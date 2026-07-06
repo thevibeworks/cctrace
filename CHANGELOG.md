@@ -6,6 +6,14 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Brand icon (`assets/cctrace-logo.svg`) — a "cc" monogram threaded by the
+  dot→ring trace line. Theme-aware; shown in both READMEs and wired into the live
+  web UI as the header logo and favicon.
+- Mermaid architecture diagram in the README (renders on GitHub), replacing the
+  ASCII sketch.
+
 ### Planned
 
 - **Conversation view** — an interactive mode that reconstructs a full LLM

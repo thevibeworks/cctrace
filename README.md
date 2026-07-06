@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/cctrace-logo.svg" width="84" alt="cctrace"></p>
+
 # cctrace
 
 > Every request Claude Code makes — messages, OAuth, usage/credits, MCP —
@@ -164,20 +166,32 @@ Every run writes to `.cctrace/` (or `--dir`):
 
 ## How it works
 
-```
-  Claude Code                cctrace                 Anthropic
-  (native binary)          MITM proxy                api.anthropic.com
-       |                       |                          |
-       |  HTTPS_PROXY +        |                          |
-       |  NODE_EXTRA_CA_CERTS  |                          |
-       |---------------------->|  terminate TLS           |
-       |                       |------------------------->|  forward (real TLS)
-       |                       |<-------------------------|  response stream
-       |<----------------------|  tee: one copy to Claude |
-       |    (streamed, no      |       one copy captured  |
-       |     buffering)        |                          |
-                               v
-                       redact -> live UI + .cctrace/*.{jsonl,html}
+```mermaid
+flowchart LR
+    CC["Claude Code<br/>(native binary)"]
+    FD{"cctrace<br/>CONNECT front door"}
+    TLS["TLS terminator<br/>(our leaf cert)"]
+    BT["blind tunnel"]
+    API[("api.anthropic.com")]
+    ORI[("non-Anthropic<br/>origin")]
+    TEE(["tee response"])
+    RD["redact<br/>headers · bodies · URLs"]
+    UI["live UI<br/>(categorized)"]
+    OUT[[".cctrace/ · jsonl + html"]]
+
+    CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
+    FD -- "Anthropic host" --> TLS
+    FD -- "other host" --> BT
+    TLS --> API
+    BT --> ORI
+    API -- "response stream" --> TEE
+    TEE -- "streamed to Claude,<br/>no buffering" --> CC
+    TEE -- "captured copy" --> RD
+    RD --> UI
+    RD --> OUT
+
+    classDef accent stroke:#3fb950,stroke-width:2px;
+    class RD accent
 ```
 
 The proxy terminates TLS with an auto-generated leaf cert (Anthropic SANs),

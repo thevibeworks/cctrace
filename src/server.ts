@@ -80,6 +80,14 @@ async function handlePair(req: Request): Promise<Response> {
   }
 }
 
+// The cctrace mark: "cc" monogram + a dot->ring trace line. Kept as raw
+// geometry (no font) so it renders identically inline and as a favicon.
+const LOGO_PATHS = `<path stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle stroke-width="9" cx="452" cy="256" r="17"/>`;
+const HEADER_LOGO = `<svg class="logo" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round">${LOGO_PATHS}<circle fill="currentColor" stroke="none" cx="250" cy="256" r="12"/></g></svg>`;
+const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><style>@media(prefers-color-scheme:dark){.s{stroke:#e6edf3}.f{fill:#e6edf3}}</style><g fill="none" stroke="#0d1117" stroke-linecap="round"><path class="s" stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path class="s" stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line class="s" stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle class="s" stroke-width="9" cx="452" cy="256" r="17"/><circle class="f" fill="#0d1117" stroke="none" cx="250" cy="256" r="12"/></g></svg>`,
+);
+
 function getLiveHtml(port: number): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -87,6 +95,7 @@ function getLiveHtml(port: number): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>cctrace live</title>
+  <link rel="icon" href="${FAVICON_HREF}">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -106,7 +115,9 @@ function getLiveHtml(port: number): string {
       align-items: center;
       gap: 16px;
     }
-    h1 { font-size: 16px; color: #58a6ff; }
+    .brand { display: flex; align-items: center; gap: 9px; }
+    .logo { width: 24px; height: 24px; color: #58a6ff; flex-shrink: 0; }
+    h1 { font-size: 16px; color: #58a6ff; letter-spacing: 0.5px; }
     .status { font-size: 12px; color: #8b949e; }
     .status.connected { color: #3fb950; }
     .status.disconnected { color: #f85149; }
@@ -258,7 +269,7 @@ function getLiveHtml(port: number): string {
 </head>
 <body>
   <header>
-    <h1>cctrace</h1>
+    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="status disconnected" id="status">disconnected</span>
     <span class="count"><span id="count">0</span> requests</span>
   </header>

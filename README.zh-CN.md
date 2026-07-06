@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/cctrace-logo.svg" width="84" alt="cctrace"></p>
+
 # cctrace
 
 > 捕获 Claude Code 发出的每一个请求 —— messages、OAuth、用量/额度、MCP ——
@@ -158,20 +160,32 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 
 ## 工作原理
 
-```
-  Claude Code                cctrace                 Anthropic
-  (native binary)          MITM proxy                api.anthropic.com
-       |                       |                          |
-       |  HTTPS_PROXY +        |                          |
-       |  NODE_EXTRA_CA_CERTS  |                          |
-       |---------------------->|  terminate TLS           |
-       |                       |------------------------->|  forward (real TLS)
-       |                       |<-------------------------|  response stream
-       |<----------------------|  tee: one copy to Claude |
-       |    (streamed, no      |       one copy captured  |
-       |     buffering)        |                          |
-                               v
-                       redact -> live UI + .cctrace/*.{jsonl,html}
+```mermaid
+flowchart LR
+    CC["Claude Code<br/>(原生二进制)"]
+    FD{"cctrace<br/>CONNECT 前门"}
+    TLS["TLS 终止<br/>(我们的叶子证书)"]
+    BT["盲隧道"]
+    API[("api.anthropic.com")]
+    ORI[("非 Anthropic<br/>源站")]
+    TEE(["tee 响应"])
+    RD["脱敏<br/>headers · bodies · URLs"]
+    UI["实时界面<br/>(分类)"]
+    OUT[[".cctrace/ · jsonl + html"]]
+
+    CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
+    FD -- "Anthropic host" --> TLS
+    FD -- "其他 host" --> BT
+    TLS --> API
+    BT --> ORI
+    API -- "响应流" --> TEE
+    TEE -- "流式给 Claude,<br/>不缓冲" --> CC
+    TEE -- "捕获副本" --> RD
+    RD --> UI
+    RD --> OUT
+
+    classDef accent stroke:#3fb950,stroke-width:2px;
+    class RD accent
 ```
 
 代理用自动生成的叶子证书（带 Anthropic SANs）终止 TLS，转发到真实 API，并对响应流做

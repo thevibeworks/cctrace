@@ -42,13 +42,18 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
     return {
       mode,
       label: `MITM proxy ${proxyUrl} (all Anthropic hosts)`,
+      // Only what Claude needs, nothing that leaks into its subprocesses:
+      //  - HTTPS_PROXY routes Claude's TLS through us (front door does CONNECT).
+      //  - NODE_EXTRA_CA_CERTS *appends* our CA to Bun's trust store, so Claude
+      //    trusts our leaf while public TLS still works (verified empirically).
+      // We deliberately do NOT set SSL_CERT_FILE (it *replaces* the OpenSSL trust
+      // store for any inherited curl/python subprocess, breaking their public
+      // TLS) or HTTP_PROXY (our front door only speaks CONNECT and 405s plain
+      // HTTP, which would break subprocess http:// calls).
       env: {
         HTTPS_PROXY: proxyUrl,
         https_proxy: proxyUrl,
-        HTTP_PROXY: proxyUrl,
-        http_proxy: proxyUrl,
         NODE_EXTRA_CA_CERTS: server.caCertPath,
-        SSL_CERT_FILE: server.caCertPath,
       },
       flush: () => server.flush(),
       stop: () => server.stop(),

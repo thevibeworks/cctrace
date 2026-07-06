@@ -1,24 +1,5 @@
-import type { TracePair, RequestData, ResponseData } from "./types";
-
-const SENSITIVE_HEADERS = [
-  "authorization",
-  "x-api-key",
-  "x-auth-token",
-  "cookie",
-  "set-cookie",
-];
-
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
-  const result = { ...headers };
-  for (const [key, value] of Object.entries(result)) {
-    if (SENSITIVE_HEADERS.some((s) => key.toLowerCase().includes(s))) {
-      result[key] = value.length > 14
-        ? `${value.slice(0, 10)}...${value.slice(-4)}`
-        : "[REDACTED]";
-    }
-  }
-  return result;
-}
+import { redactPair } from "./redact";
+import type { TracePair } from "./types";
 
 export interface ProxyConfig {
   port?: number;
@@ -56,6 +37,9 @@ export function startProxy(config: ProxyConfig): ProxyServer {
   const logAll = config.logAll ?? true;
   const pending = new Set<Promise<void>>();
 
+  // Single redaction choke point — no pair reaches a sink unredacted.
+  const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
+
   const server = Bun.serve({
     port: config.port ?? 0,
 
@@ -88,13 +72,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       } catch (err) {
         if (shouldLog) {
           pairCount++;
-          config.onPair({
+          onPair({
             id: `${Date.now()}_${pairCount.toString(36)}`,
             request: {
               timestamp: startTime / 1000,
               method: req.method,
               url: targetUrl,
-              headers: redactHeaders(reqHeaders),
+              headers: reqHeaders,
               body: reqBody,
             },
             response: null,
@@ -109,7 +93,35 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       fwdHeaders.delete("content-encoding");
       fwdHeaders.delete("content-length");
 
-      if (!shouldLog || !upstreamRes.body) {
+      if (!upstreamRes.body) {
+        // Empty-body success (204/304). Record it so the trace is complete.
+        if (shouldLog) {
+          pairCount++;
+          onPair({
+            id: `${Date.now()}_${pairCount.toString(36)}`,
+            request: {
+              timestamp: startTime / 1000,
+              method: req.method,
+              url: targetUrl,
+              headers: reqHeaders,
+              body: reqBody,
+            },
+            response: {
+              timestamp: Date.now() / 1000,
+              status: upstreamRes.status,
+              headers: Object.fromEntries(fwdHeaders.entries()),
+            },
+            duration: Date.now() - startTime,
+            loggedAt: new Date().toISOString(),
+          });
+        }
+        return new Response(null, {
+          status: upstreamRes.status,
+          statusText: upstreamRes.statusText,
+          headers: fwdHeaders,
+        });
+      }
+      if (!shouldLog) {
         return new Response(upstreamRes.body, {
           status: upstreamRes.status,
           statusText: upstreamRes.statusText,
@@ -144,13 +156,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
             timestamp: startTime / 1000,
             method: req.method,
             url: targetUrl,
-            headers: redactHeaders(reqHeaders),
+            headers: reqHeaders,
             body: reqBody,
           },
           response: {
             timestamp: Date.now() / 1000,
             status: resStatus,
-            headers: redactHeaders(resHeaders),
+            headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
           },
@@ -158,7 +170,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
           loggedAt: new Date().toISOString(),
         };
 
-        config.onPair(pair);
+        onPair(pair);
       }).catch(() => {}).finally(() => {
         pending.delete(capture);
       });

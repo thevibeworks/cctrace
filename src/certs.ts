@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, chmodSync } from "fs";
 import { join } from "path";
 
 // SANs the leaf cert must cover — every host cctrace intercepts must appear
@@ -59,10 +59,13 @@ export async function ensureCerts(caDir: string): Promise<Certs> {
     return c;
   }
 
-  if (!existsSync(caDir)) mkdirSync(caDir, { recursive: true });
+  // 0700: the CA key here can forge Anthropic certs for anyone trusting this
+  // CA, so don't rely on openssl's umask — lock the dir and keys explicitly.
+  if (!existsSync(caDir)) mkdirSync(caDir, { recursive: true, mode: 0o700 });
 
   // 1. CA key + self-signed CA cert (10y)
   await run(["openssl", "genrsa", "-out", c.caKeyPath, "2048"]);
+  chmodSync(c.caKeyPath, 0o600);
   await run([
     "openssl", "req", "-x509", "-new", "-nodes", "-key", c.caKeyPath,
     "-sha256", "-days", "3650", "-subj", "/CN=cctrace MITM CA/O=cctrace",
@@ -86,6 +89,7 @@ ${altNames}
   await Bun.write(cnfPath, cnf);
 
   await run(["openssl", "genrsa", "-out", c.leafKeyPath, "2048"]);
+  chmodSync(c.leafKeyPath, 0o600);
   await run([
     "openssl", "req", "-new", "-key", c.leafKeyPath, "-out", join(caDir, "leaf.csr"),
     "-config", cnfPath,

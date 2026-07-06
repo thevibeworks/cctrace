@@ -114,7 +114,10 @@ describe("capture abstraction", () => {
     expect(cap.mode).toBe("mitm");
     expect(cap.env.HTTPS_PROXY).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(cap.env.NODE_EXTRA_CA_CERTS).toContain("ca-cert.pem");
-    expect(cap.env.SSL_CERT_FILE).toContain("ca-cert.pem");
+    // We must NOT set SSL_CERT_FILE / HTTP_PROXY: they leak into Claude's
+    // subprocesses (curl/python/MCP) and break their public TLS / http calls.
+    expect(cap.env.SSL_CERT_FILE).toBeUndefined();
+    expect(cap.env.HTTP_PROXY).toBeUndefined();
     expect(cap.env.ANTHROPIC_BASE_URL).toBeUndefined();
   });
 });

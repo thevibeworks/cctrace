@@ -3,19 +3,8 @@ import * as net from "net";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isInterceptHost } from "./certs";
-import type { TracePair, RequestData, ResponseData } from "./types";
-
-const SENSITIVE_HEADERS = ["authorization", "x-api-key", "x-auth-token", "cookie", "set-cookie"];
-
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
-  const result = { ...headers };
-  for (const [key, value] of Object.entries(result)) {
-    if (SENSITIVE_HEADERS.some((s) => key.toLowerCase().includes(s))) {
-      result[key] = value.length > 14 ? `${value.slice(0, 10)}...${value.slice(-4)}` : "[REDACTED]";
-    }
-  }
-  return result;
-}
+import { redactPair } from "./redact";
+import type { TracePair } from "./types";
 
 async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -64,6 +53,10 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const caCertPath = join(caDir, "ca-cert.pem");
   const logAll = config.logAll ?? true;
 
+  // Every emitted pair passes through redaction here, so no branch can leak a
+  // credential to disk/HTML/WebSocket. This is the single choke point.
+  const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
+
   let pairCount = 0;
   const pending = new Set<Promise<void>>();
 
@@ -104,9 +97,9 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       } catch (err) {
         if (shouldLog) {
           pairCount++;
-          config.onPair({
+          onPair({
             id: `${Date.now()}_${pairCount.toString(36)}`,
-            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: redactHeaders(reqHeaders), body: reqBody },
+            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
             response: null,
             duration: Date.now() - startTime,
             loggedAt: new Date().toISOString(),
@@ -119,7 +112,24 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       fwdHeaders.delete("content-encoding");
       fwdHeaders.delete("content-length");
 
-      if (!shouldLog || !upstream.body) {
+      if (!upstream.body) {
+        // Empty-body success (204/304, or a 3xx under redirect:"manual"). Still
+        // record it so "capture everything" is honest about redirect hops.
+        if (shouldLog) {
+          pairCount++;
+          const resHeaders: Record<string, string> = {};
+          fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
+          onPair({
+            id: `${Date.now()}_${pairCount.toString(36)}`,
+            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
+            response: { timestamp: Date.now() / 1000, status: upstream.status, headers: resHeaders },
+            duration: Date.now() - startTime,
+            loggedAt: new Date().toISOString(),
+          });
+        }
+        return new Response(null, { status: upstream.status, statusText: upstream.statusText, headers: fwdHeaders });
+      }
+      if (!shouldLog) {
         return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: fwdHeaders });
       }
 
@@ -139,13 +149,13 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
           else resBodyRaw = captured;
         } catch { resBodyRaw = captured; }
 
-        config.onPair({
+        onPair({
           id: captureId,
-          request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: redactHeaders(reqHeaders), body: reqBody },
+          request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
           response: {
             timestamp: Date.now() / 1000,
             status: resStatus,
-            headers: redactHeaders(resHeaders),
+            headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
           },

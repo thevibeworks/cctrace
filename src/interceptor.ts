@@ -1,27 +1,7 @@
 import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "fs";
 import { type TracePair, type TraceConfig, type RequestData, type ResponseData, ANTHROPIC_HOSTS } from "./types";
 import { generateHtml } from "./html";
-
-const SENSITIVE_HEADERS = [
-  "authorization",
-  "x-api-key",
-  "x-auth-token",
-  "cookie",
-  "set-cookie",
-];
-
-function redactHeaders(headers: Record<string, string>): Record<string, string> {
-  const result = { ...headers };
-  for (const [key, value] of Object.entries(result)) {
-    const lower = key.toLowerCase();
-    if (SENSITIVE_HEADERS.some((s) => lower.includes(s))) {
-      result[key] = value.length > 14
-        ? `${value.slice(0, 10)}...${value.slice(-4)}`
-        : "[REDACTED]";
-    }
-  }
-  return result;
-}
+import { redactPair } from "./redact";
 
 function generateId(): string {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
@@ -127,7 +107,7 @@ export class Tracer {
         timestamp: startTime / 1000,
         method: init.method || "GET",
         url,
-        headers: redactHeaders(headers),
+        headers,
         body: await parseBody(init.body),
       };
 
@@ -139,7 +119,7 @@ export class Tracer {
         const response: ResponseData = {
           timestamp: endTime / 1000,
           status: res.status,
-          headers: redactHeaders(Object.fromEntries(res.headers.entries())),
+          headers: Object.fromEntries(res.headers.entries()),
           ...(await parseResponse(cloned)),
         };
 
@@ -170,12 +150,15 @@ export class Tracer {
   }
 
   private log(pair: TracePair): void {
-    this.pairs.push(pair);
+    // Same redaction choke point as the proxy modes (headers, bodies, URLs) so
+    // no credential reaches disk / the live server, even on this legacy path.
+    const safe = redactPair(pair);
+    this.pairs.push(safe);
 
     if (this.config.serverMode) {
-      this.postToServer(pair);
+      this.postToServer(safe);
     } else {
-      appendFileSync(this.logFile, JSON.stringify(pair) + "\n");
+      appendFileSync(this.logFile, JSON.stringify(safe) + "\n");
       this.generateHtmlFile();
     }
   }

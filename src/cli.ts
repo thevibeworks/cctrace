@@ -48,6 +48,22 @@ function log(msg: string, color = C.reset) {
 // parseArgs with strict:false types string flags as string|boolean|undefined.
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
+const CAPTURE_MODES = ["auto", "mitm", "base-url", "node"] as const;
+
+// Best-effort browser open, per platform. The URL is always printed too, so a
+// missing opener (headless box, no xdg-open) degrades to "open it yourself".
+function openBrowser(url: string) {
+  const cmd =
+    process.platform === "darwin" ? ["open", url] :
+    process.platform === "win32" ? ["cmd", "/c", "start", "", url] :
+    ["xdg-open", url];
+  try {
+    Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+  } catch {
+    // ignored — the Live UI URL is already on screen
+  }
+}
+
 const CACHE_DIR = join(dirname(import.meta.path), "..", ".cache");
 const MITM_CA_DIR = join(CACHE_DIR, "mitm");
 
@@ -230,9 +246,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     livePort = server.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
-      setTimeout(() => {
-        Bun.spawn(["open", `http://localhost:${livePort}`], { stdout: "ignore", stderr: "ignore" });
-      }, 500);
+      setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
     }
   }
 
@@ -263,9 +277,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
     livePort = server.port ?? opts.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
-      setTimeout(() => {
-        Bun.spawn(["open", `http://localhost:${livePort}`], { stdout: "ignore", stderr: "ignore" });
-      }, 500);
+      setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
     }
   }
 
@@ -335,6 +347,12 @@ async function main() {
     const certs = await ensureCerts(MITM_CA_DIR);
     console.log(certs.caCertPath);
     process.exit(0);
+  }
+
+  const requestedMode = str(values.mode)?.toLowerCase();
+  if (requestedMode && !CAPTURE_MODES.includes(requestedMode as (typeof CAPTURE_MODES)[number])) {
+    console.error(`[cctrace] Error: unknown --mode "${requestedMode}". Use one of: ${CAPTURE_MODES.join(", ")}.`);
+    process.exit(1);
   }
 
   const opts: RunOpts = {

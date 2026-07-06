@@ -1,0 +1,118 @@
+<svg width="1200" height="470" viewBox="0 0 1200 470" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">cctrace live UI preview</title>
+  <desc id="desc">Preview of cctrace's live web UI: category filter chips (Messages, Usage/Credits, OAuth, MCP, Bootstrap, Telemetry) with live counts, and a stream of captured Claude Code requests, each tagged with a colored category badge, method, path, status, and duration.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#0a0e14"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="20" flood-color="#020617" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="470" rx="28" fill="#f7f7f5"/>
+  <rect x="60" y="40" width="1080" height="390" rx="18" fill="url(#bg)" filter="url(#shadow)"/>
+
+  <!-- window chrome -->
+  <rect x="60" y="40" width="1080" height="46" rx="18" fill="#161b22"/>
+  <rect x="60" y="68" width="1080" height="18" fill="#161b22"/>
+  <circle cx="93" cy="63" r="7" fill="#ff5f57"/>
+  <circle cx="117" cy="63" r="7" fill="#ffbd2e"/>
+  <circle cx="141" cy="63" r="7" fill="#28c840"/>
+  <text x="600" y="68" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14" fill="#8b949e">cctrace &#183; localhost:9317</text>
+
+  <!-- filter chips -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+    <!-- messages -->
+    <rect x="86" y="104" width="150" height="30" rx="15" fill="#161b22" stroke="#3fb950" stroke-opacity="0.5"/>
+    <circle cx="104" cy="119" r="5" fill="#3fb950"/>
+    <text x="116" y="124" fill="#c9d1d9">Messages</text>
+    <text x="212" y="124" fill="#8b949e">7</text>
+    <!-- usage -->
+    <rect x="246" y="104" width="178" height="30" rx="15" fill="#161b22" stroke="#30363d"/>
+    <circle cx="264" cy="119" r="5" fill="#d29922"/>
+    <text x="276" y="124" fill="#c9d1d9">Usage/Credits</text>
+    <text x="400" y="124" fill="#8b949e">3</text>
+    <!-- oauth -->
+    <rect x="434" y="104" width="118" height="30" rx="15" fill="#161b22" stroke="#30363d"/>
+    <circle cx="452" cy="119" r="5" fill="#a371f7"/>
+    <text x="464" y="124" fill="#c9d1d9">OAuth</text>
+    <text x="528" y="124" fill="#8b949e">4</text>
+    <!-- mcp -->
+    <rect x="562" y="104" width="96" height="30" rx="15" fill="#161b22" stroke="#30363d"/>
+    <circle cx="580" cy="119" r="5" fill="#39c5cf"/>
+    <text x="592" y="124" fill="#c9d1d9">MCP</text>
+    <text x="634" y="124" fill="#8b949e">2</text>
+    <!-- bootstrap -->
+    <rect x="668" y="104" width="140" height="30" rx="15" fill="#161b22" stroke="#30363d"/>
+    <circle cx="686" cy="119" r="5" fill="#2f81a3"/>
+    <text x="698" y="124" fill="#c9d1d9">Bootstrap</text>
+    <text x="784" y="124" fill="#8b949e">1</text>
+    <!-- telemetry -->
+    <rect x="818" y="104" width="140" height="30" rx="15" fill="#161b22" stroke="#30363d"/>
+    <circle cx="836" cy="119" r="5" fill="#6e7681"/>
+    <text x="848" y="124" fill="#c9d1d9">Telemetry</text>
+    <text x="934" y="124" fill="#8b949e">5</text>
+  </g>
+
+  <!-- request rows -->
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="17">
+    <!-- messages -->
+    <rect x="86" y="152" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="152" width="4" height="38" rx="2" fill="#3fb950"/>
+    <text x="108" y="176" fill="#3fb950" font-weight="700">POST</text>
+    <text x="176" y="176" fill="#c9d1d9">/v1/messages</text>
+    <text x="470" y="176" fill="#8b949e">stream-json</text>
+    <text x="900" y="176" fill="#3fb950">200</text>
+    <text x="980" y="176" fill="#6e7681">SSE</text>
+    <text x="1060" y="176" fill="#8b949e" text-anchor="end">4.2s</text>
+
+    <!-- usage / credits -->
+    <rect x="86" y="196" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="196" width="4" height="38" rx="2" fill="#d29922"/>
+    <text x="108" y="220" fill="#d29922" font-weight="700">GET</text>
+    <text x="176" y="220" fill="#c9d1d9">/api/oauth/usage</text>
+    <text x="470" y="220" fill="#8b949e">api.anthropic.com</text>
+    <text x="900" y="220" fill="#3fb950">200</text>
+    <text x="1060" y="220" fill="#8b949e" text-anchor="end">128ms</text>
+
+    <!-- oauth -->
+    <rect x="86" y="240" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="240" width="4" height="38" rx="2" fill="#a371f7"/>
+    <text x="108" y="264" fill="#a371f7" font-weight="700">GET</text>
+    <text x="176" y="264" fill="#c9d1d9">/api/oauth/profile</text>
+    <text x="470" y="264" fill="#8b949e">api.anthropic.com</text>
+    <text x="900" y="264" fill="#3fb950">200</text>
+    <text x="1060" y="264" fill="#8b949e" text-anchor="end">96ms</text>
+
+    <!-- mcp -->
+    <rect x="86" y="284" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="284" width="4" height="38" rx="2" fill="#39c5cf"/>
+    <text x="108" y="308" fill="#39c5cf" font-weight="700">GET</text>
+    <text x="176" y="308" fill="#c9d1d9">/mcp-registry/servers</text>
+    <text x="470" y="308" fill="#8b949e">api.anthropic.com</text>
+    <text x="900" y="308" fill="#3fb950">200</text>
+    <text x="1060" y="308" fill="#8b949e" text-anchor="end">210ms</text>
+
+    <!-- bootstrap -->
+    <rect x="86" y="328" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="328" width="4" height="38" rx="2" fill="#2f81a3"/>
+    <text x="108" y="352" fill="#2f81a3" font-weight="700">POST</text>
+    <text x="176" y="352" fill="#c9d1d9">/api/claude_cli/bootstrap</text>
+    <text x="470" y="352" fill="#8b949e">api.anthropic.com</text>
+    <text x="900" y="352" fill="#3fb950">200</text>
+    <text x="1060" y="352" fill="#8b949e" text-anchor="end">184ms</text>
+
+    <!-- telemetry -->
+    <rect x="86" y="372" width="1028" height="38" rx="8" fill="#0f151d"/>
+    <rect x="86" y="372" width="4" height="38" rx="2" fill="#6e7681"/>
+    <text x="108" y="396" fill="#6e7681" font-weight="700">POST</text>
+    <text x="176" y="396" fill="#c9d1d9">/api/event_logging/...</text>
+    <text x="470" y="396" fill="#8b949e">statsig</text>
+    <text x="900" y="396" fill="#d29922">202</text>
+    <text x="1060" y="396" fill="#8b949e" text-anchor="end">72ms</text>
+  </g>
+
+  <text x="60" y="452" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="18" fill="#57606a">Every request Claude Code makes — messages, OAuth, usage/credits, MCP — captured live and categorized.</text>
+</svg>

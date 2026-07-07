@@ -124,17 +124,25 @@
       font-size: 20px; margin-bottom: 16px;
       padding-bottom: 8px; border-bottom: 1px solid var(--border);
     }
-    .roadmap ul {
-      list-style: none; display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 12px;
-    }
+    .roadmap ul { list-style: none; }
     .roadmap li {
+      display: flex; align-items: flex-start; gap: 12px;
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 8px; padding: 14px 16px; font-size: 14px;
+      border-radius: 8px; padding: 12px 16px; font-size: 14px;
+      margin-bottom: 8px; transition: border-color .15s;
     }
-    .roadmap li strong { color: var(--accent); }
+    .roadmap li:hover { border-color: var(--accent); }
+    .roadmap li strong { color: var(--text); display: block; margin-bottom: 2px; }
     .roadmap li span { color: var(--text-muted); font-size: 13px; }
+    .status-dot {
+      flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px;
+      border-radius: 50%; border: 2px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .status-dot.done { background: var(--green); border-color: var(--green); }
+    .status-dot.done::after { content: ""; width: 6px; height: 3px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translateY(-1px); }
+    .status-dot.next { border-color: var(--accent); }
+    .status-dot.next::after { content: ""; width: 0; height: 0; border-left: 6px solid var(--accent); border-top: 4px solid transparent; border-bottom: 4px solid transparent; margin-left: 2px; }
 
     .links {
       text-align: center; padding: 32px 24px;
@@ -176,8 +184,8 @@
       </g>
     </svg>
     <h1>cctrace</h1>
-    <p class="tagline en">See what Claude really says.</p>
-    <p class="tagline zh">看看 Claude 到底在说什么。</p>
+    <p class="tagline en">See what Claude really sends.</p>
+    <p class="tagline zh">看看 Claude 到底发了什么。</p>
     <p class="subtitle en">
       Every request Claude Code makes &mdash; messages, OAuth, usage/credits, MCP &mdash;
       captured live in your browser. One command.
@@ -284,34 +292,76 @@
     <h2 class="zh">即将推出</h2>
     <ul>
       <li>
-        <strong class="en">Session view</strong>
-        <strong class="zh">会话视图</strong><br>
-        <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
-        <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Full interception</strong>
+          <strong class="zh">完整拦截</strong>
+          <span class="en">Dynamic certs for all hosts — Datadog, MCP servers, everything</span>
+          <span class="zh">为所有主机动态生成证书 — Datadog、MCP 服务器，全覆盖</span>
+        </div>
       </li>
       <li>
-        <strong class="en">Conversation dump</strong>
-        <strong class="zh">对话导出</strong><br>
-        <span class="en">Export reconstructed conversations as Markdown or JSON</span>
-        <span class="zh">将还原的对话导出为 Markdown 或 JSON</span>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Smart categories</strong>
+          <strong class="zh">智能分类</strong>
+          <span class="en">Count Tokens separated from Messages, External host filter</span>
+          <span class="zh">Count Tokens 独立于 Messages，外部主机筛选</span>
+        </div>
       </li>
       <li>
-        <strong class="en">Token metrics</strong>
-        <strong class="zh">Token 指标</strong><br>
-        <span class="en">Per-turn usage, cache hit rates, cost estimates, service tier</span>
-        <span class="zh">每轮用量、缓存命中率、费用估算、服务层级</span>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Copy + token summary</strong>
+          <strong class="zh">复制 + Token 摘要</strong>
+          <span class="en">Copy button on JSON blocks, token usage bar on message pairs</span>
+          <span class="zh">JSON 块复制按钮，消息请求的 token 用量摘要栏</span>
+        </div>
       </li>
       <li>
-        <strong class="en">Agent skill</strong>
-        <strong class="zh">Agent Skill</strong><br>
-        <span class="en">Claude Code skill / MCP server for programmatic trace queries</span>
-        <span class="zh">Claude Code skill / MCP 服务器，编程式查询捕获的流量</span>
+        <div class="status-dot next"></div>
+        <div>
+          <strong class="en">Session view</strong>
+          <strong class="zh">会话视图</strong>
+          <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
+          <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
+        </div>
       </li>
       <li>
-        <strong class="en">Multi-session</strong>
-        <strong class="zh">多会话</strong><br>
-        <span class="en">Path-based routing: <code>/:project/:session</code></span>
-        <span class="zh">基于路径的路由：<code>/:project/:session</code></span>
+        <div class="status-dot"></div>
+        <div>
+          <strong class="en">Conversation dump</strong>
+          <strong class="zh">对话导出</strong>
+          <span class="en">Export reconstructed conversations as Markdown or JSON</span>
+          <span class="zh">将还原的对话导出为 Markdown 或 JSON</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot"></div>
+        <div>
+          <strong class="en">Token metrics</strong>
+          <strong class="zh">Token 指标</strong>
+          <span class="en">Cumulative usage, cache hit rates, cost estimates</span>
+          <span class="zh">累计用量、缓存命中率、费用估算</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot"></div>
+        <div>
+          <strong class="en">Agent skill</strong>
+          <strong class="zh">Agent Skill</strong>
+          <span class="en">Claude Code skill / MCP server for programmatic trace queries</span>
+          <span class="zh">Claude Code skill / MCP 服务器，编程式查询捕获的流量</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot"></div>
+        <div>
+          <strong class="en">Multi-session</strong>
+          <strong class="zh">多会话</strong>
+          <span class="en">Path-based routing: <code>/:project/:session</code></span>
+          <span class="zh">基于路径的路由：<code>/:project/:session</code></span>
+        </div>
       </li>
     </ul>
   </div>

@@ -306,6 +306,31 @@ function getLiveHtml(port: number): string {
       padding: 40px;
       color: var(--text-faint);
     }
+    .pair-meta {
+      padding: 6px 12px;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .pair-meta .val { color: var(--text); font-variant-numeric: tabular-nums; }
+    .pair-meta .cache-hit { color: var(--green); }
+    .pre-wrap { position: relative; }
+    .pre-wrap .copy-btn {
+      position: absolute; top: 6px; right: 6px;
+      background: var(--btn-bg); border: 1px solid var(--border);
+      border-radius: 4px; padding: 3px 5px; cursor: pointer;
+      color: var(--text-faint); display: none;
+      align-items: center; justify-content: center;
+      z-index: 1; line-height: 1;
+    }
+    .pre-wrap:hover .copy-btn { display: inline-flex; }
+    .copy-btn:hover { color: var(--text); }
+    .copy-btn.copied { color: var(--green); border-color: var(--green); }
+    .copy-btn svg { width: 14px; height: 14px; }
   </style>
 </head>
 <body>
@@ -435,10 +460,49 @@ function getLiveHtml(port: number): string {
       if (activeCat !== 'all' && pair._cat !== activeCat) return false;
       if (filter) {
         const q = filter.toLowerCase();
-        const text = [pair.request.method, pair.request.url, pair.response?.status].join(' ').toLowerCase();
-        if (!text.includes(q)) return false;
+        var parts = [pair.request.method, pair.request.url, pair.response?.status];
+        try { parts.push(JSON.stringify(pair.request.headers)); } catch {}
+        try { parts.push(JSON.stringify(pair.request.body)); } catch {}
+        try { parts.push(JSON.stringify(pair.response?.headers)); } catch {}
+        try { parts.push(JSON.stringify(pair.response?.body)); } catch {}
+        if (pair.response?.bodyRaw) parts.push(pair.response.bodyRaw);
+        if (!parts.join(' ').toLowerCase().includes(q)) return false;
       }
       return true;
+    }
+
+    var COPY_SVG = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>';
+    var CHECK_SVG = '<svg viewBox="0 0 16 16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.751.751 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>';
+
+    window.copyBlock = function(btn) {
+      var pre = btn.nextElementSibling;
+      navigator.clipboard.writeText(pre.textContent).then(function() {
+        btn.classList.add('copied');
+        btn.innerHTML = CHECK_SVG;
+        setTimeout(function() { btn.classList.remove('copied'); btn.innerHTML = COPY_SVG; }, 1500);
+      });
+    };
+
+    function preBlock(content) {
+      return '<div class="pre-wrap"><button class="copy-btn" onclick="copyBlock(this)" title="Copy">' + COPY_SVG + '</button><pre>' + content + '</pre></div>';
+    }
+
+    function tokenMeta(pair) {
+      if (pair._cat !== 'messages') return '';
+      var body = pair.response?.body;
+      if (!body || !body.usage) return '';
+      var u = body.usage;
+      var model = (body.model || '').replace('claude-', '');
+      var cacheRead = u.cache_read_input_tokens || 0;
+      var totalIn = (u.input_tokens || 0) + cacheRead;
+      var cachePct = totalIn > 0 ? Math.round(cacheRead / totalIn * 100) : 0;
+      var parts = [];
+      parts.push('<span class="val">' + model + '</span>');
+      parts.push('in <span class="val">' + (u.input_tokens || 0).toLocaleString() + '</span>');
+      parts.push('out <span class="val">' + (u.output_tokens || 0).toLocaleString() + '</span>');
+      if (cacheRead > 0) parts.push('cache <span class="val cache-hit">' + cacheRead.toLocaleString() + ' (' + cachePct + '%)</span>');
+      if (u.service_tier && u.service_tier !== 'standard') parts.push('tier <span class="val">' + u.service_tier + '</span>');
+      return '<div class="pair-meta">' + parts.join('<span style="color:var(--border)">|</span>') + '</div>';
     }
 
     function renderPair(pair, idx) {
@@ -454,24 +518,25 @@ function getLiveHtml(port: number): string {
       div.className = 'pair';
       div.dataset.idx = idx;
       div.innerHTML = \`
-        <div class="pair-header" onclick="toggle(\${idx})">
+        <div class="pair-header" onclick="toggle(\${idx})" title="\${escapeHtml(request.url)}">
           <span class="method">\${request.method}</span>
-          <span class="status-code \${statusClass}">\${status}</span>
-          <span class="cat-badge" style="--cat:\${cat.color}">\${cat.label}</span>
-          <span class="url" title="\${escapeHtml(request.url)}">\${escapeHtml(shortUrl)}</span>
-          <span class="duration">\${formatDuration(duration)}</span>
+          <span class="status-code \${statusClass}" title="HTTP \${status}">\${status}</span>
+          <span class="cat-badge" style="--cat:\${cat.color}" title="\${cat.label}">\${cat.label}</span>
+          <span class="url">\${escapeHtml(shortUrl)}</span>
+          <span class="duration" title="\${duration}ms">\${formatDuration(duration)}</span>
           <span class="time">\${new Date(request.timestamp * 1000).toLocaleTimeString()}</span>
         </div>
+        \${tokenMeta(pair)}
         <div class="pair-body">
           <div class="section">
             <h4>Request Headers</h4>
-            <pre>\${formatJson(request.headers)}</pre>
+            \${preBlock(formatJson(request.headers))}
           </div>
-          \${request.body ? \`<div class="section"><h4>Request Body</h4><pre>\${formatJson(request.body)}</pre></div>\` : ''}
+          \${request.body ? \`<div class="section"><h4>Request Body</h4>\${preBlock(formatJson(request.body))}</div>\` : ''}
           \${response ? \`
-            <div class="section"><h4>Response Headers</h4><pre>\${formatJson(response.headers)}</pre></div>
-            \${response.body ? \`<div class="section"><h4>Response Body</h4><pre>\${formatJson(response.body)}</pre></div>\` : ''}
-            \${response.bodyRaw ? \`<div class="section"><h4>Response (Raw)</h4><pre>\${escapeHtml(response.bodyRaw.slice(0, 50000))}</pre></div>\` : ''}
+            <div class="section"><h4>Response Headers</h4>\${preBlock(formatJson(response.headers))}</div>
+            \${response.body ? \`<div class="section"><h4>Response Body</h4>\${preBlock(formatJson(response.body))}</div>\` : ''}
+            \${response.bodyRaw ? \`<div class="section"><h4>Response (Raw)</h4>\${preBlock(escapeHtml(response.bodyRaw.slice(0, 50000)))}</div>\` : ''}
           \` : '<div class="section"><h4>Error</h4><pre>Request failed</pre></div>'}
         </div>
       \`;

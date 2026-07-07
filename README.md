@@ -2,7 +2,7 @@
 
 # cctrace
 
-> **See what Claude really says.**
+> **See what Claude really sends.**
 >
 > Every request Claude Code makes -- messages, OAuth, usage/credits, MCP --
 > captured live in your browser.

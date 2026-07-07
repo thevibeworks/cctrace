@@ -2,7 +2,7 @@
 
 # cctrace
 
-> **看看 Claude 到底在说什么。**
+> **看看 Claude 到底发了什么。**
 >
 > Claude Code 发出的每一个请求 -- messages、OAuth、用量/额度、MCP --
 > 全部实时呈现在你的浏览器里。

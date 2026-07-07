@@ -179,16 +179,34 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   });
 
   proxy.on("connect", (req, clientSocket: net.Socket, head: Buffer) => {
-    // req.url is "host:port". Intercept Anthropic hosts (TLS-terminate via our
-    // leaf cert); blind-tunnel everything else straight to its real origin so
-    // we never break a connection whose cert we can't forge.
     const [reqHost, reqPortStr] = (req.url || "").split(":");
     const host = reqHost || "api.anthropic.com";
+    const port = parseInt(reqPortStr || "443", 10);
     const intercept = isInterceptHost(host);
 
+    // Anthropic hosts → TLS-terminate via our leaf cert for full capture.
+    // Everything else → tunnel through but still log the CONNECT so it's
+    // visible in the UI for categorization and filtering.
     const dest = intercept
       ? { port: tlsPort, host: "127.0.0.1" }
-      : { port: parseInt(reqPortStr || "443", 10), host };
+      : { port, host };
+
+    if (!intercept && logAll) {
+      pairCount++;
+      onPair({
+        id: `${Date.now()}_${pairCount.toString(36)}`,
+        request: {
+          timestamp: Date.now() / 1000,
+          method: "CONNECT",
+          url: `https://${host}:${port}`,
+          headers: {},
+          body: null,
+        },
+        response: { timestamp: Date.now() / 1000, status: 200, headers: {} },
+        duration: 0,
+        loggedAt: new Date().toISOString(),
+      });
+    }
 
     const upstream = net.connect(dest.port, dest.host, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");

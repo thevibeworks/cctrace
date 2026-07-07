@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cctrace — HTTP tracer for Claude Code</title>
+  <meta name="description" content="TLS-intercepting HTTP tracer for Claude Code. Captures every API call — messages, OAuth, usage/credits, MCP — with a live categorized web UI.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cstyle%3E@media(prefers-color-scheme:dark){.s{stroke:%23e6edf3}.f{fill:%23e6edf3}}%3C/style%3E%3Cg fill='none' stroke='%230d1117' stroke-linecap='round'%3E%3Cpath class='s' stroke-width='26' d='M270.75 175.6A125 125 0 1 0 270.75 336.4'/%3E%3Cpath class='s' stroke-width='26' d='M395.75 175.6A125 125 0 1 0 395.75 336.4'/%3E%3Cline class='s' stroke-width='9' x1='250' y1='256' x2='452' y2='256'/%3E%3Ccircle class='s' stroke-width='9' cx='452' cy='256' r='17'/%3E%3Ccircle class='f' fill='%230d1117' stroke='none' cx='250' cy='256' r='12'/%3E%3C/g%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #0d1117; --bg-surface: #161b22; --border: #30363d;
+      --text: #c9d1d9; --text-muted: #8b949e; --text-faint: #6e7681;
+      --accent: #58a6ff; --green: #3fb950;
+      color-scheme: dark;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
+        --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
+        --accent: #0969da; --green: #1a7f37;
+        color-scheme: light;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .hero {
+      text-align: center;
+      padding: 80px 24px 60px;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    .hero svg { width: 96px; height: 96px; margin-bottom: 24px; }
+    .hero h1 {
+      font-size: 48px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+    .hero .tagline {
+      font-size: 20px;
+      color: var(--text-muted);
+      max-width: 520px;
+      margin: 0 auto 40px;
+    }
+
+    .install-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 15px;
+      margin-bottom: 16px;
+    }
+    .install-box .prompt { color: var(--green); user-select: none; }
+    .install-box code { color: var(--text); }
+    .install-box button {
+      background: none; border: none; color: var(--text-faint);
+      cursor: pointer; padding: 4px; border-radius: 4px;
+      display: flex; align-items: center;
+    }
+    .install-box button:hover { color: var(--text); background: var(--border); }
+    .install-box button.copied { color: var(--green); }
+
+    .alt-install {
+      font-size: 14px;
+      color: var(--text-faint);
+      margin-bottom: 40px;
+    }
+    .alt-install a { color: var(--accent); text-decoration: none; }
+    .alt-install a:hover { text-decoration: underline; }
+    .alt-install code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 13px;
+      background: var(--bg-surface);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px 60px;
+    }
+    .feature {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+    }
+    .feature h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+    .feature p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+
+    .links {
+      text-align: center;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: center;
+      gap: 32px;
+      flex-wrap: wrap;
+    }
+    .links a {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      transition: color .15s;
+    }
+    .links a:hover { color: var(--accent); }
+    .links svg { width: 20px; height: 20px; }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      color: var(--text-faint);
+      font-size: 13px;
+      margin-top: auto;
+    }
+    footer a { color: var(--text-muted); text-decoration: none; }
+    footer a:hover { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="hero">
+    <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <g fill="none" stroke="currentColor" stroke-linecap="round">
+        <path stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/>
+        <path stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/>
+        <line stroke-width="9" x1="250" y1="256" x2="452" y2="256"/>
+        <circle stroke-width="9" cx="452" cy="256" r="17"/>
+        <circle fill="currentColor" stroke="none" cx="250" cy="256" r="12"/>
+      </g>
+    </svg>
+    <h1>cctrace</h1>
+    <p class="tagline">
+      Every request Claude Code makes &mdash; messages, OAuth, usage/credits, MCP &mdash;
+      captured live in your browser.
+    </p>
+
+    <div class="install-box">
+      <span class="prompt">$</span>
+      <code id="install-cmd">npm install -g @thevibeworks/cctrace</code>
+      <button onclick="copyInstall()" id="copy-btn" title="Copy">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>
+      </button>
+    </div>
+    <div class="alt-install">
+      or <code>bunx @thevibeworks/cctrace</code> to run without installing
+      &middot; <a href="https://github.com/thevibeworks/cctrace">view source</a>
+    </div>
+  </div>
+
+  <div class="features">
+    <div class="feature">
+      <h3>Full picture</h3>
+      <p>
+        Captures <code>/v1/messages</code>, OAuth, usage/credits, MCP registry,
+        bootstrap, and telemetry &mdash; not just the chat endpoint.
+      </p>
+    </div>
+    <div class="feature">
+      <h3>Live categorized UI</h3>
+      <p>
+        Filter chips with live counts, colored category badges, expandable
+        headers and bodies, decoded SSE streams. System, light, and dark themes.
+      </p>
+    </div>
+    <div class="feature">
+      <h3>Shareable snapshots</h3>
+      <p>
+        Every run saves a self-contained HTML file that renders the same UI
+        offline. Send it to a colleague &mdash; no server needed.
+      </p>
+    </div>
+    <div class="feature">
+      <h3>Zero config</h3>
+      <p>
+        Auto-generates a CA, auto-detects your Claude install, and captures
+        everything by default. Run <code>cctrace</code> and you're done.
+      </p>
+    </div>
+    <div class="feature">
+      <h3>Safe by default</h3>
+      <p>
+        Credentials are redacted from headers, bodies, and URLs before anything
+        hits disk. Your API keys stay your API keys.
+      </p>
+    </div>
+    <div class="feature">
+      <h3>Works on the native binary</h3>
+      <p>
+        Claude Code ships as a Bun-compiled binary now. The old
+        <code>node --require</code> trick is dead. cctrace uses a real
+        TLS-intercepting proxy.
+      </p>
+    </div>
+  </div>
+
+  <div class="links">
+    <a href="https://github.com/thevibeworks/cctrace">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <a href="https://www.npmjs.com/package/@thevibeworks/cctrace">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 0v16h16V0H0zm13 13H8V5h5v8zm-2-7H9v6h2V6z"/></svg>
+      npm
+    </a>
+    <a href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5zm-1.43-.25a2.5 2.5 0 10-5 0 2.5 2.5 0 005 0z"/></svg>
+      Changelog
+    </a>
+    <a href="https://github.com/thevibeworks/cctrace/blob/main/README.zh-CN.md">
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.751.751 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+      简体中文
+    </a>
+  </div>
+
+  <footer>
+    MIT License &middot; <a href="https://github.com/thevibeworks">thevibeworks</a>
+  </footer>
+
+  <script>
+    function copyInstall() {
+      var cmd = document.getElementById('install-cmd').textContent;
+      navigator.clipboard.writeText(cmd).then(function() {
+        var btn = document.getElementById('copy-btn');
+        btn.classList.add('copied');
+        btn.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.751.751 0 01.018-1.042.751.751 0 011.042-.018L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>';
+        setTimeout(function() {
+          btn.classList.remove('copied');
+          btn.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>';
+        }, 2000);
+      });
+    }
+  </script>
+</body>
+</html>

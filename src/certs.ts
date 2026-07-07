@@ -105,8 +105,9 @@ ${altNames}
 }
 
 /**
- * Hosts cctrace terminates TLS for. Must be a subset of the leaf SANs.
- * Everything else is blind-tunneled through untouched.
+ * Hosts cctrace terminates TLS for (full request/response capture).
+ * Must be a subset of the leaf SANs. Other hosts are tunneled through
+ * but their CONNECT is still logged for visibility.
  */
 export function isInterceptHost(host: string): boolean {
   const h = host.toLowerCase();

@@ -1,6 +1,5 @@
 #!/usr/bin/env bun
 
-import { parseArgs } from "util";
 import { dirname, join, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
@@ -8,29 +7,40 @@ import { createServer, renderSnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts } from "./certs";
+import { parseCliArgs, CliUsageError } from "./args";
 import type { TracePair } from "./types";
 
 // Live-UI port. Avoids 7890/7891 (Clash/mihomo proxy defaults). Falls back to
 // an OS-assigned free port if this is taken (see createServer).
 const DEFAULT_PORT = 9317;
 
-const { values, positionals } = parseArgs({
-  args: Bun.argv.slice(2),
-  options: {
-    help: { type: "boolean", short: "h" },
-    static: { type: "boolean", short: "s" },
-    mode: { type: "string" }, // auto | mitm | base-url | node
-    "messages-only": { type: "boolean" },
-    "no-open": { type: "boolean" },
-    "print-ca": { type: "boolean" },
-    log: { type: "string" },
-    dir: { type: "string" },
-    port: { type: "string", short: "p" },
-    "claude-path": { type: "string" },
-  },
-  allowPositionals: true,
-  strict: false,
-});
+// True when running as a `bun build --compile` standalone binary (sources live
+// in the virtual /$bunfs). Matters twice: the on-disk cache can't sit next to
+// the (virtual) sources, and bun's CLI quirk below doesn't apply.
+const IS_COMPILED = import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN");
+
+// cctrace [OPTIONS] [-- CLAUDE_ARGS...] — everything after "--" goes to the
+// Claude CLI verbatim; unknown flags before it error with a hint (args.ts).
+function parseArgvOrExit() {
+  try {
+    return parseCliArgs(Bun.argv.slice(2));
+  } catch (err) {
+    if (err instanceof CliUsageError) {
+      let msg = err.message;
+      // When run through bun's CLI (bunx / bun run / the bun-link shim), bun
+      // itself eats a LEADING "--", so `cctrace -- --continue` reaches us as
+      // `--continue` and lands here. The compiled binary is immune.
+      if (!IS_COMPILED && msg.includes('put it after "--"')) {
+        msg += `\n  note: bun run/bunx/bun link eats a leading "--". If you already typed one,` +
+          `\n  install the compiled binary (make install) or put a cctrace flag before "--".`;
+      }
+      console.error(`[cctrace] ${msg}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+const { values, claudeArgs } = parseArgvOrExit();
 
 const C = {
   reset: "\x1b[0m",
@@ -44,9 +54,6 @@ const C = {
 function log(msg: string, color = C.reset) {
   console.log(`${color}[cctrace]${C.reset} ${msg}`);
 }
-
-// parseArgs with strict:false types string flags as string|boolean|undefined.
-const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 const CAPTURE_MODES = ["auto", "mitm", "base-url", "node"] as const;
 
@@ -64,7 +71,11 @@ function openBrowser(url: string) {
   }
 }
 
-const CACHE_DIR = join(dirname(import.meta.path), "..", ".cache");
+// Repo-local .cache when running from source; XDG cache for the compiled
+// binary (its import.meta.path is virtual and not writable).
+const CACHE_DIR = IS_COMPILED
+  ? join(process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache"), "cctrace")
+  : join(dirname(import.meta.path), "..", ".cache");
 const MITM_CA_DIR = join(CACHE_DIR, "mitm");
 
 function showHelp() {
@@ -73,6 +84,8 @@ ${C.cyan}cctrace${C.reset} - Trace HTTP traffic from Claude Code CLI
 
 ${C.yellow}USAGE:${C.reset}
   cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+
+  Everything after ${C.cyan}--${C.reset} is passed to the Claude CLI verbatim.
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
@@ -99,12 +112,16 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace                          ${C.dim}# Auto mode, capture everything${C.reset}
   cctrace --mode base-url          ${C.dim}# Lightweight, messages only, no CA${C.reset}
   cctrace -s                       ${C.dim}# Static mode (files only)${C.reset}
-  cctrace -- --model opus          ${C.dim}# Pass args to Claude${C.reset}
+  cctrace -- --continue            ${C.dim}# Resume last Claude session, traced${C.reset}
+  cctrace -- -p "explain this"     ${C.dim}# Claude print mode, traced${C.reset}
+  cctrace --mode base-url -- --model opus --continue
+
+  ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}
 `);
 }
 
 function findClaude(): string {
-  const custom = str(values["claude-path"]);
+  const custom = values["claude-path"];
   if (custom) {
     return resolve(custom);
   }
@@ -320,7 +337,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
 
 /** Resolve the capture mode: honor --mode, else auto-detect from the binary. */
 function resolveMode(claudePath: string): { mode: "mitm" | "base-url" | "node"; runPath: string } {
-  const requested = str(values.mode)?.toLowerCase();
+  const requested = values.mode?.toLowerCase();
   const jsPath = resolveClaudeBashWrapper(claudePath);
   const effectivePath = jsPath || claudePath;
   const native = isNativeBinary(claudePath) || (jsPath ? isNativeBinary(jsPath) : false);
@@ -349,30 +366,41 @@ async function main() {
     process.exit(0);
   }
 
-  const requestedMode = str(values.mode)?.toLowerCase();
+  const requestedMode = values.mode?.toLowerCase();
   if (requestedMode && !CAPTURE_MODES.includes(requestedMode as (typeof CAPTURE_MODES)[number])) {
     console.error(`[cctrace] Error: unknown --mode "${requestedMode}". Use one of: ${CAPTURE_MODES.join(", ")}.`);
     process.exit(1);
   }
 
   const opts: RunOpts = {
-    port: parseInt(str(values.port) || String(DEFAULT_PORT), 10),
+    port: parseInt(values.port || String(DEFAULT_PORT), 10),
     liveMode: !values.static,
-    logDir: str(values.dir) || ".cctrace",
-    logName: str(values.log),
+    logDir: values.dir || ".cctrace",
+    logName: values.log,
     logAll: !values["messages-only"],
     noOpen: !!values["no-open"],
   };
 
   const claudePath = findClaude();
   log(`Claude: ${claudePath}`, C.blue);
+  if (claudeArgs.length) log(`Claude args: ${claudeArgs.join(" ")}`, C.blue);
 
   const { mode, runPath } = resolveMode(claudePath);
 
+  // Legacy node mode injects .cache/preload.cjs + src/loader.cjs, which only
+  // exist when running from the repo — the compiled binary carries neither.
+  if (mode === "node" && IS_COMPILED) {
+    console.error(
+      "[cctrace] node mode (legacy fetch injection) needs the cctrace sources — " +
+        "run it via bun instead (bunx @thevibeworks/cctrace), or use --mode mitm/base-url.",
+    );
+    process.exit(1);
+  }
+
   if (mode === "node") {
-    await runNodeMode(runPath, positionals, opts);
+    await runNodeMode(runPath, claudeArgs, opts);
   } else {
-    await runProxyCapture(mode, runPath, positionals, opts);
+    await runProxyCapture(mode, runPath, claudeArgs, opts);
   }
 }
 

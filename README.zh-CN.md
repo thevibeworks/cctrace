@@ -94,10 +94,24 @@ bun install
 bun link            # 可选：把 `cctrace` 加入 PATH
 ```
 
+### 或构建独立二进制（推荐）
+
+```bash
+git clone https://github.com/thevibeworks/cctrace
+cd cctrace
+make install        # 编译 dist/cctrace 并安装到 ~/.local/bin
+```
+
+`make install`（或 `make build`）用 `bun build --compile` 把 cctrace 编译成单个
+可执行文件 -- 构建需要 Bun，**运行不需要**。它也是让 `cctrace -- <claude 参数>`
+原样透传的安装方式（见下方透传说明）。`make help` 列出所有目标；
+`PREFIX=/usr/local make install` 可更换安装位置。
+
 然后直接运行：
 
 ```bash
 cctrace                       # 捕获全部，打开实时界面
+cctrace -- --continue         # 继续上一个 Claude 会话，并全程追踪
 cctrace -- -p "hello"         # 把参数原样传给 Claude
 ```
 
@@ -119,10 +133,11 @@ cctrace **跑在 [Bun](https://bun.sh) 上** -- CLI 就是直接执行的 `src/c
 
 | 命令 | 可用 | 说明 |
 |---|---|---|
+| `cctrace`（`make install` 之后） | 是 | 编译后的二进制，运行不需要 Bun，`--` 原样透传 |
 | `bun run src/cli.ts [args]` | 是 | 在克隆的仓库里 |
 | `bun start` | 是 | 上一条的别名 |
 | `./src/cli.ts` | 是 | 借助 Bun shebang 直接执行 |
-| `cctrace`（`bun link` 之后） | 是 | 需要 `~/.bun/bin` 在 PATH 中 |
+| `cctrace`（`bun link` 之后） | 是 | 需要 `~/.bun/bin` 在 PATH 中；bun 会吃掉开头的 `--` |
 | 无 Bun 的 `node .../cli.ts` / `npm i -g` | **否** | 会直接报错：`env: 'bun': No such file or directory` |
 
 **三个前置条件缺一不可：**
@@ -135,8 +150,9 @@ cctrace **跑在 [Bun](https://bun.sh) 上** -- CLI 就是直接执行的 `src/c
   PATH 里没有 `claude`？cctrace 会以 `Claude not found` 退出（或用 `--claude-path`
   手动指定）。
 
-> **想要一个运行时无需 Bun 的独立二进制？** `bun build --compile src/cli.ts
-> --outfile cctrace` 会为你的平台生成一个。
+> **独立二进制：** `make build` 会为你的平台编译一个（`bun build --compile`），
+> `make install` 会把它装进 PATH。唯一限制：编译后的二进制不含遗留的 `node`
+> 捕获模式（它依赖仓库源码）-- 原生 Claude 安装本来就走默认的 `mitm`。
 
 ## 捕获模式
 
@@ -154,13 +170,23 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 
 ## Web 界面
 
+- **行内摘要** -- 每行请求一眼可读：模型、输入/输出 token、缓存读/写与命中率、
+  count_tokens 结果、用量窗口百分比（5h / 7d / 按模型）、遥测事件数、错误类型。
 - **分类筛选标签**，带实时计数：Messages、Usage/Credits、OAuth、MCP、Bootstrap、
   Telemetry、Other。点击筛选，可与文本搜索组合。
-- 每一行请求上的**彩色分类徽章**。
-- **可展开**的请求/响应 headers 与 bodies；SSE 流会被解码成可读事件。
+- **分栏详情面板** -- 点击某行，详情在列表旁展开（可按请求 ID 深链）。Messages
+  以对话形式呈现，流式回复从 SSE 解码；用量请求渲染成限额进度条；原始
+  headers/bodies 折叠可查。`j`/`k` 在筛选后的列表中移动。
+- **Session 视图** -- 网络请求与重建的对话左右并排：主对话与子代理运行
+  （自动匹配到派发它们的 Task 调用）分线程展示，工具结果折叠进对应的工具调用，
+  每个助手回合的 token/耗时都链接回产生它的请求。
 - **离线快照** -- 保存的 `.html` 内嵌完整 trace，无需服务器。一年后打开还是能用。
 
 ## 选项
+
+```
+cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+```
 
 | 选项 | 说明 |
 |--------|-------------|
@@ -173,6 +199,26 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 | `--log NAME` | 自定义日志文件基名 |
 | `--dir PATH` | 日志目录（默认 `.cctrace`） |
 | `--claude-path PATH` | 自定义 Claude 二进制路径 |
+
+### 把参数传给 Claude
+
+`--` 之后的所有参数会原样传给 Claude CLI，之前的参数属于 cctrace：
+
+```bash
+cctrace -- --continue                       # claude --continue，全程追踪
+cctrace -- -p "为什么会报错？"               # Claude print 模式，全程追踪
+cctrace --mode base-url -- --model opus     # cctrace 选项 + Claude 选项
+```
+
+`--` 之前出现 cctrace 不认识的参数会直接报错并给出提示，不会被静默吞掉。
+唯一需要注意的冲突：`-p` 在 `--` 之前是 cctrace 的端口，之后是 Claude 的
+print 模式。
+
+> **bun 运行方式的坑：** 通过 bun 的 CLI 运行时（`bunx`、`bun run`、
+> `bun link` 的 shim），bun 自己会吃掉**开头的** `--`，于是
+> `cctrace -- --help` 到达 cctrace 时变成了 `cctrace --help`。编译后的二进制
+> （`make install`）没有这个问题 -- 这也是推荐的安装方式。若用 bun 方式运行，
+> 在 `--` 前放任意一个 cctrace 选项即可（如 `cctrace --no-open -- --continue`）。
 
 ## 输出
 

@@ -1,0 +1,251 @@
+// Pure extraction/summary helpers shared by the web UI and unit tests.
+//
+// Every function here is ALSO inlined into the live web UI via
+// Function.prototype.toString() (same pattern as categorize.ts), so each must
+// be self-contained: no imports, no captured module state, and calls only to
+// other functions in this file (which are inlined alongside it, names intact).
+
+/** Parse an SSE stream ("data: {...}" lines) into an array of JSON events. */
+export function parseSse(raw: unknown): any[] {
+  const events: any[] = [];
+  for (const line of String(raw || "").split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("data:")) continue;
+    try {
+      events.push(JSON.parse(t.slice(5)));
+    } catch {
+      // partial or non-JSON data line - skip
+    }
+  }
+  return events;
+}
+
+/** 19635 -> "19.6k". Compact counts for one-line labels. */
+export function fmtCompact(n: unknown): string {
+  if (typeof n !== "number" || !isFinite(n)) return "0";
+  if (n < 1000) return String(n);
+  if (n < 1000000) {
+    const k = n / 1000;
+    return (k >= 100 ? String(Math.round(k)) : k.toFixed(1)) + "k";
+  }
+  return (n / 1000000).toFixed(2) + "m";
+}
+
+/** "claude-haiku-4-5-20251001" -> "haiku-4-5" */
+export function shortModel(model: unknown): string {
+  return String(model || "")
+    .replace(/^claude-/, "")
+    .replace(/-\d{8}$/, "");
+}
+
+/**
+ * Usage + request params for a /v1/messages pair. Handles both non-streaming
+ * JSON bodies and streamed SSE (bodyRaw): input/cache counts come from
+ * message_start, final output/thinking/stop_reason from message_delta.
+ */
+export function extractMessageInfo(pair: any): any {
+  const req = (pair && pair.request && pair.request.body) || {};
+  const resp = (pair && pair.response) || null;
+  let start: any = null; // message_start message, or the full JSON body
+  let usage: any = null; // final usage (message_delta wins over message_start)
+  let stopReason: any = null;
+  let error: any = null;
+
+  if (resp && resp.body && typeof resp.body === "object") {
+    const b: any = resp.body;
+    if (b.type === "error" || b.error) {
+      error = (b.error && b.error.type) || "error";
+    } else {
+      start = b;
+      usage = b.usage || null;
+      stopReason = b.stop_reason || null;
+    }
+  } else if (resp && resp.bodyRaw) {
+    for (const ev of parseSse(resp.bodyRaw)) {
+      if (ev.type === "message_start") start = ev.message;
+      else if (ev.type === "message_delta") {
+        if (ev.usage) usage = ev.usage;
+        if (ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+      } else if (ev.type === "error") {
+        error = (ev.error && ev.error.type) || "error";
+      }
+    }
+  }
+
+  const u0 = (start && start.usage) || {};
+  const u = usage || u0;
+  const n = (v: any) => (typeof v === "number" ? v : 0);
+  const pick = (a: any, b: any) => (typeof a === "number" ? a : n(b));
+  const input = pick(u.input_tokens, u0.input_tokens);
+  const output = pick(u.output_tokens, u0.output_tokens);
+  const cacheRead = pick(u.cache_read_input_tokens, u0.cache_read_input_tokens);
+  const cacheWrite = pick(u.cache_creation_input_tokens, u0.cache_creation_input_tokens);
+  const cc = u.cache_creation || u0.cache_creation || {};
+  const totalIn = input + cacheRead + cacheWrite;
+  return {
+    model: req.model || (start && start.model) || null,
+    stream: req.stream === true,
+    maxTokens: typeof req.max_tokens === "number" ? req.max_tokens : null,
+    temperature: typeof req.temperature === "number" ? req.temperature : null,
+    turns: Array.isArray(req.messages) ? req.messages.length : 0,
+    toolCount: Array.isArray(req.tools) ? req.tools.length : 0,
+    systemBlocks: Array.isArray(req.system) ? req.system.length : typeof req.system === "string" ? 1 : 0,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    cacheWrite5m: n(cc.ephemeral_5m_input_tokens),
+    cacheWrite1h: n(cc.ephemeral_1h_input_tokens),
+    thinking: n(u.output_tokens_details && u.output_tokens_details.thinking_tokens),
+    cachePct: totalIn > 0 ? Math.round((cacheRead / totalIn) * 100) : null,
+    stopReason: stopReason || null,
+    serviceTier: u.service_tier || u0.service_tier || null,
+    error,
+  };
+}
+
+/** Model + counted-token result for a count_tokens pair. */
+export function extractTokenCount(pair: any): any {
+  const req = (pair && pair.request && pair.request.body) || {};
+  const body = pair && pair.response && pair.response.body;
+  return {
+    model: req.model || null,
+    tokens: body && typeof body.input_tokens === "number" ? body.input_tokens : null,
+  };
+}
+
+/**
+ * Rate-limit windows + credits from an /api/oauth/usage response. Prefers the
+ * limits[] array (session -> 5h, weekly_all -> 7d, weekly_scoped -> model
+ * name); falls back to the flat five_hour/seven_day fields.
+ */
+export function extractUsageInfo(pair: any): any {
+  const b = pair && pair.response && pair.response.body;
+  if (!b || typeof b !== "object") return null;
+  const limits: any[] = [];
+  if (Array.isArray(b.limits) && b.limits.length) {
+    for (const l of b.limits) {
+      if (!l || typeof l.percent !== "number") continue;
+      let label = String(l.kind || "limit");
+      if (l.kind === "session") label = "5h";
+      else if (l.kind === "weekly_all") label = "7d";
+      else if (l.kind === "weekly_scoped") label = (l.scope && l.scope.model && l.scope.model.display_name) || "7d scoped";
+      limits.push({ label, percent: l.percent, severity: l.severity || "normal", resetsAt: l.resets_at || null });
+    }
+  } else {
+    if (b.five_hour && typeof b.five_hour.utilization === "number")
+      limits.push({ label: "5h", percent: b.five_hour.utilization, severity: "normal", resetsAt: b.five_hour.resets_at || null });
+    if (b.seven_day && typeof b.seven_day.utilization === "number")
+      limits.push({ label: "7d", percent: b.seven_day.utilization, severity: "normal", resetsAt: b.seven_day.resets_at || null });
+  }
+  let credits: any = null;
+  const x = b.extra_usage;
+  if (x && x.is_enabled) {
+    credits = {
+      used: typeof x.used_credits === "number" ? x.used_credits : 0,
+      limit: typeof x.monthly_limit === "number" ? x.monthly_limit : 0,
+      currency: x.currency || "USD",
+      decimalPlaces: typeof x.decimal_places === "number" ? x.decimal_places : 2,
+    };
+  }
+  return { limits, credits };
+}
+
+/**
+ * Rebuild assistant content blocks (text/thinking/tool_use) from streamed SSE
+ * events, accumulating deltas per block index.
+ */
+export function assembleAssistant(events: any[]): any[] {
+  const blocks: any[] = [];
+  for (const ev of events || []) {
+    if (!ev) continue;
+    if (ev.type === "content_block_start") {
+      blocks[ev.index] = ev.content_block ? JSON.parse(JSON.stringify(ev.content_block)) : {};
+    } else if (ev.type === "content_block_delta") {
+      const b = blocks[ev.index];
+      const d = ev.delta;
+      if (!b || !d) continue;
+      if (d.type === "text_delta") b.text = (b.text || "") + (d.text || "");
+      else if (d.type === "thinking_delta") b.thinking = (b.thinking || "") + (d.thinking || "");
+      else if (d.type === "input_json_delta") b.__json = (b.__json || "") + (d.partial_json || "");
+    }
+  }
+  const out: any[] = [];
+  for (const b of blocks) {
+    if (!b) continue;
+    if (typeof b.__json === "string" && b.__json) {
+      try {
+        b.input = JSON.parse(b.__json);
+      } catch {
+        // incomplete stream - keep whatever content_block_start carried
+      }
+    }
+    delete b.__json;
+    out.push(b);
+  }
+  return out;
+}
+
+/**
+ * One-line, human-first summary chips for an index row.
+ * Returns [{t: text, c?: css class, title?: tooltip}].
+ */
+export function summarizePair(pair: any, cat: string): any[] {
+  const chips: any[] = [];
+  const resp = pair && pair.response;
+  if (!resp) return [{ t: "no response", c: "err" }];
+
+  if (cat === "messages") {
+    const m = extractMessageInfo(pair);
+    if (m.model) chips.push({ t: shortModel(m.model), c: "model", title: String(m.model) });
+    if (m.error) {
+      chips.push({ t: m.error, c: "err" });
+      return chips;
+    }
+    chips.push({ t: "in " + fmtCompact(m.input), title: m.input.toLocaleString() + " uncached input tokens" });
+    chips.push({ t: "out " + fmtCompact(m.output), title: m.output.toLocaleString() + " output tokens" });
+    if (m.cacheRead > 0)
+      chips.push({
+        t: "cache read " + fmtCompact(m.cacheRead) + (m.cachePct != null ? " (" + m.cachePct + "%)" : ""),
+        c: "ok",
+        title: m.cacheRead.toLocaleString() + " prompt tokens read from cache (" + m.cachePct + "% of prompt)",
+      });
+    if (m.cacheWrite > 0)
+      chips.push({
+        t: "cache write " + fmtCompact(m.cacheWrite),
+        c: "warn",
+        title: m.cacheWrite.toLocaleString() + " prompt tokens written to cache",
+      });
+    if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
+    if (m.stopReason && m.stopReason !== "end_turn" && m.stopReason !== "tool_use")
+      chips.push({ t: m.stopReason, c: "warn", title: "stop reason" });
+  } else if (cat === "tokens") {
+    const t = extractTokenCount(pair);
+    if (t.model) chips.push({ t: shortModel(t.model), c: "model", title: String(t.model) });
+    if (t.tokens != null) chips.push({ t: "= " + t.tokens.toLocaleString() + " tok", c: "ok", title: "counted input tokens" });
+  } else if (cat === "usage") {
+    const u = extractUsageInfo(pair);
+    if (u) {
+      for (const l of u.limits) {
+        const c = l.severity !== "normal" || l.percent >= 90 ? "err" : l.percent >= 75 ? "warn" : "";
+        chips.push({ t: l.label + " " + l.percent + "%", c, title: l.resetsAt ? "resets " + l.resetsAt : "" });
+      }
+      if (u.credits) {
+        const d = Math.pow(10, u.credits.decimalPlaces);
+        chips.push({ t: "credits " + u.credits.used / d + "/" + u.credits.limit / d + " " + u.credits.currency });
+      }
+    }
+  } else if (cat === "telemetry") {
+    const ev = pair.request && pair.request.body && pair.request.body.events;
+    if (Array.isArray(ev)) chips.push({ t: ev.length + " event" + (ev.length === 1 ? "" : "s") });
+  } else if (cat === "bootstrap") {
+    const mm = String((pair.request && pair.request.url) || "").match(/[?&]model=([^&]+)/);
+    if (mm) chips.push({ t: shortModel(decodeURIComponent(mm[1])), c: "model" });
+  }
+
+  if (resp.status >= 400 && !chips.some((c) => c.c === "err")) {
+    const et = resp.body && resp.body.error && resp.body.error.type;
+    chips.push({ t: et ? String(et) : "HTTP " + resp.status, c: "err" });
+  }
+  return chips;
+}

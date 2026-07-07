@@ -100,11 +100,27 @@ bun install
 bun link            # optional: puts `cctrace` on your PATH
 ```
 
+### Or build a standalone binary (recommended)
+
+```bash
+git clone https://github.com/thevibeworks/cctrace
+cd cctrace
+make install        # compiles dist/cctrace, installs to ~/.local/bin
+```
+
+`make install` (or `make build`) compiles cctrace into a single executable
+via `bun build --compile` -- Bun is needed to build, **not to run**. It's also
+the install that makes `cctrace -- <claude args>` work verbatim (see the
+pass-through note below). `make help` lists all targets; `PREFIX=/usr/local
+make install` changes the destination.
+
 Then just run it:
 
 ```bash
-cctrace                       # capture everything, open the live UI
-cctrace -- -p "hello"         # pass args straight through to Claude
+cctrace                                    # capture everything, open the live UI
+cctrace -- --continue                      # resume your last Claude session, traced
+cctrace -- -p "hello"                      # pass args straight through to Claude
+cctrace -- --dangerously-skip-permissions  # full auto, traced
 ```
 
 On start you'll see:
@@ -125,16 +141,17 @@ fallback; everything uses `Bun.serve`/`Bun.spawn`.
 
 | Command | Works | Notes |
 |---|---|---|
+| `cctrace` (after `make install`) | yes | compiled binary, no Bun at runtime, `--` passes through intact |
 | `bun run src/cli.ts [args]` | yes | from a clone |
 | `bun start` | yes | alias of the above |
 | `./src/cli.ts` | yes | direct exec via the Bun shebang |
-| `cctrace` (after `bun link`) | yes | needs `~/.bun/bin` on your `PATH` |
+| `cctrace` (after `bun link`) | yes | needs `~/.bun/bin` on your `PATH`; bun eats a leading `--` |
 | `node .../cli.ts` / `npm i -g` without Bun | **no** | fails loudly: `env: 'bun': No such file or directory` |
 
 **Prerequisites -- all three matter:**
 
-- **Bun** -- the runtime, not just for install. If you don't have Bun,
-  nothing works. [Install it](https://bun.sh).
+- **Bun** -- the runtime (or the build tool, if you `make install` the
+  compiled binary). If you don't have Bun, [install it](https://bun.sh).
 - **`openssl` on `PATH`** -- `mitm` mode shells out to it to generate the CA +
   leaf cert. No openssl? Use `--mode base-url` (no CA needed, but you only
   see messages).
@@ -142,8 +159,10 @@ fallback; everything uses `Bun.serve`/`Bun.spawn`.
   `claude` binary to pick the capture mode. No `claude` on PATH? cctrace
   exits with `Claude not found` (or pass `--claude-path`).
 
-> **Want a standalone binary with no Bun at runtime?** `bun build --compile
-> src/cli.ts --outfile cctrace` produces one for your platform.
+> **Standalone binary:** `make build` compiles one for your platform
+> (`bun build --compile`); `make install` puts it on your PATH. One caveat:
+> the compiled binary doesn't include the legacy `node` capture mode (it needs
+> the repo sources) -- native Claude installs use `mitm` (the default) anyway.
 
 ## Capture modes
 
@@ -162,15 +181,27 @@ traffic gets its own filter category in the UI.
 
 ## The web UI
 
+- **Inline row summaries** -- every request row reads at a glance: model,
+  in/out tokens, cache read/write + hit %, count_tokens results, usage window
+  percentages (5h / 7d / per-model), telemetry event counts, error types.
 - **Category filter chips** with live counts: Messages, Usage/Credits, OAuth,
   MCP, Bootstrap, Telemetry, Other. Click to filter; combine with text search.
-- **Colored category badge** on every request row.
-- **Expandable** request/response headers and bodies; SSE streams are decoded
-  into readable events.
+- **Split detail panel** -- click a row and the detail opens beside the list
+  (deep-linkable by request id). Messages render conversation-first with the
+  streamed reply decoded from SSE; usage requests render limit bars; raw
+  headers/bodies stay one fold away. `j`/`k` walk the filtered list.
+- **Session view** -- wire requests and the reconstructed conversation side by
+  side: threads for the main chat and subagent runs (matched to their Task
+  dispatch), utility noise collapsed, tool results folded into their tool
+  calls, and per-turn token/duration linked back to the wire request.
 - **Offline snapshots** -- the saved `.html` embeds the full trace and renders
   the same UI with no server. Open it a year from now, it still works.
 
 ## Options
+
+```
+cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+```
 
 | Option | Description |
 |--------|-------------|
@@ -183,6 +214,28 @@ traffic gets its own filter category in the UI.
 | `--log NAME` | Custom log file base name |
 | `--dir PATH` | Log directory (default: `.cctrace`) |
 | `--claude-path PATH` | Custom Claude binary path |
+
+### Passing args to Claude
+
+Everything after `--` goes to the Claude CLI verbatim; flags before it belong
+to cctrace:
+
+```bash
+cctrace -- --continue                       # claude --continue, traced
+cctrace -- -p "why is this failing?"        # claude print mode, traced
+cctrace --mode base-url -- --model opus     # cctrace flag + Claude flags
+```
+
+A flag cctrace doesn't recognize before `--` is an error with a hint -- a typo
+or misplaced Claude flag is never silently swallowed. The one collision to
+know: `-p` before `--` is cctrace's port, after `--` it's Claude's print mode.
+
+> **Bun-run caveat:** when cctrace runs through bun's CLI (`bunx`, `bun run`,
+> the `bun link` shim), bun itself eats a **leading** `--`, so
+> `cctrace -- --help` arrives as `cctrace --help`. The compiled binary
+> (`make install`) is immune -- that's the recommended install. On a bun-run
+> install, put any cctrace flag before the `--`
+> (e.g. `cctrace --no-open -- --continue`).
 
 ## Output
 

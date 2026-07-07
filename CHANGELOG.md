@@ -6,17 +6,87 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Session view** — split-pane: wire threads on the left, reconstructed
+  conversation on the right (`#/session`). Requests group into threads by
+  their first message (main chat, subagent runs, quota probes / title
+  generation as collapsed "utility"); subagent threads are matched to the
+  Task tool_use that dispatched them. Turns rebuild from each thread's
+  longest request plus its streamed response; every assistant turn shows the
+  per-turn usage (model, in/out, cache, duration) of the wire request that
+  produced it, with a `wire` link back to the request detail. tool_results
+  fold into their tool_use (result-only turns collapse away); mutating tools
+  (Bash/Edit/Write/Task) render expanded, read-only lookups collapsed.
+  Reconstruction lives in `src/session.ts`, pure and unit-tested.
+- **Split detail panel** — clicking a request now opens the detail beside the
+  list instead of replacing it: the list, filters, and category chips stay
+  visible, the selected row is highlighted, and browsing keeps its context.
+  On narrow windows the panel goes full-width.
+
+- **Claude CLI pass-through** — `cctrace [OPTIONS] [-- CLAUDE_ARGS...]`:
+  everything after the first `--` is passed to the Claude CLI verbatim
+  (`cctrace -- --continue`, `cctrace -- -p "explain this"`). Forwarded args
+  are echoed at startup. Parsing lives in `src/args.ts` and is unit-tested.
+- **`make build` / `make install`** — compile cctrace into a standalone binary
+  (`bun build --compile`) and install it to `$PREFIX/bin` (default
+  `~/.local/bin`). The compiled binary needs no Bun at runtime, stores its CA
+  under `~/.cache/cctrace/`, and — unlike bun-run installs — receives a
+  leading `--` intact, so `cctrace -- --help` reaches Claude. (Bun's CLI eats
+  a leading `--` under `bunx`/`bun run`/`bun link`; usage errors from source
+  runs now mention this.) Legacy `node` mode still requires running from
+  source. Also: `make help`, `make test`, `make link`, `make clean`.
+
+- **Request detail view** — every index row now opens a hash-routed detail page
+  keyed by request id (`#/p/<id>`), deep-linkable in both the live UI and
+  static snapshots. Navigate with prev/next buttons or `j`/`k`; `Esc` returns
+  to the list.
+- **Conversation view** — `/v1/messages` details render the actual exchange:
+  system prompt (collapsed, with `cache_control` markers), tool definitions
+  (collapsed), message turns with readable text, and the streamed assistant
+  reply reconstructed from SSE events. Thinking, `tool_use`, and `tool_result`
+  blocks are collapsed one-liners so the primary flow stays readable; long
+  texts clamp with a "show all" expander.
+- **Inline row summaries** — human-readable labels on the index row itself:
+  model + `in`/`out` tokens + `cache read/write` (+ hit %) for messages
+  (now decoded from SSE streams, which previously showed nothing), `= N tok`
+  for count_tokens, `5h/7d/per-model %` for usage, event counts for telemetry,
+  error types for failed requests.
+- **Usage limits panel** — `/api/oauth/usage` details render each rate-limit
+  window (5h session, 7d all-models, 7d per-model) as a bar with utilization %
+  and reset time.
+- `src/summarize.ts` — pure, unit-tested extraction helpers (SSE parsing,
+  usage merging, assistant reassembly), inlined into the web UI the same way
+  as `categorize.ts`.
+
+### Changed
+
+- **prev/next and `j`/`k` walk the filtered list**, not the full capture —
+  with a category or text filter active, navigation steps through what you
+  see (position reads `n / N shown`).
+- The web UI moved from `server.ts` into its own `src/ui.ts`; `server.ts` is
+  now just the Bun.serve + WebSocket relay.
+- **CLI options are now parsed strictly.** An unknown flag before `--`
+  (e.g. `cctrace --continue`) errors with a hint to move it after `--` —
+  previously it was silently swallowed and never reached Claude. Stray
+  positionals and missing option values error the same way.
+- Index rows no longer expand inline; clicking opens the detail view. Raw
+  request/response payloads render lazily on expand (megabyte JSON bodies are
+  only stringified when asked).
+- Token/cache metadata moved from the separate `pair-meta` line into the row
+  itself, on a single line.
+- Anthropic-host URLs display as path-only in the list (the category badge
+  already names the service); other hosts keep `host + path`.
+
 ### Planned
 
-- **Session view** — split-pane mode: wire view on the left, reconstructed
-  conversation on the right (system prompt, message turns, tool calls, streamed
-  assistant reply decoded from SSE events).
 - **Conversation dump** — export the reconstructed conversation as Markdown/JSON.
 - **Agent skill** — a Claude Code skill / MCP server for querying captured
   traffic programmatically.
 - **Multi-session live view** — path-based session routing
   (`/<project>/<session-id>`) to avoid port conflicts.
-- **Token metrics** — per-turn/cumulative usage, cache hit rates, cost estimates.
+- **Cumulative token metrics** — per-session totals and cost estimates
+  (per-request usage + cache hit rates shipped above).
 
 ## [0.2.0] - 2026-07-07
 

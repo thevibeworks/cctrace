@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, chmodSync } from "fs";
+import { existsSync, mkdirSync, chmodSync, readFileSync } from "fs";
 import { join } from "path";
 
 // SANs the leaf cert must cover — every host cctrace intercepts must appear
@@ -105,9 +105,40 @@ ${altNames}
 }
 
 /**
- * Hosts cctrace terminates TLS for (full request/response capture).
- * Must be a subset of the leaf SANs. Other hosts are tunneled through
- * but their CONNECT is still logged for visibility.
+ * Generate a leaf cert for an arbitrary host, signed by our CA.
+ * Cached on disk so subsequent connections to the same host are instant.
+ */
+export async function generateHostCert(host: string, caDir: string): Promise<{ cert: string; key: string }> {
+  const safe = host.replace(/[^a-zA-Z0-9.\-]/g, "_");
+  const certPath = join(caDir, `host-${safe}-cert.pem`);
+  const keyPath = join(caDir, `host-${safe}-key.pem`);
+
+  if (existsSync(certPath) && existsSync(keyPath)) {
+    return { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") };
+  }
+
+  const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(host);
+  const san = isIP ? `IP.1 = ${host}` : `DNS.1 = ${host}\nDNS.2 = *.${host}`;
+  const cnf = `[req]\ndistinguished_name = dn\nreq_extensions = v3_req\nprompt = no\n[dn]\nCN = ${host}\n[v3_req]\nsubjectAltName = @alt\n[alt]\n${san}\n`;
+  const cnfPath = join(caDir, `host-${safe}.cnf`);
+  await Bun.write(cnfPath, cnf);
+
+  await run(["openssl", "genrsa", "-out", keyPath, "2048"]);
+  chmodSync(keyPath, 0o600);
+  await run(["openssl", "req", "-new", "-key", keyPath, "-out", join(caDir, `host-${safe}.csr`), "-config", cnfPath]);
+  await run([
+    "openssl", "x509", "-req", "-in", join(caDir, `host-${safe}.csr`),
+    "-CA", join(caDir, "ca-cert.pem"), "-CAkey", join(caDir, "ca-key.pem"), "-CAcreateserial",
+    "-out", certPath, "-days", "3650", "-sha256",
+    "-extfile", cnfPath, "-extensions", "v3_req",
+  ]);
+
+  return { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") };
+}
+
+/**
+ * Hosts the pre-generated static leaf cert covers.
+ * Other hosts get dynamically generated certs via generateHostCert.
  */
 export function isInterceptHost(host: string): boolean {
   const h = host.toLowerCase();

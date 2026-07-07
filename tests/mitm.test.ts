@@ -88,12 +88,10 @@ describe("mitm proxy tunnel mechanics", () => {
     expect(issuer).toBe("cctrace");
   });
 
-  test("non-intercepted host is blind-tunneled (issuer is a real public CA)", async () => {
+  test("non-Anthropic host gets a dynamically generated cert (issuer = cctrace)", async () => {
     const mitm = track(await startMitm({ caDir, onPair: () => {} }));
     const issuer = await connectAndGetIssuer(mitm.port, "example.com");
-    // Reached the real origin -> issuer is a public CA, never our "cctrace" CA.
-    expect(issuer).not.toBe("cctrace");
-    expect(issuer).not.toBe("<error>");
+    expect(issuer).toBe("cctrace");
   });
 });
 

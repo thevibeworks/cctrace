@@ -2,7 +2,7 @@ import * as http from "http";
 import * as net from "net";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { isInterceptHost } from "./certs";
+import { isInterceptHost, generateHostCert } from "./certs";
 import { redactPair } from "./redact";
 import type { TracePair } from "./types";
 
@@ -35,16 +35,16 @@ export interface MitmServer {
 }
 
 /**
- * TLS-intercepting HTTP proxy (Charles/mitmproxy style).
+ * TLS-intercepting HTTP proxy — intercepts ALL HTTPS traffic.
  *
- * Front door: a plain http.Server that only answers CONNECT. It writes
- * "200 Connection Established", then pipes the raw tunnel bytes to a local
- * Bun.serve TLS listener. Bun terminates TLS with our leaf cert (Claude trusts
- * the CA via NODE_EXTRA_CA_CERTS), decrypts the request, and we forward it to
- * the real upstream host from the Host header. Because interception happens at
- * the transport layer, it captures every https call to Anthropic hosts,
- * regardless of how Claude built the URL -- including /api/oauth/usage, which
- * ignores ANTHROPIC_BASE_URL.
+ * Front door: a plain http.Server answers CONNECT. For every host, it pipes
+ * the raw tunnel to a local Bun.serve TLS terminator that presents a cert
+ * signed by our CA. Anthropic hosts use a pre-generated static leaf cert;
+ * other hosts get a dynamically generated cert (cached on disk).
+ *
+ * Because interception happens at the transport layer, it captures every
+ * HTTPS call regardless of host — including external telemetry, MCP server
+ * traffic, and anything else Claude Code touches.
  */
 export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const caDir = config.caDir;
@@ -53,32 +53,26 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const caCertPath = join(caDir, "ca-cert.pem");
   const logAll = config.logAll ?? true;
 
-  // Every emitted pair passes through redaction here, so no branch can leak a
-  // credential to disk/HTML/WebSocket. This is the single choke point.
   const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
 
   let pairCount = 0;
   const pending = new Set<Promise<void>>();
 
-  // TLS terminator: Bun.serve handles the handshake natively (robust in Bun),
-  // then forwards the decrypted request to the real host.
-  const tlsServer = Bun.serve({
-    port: 0,
-    tls: { key, cert },
-    async fetch(req) {
-      // req.url arrives as https://<our-listener-host>/<path>; the real target
-      // host is in the Host header (set by Claude for the original request).
-      const hostHeader = req.headers.get("host") || "api.anthropic.com";
-      const targetHost = hostHeader.split(":")[0];
-      const path = new URL(req.url).pathname + new URL(req.url).search;
-      const targetUrl = `https://${targetHost}${path}`;
-      const shouldLog = logAll || path.includes("/v1/messages");
-      const startTime = Date.now();
+  // Shared fetch handler — used by both the static Anthropic TLS server
+  // and dynamically created per-host TLS servers.
+  function interceptFetch(req: Request): Response | Promise<Response> {
+    const hostHeader = req.headers.get("host") || "unknown";
+    const targetHost = hostHeader.split(":")[0];
+    const path = new URL(req.url).pathname + new URL(req.url).search;
+    const targetUrl = `https://${targetHost}${path}`;
+    const shouldLog = logAll || path.includes("/v1/messages");
+    const startTime = Date.now();
 
-      const reqHeaders: Record<string, string> = {};
-      req.headers.forEach((v, k) => { reqHeaders[k] = v; });
-      reqHeaders["accept-encoding"] = "identity";
+    const reqHeaders: Record<string, string> = {};
+    req.headers.forEach((v, k) => { reqHeaders[k] = v; });
+    reqHeaders["accept-encoding"] = "identity";
 
+    const doCapture = async (): Promise<Response> => {
       let reqBody: unknown = null;
       let rawReqBody: string | null = null;
       if (req.body && req.method !== "GET" && req.method !== "HEAD") {
@@ -113,8 +107,6 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       fwdHeaders.delete("content-length");
 
       if (!upstream.body) {
-        // Empty-body success (204/304, or a 3xx under redirect:"manual"). Still
-        // record it so "capture everything" is honest about redirect hops.
         if (shouldLog) {
           pairCount++;
           const resHeaders: Record<string, string> = {};
@@ -166,51 +158,81 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       pending.add(cap);
 
       return new Response(clientStream, { status: upstream.status, statusText: upstream.statusText, headers: fwdHeaders });
-    },
+    };
+
+    return doCapture();
+  }
+
+  // Static TLS terminator for Anthropic hosts (pre-generated leaf cert).
+  const tlsServer = Bun.serve({
+    port: 0,
+    tls: { key, cert },
+    fetch: interceptFetch,
   });
 
   const tlsPort: number = tlsServer.port ?? 0;
 
-  // Front door: plain HTTP proxy that only handles CONNECT by piping the raw
-  // tunnel to the Bun TLS listener above.
+  // Per-host TLS servers for non-Anthropic hosts (dynamically generated certs).
+  const hostServers = new Map<string, { port: number; server: ReturnType<typeof Bun.serve> }>();
+  const hostCertPending = new Map<string, Promise<{ port: number }>>();
+
+  async function getHostPort(host: string): Promise<number> {
+    const cached = hostServers.get(host);
+    if (cached) return cached.port;
+
+    // Deduplicate concurrent cert generation for the same host
+    let inflight = hostCertPending.get(host);
+    if (!inflight) {
+      inflight = generateHostCert(host, caDir).then(({ cert: hCert, key: hKey }) => {
+        const server = Bun.serve({
+          port: 0,
+          tls: { key: hKey, cert: hCert },
+          fetch: interceptFetch,
+        });
+        const entry = { port: server.port ?? 0, server };
+        hostServers.set(host, entry);
+        hostCertPending.delete(host);
+        return { port: entry.port };
+      });
+      hostCertPending.set(host, inflight);
+    }
+    return (await inflight).port;
+  }
+
   const proxy = http.createServer((_req, res) => {
     res.writeHead(405);
     res.end("This proxy only supports HTTPS (CONNECT).");
   });
 
-  proxy.on("connect", (req, clientSocket: net.Socket, head: Buffer) => {
+  proxy.on("connect", async (req, clientSocket: net.Socket, head: Buffer) => {
     const [reqHost, reqPortStr] = (req.url || "").split(":");
     const host = reqHost || "api.anthropic.com";
-    const port = parseInt(reqPortStr || "443", 10);
     const intercept = isInterceptHost(host);
 
-    // Anthropic hosts → TLS-terminate via our leaf cert for full capture.
-    // Everything else → tunnel through but still log the CONNECT so it's
-    // visible in the UI for categorization and filtering.
-    const dest = intercept
-      ? { port: tlsPort, host: "127.0.0.1" }
-      : { port, host };
-
-    if (!intercept && logAll) {
-      pairCount++;
-      onPair({
-        id: `${Date.now()}_${pairCount.toString(36)}`,
-        request: {
-          timestamp: Date.now() / 1000,
-          method: "CONNECT",
-          url: `https://${host}:${port}`,
-          headers: {},
-          body: null,
-        },
-        response: { timestamp: Date.now() / 1000, status: 200, headers: {} },
-        duration: 0,
-        loggedAt: new Date().toISOString(),
-      });
+    let destPort: number;
+    if (intercept) {
+      destPort = tlsPort;
+    } else {
+      try {
+        destPort = await getHostPort(host);
+      } catch {
+        // Cert generation failed (no openssl?) — blind tunnel as last resort
+        const port = parseInt(reqPortStr || "443", 10);
+        const upstream = net.connect(port, host, () => {
+          clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (head?.length) upstream.write(head);
+          clientSocket.pipe(upstream);
+          upstream.pipe(clientSocket);
+        });
+        upstream.on("error", () => clientSocket.destroy());
+        clientSocket.on("error", () => upstream.destroy());
+        return;
+      }
     }
 
-    const upstream = net.connect(dest.port, dest.host, () => {
+    const upstream = net.connect(destPort, "127.0.0.1", () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head && head.length) upstream.write(head);
+      if (head?.length) upstream.write(head);
       clientSocket.pipe(upstream);
       upstream.pipe(clientSocket);
     });
@@ -226,7 +248,11 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       resolve({
         port,
         caCertPath,
-        stop: () => { proxy.close(); tlsServer.stop(true); },
+        stop: () => {
+          proxy.close();
+          tlsServer.stop(true);
+          for (const entry of hostServers.values()) entry.server.stop(true);
+        },
         flush: () => Promise.all(pending).then(() => {}),
         pairCount: () => pairCount,
       });

@@ -2,7 +2,7 @@
 
 # cctrace
 
-> **See what Claude really does.**
+> **See what Claude really says.**
 >
 > Every request Claude Code makes -- messages, OAuth, usage/credits, MCP --
 > captured live in your browser.
@@ -155,9 +155,10 @@ cctrace auto-selects based on your Claude install; override with `--mode`.
 | **`base-url`** | `/v1/messages` only | Zero -- just sets `ANTHROPIC_BASE_URL` |
 | **`node`** (auto for npm/JS installs) | Everything via `fetch()` hook | Legacy; only works on non-native (JS) Claude |
 
-Non-Anthropic hosts are tunneled through (cctrace can only terminate TLS for
-hosts it has a cert for), but the CONNECT is still **logged** so you can see
-every host Claude contacts and filter by category.
+Non-Anthropic hosts are **fully intercepted** too -- cctrace dynamically
+generates a TLS cert for each host (signed by the same CA), so you see the
+complete request and response for everything Claude contacts. External
+traffic gets its own filter category in the UI.
 
 ## The web UI
 
@@ -197,7 +198,7 @@ flowchart LR
     CC["Claude Code<br/>(native binary)"]
     FD{"cctrace<br/>CONNECT front door"}
     TLS["TLS terminator<br/>(our leaf cert)"]
-    BT["tunnel<br/>(logged)"]
+    BT["TLS terminator<br/>(dynamic cert)"]
     API[("api.anthropic.com")]
     ORI[("non-Anthropic<br/>origin")]
     TEE(["tee response"])
@@ -210,6 +211,7 @@ flowchart LR
     FD -- "other host" --> BT
     TLS --> API
     BT --> ORI
+    ORI -- "response stream" --> TEE
     API -- "response stream" --> TEE
     TEE -- "streamed to Claude,<br/>no buffering" --> CC
     TEE -- "captured copy" --> RD

@@ -2,7 +2,7 @@
 
 # cctrace
 
-> **看看 Claude 到底在做什么。**
+> **看看 Claude 到底在说什么。**
 >
 > Claude Code 发出的每一个请求 -- messages、OAuth、用量/额度、MCP --
 > 全部实时呈现在你的浏览器里。
@@ -148,8 +148,9 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 | **`base-url`** | 仅 `/v1/messages` | 零配置 -- 只设置 `ANTHROPIC_BASE_URL` |
 | **`node`**（npm/JS 安装自动选用） | 通过 `fetch()` 钩子捕获全部 | 遗留方案；仅适用于非原生（JS）Claude |
 
-非 Anthropic 的 host 会被隧道透传（cctrace 只对有证书的 host 做 TLS 终止），但
-CONNECT 仍会被**记录**，因此你可以看到 Claude 连接的每一个 host，并按分类筛选。
+非 Anthropic 的 host 也会被**完整拦截** -- cctrace 会为每个 host 动态生成 TLS
+证书（由同一个 CA 签发），因此你能看到 Claude 联系的所有目标的完整请求和响应。
+外部流量在界面中有独立的筛选分类。
 
 ## Web 界面
 
@@ -187,7 +188,7 @@ flowchart LR
     CC["Claude Code<br/>(原生二进制)"]
     FD{"cctrace<br/>CONNECT 前门"}
     TLS["TLS 终止<br/>(我们的叶子证书)"]
-    BT["隧道<br/>(已记录)"]
+    BT["TLS 终止<br/>(动态证书)"]
     API[("api.anthropic.com")]
     ORI[("非 Anthropic<br/>源站")]
     TEE(["tee 响应"])

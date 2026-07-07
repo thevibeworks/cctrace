@@ -15,7 +15,7 @@
 [![runtime](https://img.shields.io/badge/runtime-bun-f9f1e1)](https://bun.sh)
 
 <p align="center">
-  <img src="assets/cctrace-preview.svg" alt="cctrace 实时界面" width="100%">
+  <img src="assets/cctrace-demo.gif" alt="cctrace 实时演示" width="100%">
 </p>
 
 cctrace 卡在 Claude Code 和 Anthropic API 中间，把每一个 HTTP 请求记录到本地的分
@@ -243,10 +243,16 @@ issue 里。真的别这么干。
 
 ## 路线图
 
-- **对话视图** -- 一个交互式模式，从原始捕获中还原出一次*完整的 LLM 交互*：system
-  prompt、消息轮次、工具定义、工具调用及其结果，以及从 SSE 事件解码出的流式助手回
-  复 -- 渲染成一段可读的对话，而不是底层的请求/响应转储。底层视图保留；这个只是从
-  对话层重新读取同样的字节。
+- **会话视图** -- 分屏模式，从原始捕获中还原出一次*完整的 LLM 对话*：system prompt、
+  消息轮次、工具定义、工具调用及其结果，以及从 SSE 事件解码出的流式助手回复。左边
+  是原始请求视图，右边是可读的对话。
+- **对话导出** -- 将还原的对话导出为 Markdown 或 JSON，方便分享或事后分析。
+- **Agent Skill** -- 专门设计的 Claude Code skill / MCP 服务器，用于以编程方式与
+  cctrace 交互：查询捕获的流量、检查特定请求、导出对话。
+- **多会话实时视图** -- 同时运行多个 cctrace 会话而不端口冲突，每个会话路由到
+  `http://localhost:9317/<project>/<session-id>` 的独立路径。
+- **Token 指标** -- 每轮和累计 token 用量、缓存命中率、费用估算，以及
+  `service_tier` / `inference_geo` 可见性。
 
 已发布的变更见 [CHANGELOG.md](CHANGELOG.md)。
 

@@ -24,47 +24,59 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
+      background: var(--bg); color: var(--text);
+      line-height: 1.6; min-height: 100vh;
+      display: flex; flex-direction: column;
     }
+
+    /* i18n: hide content for the non-active language */
+    [lang="en"] .zh { display: none; }
+    [lang="zh"] .en { display: none; }
+
+    nav {
+      display: flex; justify-content: flex-end; align-items: center;
+      padding: 12px 24px; gap: 8px;
+    }
+    .lang-toggle {
+      display: inline-flex; align-items: center; gap: 0;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden; font-size: 13px;
+    }
+    .lang-toggle button {
+      padding: 5px 12px; border: none; background: none;
+      color: var(--text-muted); cursor: pointer; font-size: 13px;
+      font-family: inherit; transition: all .15s;
+    }
+    .lang-toggle button.active {
+      background: var(--accent); color: #fff;
+    }
+    .lang-toggle button:not(.active):hover { background: var(--border); }
 
     .hero {
       text-align: center;
-      padding: 80px 24px 60px;
-      max-width: 720px;
-      margin: 0 auto;
+      padding: 40px 24px 40px;
+      max-width: 720px; margin: 0 auto;
     }
-    .hero svg { width: 96px; height: 96px; margin-bottom: 24px; }
+    .hero svg { width: 80px; height: 80px; margin-bottom: 20px; }
     .hero h1 {
-      font-size: 48px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin-bottom: 16px;
+      font-size: 48px; font-weight: 700;
+      letter-spacing: -0.02em; margin-bottom: 12px;
     }
     .hero .tagline {
-      font-size: 28px;
-      font-weight: 600;
-      color: var(--text);
-      max-width: 520px;
-      margin: 0 auto 16px;
-      letter-spacing: -0.01em;
+      font-size: 26px; font-weight: 600; color: var(--text);
+      max-width: 520px; margin: 0 auto 12px; letter-spacing: -0.01em;
+    }
+    .hero .subtitle {
+      font-size: 15px; color: var(--text-faint);
+      max-width: 480px; margin: 0 auto 32px;
     }
 
     .install-box {
-      display: inline-flex;
-      align-items: center;
-      gap: 12px;
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 20px;
+      display: inline-flex; align-items: center; gap: 12px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 20px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 15px;
-      margin-bottom: 16px;
+      font-size: 15px; margin-bottom: 12px;
     }
     .install-box .prompt { color: var(--green); user-select: none; }
     .install-box code { color: var(--text); }
@@ -75,79 +87,84 @@
     }
     .install-box button:hover { color: var(--text); background: var(--border); }
     .install-box button.copied { color: var(--green); }
-
     .alt-install {
-      font-size: 14px;
-      color: var(--text-faint);
-      margin-bottom: 40px;
+      font-size: 14px; color: var(--text-faint); margin-bottom: 32px;
     }
     .alt-install a { color: var(--accent); text-decoration: none; }
     .alt-install a:hover { text-decoration: underline; }
     .alt-install code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px;
-      background: var(--bg-surface);
-      padding: 2px 6px;
-      border-radius: 4px;
+      font-size: 13px; background: var(--bg-surface); padding: 2px 6px; border-radius: 4px;
+    }
+
+    .demo {
+      max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
+    }
+    .demo img {
+      width: 100%; border-radius: 10px;
+      border: 1px solid var(--border);
     }
 
     .features {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 20px;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 0 24px 60px;
+      gap: 16px; max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
     }
     .feature {
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 24px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 20px;
     }
-    .feature h3 {
-      font-size: 16px;
-      margin-bottom: 8px;
+    .feature h3 { font-size: 15px; margin-bottom: 6px; }
+    .feature p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
+
+    .roadmap {
+      max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
     }
-    .feature p {
-      font-size: 14px;
-      color: var(--text-muted);
-      line-height: 1.5;
+    .roadmap h2 {
+      font-size: 20px; margin-bottom: 16px;
+      padding-bottom: 8px; border-bottom: 1px solid var(--border);
     }
+    .roadmap ul {
+      list-style: none; display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .roadmap li {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 14px 16px; font-size: 14px;
+    }
+    .roadmap li strong { color: var(--accent); }
+    .roadmap li span { color: var(--text-muted); font-size: 13px; }
 
     .links {
-      text-align: center;
-      padding: 40px 24px;
+      text-align: center; padding: 32px 24px;
       border-top: 1px solid var(--border);
-      display: flex;
-      justify-content: center;
-      gap: 32px;
-      flex-wrap: wrap;
+      display: flex; justify-content: center; gap: 32px; flex-wrap: wrap;
     }
     .links a {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--text-muted);
-      text-decoration: none;
-      font-size: 14px;
-      transition: color .15s;
+      display: inline-flex; align-items: center; gap: 8px;
+      color: var(--text-muted); text-decoration: none;
+      font-size: 14px; transition: color .15s;
     }
     .links a:hover { color: var(--accent); }
-    .links svg { width: 20px; height: 20px; }
+    .links svg { width: 18px; height: 18px; }
 
     footer {
-      text-align: center;
-      padding: 24px;
-      color: var(--text-faint);
-      font-size: 13px;
-      margin-top: auto;
+      text-align: center; padding: 20px;
+      color: var(--text-faint); font-size: 13px; margin-top: auto;
     }
     footer a { color: var(--text-muted); text-decoration: none; }
     footer a:hover { color: var(--accent); }
   </style>
 </head>
 <body>
+  <nav>
+    <div class="lang-toggle">
+      <button id="lang-en" class="active" onclick="setLang('en')">EN</button>
+      <button id="lang-zh" onclick="setLang('zh')">ZH</button>
+    </div>
+  </nav>
+
   <div class="hero">
     <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <g fill="none" stroke="currentColor" stroke-linecap="round">
@@ -159,10 +176,15 @@
       </g>
     </svg>
     <h1>cctrace</h1>
-    <p class="tagline">See what Claude really says.</p>
-    <p style="font-size:15px; color:var(--text-faint); max-width:480px; margin:0 auto 40px;">
+    <p class="tagline en">See what Claude really says.</p>
+    <p class="tagline zh">看看 Claude 到底在说什么。</p>
+    <p class="subtitle en">
       Every request Claude Code makes &mdash; messages, OAuth, usage/credits, MCP &mdash;
       captured live in your browser. One command.
+    </p>
+    <p class="subtitle zh">
+      Claude Code 发出的每一个请求 &mdash; messages、OAuth、用量/额度、MCP &mdash;
+      全部实时呈现在你的浏览器里。一行命令。
     </p>
 
     <div class="install-box">
@@ -173,55 +195,125 @@
       </button>
     </div>
     <div class="alt-install">
-      or <code>bunx @thevibeworks/cctrace</code> to run without installing
-      &middot; <a href="https://github.com/thevibeworks/cctrace">view source</a>
+      <span class="en">or <code>bunx @thevibeworks/cctrace</code> to run without installing</span>
+      <span class="zh">或 <code>bunx @thevibeworks/cctrace</code> 直接运行，无需安装</span>
     </div>
+  </div>
+
+  <div class="demo">
+    <img src="https://raw.githubusercontent.com/thevibeworks/cctrace/main/assets/cctrace-demo.gif" alt="cctrace demo">
   </div>
 
   <div class="features">
     <div class="feature">
-      <h3>Full picture</h3>
-      <p>
+      <h3 class="en">Full picture</h3>
+      <h3 class="zh">完整全貌</h3>
+      <p class="en">
         Captures <code>/v1/messages</code>, OAuth, usage/credits, MCP registry,
         bootstrap, and telemetry &mdash; not just the chat endpoint.
       </p>
+      <p class="zh">
+        捕获 <code>/v1/messages</code>、OAuth、用量/额度、MCP registry、bootstrap、
+        遥测 &mdash; 不只是聊天端点。
+      </p>
     </div>
     <div class="feature">
-      <h3>Live categorized UI</h3>
-      <p>
+      <h3 class="en">Live categorized UI</h3>
+      <h3 class="zh">实时分类界面</h3>
+      <p class="en">
         Filter chips with live counts, colored category badges, expandable
         headers and bodies, decoded SSE streams. System, light, and dark themes.
       </p>
+      <p class="zh">
+        带实时计数的筛选标签、彩色分类徽章、可展开的 headers/bodies、解码后的 SSE 流。
+        支持跟随系统、浅色和深色主题。
+      </p>
     </div>
     <div class="feature">
-      <h3>Shareable snapshots</h3>
-      <p>
+      <h3 class="en">Shareable snapshots</h3>
+      <h3 class="zh">可分享快照</h3>
+      <p class="en">
         Every run saves a self-contained HTML file that renders the same UI
         offline. Send it to a colleague &mdash; no server needed.
       </p>
-    </div>
-    <div class="feature">
-      <h3>Zero config</h3>
-      <p>
-        Auto-generates a CA, auto-detects your Claude install, and captures
-        everything by default. Run <code>cctrace</code> and you're done.
+      <p class="zh">
+        每次运行都保存一份自包含 HTML，离线也能渲染同样的界面。发给同事就能看，
+        不需要服务器。
       </p>
     </div>
     <div class="feature">
-      <h3>Safe by default</h3>
-      <p>
+      <h3 class="en">Full interception</h3>
+      <h3 class="zh">完整拦截</h3>
+      <p class="en">
+        Dynamic cert generation intercepts ALL hosts &mdash; Anthropic,
+        Datadog telemetry, MCP servers. See every byte that leaves your machine.
+      </p>
+      <p class="zh">
+        动态证书生成拦截所有主机 &mdash; Anthropic、Datadog 遥测、MCP 服务器。
+        看到离开你机器的每一个字节。
+      </p>
+    </div>
+    <div class="feature">
+      <h3 class="en">Safe by default</h3>
+      <h3 class="zh">默认安全</h3>
+      <p class="en">
         Credentials are redacted from headers, bodies, and URLs before anything
         hits disk. Your API keys stay your API keys.
       </p>
-    </div>
-    <div class="feature">
-      <h3>Works on the native binary</h3>
-      <p>
-        Claude Code ships as a Bun-compiled binary now. The old
-        <code>node --require</code> trick is dead. cctrace uses a real
-        TLS-intercepting proxy.
+      <p class="zh">
+        凭据在落盘前就已从 headers、bodies 和 URL 中脱敏。你的 API key 还是你的
+        API key。
       </p>
     </div>
+    <div class="feature">
+      <h3 class="en">Zero config</h3>
+      <h3 class="zh">零配置</h3>
+      <p class="en">
+        Auto-generates a CA, auto-detects your Claude install, and captures
+        everything by default. Run <code>cctrace</code> and you're done.
+      </p>
+      <p class="zh">
+        自动生成 CA、自动识别 Claude 安装、默认捕获全部。运行 <code>cctrace</code>
+        就完事了。
+      </p>
+    </div>
+  </div>
+
+  <div class="roadmap">
+    <h2 class="en">Coming soon</h2>
+    <h2 class="zh">即将推出</h2>
+    <ul>
+      <li>
+        <strong class="en">Session view</strong>
+        <strong class="zh">会话视图</strong><br>
+        <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
+        <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
+      </li>
+      <li>
+        <strong class="en">Conversation dump</strong>
+        <strong class="zh">对话导出</strong><br>
+        <span class="en">Export reconstructed conversations as Markdown or JSON</span>
+        <span class="zh">将还原的对话导出为 Markdown 或 JSON</span>
+      </li>
+      <li>
+        <strong class="en">Token metrics</strong>
+        <strong class="zh">Token 指标</strong><br>
+        <span class="en">Per-turn usage, cache hit rates, cost estimates, service tier</span>
+        <span class="zh">每轮用量、缓存命中率、费用估算、服务层级</span>
+      </li>
+      <li>
+        <strong class="en">Agent skill</strong>
+        <strong class="zh">Agent Skill</strong><br>
+        <span class="en">Claude Code skill / MCP server for programmatic trace queries</span>
+        <span class="zh">Claude Code skill / MCP 服务器，编程式查询捕获的流量</span>
+      </li>
+      <li>
+        <strong class="en">Multi-session</strong>
+        <strong class="zh">多会话</strong><br>
+        <span class="en">Path-based routing: <code>/:project/:session</code></span>
+        <span class="zh">基于路径的路由：<code>/:project/:session</code></span>
+      </li>
+    </ul>
   </div>
 
   <div class="links">
@@ -237,10 +329,6 @@
       <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5zm-1.43-.25a2.5 2.5 0 10-5 0 2.5 2.5 0 005 0z"/></svg>
       Changelog
     </a>
-    <a href="https://github.com/thevibeworks/cctrace/blob/main/README.zh-CN.md">
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.751.751 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
-      简体中文
-    </a>
   </div>
 
   <footer>
@@ -248,6 +336,16 @@
   </footer>
 
   <script>
+    function setLang(lang) {
+      document.documentElement.lang = lang;
+      document.getElementById('lang-en').className = lang === 'en' ? 'active' : '';
+      document.getElementById('lang-zh').className = lang === 'zh' ? 'active' : '';
+      localStorage.setItem('cctrace-lang', lang);
+    }
+    var saved = localStorage.getItem('cctrace-lang');
+    if (saved) setLang(saved);
+    else if (navigator.language.startsWith('zh')) setLang('zh');
+
     function copyInstall() {
       var cmd = document.getElementById('install-cmd').textContent;
       navigator.clipboard.writeText(cmd).then(function() {

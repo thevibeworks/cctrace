@@ -15,7 +15,7 @@ English | [简体中文](README.zh-CN.md)
 [![runtime](https://img.shields.io/badge/runtime-bun-f9f1e1)](https://bun.sh)
 
 <p align="center">
-  <img src="assets/cctrace-preview.svg" alt="cctrace live UI" width="100%">
+  <img src="assets/cctrace-demo.gif" alt="cctrace live demo" width="100%">
 </p>
 
 cctrace sits between Claude Code and the Anthropic API, recording every HTTP
@@ -257,12 +257,22 @@ Never paste raw output into a public issue. Seriously.
 
 ## Roadmap
 
-- **Conversation view** -- an interactive mode that reconstructs a *full LLM
-  interaction* from the raw capture: system prompt, message turns, tool
+- **Session view** -- a split-pane mode that reconstructs a *full LLM
+  conversation* from the raw capture: system prompt, message turns, tool
   definitions, tool calls and their results, and the streamed assistant reply
-  decoded from the SSE events -- rendered as one readable conversation instead
-  of a wire-level request/response dump. The wire view stays; this reads the
-  same bytes at the conversation layer.
+  decoded from SSE events. Wire view on the left, readable conversation on the
+  right. The wire view stays; this reads the same bytes at the conversation
+  layer.
+- **Conversation dump** -- export the reconstructed conversation as Markdown
+  or JSON, ready for sharing or post-mortem analysis.
+- **Agent skill** -- a purpose-built Claude Code skill/MCP server for
+  interacting with cctrace programmatically: query captured traffic, inspect
+  specific requests, export conversations.
+- **Multi-session live view** -- run multiple cctrace sessions without port
+  conflicts by routing each session to a path like
+  `http://localhost:9317/<project>/<session-id>`.
+- **Token metrics** -- per-turn and cumulative token usage, cache hit rates,
+  cost estimates, and `service_tier` / `inference_geo` visibility.
 
 See [CHANGELOG.md](CHANGELOG.md) for released changes.
 

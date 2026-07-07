@@ -8,12 +8,15 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Planned
 
-- **Conversation view** — an interactive mode that reconstructs a full LLM
-  interaction from the raw capture: system prompt, message turns, tool
-  definitions, tool calls and their results, and the streamed assistant reply
-  decoded from the SSE events — rendered as one readable conversation instead of
-  a wire-level request/response dump. The wire view stays; this reads the same
-  bytes at the conversation layer.
+- **Session view** — split-pane mode: wire view on the left, reconstructed
+  conversation on the right (system prompt, message turns, tool calls, streamed
+  assistant reply decoded from SSE events).
+- **Conversation dump** — export the reconstructed conversation as Markdown/JSON.
+- **Agent skill** — a Claude Code skill / MCP server for querying captured
+  traffic programmatically.
+- **Multi-session live view** — path-based session routing
+  (`/<project>/<session-id>`) to avoid port conflicts.
+- **Token metrics** — per-turn/cumulative usage, cache hit rates, cost estimates.
 
 ## [0.2.0] - 2026-07-07
 

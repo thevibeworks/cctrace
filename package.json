@@ -1,6 +1,6 @@
 {
-  "name": "cctrace",
-  "version": "0.1.1",
+  "name": "@thevibeworks/cctrace",
+  "version": "0.2.0",
   "description": "TLS-intercepting HTTP tracer for Claude Code — captures every API call (messages, OAuth, usage/credits, MCP) with a live categorized web UI",
   "type": "module",
   "bin": {
@@ -8,14 +8,19 @@
   },
   "files": [
     "src",
+    "assets",
     "README.md",
     "README.zh-CN.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "scripts": {
     "dev": "bun run --watch src/cli.ts",
     "start": "bun run src/cli.ts",
     "test": "bun test"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "repository": {
     "type": "git",
@@ -28,6 +33,18 @@
   "devDependencies": {
     "@types/bun": "latest"
   },
-  "keywords": ["claude", "claude-code", "anthropic", "trace", "proxy", "mitm", "debug", "cli"],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "anthropic",
+    "trace",
+    "proxy",
+    "mitm",
+    "debug",
+    "cli",
+    "http",
+    "tls",
+    "inspector"
+  ],
   "license": "MIT"
 }

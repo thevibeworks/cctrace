@@ -87,6 +87,7 @@ const HEADER_LOGO = `<svg class="logo" viewBox="0 0 512 512" xmlns="http://www.w
 const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><style>@media(prefers-color-scheme:dark){.s{stroke:#e6edf3}.f{fill:#e6edf3}}</style><g fill="none" stroke="#0d1117" stroke-linecap="round"><path class="s" stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path class="s" stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line class="s" stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle class="s" stroke-width="9" cx="452" cy="256" r="17"/><circle class="f" fill="#0d1117" stroke="none" cx="250" cy="256" r="12"/></g></svg>`,
 );
+const GITHUB_ICON = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
 
 function getLiveHtml(port: number): string {
   return `<!DOCTYPE html>
@@ -96,66 +97,106 @@ function getLiveHtml(port: number): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>cctrace live</title>
   <link rel="icon" href="${FAVICON_HREF}">
+  <script>(function(){var t=localStorage.getItem('cctrace-theme');if(t&&t!=='system')document.documentElement.setAttribute('data-theme',t)})()</script>
   <style>
+    :root {
+      --bg: #0d1117; --bg-surface: #161b22; --border: #30363d;
+      --text: #c9d1d9; --text-muted: #8b949e; --text-faint: #6e7681;
+      --accent: #58a6ff; --text-method: #79c0ff;
+      --green: #3fb950; --red: #f85149;
+      --status-ok: #238636; --status-warn: #9e6a03; --status-err: #da3633;
+      --btn-bg: #21262d; --hover: #1f2428;
+      color-scheme: dark;
+    }
+    @media (prefers-color-scheme: light) {
+      :root:not([data-theme="dark"]) {
+        --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
+        --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
+        --accent: #0969da; --text-method: #0550ae;
+        --green: #1a7f37; --red: #cf222e;
+        --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
+        --btn-bg: #e1e4e8; --hover: #eef1f4;
+        color-scheme: light;
+      }
+    }
+    [data-theme="light"] {
+      --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
+      --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
+      --accent: #0969da; --text-method: #0550ae;
+      --green: #1a7f37; --red: #cf222e;
+      --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
+      --btn-bg: #e1e4e8; --hover: #eef1f4;
+      color-scheme: light;
+    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 13px;
-      background: #0d1117;
-      color: #c9d1d9;
+      background: var(--bg);
+      color: var(--text);
       height: 100vh;
       display: flex;
       flex-direction: column;
     }
     header {
       padding: 12px 16px;
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 16px;
     }
     .brand { display: flex; align-items: center; gap: 9px; }
-    .logo { width: 24px; height: 24px; color: #58a6ff; flex-shrink: 0; }
-    h1 { font-size: 16px; color: #58a6ff; letter-spacing: 0.5px; }
-    .status { font-size: 12px; color: #8b949e; }
-    .status.connected { color: #3fb950; }
-    .status.disconnected { color: #f85149; }
-    .count { color: #8b949e; margin-left: auto; }
+    .logo { width: 24px; height: 24px; color: var(--accent); flex-shrink: 0; }
+    h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
+    .status { font-size: 12px; color: var(--text-muted); }
+    .status.connected { color: var(--green); }
+    .status.disconnected { color: var(--red); }
+    .count { color: var(--text-muted); margin-left: auto; }
+    .header-actions { display: flex; align-items: center; gap: 2px; }
+    .icon-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 28px; height: 28px; border-radius: 6px;
+      background: none; border: 1px solid transparent;
+      color: var(--text-faint); cursor: pointer; padding: 0;
+      text-decoration: none; transition: color .15s, background .15s;
+    }
+    .icon-btn:hover { background: var(--btn-bg); border-color: var(--border); color: var(--text); }
+    .icon-btn svg { width: 16px; height: 16px; }
     .toolbar {
       padding: 8px 16px;
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
       display: flex;
       gap: 8px;
     }
     .toolbar input {
       flex: 1;
       padding: 6px 10px;
-      background: #0d1117;
-      border: 1px solid #30363d;
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 4px;
-      color: #c9d1d9;
+      color: var(--text);
       font-family: inherit;
       font-size: 12px;
     }
-    .toolbar input:focus { outline: none; border-color: #58a6ff; }
+    .toolbar input:focus { outline: none; border-color: var(--accent); }
     .toolbar button {
       padding: 6px 12px;
-      background: #21262d;
-      border: 1px solid #30363d;
+      background: var(--btn-bg);
+      border: 1px solid var(--border);
       border-radius: 4px;
-      color: #c9d1d9;
+      color: var(--text);
       cursor: pointer;
       font-family: inherit;
       font-size: 12px;
     }
-    .toolbar button:hover { background: #30363d; }
-    .toolbar button.active { background: #238636; border-color: #238636; }
+    .toolbar button:hover { background: var(--border); }
+    .toolbar button.active { background: var(--status-ok); border-color: var(--status-ok); color: #fff; }
     .cats {
       padding: 8px 16px;
-      background: #161b22;
-      border-bottom: 1px solid #30363d;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
       display: flex;
       gap: 6px;
       flex-wrap: wrap;
@@ -165,19 +206,19 @@ function getLiveHtml(port: number): string {
       align-items: center;
       gap: 6px;
       padding: 4px 10px;
-      background: #0d1117;
-      border: 1px solid #30363d;
+      background: var(--bg);
+      border: 1px solid var(--border);
       border-radius: 999px;
-      color: #8b949e;
+      color: var(--text-muted);
       cursor: pointer;
       font-size: 11px;
       user-select: none;
     }
-    .cat-chip:hover { border-color: #58a6ff; }
-    .cat-chip.active { color: #fff; border-color: currentColor; }
-    .cat-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cat, #6e7681); }
-    .cat-chip .n { color: #6e7681; font-variant-numeric: tabular-nums; }
-    .cat-chip.active .n { color: #c9d1d9; }
+    .cat-chip:hover { border-color: var(--accent); }
+    .cat-chip.active { border-color: currentColor; }
+    .cat-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cat, var(--text-faint)); }
+    .cat-chip .n { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    .cat-chip.active .n { color: var(--text); }
     .cat-chip.zero { opacity: 0.4; }
     .cat-badge {
       padding: 1px 7px;
@@ -186,7 +227,7 @@ function getLiveHtml(port: number): string {
       text-transform: uppercase;
       letter-spacing: 0.03em;
       color: #fff;
-      background: var(--cat, #6e7681);
+      background: var(--cat, var(--text-faint));
     }
     main {
       flex: 1;
@@ -194,7 +235,7 @@ function getLiveHtml(port: number): string {
       padding: 8px;
     }
     .pair {
-      border: 1px solid #30363d;
+      border: 1px solid var(--border);
       border-radius: 6px;
       margin-bottom: 6px;
       overflow: hidden;
@@ -209,12 +250,12 @@ function getLiveHtml(port: number): string {
       align-items: center;
       gap: 10px;
       padding: 8px 12px;
-      background: #161b22;
+      background: var(--bg-surface);
       cursor: pointer;
       font-size: 12px;
     }
-    .pair-header:hover { background: #1f2428; }
-    .method { font-weight: 600; color: #79c0ff; min-width: 45px; }
+    .pair-header:hover { background: var(--hover); }
+    .method { font-weight: 600; color: var(--text-method); min-width: 45px; }
     .status-code {
       padding: 2px 6px;
       border-radius: 3px;
@@ -222,35 +263,35 @@ function getLiveHtml(port: number): string {
       font-weight: 500;
       font-size: 11px;
     }
-    .status-2xx { background: #238636; }
-    .status-4xx { background: #9e6a03; }
-    .status-5xx { background: #da3633; }
-    .status-err { background: #da3633; }
+    .status-2xx { background: var(--status-ok); }
+    .status-4xx { background: var(--status-warn); }
+    .status-5xx { background: var(--status-err); }
+    .status-err { background: var(--status-err); }
     .url {
       flex: 1;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .duration { color: #8b949e; min-width: 50px; text-align: right; }
-    .time { color: #6e7681; font-size: 11px; }
+    .duration { color: var(--text-muted); min-width: 50px; text-align: right; }
+    .time { color: var(--text-faint); font-size: 11px; }
     .pair-body {
       display: none;
       padding: 12px;
-      background: #0d1117;
-      border-top: 1px solid #30363d;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
     }
     .pair.expanded .pair-body { display: block; }
     .section { margin-bottom: 12px; }
     .section:last-child { margin-bottom: 0; }
     .section h4 {
-      color: #8b949e;
+      color: var(--text-muted);
       font-size: 10px;
       text-transform: uppercase;
       margin-bottom: 6px;
     }
     pre {
-      background: #161b22;
+      background: var(--bg-surface);
       padding: 10px;
       border-radius: 4px;
       overflow-x: auto;
@@ -263,7 +304,7 @@ function getLiveHtml(port: number): string {
     .empty {
       text-align: center;
       padding: 40px;
-      color: #6e7681;
+      color: var(--text-faint);
     }
   </style>
 </head>
@@ -272,6 +313,10 @@ function getLiveHtml(port: number): string {
     <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="status disconnected" id="status">disconnected</span>
     <span class="count"><span id="count">0</span> requests</span>
+    <span class="header-actions">
+      <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
+      <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
+    </span>
   </header>
   <div class="toolbar">
     <input type="text" id="filter" placeholder="Filter by URL, method, status...">
@@ -300,6 +345,29 @@ function getLiveHtml(port: number): string {
     const autoScrollBtn = document.getElementById('autoscroll');
     const clearBtn = document.getElementById('clear');
     const catsEl = document.getElementById('cats');
+    const themeToggle = document.getElementById('theme-toggle');
+
+    // Theme toggle: system -> light -> dark -> system
+    const THEME_ICONS = {
+      system: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="9" rx="1"/><line x1="8" y1="12" x2="8" y2="14.5"/><line x1="4.5" y1="14.5" x2="11.5" y2="14.5"/></svg>',
+      light: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1.5" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="14.5"/><line x1="1.5" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="14.5" y2="8"/><line x1="3.4" y1="3.4" x2="4.5" y2="4.5"/><line x1="11.5" y1="11.5" x2="12.6" y2="12.6"/><line x1="3.4" y1="12.6" x2="4.5" y2="11.5"/><line x1="11.5" y1="4.5" x2="12.6" y2="3.4"/></svg>',
+      dark: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 9.5A5.5 5.5 0 0 1 6.5 2.8 5 5 0 1 0 13.2 9.5z"/></svg>'
+    };
+    function getThemePref() { return localStorage.getItem('cctrace-theme') || 'system'; }
+    function applyTheme(pref) {
+      if (pref === 'system') document.documentElement.removeAttribute('data-theme');
+      else document.documentElement.setAttribute('data-theme', pref);
+      themeToggle.innerHTML = THEME_ICONS[pref];
+      themeToggle.title = 'Theme: ' + pref;
+    }
+    themeToggle.onclick = function() {
+      var order = ['system', 'light', 'dark'];
+      var cur = getThemePref();
+      var next = order[(order.indexOf(cur) + 1) % 3];
+      localStorage.setItem('cctrace-theme', next);
+      applyTheme(next);
+    };
+    applyTheme(getThemePref());
 
     function catCounts() {
       const counts = { all: pairs.length };
@@ -312,10 +380,10 @@ function getLiveHtml(port: number): string {
       const counts = catCounts();
       const chip = (id, label, color, n) =>
         '<div class="cat-chip ' + (activeCat === id ? 'active' : '') + (n === 0 && id !== 'all' ? ' zero' : '') +
-        '" style="--cat:' + (color || '#8b949e') + (activeCat === id ? ';color:' + (color || '#c9d1d9') : '') + '" data-cat="' + id + '">' +
+        '" style="--cat:' + (color || 'var(--text-muted)') + (activeCat === id ? ';color:' + (color || 'var(--text)') : '') + '" data-cat="' + id + '">' +
         (id === 'all' ? '' : '<span class="dot"></span>') +
         '<span>' + label + '</span><span class="n">' + n + '</span></div>';
-      let html = chip('all', 'All', '#58a6ff', counts.all);
+      let html = chip('all', 'All', 'var(--accent)', counts.all);
       for (const c of CATS) html += chip(c.id, c.label, c.color, counts[c.id] || 0);
       catsEl.innerHTML = html;
       catsEl.querySelectorAll('.cat-chip').forEach(el => {

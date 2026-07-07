@@ -70,6 +70,20 @@ zero-config, sees everything, and speaks Claude.
 
 Requires [Bun](https://bun.sh), `openssl`, and Claude Code (`claude` on PATH).
 
+### Install from npm
+
+```bash
+bun add -g @thevibeworks/cctrace
+```
+
+### Or run without installing
+
+```bash
+bunx @thevibeworks/cctrace
+```
+
+### Or clone the repo
+
 ```bash
 git clone https://github.com/thevibeworks/cctrace
 cd cctrace

@@ -6,14 +6,6 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
-### Added
-
-- Brand icon (`assets/cctrace-logo.svg`) — a "cc" monogram threaded by the
-  dot→ring trace line. Theme-aware; shown in both READMEs and wired into the live
-  web UI as the header logo and favicon.
-- Mermaid architecture diagram in the README (renders on GitHub), replacing the
-  ASCII sketch.
-
 ### Planned
 
 - **Conversation view** — an interactive mode that reconstructs a full LLM
@@ -22,6 +14,26 @@ All notable changes to cctrace are documented here. Format follows
   decoded from the SSE events — rendered as one readable conversation instead of
   a wire-level request/response dump. The wire view stays; this reads the same
   bytes at the conversation layer.
+
+## [0.2.0] - 2026-07-07
+
+### Added
+
+- **Theme toggle** — the web UI now supports system / light / dark themes. Defaults
+  to the OS preference; click the toggle in the header to override. Preference is
+  persisted in localStorage and applies to both live and snapshot views. A
+  synchronous `<head>` script prevents FOUC on reload.
+- **GitHub link** in the web UI header — links to the repo for easy access.
+- Brand icon (`assets/cctrace-logo.svg`) — a "cc" monogram threaded by the
+  dot→ring trace line. Theme-aware; shown in both READMEs and wired into the live
+  web UI as the header logo and favicon.
+- Mermaid architecture diagram in the README (renders on GitHub), replacing the
+  ASCII sketch.
+- npm install option (`bun add -g @thevibeworks/cctrace` / `bunx @thevibeworks/cctrace`).
+
+### Changed
+
+- Published as `@thevibeworks/cctrace` on npm (scoped package, public access).
 
 ## [0.1.1] - 2026-07-06
 
@@ -85,6 +97,7 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/thevibeworks/cctrace/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/thevibeworks/cctrace/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/thevibeworks/cctrace/releases/tag/v0.1.0

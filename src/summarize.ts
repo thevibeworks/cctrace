@@ -104,6 +104,26 @@ export function extractMessageInfo(pair: any): any {
   };
 }
 
+/**
+ * Claude Code session id from a /v1/messages request. The wire carries it in
+ * request.body.metadata.user_id — current builds send a JSON string
+ * ({"device_id":...,"session_id":"<uuid>"}), older ones an underscored form
+ * (..._session_<uuid>). Returns "" when absent.
+ */
+export function extractSessionId(pair: any): string {
+  const meta = pair && pair.request && pair.request.body && pair.request.body.metadata;
+  const uid = meta && meta.user_id;
+  if (typeof uid !== "string" || !uid) return "";
+  try {
+    const parsed = JSON.parse(uid);
+    if (parsed && typeof parsed.session_id === "string") return parsed.session_id;
+  } catch {
+    // not JSON — fall through to the underscored legacy form
+  }
+  const m = /session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(uid);
+  return (m && m[1]) || "";
+}
+
 /** Model + counted-token result for a count_tokens pair. */
 export function extractTokenCount(pair: any): any {
   const req = (pair && pair.request && pair.request.body) || {};

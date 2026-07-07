@@ -194,6 +194,13 @@ traffic gets its own filter category in the UI.
   side: threads for the main chat and subagent runs (matched to their Task
   dispatch), utility noise collapsed, tool results folded into their tool
   calls, and per-turn token/duration linked back to the wire request.
+- **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up
+  where a previous traced run left off: every Claude Code request carries its
+  session id on the wire, so cctrace finds the earlier runs' traces in the log
+  dir by exact match and merges them in. Old turns keep their tokens, timing,
+  and wire links instead of rendering as bare history; merged requests are
+  badged `prev` with a toggle to hide them. `--fresh` opts out; `--with FILE`
+  force-merges any trace file.
 - **Offline snapshots** -- the saved `.html` embeds the full trace and renders
   the same UI with no server. Open it a year from now, it still works.
 
@@ -213,6 +220,8 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--print-ca` | Print the MITM CA cert path and exit |
 | `--log NAME` | Custom log file base name |
 | `--dir PATH` | Log directory (default: `.cctrace`) |
+| `--fresh` | Don't merge prior traces of a continued session |
+| `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
 
 ### Passing args to Claude

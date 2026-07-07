@@ -8,6 +8,17 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Added
 
+- **Cross-run session continuity** — `cctrace -- --continue` / `--resume` now
+  merges the earlier runs' traces of the same Claude session into the live UI
+  and the `.html` snapshot. Matching is exact: Claude Code sends its session
+  id in every `/v1/messages` request (`metadata.user_id`), so when a live pair
+  reveals a session seen in a prior `.jsonl` in the log dir, those pairs are
+  loaded, badged `prev` (with a "Prev runs" toggle in the toolbar), and the
+  Session view gets full per-turn usage/duration/wire links for old turns
+  instead of bare replayed history. `--fresh` disables the merge; `--with FILE`
+  force-merges arbitrary trace files. Extraction (`extractSessionId`) and file
+  scanning (`src/history.ts`) are pure and unit-tested.
+
 - **Session view** — split-pane: wire threads on the left, reconstructed
   conversation on the right (`#/session`). Requests group into threads by
   their first message (main chat, subagent runs, quota probes / title

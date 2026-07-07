@@ -17,6 +17,7 @@ src/
 ├── loader.cjs      # CJS loader for --require (legacy)
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
+├── history.ts      # Cross-run session continuity: find prior traces by session_id
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
@@ -143,6 +144,16 @@ make test       # bun test
   forwarding to Claude.
 - **flush() before exit**: async captures must finish before the process exits,
   or pairs are lost.
+- **Session continuity is viewer-side, keyed by wire session_id**: each run
+  still writes its own immutable `trace-<ts>.jsonl`. Claude Code sends its
+  session id in every /v1/messages request (`metadata.user_id` JSON), so when
+  a live pair reveals a session_id found in a prior trace in the log dir,
+  `history.ts` loads those pairs (marked `pair.prior = <file>`, deduped by
+  pair id) into the server and the snapshot. Old turns then regain per-turn
+  usage/duration/wire links in the Session view — the attribution loop in
+  `session.ts` doesn't care which run a request came from. `--fresh` opts out,
+  `--with FILE` force-merges. Append-to-one-file was rejected: it corrupts on
+  unrelated sessions and still needs the same load-at-startup machinery.
 
 ## Testing
 

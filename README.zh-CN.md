@@ -180,6 +180,11 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 - **Session 视图** -- 网络请求与重建的对话左右并排：主对话与子代理运行
   （自动匹配到派发它们的 Task 调用）分线程展示，工具结果折叠进对应的工具调用，
   每个助手回合的 token/耗时都链接回产生它的请求。
+- **会话续接** -- `cctrace -- --continue`（或 `--resume`）会接续上次被追踪的
+  运行：Claude Code 的每个请求都在线上携带 session id，cctrace 据此在日志目录里
+  精确匹配到之前运行的 trace 并合并进来。旧回合保留各自的 token、耗时和请求
+  链接，不再是干巴巴的回放历史；合并进来的请求带 `prev` 徽标，可一键隐藏。
+  `--fresh` 关闭合并；`--with FILE` 强制合并任意 trace 文件。
 - **离线快照** -- 保存的 `.html` 内嵌完整 trace，无需服务器。一年后打开还是能用。
 
 ## 选项
@@ -198,6 +203,8 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--print-ca` | 打印 MITM CA 证书路径并退出 |
 | `--log NAME` | 自定义日志文件基名 |
 | `--dir PATH` | 日志目录（默认 `.cctrace`） |
+| `--fresh` | 续接会话时不合并之前的 trace |
+| `--with FILE` | 把指定 trace 文件合并进视图（可重复） |
 | `--claude-path PATH` | 自定义 Claude 二进制路径 |
 
 ### 把参数传给 Claude

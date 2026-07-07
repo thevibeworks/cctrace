@@ -153,6 +153,9 @@ export function getLiveHtml(port: number): string {
     .toolbar button:hover { background: var(--border); }
     .toolbar button.active { background: var(--status-ok); border-color: var(--status-ok); color: #fff; }
     body.view-session #filter, body.view-session #autoscroll, body.view-session #clear { display: none; }
+    #prior-toggle { display: none; }
+    #prior-toggle.avail { display: inline-block; }
+    body.view-session #prior-toggle { display: none; }
     body.view-session .cats { display: none; }
     .cats {
       padding: 8px 16px;
@@ -189,6 +192,18 @@ export function getLiveHtml(port: number): string {
       letter-spacing: 0.03em;
       color: #fff;
       background: var(--cat, var(--text-faint));
+      flex-shrink: 0;
+    }
+    /* Pairs merged in from a previous run's trace (same Claude session). */
+    .pair.prior .pair-header { opacity: 0.72; }
+    .prior-badge {
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--text-muted);
+      border: 1px dashed var(--text-faint);
       flex-shrink: 0;
     }
     /* ---- Requests view: list + split detail panel ---- */
@@ -500,6 +515,7 @@ export function getLiveHtml(port: number): string {
       <button class="tab" id="tab-session">Session</button>
     </span>
     <input type="text" id="filter" placeholder="Filter by URL, method, status...">
+    <button id="prior-toggle" class="active" title="Show/hide requests merged from previous runs of this session">Prev runs</button>
     <button id="autoscroll" class="active">Auto-scroll</button>
     <button id="clear">Clear</button>
   </div>
@@ -518,6 +534,7 @@ export function getLiveHtml(port: number): string {
     let autoScroll = true;
     let filter = '';
     let activeCat = 'all';
+    let showPrior = true;      // include prior-run pairs in the Requests list
     let view = 'requests';      // 'requests' | 'session'
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session view
@@ -558,6 +575,7 @@ export function getLiveHtml(port: number): string {
     const filterEl = document.getElementById('filter');
     const autoScrollBtn = document.getElementById('autoscroll');
     const clearBtn = document.getElementById('clear');
+    const priorToggle = document.getElementById('prior-toggle');
     const catsEl = document.getElementById('cats');
     const themeToggle = document.getElementById('theme-toggle');
     const tabRequests = document.getElementById('tab-requests');
@@ -632,6 +650,18 @@ export function getLiveHtml(port: number): string {
           }
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+        } else if (msg.type === 'history') {
+          // Prior-run pairs of a continued session: merge, resort, re-render.
+          const known = new Set(pairs.map(p => p.id));
+          for (const p of msg.pairs) {
+            if (known.has(p.id)) continue;
+            p._cat = categorize(p.request.url);
+            pairs.push(p);
+          }
+          pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
+          render();
+          refreshDetailNav();
+          if (view === 'session') showSession(sessionSelKey);
         }
       };
     }
@@ -651,6 +681,7 @@ export function getLiveHtml(port: number): string {
     }
 
     function passesFilters(pair) {
+      if (pair.prior && !showPrior) return false;
       if (activeCat !== 'all' && pair._cat !== activeCat) return false;
       if (filter) {
         const q = filter.toLowerCase();
@@ -703,23 +734,26 @@ export function getLiveHtml(port: number): string {
       const status = response ? response.status : 'ERR';
       const cat = CAT_BY_ID[pair._cat] || CAT_BY_ID.other;
       const div = document.createElement('div');
-      div.className = 'pair' + (pair.id === detailId ? ' selected' : '');
+      div.className = 'pair' + (pair.id === detailId ? ' selected' : '') + (pair.prior ? ' prior' : '');
       div.dataset.id = pair.id;
+      const when = new Date(request.timestamp * 1000);
       div.innerHTML =
         '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
           '<span class="method">' + escapeHtml(request.method) + '</span>' +
           '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + status + '">' + status + '</span>' +
           '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
+          (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
           '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
           '<span class="sum">' + chipsHtml(pair) + '</span>' +
           '<span class="duration" title="' + duration + 'ms">' + formatDuration(duration) + '</span>' +
-          '<span class="time">' + new Date(request.timestamp * 1000).toLocaleTimeString() + '</span>' +
+          '<span class="time" title="' + when.toLocaleString() + '">' + (pair.prior ? when.toLocaleString() : when.toLocaleTimeString()) + '</span>' +
         '</a>';
       pairsEl.appendChild(div);
     }
 
     function render() {
       renderCats();
+      priorToggle.classList.toggle('avail', pairs.some(p => p.prior));
       countEl.textContent = pairs.length;
       pairsEl.innerHTML = '';
       if (pairs.length === 0) {
@@ -856,6 +890,7 @@ export function getLiveHtml(port: number): string {
           '<span class="method">' + escapeHtml(request.method) + '</span>' +
           '<span class="status-code ' + getStatusClass(response && response.status) + '">' + status + '</span>' +
           '<span class="cat-badge" style="--cat:' + cat.color + '">' + cat.label + '</span>' +
+          (pair.prior ? '<span class="prior-badge" title="merged from a previous run of this session">prev \\u00b7 ' + escapeHtml(pair.prior) + '</span>' : '') +
           '<span class="detail-url">' + escapeHtml(request.url) + '</span>' +
           '<span class="duration">' + formatDuration(duration) + '</span>' +
           '<span class="time">' + new Date(request.timestamp * 1000).toLocaleString() + '</span>' +
@@ -1144,7 +1179,7 @@ export function getLiveHtml(port: number): string {
           const p = pairs.find(x => x.id === pid);
           if (!p) continue;
           const m = extractMessageInfo(p);
-          rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request">' +
+          rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
             '<span>' + new Date(p.request.timestamp * 1000).toLocaleTimeString() + '</span>' +
             '<span class="treq-io">in ' + fmtCompact(m.input + m.cacheRead + m.cacheWrite) + ' \\u00b7 out ' + fmtCompact(m.output) + '</span>' +
             '<span>' + formatDuration(p.duration) + '</span></a>';
@@ -1243,6 +1278,12 @@ export function getLiveHtml(port: number): string {
     }
 
     filterEl.oninput = () => { filter = filterEl.value; render(); refreshDetailNav(); };
+    priorToggle.onclick = () => {
+      showPrior = !showPrior;
+      priorToggle.classList.toggle('active', showPrior);
+      render();
+      refreshDetailNav();
+    };
     autoScrollBtn.onclick = () => {
       autoScroll = !autoScroll;
       autoScrollBtn.classList.toggle('active', autoScroll);

@@ -19,6 +19,8 @@ export const CLI_OPTIONS = {
   dir: { type: "string" },
   port: { type: "string", short: "p" },
   "claude-path": { type: "string" },
+  fresh: { type: "boolean" },
+  with: { type: "string", multiple: true },
 } as const;
 
 /** A user-facing usage error: print the message and exit, no stack trace. */

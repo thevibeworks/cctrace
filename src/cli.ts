@@ -8,6 +8,8 @@ import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
+import { loadPriorPairs, loadTraceFiles } from "./history";
+import { extractSessionId } from "./summarize";
 import type { TracePair } from "./types";
 
 // Live-UI port. Avoids 7890/7891 (Clash/mihomo proxy defaults). Falls back to
@@ -96,6 +98,8 @@ ${C.yellow}OPTIONS:${C.reset}
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
   --dir PATH         Log directory (default: .cctrace)
+  --fresh            Don't merge prior traces of a continued session
+  --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
   -h, --help         Show this help
 
@@ -180,6 +184,8 @@ interface RunOpts {
   logName?: string;
   logAll: boolean;
   noOpen: boolean;
+  fresh: boolean;
+  withFiles: string[];
 }
 
 interface LogSink {
@@ -188,11 +194,17 @@ interface LogSink {
   writeHtml: () => string;
 }
 
-function makeLogSink(opts: RunOpts, livePort?: number): LogSink {
-  if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
+/** The current run's log paths, computed once so server + sink agree. */
+function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
   const base = opts.logName || `trace-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5)}`;
-  const logFile = join(opts.logDir, `${base}.jsonl`);
-  const htmlFile = join(opts.logDir, `${base}.html`);
+  return {
+    logFile: join(opts.logDir, `${base}.jsonl`),
+    htmlFile: join(opts.logDir, `${base}.html`),
+  };
+}
+
+function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?: number): LogSink {
+  if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
   writeFileSync(logFile, "");
   log(`Log: ${logFile}`, C.blue);
 
@@ -210,8 +222,21 @@ function makeLogSink(opts: RunOpts, livePort?: number): LogSink {
         }).catch(() => {});
       }
     },
+    // The snapshot merges prior-run pairs of the same Claude session (and any
+    // --with files) so a --continue'd session's .html is complete on its own.
     writeHtml: () => {
-      writeFileSync(htmlFile, renderSnapshot(collected));
+      let all = collected;
+      const extra: TracePair[] = opts.withFiles.length ? loadTraceFiles(opts.withFiles) : [];
+      if (!opts.fresh) {
+        const sids = new Set(collected.map(extractSessionId).filter(Boolean));
+        extra.push(...loadPriorPairs(opts.logDir, logFile, sids));
+      }
+      if (extra.length) {
+        const known = new Set(collected.map((p) => p.id));
+        all = [...collected, ...extra.filter((p) => p.id && !known.has(p.id))];
+        all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
+      }
+      writeFileSync(htmlFile, renderSnapshot(all));
       return htmlFile;
     },
   };
@@ -257,9 +282,16 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 }
 
 async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs: string[], opts: RunOpts) {
+  const { logFile, htmlFile } = logPaths(opts);
   let livePort: number | undefined;
   if (opts.liveMode) {
-    const server = createServer({ port: opts.port, logDir: opts.logDir, logName: opts.logName });
+    const server = createServer({
+      port: opts.port,
+      logDir: opts.logDir,
+      logFile,
+      noHistory: opts.fresh,
+      withFiles: opts.withFiles,
+    });
     livePort = server.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
@@ -267,7 +299,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     }
   }
 
-  const sink = makeLogSink(opts, livePort);
+  const sink = makeLogSink(opts, logFile, htmlFile, livePort);
   const targetHost = process.env.ANTHROPIC_BASE_URL
     ? new URL(process.env.ANTHROPIC_BASE_URL).host
     : "api.anthropic.com";
@@ -290,7 +322,14 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
 
   let livePort = opts.port;
   if (opts.liveMode) {
-    const server = createServer({ port: opts.port, logDir: opts.logDir, logName: opts.logName });
+    // Legacy mode: the preload names the log file itself, so the server can't
+    // exclude it from prior-trace scans — pair-id dedupe covers that instead.
+    const server = createServer({
+      port: opts.port,
+      logDir: opts.logDir,
+      noHistory: opts.fresh,
+      withFiles: opts.withFiles,
+    });
     livePort = server.port ?? opts.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
@@ -379,6 +418,8 @@ async function main() {
     logName: values.log,
     logAll: !values["messages-only"],
     noOpen: !!values["no-open"],
+    fresh: !!values.fresh,
+    withFiles: values.with ? [...values.with] : [],
   };
 
   const claudePath = findClaude();

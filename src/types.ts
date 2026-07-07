@@ -20,6 +20,8 @@ export interface TracePair {
   response: ResponseData | null;
   duration: number;
   loggedAt: string;
+  /** Source file base name when merged in from a previous run's trace. */
+  prior?: string;
 }
 
 export interface TraceConfig {

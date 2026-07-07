@@ -4,6 +4,7 @@ import {
   fmtCompact,
   shortModel,
   extractMessageInfo,
+  extractSessionId,
   extractTokenCount,
   extractUsageInfo,
   assembleAssistant,
@@ -281,5 +282,31 @@ describe("summarizePair", () => {
     expect(summarizePair({ request: { url: "x" }, response: null }, "other")[0]).toEqual({ t: "no response", c: "err" });
     const chips = summarizePair({ request: { url: "x" }, response: { status: 403, body: {} } }, "other");
     expect(chips).toEqual([{ t: "HTTP 403", c: "err" }]);
+  });
+});
+
+describe("extractSessionId", () => {
+  const UUID = "70683b4f-e779-414c-bcdb-9b22361a0232";
+  const withUserId = (user_id: unknown) => ({
+    request: { url: "https://api.anthropic.com/v1/messages", body: { metadata: { user_id } } },
+    response: null,
+  });
+
+  test("current JSON user_id format", () => {
+    const uid = JSON.stringify({ device_id: "d".repeat(64), account_uuid: "ac09a023-ee4c-4b26-bd92-683d452a3b79", session_id: UUID });
+    expect(extractSessionId(withUserId(uid))).toBe(UUID);
+  });
+
+  test("legacy underscored format", () => {
+    expect(extractSessionId(withUserId(`user_abc123_account__session_${UUID}`))).toBe(UUID);
+  });
+
+  test("missing metadata / user_id / malformed", () => {
+    expect(extractSessionId({ request: { body: {} } })).toBe("");
+    expect(extractSessionId(withUserId(undefined))).toBe("");
+    expect(extractSessionId(withUserId(42))).toBe("");
+    expect(extractSessionId(withUserId("no session here"))).toBe("");
+    expect(extractSessionId(withUserId('{"broken json'))).toBe("");
+    expect(extractSessionId(null)).toBe("");
   });
 });

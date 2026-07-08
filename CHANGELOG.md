@@ -88,9 +88,16 @@ All notable changes to cctrace are documented here. Format follows
   itself, on a single line.
 - Anthropic-host URLs display as path-only in the list (the category badge
   already names the service); other hosts keep `host + path`.
+- **Docs lead with the two jobs cctrace is built for** — LLM tracing (what
+  Claude Code sends and receives each turn) and security/privacy tracing
+  (what actually leaves your machine). README (en/zh) "Why" section, landing
+  page hero, and meta description reframed accordingly.
 
 ### Planned
 
+- **Codex support** — trace OpenAI Codex CLI through the same MITM front door
+  (OpenAI host filters, endpoint categories, Codex-aware conversation
+  reconstruction).
 - **Conversation dump** — export the reconstructed conversation as Markdown/JSON.
 - **Agent skill** — a Claude Code skill / MCP server for querying captured
   traffic programmatically.

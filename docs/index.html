@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>cctrace — HTTP tracer for Claude Code</title>
-  <meta name="description" content="TLS-intercepting HTTP tracer for Claude Code. Captures every API call — messages, OAuth, usage/credits, MCP — with a live categorized web UI.">
+  <meta name="description" content="TLS-intercepting HTTP tracer for Claude Code: see what the LLM sends and receives each turn, and audit what leaves your machine — hosts, telemetry, payloads.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cstyle%3E@media(prefers-color-scheme:dark){.s{stroke:%23e6edf3}.f{fill:%23e6edf3}}%3C/style%3E%3Cg fill='none' stroke='%230d1117' stroke-linecap='round'%3E%3Cpath class='s' stroke-width='26' d='M270.75 175.6A125 125 0 1 0 270.75 336.4'/%3E%3Cpath class='s' stroke-width='26' d='M395.75 175.6A125 125 0 1 0 395.75 336.4'/%3E%3Cline class='s' stroke-width='9' x1='250' y1='256' x2='452' y2='256'/%3E%3Ccircle class='s' stroke-width='9' cx='452' cy='256' r='17'/%3E%3Ccircle class='f' fill='%230d1117' stroke='none' cx='250' cy='256' r='12'/%3E%3C/g%3E%3C/svg%3E">
   <style>
     :root {
@@ -187,12 +187,14 @@
     <p class="tagline en">See what Claude really sends.</p>
     <p class="tagline zh">看看 Claude 到底发了什么。</p>
     <p class="subtitle en">
-      Every request Claude Code makes &mdash; messages, OAuth, usage/credits, MCP &mdash;
-      captured live in your browser. One command.
+      <strong>LLM tracing</strong> &mdash; what Claude Code sends and receives
+      each turn. <strong>Security &amp; privacy tracing</strong> &mdash; what
+      actually leaves your machine. One command.
     </p>
     <p class="subtitle zh">
-      Claude Code 发出的每一个请求 &mdash; messages、OAuth、用量/额度、MCP &mdash;
-      全部实时呈现在你的浏览器里。一行命令。
+      <strong>LLM 追踪</strong>：Claude Code 每轮到底发送和接收了什么。
+      <strong>安全/隐私审计</strong>：哪些请求出站、去了哪些 host、payload
+      里带了什么。一行命令。
     </p>
 
     <div class="install-box">
@@ -319,12 +321,21 @@
         </div>
       </li>
       <li>
-        <div class="status-dot next"></div>
+        <div class="status-dot done"></div>
         <div>
           <strong class="en">Session view</strong>
           <strong class="zh">会话视图</strong>
           <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
           <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot next"></div>
+        <div>
+          <strong class="en">Codex support</strong>
+          <strong class="zh">Codex 支持</strong>
+          <span class="en">Trace OpenAI Codex CLI through the same MITM front door</span>
+          <span class="zh">用同一套 MITM 前门追踪 OpenAI Codex CLI</span>
         </div>
       </li>
       <li>

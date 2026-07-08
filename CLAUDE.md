@@ -17,7 +17,9 @@ src/
 ├── loader.cjs      # CJS loader for --require (legacy)
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
-├── history.ts      # Cross-run session continuity: find prior traces by session_id
+├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads
+├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
+├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
@@ -35,14 +37,17 @@ TLS-intercepting proxy, Charles/mitmproxy style. This is the only mode that
 sees the full picture, because Claude hardcodes some hosts (OAuth, usage,
 credits) independent of `ANTHROPIC_BASE_URL`.
 
-1. `ensureCerts()` generates a CA + leaf cert (Anthropic SANs) under `.cache/mitm/`
+1. `ensureCerts()` generates a CA + leaf cert (Anthropic SANs) under
+   `~/.cache/cctrace/mitm/` (override: `--cache-dir` / `CCTRACE_CACHE_DIR`)
 2. Front door: an http.Server answers `CONNECT`. Anthropic hosts are routed to a
-   local `Bun.serve({ tls })` terminator; all other hosts are blind-tunneled
-   through untouched (we never break a cert we can't forge)
+   local `Bun.serve({ tls })` terminator; other hosts get a dynamically
+   generated per-host cert signed by the same CA (blind tunnel only as a
+   last resort when cert generation fails)
 3. The TLS terminator decrypts, forwards to the real host, tees the response
    (stream to Claude + capture in parallel), logs the pair
-4. Claude trusts our CA via `NODE_EXTRA_CA_CERTS` + `SSL_CERT_FILE`, and routes
-   through us via `HTTPS_PROXY`
+4. Claude trusts our CA via `NODE_EXTRA_CA_CERTS` (deliberately NOT
+   `SSL_CERT_FILE` — it leaks into subprocesses), and routes through us via
+   `HTTPS_PROXY`
 
 Captures `/v1/messages`, `/api/oauth/*` (incl. usage/credits), `/api/claude_cli/*`,
 `/mcp-registry/*`, `/api/event_logging/*`.
@@ -114,6 +119,20 @@ cctrace -- --continue         # everything after -- goes to Claude verbatim
 cctrace -- -p "explain this"  # (-p after -- is Claude's, before it cctrace's)
 ```
 
+Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
+`cli.ts` before the strict parser). They read saved traces only — no proxy, no
+Claude spawn. `clean`/`merge`/`compress` are dry-run by default; `--yes` applies.
+
+```bash
+cctrace view <file|session-id|fragment>   # rebuild a snapshot .html and open it
+cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
+cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
+cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz
+```
+
+The MITM CA / cache dir is `~/.cache/cctrace` for every install method (source,
+`bun link`, compiled binary), overridable via `--cache-dir` / `CCTRACE_CACHE_DIR`.
+
 CLI parsing lives in `src/args.ts`: argv splits at the first `--` (rest goes
 to Claude untouched); cctrace's own flags parse strict, so unknown options
 error with a "put it after --" hint instead of being silently swallowed.
@@ -136,8 +155,15 @@ make test       # bun test
 - **MITM default**: native Claude (>= v2.0.26) is a Bun-compiled binary;
   `node --require` can't inject. TLS interception captures everything at the
   transport layer, below URL construction.
-- **Blind-tunnel non-Anthropic hosts**: our leaf cert only has Anthropic SANs;
-  forging other hosts would fail TLS, so we pass them through raw.
+- **Dynamic certs for non-Anthropic hosts**: the pre-generated leaf only has
+  Anthropic SANs; other hosts get a per-host cert minted on first contact
+  (cached on disk), so external traffic is captured too. Blind tunnel remains
+  the fallback when cert generation fails (no openssl).
+- **Storage subcommands never shrink data**: `merge`/`compress` union with an
+  existing `session-*.jsonl` / `.gz` instead of overwriting; `clean` verifies
+  an `.html` has a source trace before calling it regenerable; every unlink
+  re-stats first so a live capture appending between plan and apply is skipped,
+  not truncated (`src/storage.ts`, regression-tested).
 - **Stream tee, not clone**: `ReadableStream.tee()` streams to Claude immediately
   while capturing in parallel — no buffering of SSE responses.
 - **accept-encoding: identity**: avoid gzip/br decompression mismatch when

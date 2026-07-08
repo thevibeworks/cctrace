@@ -1,4 +1,6 @@
 # captured traffic (contains real session + quota data — never commit)
+.claude/CLAUDE.md
+.deva
 .cctrace/
 .cctrace-*/
 .claude-trace/

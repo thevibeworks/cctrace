@@ -31,6 +31,18 @@ it does.
 
 ## Why
 
+cctrace is built for exactly two jobs:
+
+1. **LLM tracing** -- see exactly what Claude Code sends and receives each
+   turn: system prompt, context, tool definitions, streamed replies,
+   token/cache usage.
+2. **Security & privacy tracing** -- audit what actually leaves your machine:
+   which hosts get contacted, what telemetry goes out, what's inside every
+   payload.
+
+Both jobs need the full picture -- every request, not just the convenient
+ones -- and getting that is harder than it sounds:
+
 Claude Code ships as a Bun-compiled **native binary**. The classic trick of
 injecting a `fetch()` hook with `node --require` doesn't work on a native
 binary -- it's dead, Jim. cctrace captures traffic the way it actually works
@@ -319,12 +331,10 @@ Never paste raw output into a public issue. Seriously.
 
 ## Roadmap
 
-- **Session view** -- a split-pane mode that reconstructs a *full LLM
-  conversation* from the raw capture: system prompt, message turns, tool
-  definitions, tool calls and their results, and the streamed assistant reply
-  decoded from SSE events. Wire view on the left, readable conversation on the
-  right. The wire view stays; this reads the same bytes at the conversation
-  layer.
+- **Codex support** -- trace OpenAI Codex CLI through the same MITM front
+  door. The proxy layer is already agent-agnostic; what's left is OpenAI host
+  filters, endpoint categories, and conversation reconstruction for its wire
+  format.
 - **Conversation dump** -- export the reconstructed conversation as Markdown
   or JSON, ready for sharing or post-mortem analysis.
 - **Agent skill** -- a purpose-built Claude Code skill/MCP server for

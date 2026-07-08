@@ -85,6 +85,13 @@ describe("loadPriorPairs / loadTraceFiles", () => {
     expect(got[1]?.prior).toBe("trace-old1.jsonl");
   });
 
+  test("dedupes a pair present in both its trace and a merge output", () => {
+    writeFileSync(join(dir, "trace-old.jsonl"), toJsonl([messagesPair("1_a", SID_A, 100)]));
+    writeFileSync(join(dir, "session-2d5c.jsonl"), toJsonl([messagesPair("1_a", SID_A, 100), messagesPair("2_b", SID_A, 200)]));
+    const got = loadPriorPairs(dir, join(dir, "trace-current.jsonl"), new Set([SID_A]));
+    expect(got.map((p) => p.id)).toEqual(["1_a", "2_b"]);
+  });
+
   test("no sessions or missing dir returns empty", () => {
     expect(loadPriorPairs(dir, "", new Set())).toEqual([]);
     expect(loadPriorPairs(join(dir, "nope"), "", new Set([SID_A]))).toEqual([]);

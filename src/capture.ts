@@ -11,6 +11,8 @@ export interface CaptureOptions {
   cacheDir: string;
   /** Upstream host for base-url mode; MITM reads it from each request. */
   targetHost?: string;
+  /** Progress messages (cert generation, proxy start) for the CLI to print. */
+  onStatus?: (msg: string) => void;
 }
 
 /**
@@ -32,13 +34,14 @@ export interface Capturer {
 
 export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): Promise<Capturer> {
   if (mode === "mitm") {
-    const certs = await ensureCerts(opts.cacheDir);
+    const certs = await ensureCerts(opts.cacheDir, opts.onStatus);
     const server = await startMitm({
       caDir: certs.caDir,
       onPair: opts.onPair,
       logAll: opts.logAll,
     });
     const proxyUrl = `http://127.0.0.1:${server.port}`;
+    opts.onStatus?.(`MITM proxy listening on ${proxyUrl}`);
     return {
       mode,
       label: `MITM proxy ${proxyUrl} (all Anthropic hosts)`,

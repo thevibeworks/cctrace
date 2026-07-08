@@ -1323,6 +1323,24 @@ export function getLiveHtml(port: number): string {
 export function renderSnapshot(tracePairs: TracePair[]): string {
   const html = getLiveHtml(0);
   // Inject before </head> so __PAIRS__ is defined before the body script runs.
-  const inject = `<script>window.__PAIRS__ = ${JSON.stringify(tracePairs)};</script>`;
-  return html.replace("</head>", `${inject}\n</head>`);
+  const inject = `<script>window.__PAIRS__ = ${jsonForScript(tracePairs)};</script>`;
+  // Function replacement: a string replacement would $-substitute the payload
+  // ($$ collapses, $& / $` splice document text into the JSON) — captured
+  // conversations about code contain those daily.
+  return html.replace("</head>", () => `${inject}\n</head>`);
+}
+
+/**
+ * JSON.stringify for embedding inside an inline <script>. Plain stringify is
+ * unsafe here: a captured payload containing the literal "</script>" (common
+ * when Claude is discussing HTML) closes the tag early and the browser throws
+ * "Invalid or unexpected token". Escaping "<" as \u003c makes any tag-like
+ * substring inert; U+2028/U+2029 are valid in JSON but are newlines to a JS
+ * parser, so escape those too. All three decode back to the original on parse.
+ */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }

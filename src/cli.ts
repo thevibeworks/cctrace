@@ -10,6 +10,11 @@ import { ensureCerts } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
+import { writeView, ViewError } from "./view";
+import {
+  planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
+} from "./storage";
+import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
 // Live-UI port. Avoids 7890/7891 (Clash/mihomo proxy defaults). Falls back to
@@ -42,7 +47,12 @@ function parseArgvOrExit() {
     throw err;
   }
 }
-const { values, claudeArgs } = parseArgvOrExit();
+// Subcommands (view/clean/merge/compress) bypass the OPTIONS/-- grammar, so
+// detect them before the strict parser rejects their positionals.
+const RAW_ARGV = Bun.argv.slice(2);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress"]);
+const SUBCOMMAND = SUBCOMMANDS.has(RAW_ARGV[0]) ? RAW_ARGV[0] : null;
+const { values, claudeArgs } = SUBCOMMAND ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit();
 
 const C = {
   reset: "\x1b[0m",
@@ -59,6 +69,11 @@ function log(msg: string, color = C.reset) {
 
 const CAPTURE_MODES = ["auto", "mitm", "base-url", "node"] as const;
 
+/** Does Claude get a flag that resumes an existing session? */
+function isContinuation(args: string[]): boolean {
+  return args.some((a) => a === "--continue" || a === "-c" || a === "--resume" || a === "-r");
+}
+
 // Best-effort browser open, per platform. The URL is always printed too, so a
 // missing opener (headless box, no xdg-open) degrades to "open it yourself".
 function openBrowser(url: string) {
@@ -73,11 +88,179 @@ function openBrowser(url: string) {
   }
 }
 
-// Repo-local .cache when running from source; XDG cache for the compiled
-// binary (its import.meta.path is virtual and not writable).
-const CACHE_DIR = IS_COMPILED
-  ? join(process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache"), "cctrace")
-  : join(dirname(import.meta.path), "..", ".cache");
+// `cctrace view <target> [--dir DIR] [--no-open]` — rebuild a snapshot .html
+// from a saved trace (a .jsonl path, a Claude Code session id, or a trace
+// filename fragment) and open it. No proxy, no Claude spawn.
+function runView(args: string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        dir: { type: "string" },
+        "no-open": { type: "boolean" },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] view: ${(err as Error).message}\n  usage: cctrace view <file.jsonl | session-id> [--dir DIR] [--no-open]`);
+    process.exit(1);
+  }
+  const target = parsed.positionals[0];
+  if (!target) {
+    console.error("[cctrace] view: need a target\n  usage: cctrace view <file.jsonl | session-id> [--dir DIR] [--no-open]");
+    process.exit(1);
+  }
+  const logDir = (parsed.values.dir as string) || ".cctrace";
+  try {
+    const result = writeView(target, logDir);
+    log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
+    log(`HTML: ${result.htmlPath}`, C.green);
+    if (!parsed.values["no-open"]) openBrowser(result.htmlPath);
+  } catch (err) {
+    if (err instanceof ViewError) {
+      console.error(`[cctrace] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+}
+
+/** Parse a storage subcommand's flags; exit(1) with usage on error. */
+function parseStorageArgs(
+  cmd: string,
+  args: string[],
+  options: Record<string, { type: "string" | "boolean" }>,
+  usage: string,
+) {
+  try {
+    return parseArgs({ args, options: { dir: { type: "string" }, yes: { type: "boolean" }, ...options }, allowPositionals: true, strict: true });
+  } catch (err) {
+    console.error(`[cctrace] ${cmd}: ${(err as Error).message}\n  usage: ${usage}`);
+    process.exit(1);
+  }
+}
+
+const DRY = `${C.yellow}dry run${C.reset} — re-run with ${C.cyan}--yes${C.reset} to apply`;
+
+// `cctrace clean` — delete regenerable .html snapshots and 0-byte aborted
+// traces. Never touches conversation data.
+function runClean(args: string[]) {
+  const { values: v } = parseStorageArgs("clean", args, {}, "cctrace clean [--dir DIR] [--yes]");
+  const logDir = (v.dir as string) || ".cctrace";
+  const plan = planClean(logDir);
+  if (!plan.htmls.length && !plan.empties.length) {
+    log(`Nothing to clean in ${logDir} (no .html snapshots, no empty traces)`, C.green);
+    return;
+  }
+  if (plan.htmls.length) {
+    log(`${plan.htmls.length} regenerable HTML snapshot(s), ${human(plan.htmls.reduce((s, f) => s + f.size, 0))} — rebuild any with 'cctrace view':`, C.cyan);
+    for (const f of plan.htmls) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  }
+  if (plan.empties.length) {
+    log(`${plan.empties.length} empty/aborted trace(s):`, C.cyan);
+    for (const f of plan.empties) console.log(`    ${f.name}  ${C.dim}0 B${C.reset}`);
+  }
+  if (plan.kept.length) {
+    log(`${plan.kept.length} .html kept — no source trace left to rebuild from:`, C.dim);
+    for (const f of plan.kept) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  }
+  if (!v.yes) {
+    log(`Would free ${human(plan.bytes)}. ${DRY}`, C.yellow);
+    return;
+  }
+  const res = applyClean(plan);
+  log(`Deleted ${res.removed.length} file(s), freed ${human(res.bytes)}`, C.green);
+  if (res.skipped.length) {
+    log(`Skipped ${res.skipped.length} file(s) that changed since the plan: ${res.skipped.join(", ")}`, C.yellow);
+  }
+}
+
+// `cctrace merge` — consolidate each session's pairs (across --continue runs)
+// into one deduped session-<id>.jsonl. --prune also removes fully-merged
+// source traces (never one carrying un-attributable utility pairs).
+function runMerge(args: string[]) {
+  const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR] [--prune] [--yes]");
+  const logDir = (v.dir as string) || ".cctrace";
+  const plan = planMerge(logDir);
+  if (!plan.sessions.length) {
+    log(`No session traces to merge in ${logDir}`, C.green);
+    return;
+  }
+  log(`${plan.sessions.length} session(s) across ${logDir}:`, C.cyan);
+  for (const s of plan.sessions) {
+    const dup = s.dupes ? `, ${s.dupes} dupe(s) dropped` : "";
+    const prev = s.existing ? `, ${s.existing} kept from a previous merge` : "";
+    console.log(`    ${s.outName}  ${C.dim}${s.pairCount} pairs${dup}${prev} — from ${s.sources.join(", ")}${C.reset}`);
+  }
+  if (plan.unattributable) {
+    log(`${plan.unattributable} utility pair(s) with no session id left in place`, C.dim);
+  }
+  if (v.prune && plan.subsumed.length) {
+    log(`--prune would remove ${plan.subsumed.length} fully-merged source(s), freeing ${human(plan.subsumed.reduce((s, f) => s + f.size, 0))}:`, C.cyan);
+    for (const f of plan.subsumed) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  }
+  if (!v.yes) {
+    log(`Would write ${plan.sessions.length} merged file(s)${v.prune ? "" : " (add --prune to also drop merged sources)"}. ${DRY}`, C.yellow);
+    return;
+  }
+  const res = applyMerge(plan, { prune: !!v.prune });
+  log(`Wrote ${res.written.length} merged session file(s)`, C.green);
+  if (res.pruned.length) log(`Pruned ${res.pruned.length} source(s), freed ${human(res.bytes)}`, C.green);
+  if (res.skipped.length) {
+    log(`Kept ${res.skipped.length} source(s) that grew since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+  }
+}
+
+// `cctrace compress` — gzip -9 archive .jsonl traces for backup; view reads
+// .gz transparently. --older-than N limits to traces older than N days.
+function runCompress(args: string[]) {
+  const { values: v } = parseStorageArgs(
+    "compress", args,
+    { "older-than": { type: "string" }, "keep-jsonl": { type: "boolean" } },
+    "cctrace compress [--dir DIR] [--older-than DAYS] [--keep-jsonl] [--yes]",
+  );
+  const logDir = (v.dir as string) || ".cctrace";
+  const olderThan = v["older-than"] != null ? parseInt(v["older-than"] as string, 10) : undefined;
+  if (olderThan != null && (isNaN(olderThan) || olderThan < 0)) {
+    console.error("[cctrace] compress: --older-than needs a non-negative number of days");
+    process.exit(1);
+  }
+  const plan = planCompress(logDir, Date.now(), olderThan);
+  if (!plan.files.length) {
+    log(`No .jsonl traces to compress in ${logDir}${olderThan != null ? ` older than ${olderThan}d` : ""}`, C.green);
+    return;
+  }
+  log(`${plan.files.length} trace(s), ${human(plan.bytes)} to gzip -9:`, C.cyan);
+  for (const f of plan.files) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  if (!v.yes) {
+    log(`Would archive ${human(plan.bytes)} (JSON gzips ~10-20x)${v["keep-jsonl"] ? "" : "; originals removed after"}. ${DRY}`, C.yellow);
+    return;
+  }
+  const res = applyCompress(plan, { keepJsonl: !!v["keep-jsonl"] });
+  for (const a of res.archived) {
+    console.log(`    ${a.name}.gz  ${C.dim}${human(a.before)} → ${human(a.after)}${C.reset}`);
+  }
+  const ratio = res.before > 0 ? (res.before / Math.max(res.after, 1)).toFixed(1) : "0";
+  log(`Archived ${res.archived.length} trace(s): ${human(res.before)} → ${human(res.after)} (${ratio}x), saved ${human(res.before - res.after)}`, C.green);
+  if (res.skipped.length) {
+    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+  }
+}
+
+// One stable cache dir for every install method (source, bun link, compiled
+// binary) so the MITM CA is generated once and reused — regenerating it each
+// run would defeat any CA the user trusted into their system store. Override
+// with --cache-dir or CCTRACE_CACHE_DIR; else XDG cache (~/.cache/cctrace).
+function resolveCacheDir(): string {
+  const flag = (values as { "cache-dir"?: string })["cache-dir"];
+  if (flag) return resolve(flag);
+  if (process.env.CCTRACE_CACHE_DIR) return resolve(process.env.CCTRACE_CACHE_DIR);
+  const base = process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache");
+  return join(base, "cctrace");
+}
+const CACHE_DIR = resolveCacheDir();
 const MITM_CA_DIR = join(CACHE_DIR, "mitm");
 
 function showHelp() {
@@ -86,8 +269,18 @@ ${C.cyan}cctrace${C.reset} - Trace HTTP traffic from Claude Code CLI
 
 ${C.yellow}USAGE:${C.reset}
   cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+  cctrace <SUBCOMMAND> [ARGS]
 
   Everything after ${C.cyan}--${C.reset} is passed to the Claude CLI verbatim.
+
+${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no Claude)${C.reset}
+  ${C.cyan}view${C.reset} <file|session-id>   Rebuild a snapshot .html and open it. Target is a
+                          .jsonl/.jsonl.gz path, a Claude Code session id, or a
+                          trace filename fragment.
+  ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
+  ${C.cyan}merge${C.reset}                     Consolidate each session's pairs into one .jsonl.
+  ${C.cyan}compress${C.reset}                  gzip -9 archive traces (view reads .gz directly).
+  ${C.dim}clean/merge/compress dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
@@ -101,6 +294,8 @@ ${C.yellow}OPTIONS:${C.reset}
   --fresh            Don't merge prior traces of a continued session
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
+  --cache-dir PATH   MITM CA / cache dir (default: ~/.cache/cctrace;
+                     or set CCTRACE_CACHE_DIR)
   -h, --help         Show this help
 
 ${C.yellow}CAPTURE MODES:${C.reset}
@@ -119,6 +314,8 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace -- --continue            ${C.dim}# Resume last Claude session, traced${C.reset}
   cctrace -- -p "explain this"     ${C.dim}# Claude print mode, traced${C.reset}
   cctrace --mode base-url -- --model opus --continue
+  cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl  ${C.dim}# reopen a saved trace${C.reset}
+  cctrace view 4f9a2c1e             ${C.dim}# rebuild by Claude Code session id${C.reset}
 
   ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}
 `);
@@ -232,8 +429,15 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
         extra.push(...loadPriorPairs(opts.logDir, logFile, sids));
       }
       if (extra.length) {
+        // known also dedupes within extra: --with files and prior-run scans
+        // can hand us the same pair twice (e.g. a trace and its merge output).
         const known = new Set(collected.map((p) => p.id));
-        all = [...collected, ...extra.filter((p) => p.id && !known.has(p.id))];
+        all = [...collected];
+        for (const p of extra) {
+          if (!p.id || known.has(p.id)) continue;
+          known.add(p.id);
+          all.push(p);
+        }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
       writeFileSync(htmlFile, renderSnapshot(all));
@@ -265,6 +469,13 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     if (onFinalize) {
       const htmlFile = onFinalize();
       log(`HTML: ${htmlFile}`, C.green);
+      // Static mode has no live tab, so open the finished snapshot. Live mode
+      // already has the same UI on screen; point at `view` to reopen instead.
+      if (!opts.noOpen && !opts.liveMode) {
+        openBrowser(htmlFile);
+      } else {
+        log(`Reopen anytime: cctrace view ${htmlFile.replace(/\.html$/, ".jsonl")}`, C.dim);
+      }
     }
     if (signal) log(`Terminated: ${signal}`, C.yellow);
     else if (code === 0) log("Session complete", C.green);
@@ -304,12 +515,26 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     ? new URL(process.env.ANTHROPIC_BASE_URL).host
     : "api.anthropic.com";
 
+  // Source runs used to keep the CA under the repo's .cache/ — that key can
+  // forge Anthropic certs, so don't leave it behind as silent archaeology.
+  const legacyCaDir = join(dirname(import.meta.path), "..", ".cache", "mitm");
+  if (mode === "mitm" && legacyCaDir !== MITM_CA_DIR && existsSync(legacyCaDir)) {
+    log(`Legacy CA cache at ${legacyCaDir} is no longer used — safe to delete`, C.yellow);
+  }
+
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,
     logAll: opts.logAll,
     cacheDir: MITM_CA_DIR,
     targetHost,
+    onStatus: (msg) => log(msg, C.dim),
   });
+
+  // --continue/--resume can't reveal which session until Claude's first request
+  // hits the wire, so prior turns merge then, not now. Say so, or a user waits.
+  if (!opts.fresh && isContinuation(claudeArgs)) {
+    log("Continuing a session — prior turns merge into Session view on Claude's first request", C.dim);
+  }
 
   spawnClaudeWithCapturer(claudePath, claudeArgs, capturer, opts, sink.writeHtml);
 }
@@ -394,6 +619,15 @@ function resolveMode(claudePath: string): { mode: "mitm" | "base-url" | "node"; 
 }
 
 async function main() {
+  if (SUBCOMMAND) {
+    const rest = RAW_ARGV.slice(1);
+    if (SUBCOMMAND === "view") runView(rest);
+    else if (SUBCOMMAND === "clean") runClean(rest);
+    else if (SUBCOMMAND === "merge") runMerge(rest);
+    else if (SUBCOMMAND === "compress") runCompress(rest);
+    process.exit(0);
+  }
+
   if (values.help) {
     showHelp();
     process.exit(0);

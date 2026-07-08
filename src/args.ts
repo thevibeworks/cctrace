@@ -19,6 +19,7 @@ export const CLI_OPTIONS = {
   dir: { type: "string" },
   port: { type: "string", short: "p" },
   "claude-path": { type: "string" },
+  "cache-dir": { type: "string" },
   fresh: { type: "boolean" },
   with: { type: "string", multiple: true },
 } as const;

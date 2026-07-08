@@ -197,6 +197,35 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
   `--fresh` 关闭合并；`--with FILE` 强制合并任意 trace 文件。
 - **离线快照** -- 保存的 `.html` 内嵌完整 trace，无需服务器。一年后打开还是能用。
 
+## 处理已保存的 trace
+
+子命令直接作用于磁盘上已有的 trace -- 不启代理、不拉起 Claude。三个清理类命令
+**默认 dry-run**（只打印将要处理的清单，不动任何文件），加 `--yes` 才真正执行。
+
+```bash
+# 重建快照 .html 并打开 -- 可用文件路径、session id 或文件名片段
+cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
+cctrace view 4f9a2c1e                      # Claude Code 的 session id（可用前缀）
+
+# 回收空间：删掉可重建的 .html 快照 + 0 字节的中断 trace
+cctrace clean                              # dry-run：列出将删除的文件
+cctrace clean --yes
+
+# 合并：把一个 session 的多次运行（--continue 会跨文件）并成一个 .jsonl
+cctrace merge                              # 每个 session 一个 session-<id>.jsonl
+cctrace merge --prune --yes                # 同时删除已被完全合并的源文件
+
+# 归档备份：gzip -9（view 能直接读 .jsonl.gz）
+cctrace compress --older-than 7 --yes      # 只压缩 7 天前的 trace
+```
+
+清理绝不会让数据变少。`clean` 只删除源 `.jsonl`/`.jsonl.gz` 仍然存在的
+`.html`（逐个检查，不是想当然 -- 孤儿快照会被保留）。`merge` 和 `compress`
+会与已有的输出做并集，重复执行只会让合并文件或归档变大、不会变小。`merge`
+只在源文件里**每一个** pair 都归属到某个 session 时才 prune 它，因此带有
+OAuth/用量/遥测（无 session id）的 trace 绝不会被误删。每次删除前还会复查
+文件在 plan 之后有没有变化，所以就算有 live 抓取正在追加写入，清理也是安全的。
+
 ## 选项
 
 ```
@@ -216,6 +245,7 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--fresh` | 续接会话时不合并之前的 trace |
 | `--with FILE` | 把指定 trace 文件合并进视图（可重复） |
 | `--claude-path PATH` | 自定义 Claude 二进制路径 |
+| `--cache-dir PATH` | MITM CA / 缓存目录（默认 `~/.cache/cctrace`；或用 `CCTRACE_CACHE_DIR`） |
 
 ### 把参数传给 Claude
 

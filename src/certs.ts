@@ -50,14 +50,17 @@ async function run(cmd: string[], opts: { cwd?: string; stdin?: string } = {}): 
  * once, under caDir. Idempotent: skips generation if all four files exist.
  * Requires the openssl CLI.
  */
-export async function ensureCerts(caDir: string): Promise<Certs> {
+export async function ensureCerts(caDir: string, onStatus?: (msg: string) => void): Promise<Certs> {
   const c = paths(caDir);
   if (
     existsSync(c.caCertPath) && existsSync(c.caKeyPath) &&
     existsSync(c.leafCertPath) && existsSync(c.leafKeyPath)
   ) {
+    onStatus?.(`Using cached MITM CA: ${c.caCertPath}`);
     return c;
   }
+
+  onStatus?.("Generating MITM CA + leaf cert (first run, needs openssl)…");
 
   // 0700: the CA key here can forge Anthropic certs for anyone trusting this
   // CA, so don't rely on openssl's umask — lock the dir and keys explicitly.
@@ -101,6 +104,7 @@ ${altNames}
     "-extfile", cnfPath, "-extensions", "v3_req",
   ]);
 
+  onStatus?.(`MITM CA ready: ${c.caCertPath}`);
   return c;
 }
 

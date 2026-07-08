@@ -6,6 +6,88 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Planned
+
+- **Codex support** — trace OpenAI Codex CLI through the same MITM front door
+  (OpenAI host filters, endpoint categories, Codex-aware conversation
+  reconstruction).
+- **Conversation dump** — export the reconstructed conversation as Markdown/JSON.
+- **Agent skill** — a Claude Code skill / MCP server for querying captured
+  traffic programmatically.
+- **Multi-session live view** — path-based session routing
+  (`/<project>/<session-id>`) to avoid port conflicts.
+- **Cumulative token metrics** — per-session totals and cost estimates
+  (per-request usage + cache hit rates shipped in 0.4.0).
+
+## [0.5.0] - 2026-07-08
+
+### Added
+
+- **`cctrace view <target>`** — rebuild a snapshot `.html` from a saved trace
+  with no proxy and no Claude spawn, then open it. Target is a `.jsonl` (or
+  `.jsonl.gz`) path, a Claude Code **session id** (or prefix — merges every
+  trace carrying it, deduped, like live continuity), or a trace filename
+  fragment. Resolution + rendering live in `src/view.ts`, unit-tested.
+- **Storage subcommands `clean` / `merge` / `compress`** — housekeeping for a
+  log dir that grows large. `clean` deletes regenerable `.html` snapshots and
+  0-byte aborted traces; `merge` consolidates each session's pairs (across
+  `--continue` runs) into one deduped `session-<id>.jsonl` (`--prune` drops
+  fully-merged sources, never one holding un-attributable utility pairs);
+  `compress` gzip -9 archives traces to `.jsonl.gz` (`--older-than N`,
+  `--keep-jsonl`). All three **dry-run by default** and print an itemized plan;
+  `--yes` applies. Data-safety invariants, each regression-tested: `merge` and
+  `compress` **union with existing outputs** (a re-run can only grow a merged
+  file or archive, never shrink one); `clean` verifies an `.html` is actually
+  regenerable (a sibling `.jsonl`/`.jsonl.gz` exists) instead of assuming;
+  every unlink re-stats first, so a live capture appending pairs between plan
+  and apply is skipped and reported, not truncated; outputs are written
+  tmp+rename. Logic in `src/storage.ts`.
+- **Transparent `.jsonl.gz` reads** — `view` and cross-run continuity read
+  gzip-archived traces directly (`readTraceText` in `src/history.ts`).
+- **`--cache-dir` / `CCTRACE_CACHE_DIR`** — override the MITM CA / cache dir.
+
+### Fixed
+
+- **Snapshot `.html` no longer breaks — or silently corrupts — on hostile
+  payload content.** Two bugs, one choke point. `renderSnapshot` embedded the
+  trace via raw `JSON.stringify` inside an inline `<script>`, so a payload
+  holding a literal `</script>` (common when Claude discusses HTML) closed
+  the tag early and the browser threw `Invalid or unexpected token` on load —
+  `jsonForScript` now escapes `<` (as `\u003c`) plus the U+2028/U+2029 line separators (all
+  decode back on parse). And the `</head>` injection used a *string*
+  `.replace()`, whose `$`-substitution rules corrupt any payload containing
+  `$$`, `$&`, `` $` `` or `$'` (a Makefile in the conversation was enough) —
+  it is now a function replacement. Both regression-tested in
+  `tests/snapshot.test.ts`.
+- **Prior-run pairs dedupe across trace files.** After a (non-prune) `merge`,
+  a pair exists in both its original trace and the merged session file;
+  continuity snapshots now dedupe by pair id instead of rendering every prior
+  turn twice (`loadPriorPairs`). Relatedly, `view <session-id>` resolves by
+  session scan *before* filename matching, so it merges all of a session's
+  traces even when a `session-*.jsonl` filename contains the id.
+
+### Changed
+
+- **One cache dir for every install method.** The MITM CA now lives in
+  `~/.cache/cctrace` (XDG) for source runs, `bun link`, and the compiled
+  binary alike, instead of a repo-local `.cache/` for source — so the CA is
+  generated once and reused. A leftover repo-local CA is flagged at startup
+  (that key can forge Anthropic certs; delete it).
+- **Verbose startup** — cert generation vs cache reuse, CA path, and the MITM
+  proxy address are now logged instead of happening silently.
+- **Snapshot opens on exit in static mode** (`-s`); live mode keeps its single
+  tab and prints a `cctrace view …` reopen hint. `--continue`/`--resume` prints
+  a note that prior turns merge on Claude's first request (they can't sooner —
+  the session id only appears on the wire).
+- **Docs lead with the two jobs cctrace is built for** — LLM tracing (what
+  Claude Code sends and receives each turn) and security/privacy tracing
+  (what actually leaves your machine). README (en/zh) "Why" section, landing
+  page hero, and meta description reframed accordingly.
+- `bun test` discovery is scoped to `tests/` via `bunfig.toml` (a vendored
+  checkout under `reference/` used to get swept in).
+
+## [0.4.0] - 2026-07-07
+
 ### Added
 
 - **Cross-run session continuity** — `cctrace -- --continue` / `--resume` now
@@ -18,7 +100,6 @@ All notable changes to cctrace are documented here. Format follows
   instead of bare replayed history. `--fresh` disables the merge; `--with FILE`
   force-merges arbitrary trace files. Extraction (`extractSessionId`) and file
   scanning (`src/history.ts`) are pure and unit-tested.
-
 - **Session view** — split-pane: wire threads on the left, reconstructed
   conversation on the right (`#/session`). Requests group into threads by
   their first message (main chat, subagent runs, quota probes / title
@@ -34,20 +115,18 @@ All notable changes to cctrace are documented here. Format follows
   list instead of replacing it: the list, filters, and category chips stay
   visible, the selected row is highlighted, and browsing keeps its context.
   On narrow windows the panel goes full-width.
-
 - **Claude CLI pass-through** — `cctrace [OPTIONS] [-- CLAUDE_ARGS...]`:
   everything after the first `--` is passed to the Claude CLI verbatim
   (`cctrace -- --continue`, `cctrace -- -p "explain this"`). Forwarded args
   are echoed at startup. Parsing lives in `src/args.ts` and is unit-tested.
 - **`make build` / `make install`** — compile cctrace into a standalone binary
   (`bun build --compile`) and install it to `$PREFIX/bin` (default
-  `~/.local/bin`). The compiled binary needs no Bun at runtime, stores its CA
-  under `~/.cache/cctrace/`, and — unlike bun-run installs — receives a
-  leading `--` intact, so `cctrace -- --help` reaches Claude. (Bun's CLI eats
-  a leading `--` under `bunx`/`bun run`/`bun link`; usage errors from source
-  runs now mention this.) Legacy `node` mode still requires running from
-  source. Also: `make help`, `make test`, `make link`, `make clean`.
-
+  `~/.local/bin`). The compiled binary needs no Bun at runtime and — unlike
+  bun-run installs — receives a leading `--` intact, so `cctrace -- --help`
+  reaches Claude. (Bun's CLI eats a leading `--` under `bunx`/`bun run`/`bun
+  link`; usage errors from source runs now mention this.) Legacy `node` mode
+  still requires running from source. Also: `make help`, `make test`,
+  `make link`, `make clean`.
 - **Request detail view** — every index row now opens a hash-routed detail page
   keyed by request id (`#/p/<id>`), deep-linkable in both the live UI and
   static snapshots. Navigate with prev/next buttons or `j`/`k`; `Esc` returns
@@ -88,23 +167,22 @@ All notable changes to cctrace are documented here. Format follows
   itself, on a single line.
 - Anthropic-host URLs display as path-only in the list (the category badge
   already names the service); other hosts keep `host + path`.
-- **Docs lead with the two jobs cctrace is built for** — LLM tracing (what
-  Claude Code sends and receives each turn) and security/privacy tracing
-  (what actually leaves your machine). README (en/zh) "Why" section, landing
-  page hero, and meta description reframed accordingly.
 
-### Planned
+## [0.3.0] - 2026-07-07
 
-- **Codex support** — trace OpenAI Codex CLI through the same MITM front door
-  (OpenAI host filters, endpoint categories, Codex-aware conversation
-  reconstruction).
-- **Conversation dump** — export the reconstructed conversation as Markdown/JSON.
-- **Agent skill** — a Claude Code skill / MCP server for querying captured
-  traffic programmatically.
-- **Multi-session live view** — path-based session routing
-  (`/<project>/<session-id>`) to avoid port conflicts.
-- **Cumulative token metrics** — per-session totals and cost estimates
-  (per-request usage + cache hit rates shipped above).
+### Added
+
+- **Full interception of non-Anthropic hosts** — instead of blind-tunneling
+  traffic our Anthropic-only leaf cert couldn't serve, the MITM proxy now
+  mints a per-host TLS cert on first contact (signed by the same CA, cached
+  on disk), so everything Claude talks to is captured. External traffic gets
+  its own filter category in the UI; the blind tunnel remains only as a
+  fallback when cert generation fails.
+- **count_tokens category** — `/v1/messages/count_tokens` requests get their
+  own badge and an inline `= N tok` row summary.
+- Tunneled `CONNECT` requests are logged, so even pass-through traffic is
+  visible.
+- GitHub Pages landing page; brand slogan ("See what Claude really does.").
 
 ## [0.2.0] - 2026-07-07
 
@@ -188,7 +266,10 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/thevibeworks/cctrace/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/thevibeworks/cctrace/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/thevibeworks/cctrace/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/thevibeworks/cctrace/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/thevibeworks/cctrace/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/thevibeworks/cctrace/releases/tag/v0.1.0

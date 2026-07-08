@@ -1,7 +1,19 @@
 import { readdirSync, readFileSync, existsSync } from "fs";
 import { join, basename, resolve } from "path";
+import { gunzipSync } from "zlib";
 import { extractSessionId } from "./summarize";
 import type { TracePair } from "./types";
+
+/** Read a trace file, transparently gunzipping a `.gz` archive. */
+export function readTraceText(path: string): string {
+  const buf = readFileSync(path);
+  return path.endsWith(".gz") ? gunzipSync(buf).toString("utf8") : buf.toString("utf8");
+}
+
+/** A trace file this run should consider: raw or gzip-archived .jsonl. */
+export function isTraceFile(name: string): boolean {
+  return name.endsWith(".jsonl") || name.endsWith(".jsonl.gz");
+}
 
 // Cross-run session continuity. Claude Code's --continue/--resume re-sends the
 // whole conversation, so the session VIEW already reconstructs old turns — but
@@ -48,9 +60,10 @@ export function loadPriorPairs(logDir: string, excludeFile: string, sessionIds: 
   if (!sessionIds.size || !existsSync(logDir)) return [];
   const excludeAbs = resolve(excludeFile);
   const out: TracePair[] = [];
+  const seenIds = new Set<string>();
   let files: string[];
   try {
-    files = readdirSync(logDir).filter((f) => f.endsWith(".jsonl"));
+    files = readdirSync(logDir).filter(isTraceFile);
   } catch {
     return [];
   }
@@ -59,7 +72,7 @@ export function loadPriorPairs(logDir: string, excludeFile: string, sessionIds: 
     if (resolve(path) === excludeAbs) continue;
     let text: string;
     try {
-      text = readFileSync(path, "utf8");
+      text = readTraceText(path);
     } catch {
       continue;
     }
@@ -67,6 +80,13 @@ export function loadPriorPairs(logDir: string, excludeFile: string, sessionIds: 
     for (const id of sessionIds) if (text.includes(id)) { mayMatch = true; break; }
     if (!mayMatch) continue;
     for (const pair of scanTraceText(text, sessionIds)) {
+      // After a `merge`, a pair exists in both its trace-*.jsonl and the
+      // session-*.jsonl output — dedupe across files or snapshots render
+      // every prior turn twice.
+      if (pair.id) {
+        if (seenIds.has(pair.id)) continue;
+        seenIds.add(pair.id);
+      }
       pair.prior = f;
       out.push(pair);
     }
@@ -81,7 +101,7 @@ export function loadTraceFiles(paths: string[]): TracePair[] {
   for (const p of paths) {
     let text: string;
     try {
-      text = readFileSync(p, "utf8");
+      text = readTraceText(p);
     } catch (err) {
       console.error(`[cctrace] --with ${p}: ${(err as Error).message}`);
       continue;

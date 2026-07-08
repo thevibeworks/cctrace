@@ -216,6 +216,38 @@ traffic gets its own filter category in the UI.
 - **Offline snapshots** -- the saved `.html` embeds the full trace and renders
   the same UI with no server. Open it a year from now, it still works.
 
+## Working with saved traces
+
+Subcommands operate on traces already on disk -- no proxy, no Claude spawn.
+The three housekeeping commands are **dry-run by default** (they print an
+itemized plan and touch nothing); add `--yes` to apply.
+
+```bash
+# Rebuild a snapshot .html and open it -- by file, session id, or filename bit
+cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
+cctrace view 4f9a2c1e                      # a Claude Code session id (or prefix)
+
+# Reclaim space: drop regenerable .html snapshots + 0-byte aborted traces
+cctrace clean                              # dry run: lists what would go
+cctrace clean --yes
+
+# Consolidate a session's runs (--continue spans files) into one .jsonl
+cctrace merge                              # one session-<id>.jsonl per session
+cctrace merge --prune --yes                # also remove fully-merged sources
+
+# Archive for backup: gzip -9 (view reads .jsonl.gz directly)
+cctrace compress --older-than 7 --yes      # only traces older than 7 days
+```
+
+Housekeeping never shrinks your data. `clean` only deletes an `.html` whose
+source `.jsonl`/`.jsonl.gz` still exists (checked, not assumed — an orphan
+snapshot is kept). `merge` and `compress` union with existing outputs, so
+re-running them can only grow a merged file or archive. `merge` only prunes a
+source when *every* pair in it was attributed to a session, so a trace holding
+OAuth/usage/telemetry (no session id) is never deleted out from under you.
+And every deletion re-checks that the file didn't change since the plan, so
+housekeeping while a live capture is appending is safe.
+
 ## Options
 
 ```
@@ -235,6 +267,7 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--fresh` | Don't merge prior traces of a continued session |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
+| `--cache-dir PATH` | MITM CA / cache dir (default: `~/.cache/cctrace`; or `CCTRACE_CACHE_DIR`) |
 
 ### Passing args to Claude
 

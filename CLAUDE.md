@@ -38,7 +38,7 @@ sees the full picture, because Claude hardcodes some hosts (OAuth, usage,
 credits) independent of `ANTHROPIC_BASE_URL`.
 
 1. `ensureCerts()` generates a CA + leaf cert (Anthropic SANs) under
-   `~/.cache/cctrace/mitm/` (override: `--cache-dir` / `CCTRACE_CACHE_DIR`)
+   `~/.local/share/cctrace/mitm/` (override: `--data-dir` / `CCTRACE_DATA_DIR`)
 2. Front door: an http.Server answers `CONNECT`. Anthropic hosts are routed to a
    local `Bun.serve({ tls })` terminator; other hosts get a dynamically
    generated per-host cert signed by the same CA (blind tunnel only as a
@@ -130,8 +130,13 @@ cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per s
 cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz
 ```
 
-The MITM CA / cache dir is `~/.cache/cctrace` for every install method (source,
-`bun link`, compiled binary), overridable via `--cache-dir` / `CCTRACE_CACHE_DIR`.
+The MITM CA / data dir is `~/.local/share/cctrace` (XDG data — the CA is
+identity material; rotating it breaks any trust exported via `--print-ca`, so
+it must not live where cache cleaners sweep) for every install method (source,
+`bun link`, compiled binary), overridable via `--data-dir` / `CCTRACE_DATA_DIR`
+(legacy `--cache-dir` / `CCTRACE_CACHE_DIR` still honored). A pre-0.6 CA found
+in `~/.cache/cctrace` is moved once, preserving CA identity (`migrateCaDir` in
+`src/certs.ts`).
 
 CLI parsing lives in `src/args.ts`: argv splits at the first `--` (rest goes
 to Claude untouched); cctrace's own flags parse strict, so unknown options
@@ -141,7 +146,7 @@ error with a "put it after --" hint instead of being silently swallowed.
 `--`, so `cctrace -- --help` only works from the compiled binary. `make build`
 compiles `dist/cctrace` (`bun build --compile`, never `--minify` — the UI
 inlines functions via `toString()`); `make install` puts it in `~/.local/bin`.
-The compiled binary uses `~/.cache/cctrace/` instead of the repo `.cache/` and
+The compiled binary uses `~/.local/share/cctrace/` instead of the repo `.cache/` and
 does not support the legacy node mode (needs repo sources).
 
 ```bash
@@ -164,8 +169,20 @@ make test       # bun test
   an `.html` has a source trace before calling it regenerable; every unlink
   re-stats first so a live capture appending between plan and apply is skipped,
   not truncated (`src/storage.ts`, regression-tested).
-- **Stream tee, not clone**: `ReadableStream.tee()` streams to Claude immediately
-  while capturing in parallel — no buffering of SSE responses.
+- **Guarded pump, not `tee()`**: responses stream to Claude chunk-by-chunk while
+  the same chunks accumulate for capture (`captureTee` in `src/stream.ts`).
+  `ReadableStream.tee()` was abandoned: its native cancel path can crash the
+  whole Bun process (`TypeError: null is not an object` in stream builtins)
+  when a proxied connection drops mid-SSE, and it buffers unboundedly when one
+  branch is slow. The pump guards every controller call, keeps capturing after
+  a client abort (an interrupted request still logs its full response, or
+  partial + `truncated: true` if upstream died), and applies real backpressure.
+- **The proxy must never take down the session**: if cctrace dies, Claude's
+  `HTTPS_PROXY` dies with it. Capture runs install `uncaughtException` /
+  `unhandledRejection` handlers (log one line, keep serving), every proxy
+  `Bun.serve` sets `idleTimeout: 0` (the 10s default would kill idle-quiet
+  connections) plus an `error` hook (one failed request, no TUI spew), and
+  `flush()` is capped at 5s so an abandoned capture can't hang exit.
 - **accept-encoding: identity**: avoid gzip/br decompression mismatch when
   forwarding to Claude.
 - **flush() before exit**: async captures must finish before the process exits,

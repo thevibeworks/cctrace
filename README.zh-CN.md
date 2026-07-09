@@ -245,7 +245,7 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--fresh` | 续接会话时不合并之前的 trace |
 | `--with FILE` | 把指定 trace 文件合并进视图（可重复） |
 | `--claude-path PATH` | 自定义 Claude 二进制路径 |
-| `--cache-dir PATH` | MITM CA / 缓存目录（默认 `~/.cache/cctrace`；或用 `CCTRACE_CACHE_DIR`） |
+| `--data-dir PATH` | MITM CA / 数据目录（默认 `~/.local/share/cctrace`；或用 `CCTRACE_DATA_DIR`。旧的 `--cache-dir` / `CCTRACE_CACHE_DIR` 仍然可用；0.6 之前留在 `~/.cache/cctrace` 的 CA 会自动迁移） |
 
 ### 把参数传给 Claude
 

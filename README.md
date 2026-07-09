@@ -267,7 +267,7 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--fresh` | Don't merge prior traces of a continued session |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
-| `--cache-dir PATH` | MITM CA / cache dir (default: `~/.cache/cctrace`; or `CCTRACE_CACHE_DIR`) |
+| `--data-dir PATH` | MITM CA / data dir (default: `~/.local/share/cctrace`; or `CCTRACE_DATA_DIR`. Legacy `--cache-dir` / `CCTRACE_CACHE_DIR` still work; a pre-0.6 CA in `~/.cache/cctrace` migrates over automatically) |
 
 ### Passing args to Claude
 

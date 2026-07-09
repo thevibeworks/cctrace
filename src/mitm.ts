@@ -4,21 +4,8 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { isInterceptHost, generateHostCert } from "./certs";
 import { redactPair } from "./redact";
+import { captureTee } from "./stream";
 import type { TracePair } from "./types";
-
-async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
-  }
-  const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let offset = 0;
-  for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-  return new TextDecoder().decode(merged);
-}
 
 export interface MitmConfig {
   caDir: string;
@@ -125,7 +112,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: fwdHeaders });
       }
 
-      const [clientStream, captureStream] = upstream.body.tee();
+      const { stream: clientStream, captured } = captureTee(upstream.body);
       pairCount++;
       const captureId = `${Date.now()}_${pairCount.toString(36)}`;
       const resStatus = upstream.status;
@@ -133,13 +120,13 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
       const ct = upstream.headers.get("content-type") || "";
 
-      const cap = drainStream(captureStream).then((captured) => {
+      const cap = captured.then(({ text, complete }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
         try {
-          if (ct.includes("application/json")) resBody = JSON.parse(captured);
-          else resBodyRaw = captured;
-        } catch { resBodyRaw = captured; }
+          if (ct.includes("application/json")) resBody = JSON.parse(text);
+          else resBodyRaw = text;
+        } catch { resBodyRaw = text; }
 
         onPair({
           id: captureId,
@@ -150,6 +137,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(complete ? {} : { truncated: true }),
           },
           duration: Date.now() - startTime,
           loggedAt: new Date().toISOString(),
@@ -164,10 +152,19 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   }
 
   // Static TLS terminator for Anthropic hosts (pre-generated leaf cert).
+  // idleTimeout 0: Bun's 10s default kills any connection with 10s of socket
+  // silence — a long prompt (/compact) waits longer than that for its first
+  // byte, and the resulting mid-request cancel used to crash the process.
+  // A handler failure must degrade to one failed request, quietly — Bun's
+  // default prints a multi-line error over Claude's TUI.
+  const onServeError = (err: Error) => new Response(`cctrace capture error: ${err.message}`, { status: 502 });
+
   const tlsServer = Bun.serve({
     port: 0,
+    idleTimeout: 0,
     tls: { key, cert },
     fetch: interceptFetch,
+    error: onServeError,
   });
 
   const tlsPort: number = tlsServer.port ?? 0;
@@ -186,8 +183,10 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       inflight = generateHostCert(host, caDir).then(({ cert: hCert, key: hKey }) => {
         const server = Bun.serve({
           port: 0,
+          idleTimeout: 0,
           tls: { key: hKey, cert: hCert },
           fetch: interceptFetch,
+          error: onServeError,
         });
         const entry = { port: server.port ?? 0, server };
         hostServers.set(host, entry);
@@ -253,7 +252,11 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
           tlsServer.stop(true);
           for (const entry of hostServers.values()) entry.server.stop(true);
         },
-        flush: () => Promise.all(pending).then(() => {}),
+        // Race a cap so an abandoned capture can never hang exit.
+        flush: () => Promise.race([
+          Promise.all(pending),
+          new Promise((r) => setTimeout(r, 5000)),
+        ]).then(() => {}),
         pairCount: () => pairCount,
       });
     });

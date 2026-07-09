@@ -19,6 +19,45 @@ All notable changes to cctrace are documented here. Format follows
 - **Cumulative token metrics** — per-session totals and cost estimates
   (per-request usage + cache hit rates shipped in 0.4.0).
 
+## [0.6.0] - 2026-07-09
+
+### Fixed
+
+- **A dropped connection can no longer crash cctrace mid-session** — a
+  process-fatal `TypeError: null is not an object` in Bun's stream builtins
+  (observed during long-running operations like `/compact`) killed the proxy
+  and severed the live Claude session behind it. Three layers, each
+  independently tested:
+  - `ReadableStream.tee()` replaced with a guarded pump (`src/stream.ts`):
+    every controller call is wrapped, a client abort still captures the full
+    response, an upstream failure logs the partial body with
+    `truncated: true`, and upstream is only read as fast as Claude consumes
+    it (tee buffered unboundedly).
+  - Capture runs install `uncaughtException`/`unhandledRejection` handlers:
+    an escaped stream error now costs one log line, not the session.
+    Verified to intercept the observed error class on Bun 1.3.14.
+  - Every proxy `Bun.serve` sets `idleTimeout: 0` (default 10s) and an
+    `error` hook (a handler failure returns 502 instead of printing a
+    multi-line error over Claude's TUI); `flush()` is capped at 5s so an
+    abandoned capture cannot hang exit.
+
+### Changed
+
+- **The MITM CA moved from XDG cache to XDG data** —
+  `~/.cache/cctrace` → `~/.local/share/cctrace` (`$XDG_DATA_HOME` respected).
+  The CA is identity material: rotating it silently breaks any trust exported
+  with `--print-ca`, and cache directories are exactly what cleanup tools
+  wipe. A pre-0.6 CA is **moved once, preserving its identity** — same key,
+  same fingerprint, permissions re-locked (dir `0700`, keys `0600`).
+
+### Added
+
+- `--data-dir PATH` / `CCTRACE_DATA_DIR` — the documented names for the
+  storage override. Legacy `--cache-dir` / `CCTRACE_CACHE_DIR` keep working
+  as aliases.
+- `truncated: true` on a captured response whose upstream stream died before
+  finishing (previously the pair was silently dropped).
+
 ## [0.5.0] - 2026-07-08
 
 ### Added
@@ -266,7 +305,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/thevibeworks/cctrace/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thevibeworks/cctrace/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/thevibeworks/cctrace/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/thevibeworks/cctrace/compare/v0.2.0...v0.3.0

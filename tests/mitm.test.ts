@@ -1,10 +1,11 @@
-import { describe, test, expect, afterEach, beforeAll } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, beforeEach } from "bun:test";
 import { startMitm } from "../src/mitm";
-import { ensureCerts, isInterceptHost } from "../src/certs";
+import { ensureCerts, isInterceptHost, migrateCaDir } from "../src/certs";
 import { createCapturer } from "../src/capture";
 import type { TracePair } from "../src/types";
 import { join } from "path";
-import { existsSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { existsSync, rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync } from "fs";
 import * as net from "net";
 import * as tls from "tls";
 
@@ -30,6 +31,50 @@ describe("certs", () => {
     const a = await ensureCerts(caDir);
     const b = await ensureCerts(caDir);
     expect(a.caCertPath).toBe(b.caCertPath);
+  });
+});
+
+// The CA is identity material: migration must move it (same key bits), never
+// regenerate, and must never clobber a CA already at the destination.
+describe("migrateCaDir", () => {
+  let root: string;
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), "cctrace-migrate-")); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const seed = (dir: string, marker: string) => {
+    mkdirSync(dir, { recursive: true });
+    for (const f of ["ca-cert.pem", "ca-key.pem", "leaf-cert.pem", "leaf-key.pem", "host-example.com-cert.pem"]) {
+      writeFileSync(join(dir, f), `${marker}:${f}`);
+    }
+  };
+
+  test("moves the whole dir, preserving contents and key perms", () => {
+    const from = join(root, "cache", "mitm");
+    const to = join(root, "share", "mitm");
+    seed(from, "legacy");
+    expect(migrateCaDir(from, to)).toBe(true);
+    expect(existsSync(from)).toBe(false);
+    expect(readFileSync(join(to, "ca-key.pem"), "utf8")).toBe("legacy:ca-key.pem");
+    expect(readFileSync(join(to, "host-example.com-cert.pem"), "utf8")).toBe("legacy:host-example.com-cert.pem");
+    expect(statSync(join(to, "ca-key.pem")).mode & 0o777).toBe(0o600);
+    expect(statSync(to).mode & 0o777).toBe(0o700);
+  });
+
+  test("never clobbers a CA already at the destination", () => {
+    const from = join(root, "cache", "mitm");
+    const to = join(root, "share", "mitm");
+    seed(from, "legacy");
+    seed(to, "current");
+    expect(migrateCaDir(from, to)).toBe(false);
+    expect(readFileSync(join(to, "ca-key.pem"), "utf8")).toBe("current:ca-key.pem");
+    expect(existsSync(join(from, "ca-key.pem"))).toBe(true); // source untouched
+  });
+
+  test("no-op when the source has no CA or paths are the same", () => {
+    const to = join(root, "share", "mitm");
+    expect(migrateCaDir(join(root, "nope"), to)).toBe(false);
+    seed(to, "x");
+    expect(migrateCaDir(to, to)).toBe(false);
   });
 });
 

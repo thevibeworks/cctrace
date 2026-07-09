@@ -198,6 +198,61 @@ describe("proxy: SSE streaming", () => {
 
     reader.cancel();
   });
+
+  // Regression: a client aborting mid-SSE (dropped /compact connection) used
+  // to cancel one branch of ReadableStream.tee() and crash the whole process
+  // in Bun's stream builtins ("TypeError: null is not an object"). The proxy
+  // must survive, log the complete pair anyway, and keep serving.
+  test("client abort mid-stream: proxy survives and captures the full body", async () => {
+    const upstream = track(Bun.serve({
+      port: 0,
+      fetch() {
+        const stream = new ReadableStream({
+          async start(controller) {
+            controller.enqueue(new TextEncoder().encode("event: a\ndata: {}\n\n"));
+            await Bun.sleep(30);
+            controller.enqueue(new TextEncoder().encode("event: b\ndata: {}\n\n"));
+            await Bun.sleep(30);
+            controller.enqueue(new TextEncoder().encode("event: c\ndata: {}\n\n"));
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+      },
+    }));
+
+    const pairs: TracePair[] = [];
+    const proxy = track(startProxy({
+      targetHost: `localhost:${upstream.port}`,
+      targetScheme: "http",
+      onPair: (p) => pairs.push(p),
+    }));
+
+    const ac = new AbortController();
+    const res = await fetch(`http://localhost:${proxy.port}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+      signal: ac.signal,
+    });
+    const reader = res.body!.getReader();
+    await reader.read(); // first event arrives...
+    ac.abort(); // ...then the client walks away mid-stream
+
+    await proxy.flush();
+    expect(pairs.length).toBe(1);
+    expect(pairs[0].response?.bodyRaw).toContain("event: a");
+    expect(pairs[0].response?.bodyRaw).toContain("event: c");
+
+    // and the proxy still serves the next request
+    const again = await fetch(`http://localhost:${proxy.port}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+    await again.text();
+  });
 });
 
 describe("proxy: error handling", () => {

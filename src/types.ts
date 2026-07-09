@@ -12,6 +12,8 @@ export interface ResponseData {
   headers: Record<string, string>;
   body?: unknown;
   bodyRaw?: string;
+  /** The upstream stream errored before finishing; body holds what arrived. */
+  truncated?: boolean;
 }
 
 export interface TracePair {

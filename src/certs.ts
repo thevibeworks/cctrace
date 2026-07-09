@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, chmodSync, readFileSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, chmodSync, readFileSync, renameSync, cpSync, rmSync } from "fs";
+import { join, dirname, resolve } from "path";
 
 // SANs the leaf cert must cover — every host cctrace intercepts must appear
 // here, or its TLS handshake fails. Kept in sync with isInterceptHost().
@@ -138,6 +138,35 @@ export async function generateHostCert(host: string, caDir: string): Promise<{ c
   ]);
 
   return { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") };
+}
+
+/**
+ * Move a CA dir generated at a legacy location (pre-0.6: XDG cache) to its
+ * current home. The CA is identity material — regenerating it would break any
+ * trust the user exported with --print-ca — so it is moved, not recreated.
+ * Per-host certs live flat in the same dir and move with it.
+ *
+ * No-op (returns false) when the source has no CA, the target already has
+ * one, or the paths are the same. Throws only on hard filesystem errors.
+ */
+export function migrateCaDir(from: string, to: string): boolean {
+  if (resolve(from) === resolve(to)) return false;
+  if (!existsSync(join(from, "ca-cert.pem"))) return false;
+  if (existsSync(join(to, "ca-cert.pem"))) return false;
+  mkdirSync(dirname(to), { recursive: true });
+  try {
+    renameSync(from, to);
+  } catch {
+    // Cross-device, or the target dir already exists — copy then remove.
+    cpSync(from, to, { recursive: true });
+    rmSync(from, { recursive: true, force: true });
+  }
+  chmodSync(to, 0o700);
+  for (const key of ["ca-key.pem", "leaf-key.pem"]) {
+    const p = join(to, key);
+    if (existsSync(p)) chmodSync(p, 0o600);
+  }
+  return true;
 }
 
 /**

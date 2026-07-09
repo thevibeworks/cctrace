@@ -1,4 +1,5 @@
 import { redactPair } from "./redact";
+import { captureTee } from "./stream";
 import type { TracePair } from "./types";
 
 export interface ProxyConfig {
@@ -7,20 +8,6 @@ export interface ProxyConfig {
   targetScheme?: string;
   onPair: (pair: TracePair) => void;
   logAll?: boolean;
-}
-
-async function drainStream(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
-  }
-  const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let offset = 0;
-  for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-  return new TextDecoder().decode(merged);
 }
 
 export interface ProxyServer {
@@ -42,6 +29,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
 
   const server = Bun.serve({
     port: config.port ?? 0,
+    // Bun's 10s idleTimeout default kills long requests (/compact waits
+    // longer than that for its first byte). 0 disables it.
+    idleTimeout: 0,
+
+    // A handler failure must degrade to one failed request, quietly — Bun's
+    // default prints a multi-line error over Claude's TUI.
+    error: (err) => new Response(`cctrace capture error: ${err.message}`, { status: 502 }),
 
     async fetch(req) {
       const url = new URL(req.url);
@@ -129,25 +123,25 @@ export function startProxy(config: ProxyConfig): ProxyServer {
         });
       }
 
-      const [clientStream, captureStream] = upstreamRes.body.tee();
+      const { stream: clientStream, captured } = captureTee(upstreamRes.body);
       pairCount++;
       const captureId = `${Date.now()}_${pairCount.toString(36)}`;
       const resStatus = upstreamRes.status;
       const resHeaders = Object.fromEntries(fwdHeaders.entries());
       const ct = upstreamRes.headers.get("content-type") || "";
 
-      const capture = drainStream(captureStream).then((captured) => {
+      const capture = captured.then(({ text, complete }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
 
         try {
           if (ct.includes("application/json")) {
-            resBody = JSON.parse(captured);
+            resBody = JSON.parse(text);
           } else {
-            resBodyRaw = captured;
+            resBodyRaw = text;
           }
         } catch {
-          resBodyRaw = captured;
+          resBodyRaw = text;
         }
 
         const pair: TracePair = {
@@ -165,6 +159,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(complete ? {} : { truncated: true }),
           },
           duration: Date.now() - startTime,
           loggedAt: new Date().toISOString(),
@@ -188,7 +183,11 @@ export function startProxy(config: ProxyConfig): ProxyServer {
   return {
     port: server.port ?? 0,
     stop: () => server.stop(),
-    flush: () => Promise.all(pending).then(() => {}),
+    // Race a cap so an abandoned capture can never hang exit.
+    flush: () => Promise.race([
+      Promise.all(pending),
+      new Promise((r) => setTimeout(r, 5000)),
+    ]).then(() => {}),
     pairCount: () => pairCount,
   };
 }

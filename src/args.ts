@@ -19,7 +19,8 @@ export const CLI_OPTIONS = {
   dir: { type: "string" },
   port: { type: "string", short: "p" },
   "claude-path": { type: "string" },
-  "cache-dir": { type: "string" },
+  "data-dir": { type: "string" },
+  "cache-dir": { type: "string" }, // legacy alias for --data-dir (pre-0.6)
   fresh: { type: "boolean" },
   with: { type: "string", multiple: true },
 } as const;

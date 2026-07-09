@@ -6,7 +6,7 @@ import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
-import { ensureCerts } from "./certs";
+import { ensureCerts, migrateCaDir } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
@@ -249,19 +249,35 @@ function runCompress(args: string[]) {
   }
 }
 
-// One stable cache dir for every install method (source, bun link, compiled
-// binary) so the MITM CA is generated once and reused — regenerating it each
-// run would defeat any CA the user trusted into their system store. Override
-// with --cache-dir or CCTRACE_CACHE_DIR; else XDG cache (~/.cache/cctrace).
-function resolveCacheDir(): string {
-  const flag = (values as { "cache-dir"?: string })["cache-dir"];
+// One stable data dir for every install method (source, bun link, compiled
+// binary) so the MITM CA is generated once and reused. The CA is identity
+// material — rotating it silently breaks any trust the user exported with
+// --print-ca — so it lives in XDG *data* (~/.local/share/cctrace), not cache:
+// cache dirs are fair game for cleaners. Override with --data-dir /
+// CCTRACE_DATA_DIR (the pre-0.6 --cache-dir / CCTRACE_CACHE_DIR still work).
+function resolveDataDir(): string {
+  const v = values as { "data-dir"?: string; "cache-dir"?: string };
+  const flag = v["data-dir"] || v["cache-dir"];
   if (flag) return resolve(flag);
-  if (process.env.CCTRACE_CACHE_DIR) return resolve(process.env.CCTRACE_CACHE_DIR);
-  const base = process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache");
+  const env = process.env.CCTRACE_DATA_DIR || process.env.CCTRACE_CACHE_DIR;
+  if (env) return resolve(env);
+  const base = process.env.XDG_DATA_HOME || join(process.env.HOME || ".", ".local", "share");
   return join(base, "cctrace");
 }
-const CACHE_DIR = resolveCacheDir();
-const MITM_CA_DIR = join(CACHE_DIR, "mitm");
+const DATA_DIR = resolveDataDir();
+const MITM_CA_DIR = join(DATA_DIR, "mitm");
+
+// Pre-0.6 the CA lived in XDG cache; move it once, preserving CA identity.
+function migrateLegacyCa() {
+  const cacheBase = process.env.XDG_CACHE_HOME || join(process.env.HOME || ".", ".cache");
+  try {
+    if (migrateCaDir(join(cacheBase, "cctrace", "mitm"), MITM_CA_DIR)) {
+      log(`Moved MITM CA to ${MITM_CA_DIR} (data, not cache — cleaners wipe ~/.cache)`, C.dim);
+    }
+  } catch {
+    // Fall through: ensureCerts regenerates at the new location.
+  }
+}
 
 function showHelp() {
   console.log(`
@@ -294,8 +310,8 @@ ${C.yellow}OPTIONS:${C.reset}
   --fresh            Don't merge prior traces of a continued session
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
-  --cache-dir PATH   MITM CA / cache dir (default: ~/.cache/cctrace;
-                     or set CCTRACE_CACHE_DIR)
+  --data-dir PATH    MITM CA / data dir (default: ~/.local/share/cctrace;
+                     or set CCTRACE_DATA_DIR. --cache-dir still works)
   -h, --help         Show this help
 
 ${C.yellow}CAPTURE MODES:${C.reset}
@@ -350,17 +366,17 @@ function findClaude(): string {
 }
 
 async function buildPreload(): Promise<string> {
-  if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
   const srcDir = dirname(import.meta.path);
   const preloadSrc = join(srcDir, "preload.ts");
-  const preloadOut = join(CACHE_DIR, "preload.cjs");
+  const preloadOut = join(DATA_DIR, "preload.cjs");
 
   if (existsSync(preloadOut)) unlinkSync(preloadOut);
 
   const result = await Bun.build({
     entrypoints: [preloadSrc],
-    outdir: CACHE_DIR,
+    outdir: DATA_DIR,
     target: "node",
     format: "cjs",
     naming: "[name].cjs",
@@ -447,6 +463,18 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
 }
 
 function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, onFinalize?: () => string) {
+  // The proxy must outlive any single failed connection: if this process dies,
+  // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
+  // stream internals can throw from native callbacks (observed: process-fatal
+  // TypeError when a proxied SSE connection dropped mid-stream) — log the pair
+  // as lost and keep serving.
+  const survive = (kind: string) => (err: unknown) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`${kind}: ${msg} — capture continues`, C.yellow);
+  };
+  process.on("uncaughtException", survive("Uncaught exception"));
+  process.on("unhandledRejection", survive("Unhandled rejection"));
+
   log(`Capture: ${capturer.label}`, C.cyan);
   console.log("");
 
@@ -521,6 +549,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   if (mode === "mitm" && legacyCaDir !== MITM_CA_DIR && existsSync(legacyCaDir)) {
     log(`Legacy CA cache at ${legacyCaDir} is no longer used — safe to delete`, C.yellow);
   }
+  if (mode === "mitm") migrateLegacyCa();
 
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,
@@ -634,6 +663,7 @@ async function main() {
   }
 
   if (values["print-ca"]) {
+    migrateLegacyCa();
     const certs = await ensureCerts(MITM_CA_DIR);
     console.log(certs.caCertPath);
     process.exit(0);

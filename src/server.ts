@@ -1,6 +1,6 @@
 import type { ServerWebSocket } from "bun";
 import type { TracePair } from "./types";
-import { getLiveHtml } from "./ui";
+import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 
@@ -15,6 +15,8 @@ interface ServerConfig {
   noHistory?: boolean;
   /** Trace files to force-merge at startup (--with). */
   withFiles?: string[];
+  /** Run identity (project name/path) shown in the page header. */
+  meta?: PageMeta;
 }
 
 const clients = new Set<ServerWebSocket<unknown>>();
@@ -88,7 +90,7 @@ export function createServer(config: ServerConfig) {
       if (url.pathname === "/" || url.pathname === "/index.html") {
         // Use the actually-bound port so the WebSocket URL is correct even
         // when we fell back off a busy preferred port.
-        return new Response(getLiveHtml(server.port ?? port), {
+        return new Response(getLiveHtml(server.port ?? port, config.meta), {
           headers: { "Content-Type": "text/html" },
         });
       }

@@ -64,3 +64,35 @@ describe("renderSnapshot", () => {
     expect((parsed[0].request.body as { text: string }).text).toBe(text);
   });
 });
+
+// The header shows run identity: project (server-injected META) + session id
+// (extracted from pairs in the page, so snapshots get it too).
+describe("page meta", () => {
+  const metaPayload = (html: string) => {
+    const m = html.match(/const META = (.*?);\n/);
+    expect(m).not.toBeNull();
+    return m![1];
+  };
+
+  test("meta embeds project name + path", () => {
+    const html = renderSnapshot([pairWith("hi")], { project: "cctrace", projectPath: "/w/cctrace" });
+    expect(JSON.parse(metaPayload(html))).toEqual({ project: "cctrace", projectPath: "/w/cctrace" });
+  });
+
+  test("meta defaults to {} when unknown (cctrace view)", () => {
+    expect(JSON.parse(metaPayload(renderSnapshot([pairWith("hi")])))).toEqual({});
+  });
+
+  test("hostile project path cannot break out of the script tag", () => {
+    const evil = "/tmp/</script><script>alert(1)</script>";
+    const payload = metaPayload(renderSnapshot([], { project: "x", projectPath: evil }));
+    expect(payload.includes("<")).toBe(false);
+    expect(JSON.parse(payload).projectPath).toBe(evil);
+  });
+
+  test("the page inlines extractSessionId and the ctx mount point", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain('id="ctx"');
+    expect(html).toContain("function extractSessionId");
+  });
+});

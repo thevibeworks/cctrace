@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { dirname, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot } from "./server";
@@ -11,6 +11,7 @@ import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, ViewError } from "./view";
+import type { PageMeta } from "./ui";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
 } from "./storage";
@@ -407,6 +408,12 @@ interface LogSink {
   writeHtml: () => string;
 }
 
+/** Run identity for the page header: Claude's project is the cwd it runs in. */
+function pageMeta(): PageMeta {
+  const cwd = process.cwd();
+  return { project: basename(cwd) || cwd, projectPath: cwd };
+}
+
 /** The current run's log paths, computed once so server + sink agree. */
 function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
   const base = opts.logName || `trace-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5)}`;
@@ -456,7 +463,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
         }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
-      writeFileSync(htmlFile, renderSnapshot(all));
+      writeFileSync(htmlFile, renderSnapshot(all, pageMeta()));
       return htmlFile;
     },
   };
@@ -530,6 +537,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       logFile,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
+      meta: pageMeta(),
     });
     livePort = server.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);
@@ -583,6 +591,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       logDir: opts.logDir,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
+      meta: pageMeta(),
     });
     livePort = server.port ?? opts.port;
     log(`Live UI: http://localhost:${livePort}`, C.green);

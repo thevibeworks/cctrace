@@ -19,6 +19,17 @@ All notable changes to cctrace are documented here. Format follows
 - **Cumulative token metrics** — per-session totals and cost estimates
   (per-request usage + cache hit rates shipped in 0.4.0).
 
+## [0.6.1] - 2026-07-10
+
+### Added
+
+- **The header now shows which run you're looking at** — project name
+  (the directory cctrace ran in; full path on hover) and the current Claude
+  session id (short form; hover for the full id, click to copy). The session
+  id is extracted from the pairs in the page, so saved snapshots and
+  `cctrace view` rebuilds show it too; the browser tab is titled
+  `<project> · cctrace` so multiple live UIs stay tellable apart.
+
 ## [0.6.0] - 2026-07-09
 
 ### Fixed
@@ -305,7 +316,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/thevibeworks/cctrace/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/thevibeworks/cctrace/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thevibeworks/cctrace/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/thevibeworks/cctrace/compare/v0.3.0...v0.4.0

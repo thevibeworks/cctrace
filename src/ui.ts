@@ -5,6 +5,7 @@ import {
   fmtCompact,
   shortModel,
   extractMessageInfo,
+  extractSessionId,
   extractTokenCount,
   extractUsageInfo,
   assembleAssistant,
@@ -34,7 +35,16 @@ const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
 );
 const GITHUB_ICON = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
 
-export function getLiveHtml(port: number): string {
+/** Run identity shown in the page header. All fields optional: `cctrace view`
+ * rebuilds from a saved trace where the original cwd is unknown. */
+export interface PageMeta {
+  /** Project name — basename of the directory cctrace ran in. */
+  project?: string;
+  /** Full path of that directory (tooltip). */
+  projectPath?: string;
+}
+
+export function getLiveHtml(port: number, meta: PageMeta = {}): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -94,7 +104,17 @@ export function getLiveHtml(port: number): string {
     .brand { display: flex; align-items: center; gap: 9px; }
     .logo { width: 24px; height: 24px; color: var(--accent); flex-shrink: 0; }
     h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
-    .status { font-size: 12px; color: var(--text-muted); }
+    .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
+    .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx-sep { color: var(--text-faint); }
+    .ctx-sess {
+      font: inherit; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
+      background: var(--btn-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 7px;
+    }
+    .ctx-sess:hover { color: var(--text); }
+    .ctx-sess.copied { color: var(--green); border-color: var(--green); }
+    .status { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
     .status.connected { color: var(--green); }
     .status.disconnected { color: var(--red); }
     .count { color: var(--text-muted); margin-left: auto; }
@@ -502,6 +522,7 @@ export function getLiveHtml(port: number): string {
 <body>
   <header>
     <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
+    <span class="ctx" id="ctx"></span>
     <span class="status disconnected" id="status">disconnected</span>
     <span class="count"><span id="count">0</span> requests</span>
     <span class="header-actions">
@@ -540,6 +561,10 @@ export function getLiveHtml(port: number): string {
     let sessionSelKey = null;   // selected thread in the session view
     let sessionCache = { n: -1, threads: [] };
 
+    // Run identity injected by the server / snapshot writer ({} when unknown,
+    // e.g. a snapshot rebuilt by \`cctrace view\`).
+    const META = ${jsonForScript(meta)};
+
     // Category metadata + categorizer are injected from src/categorize.ts, the
     // single source of truth shared with the unit tests (no drift).
     const CATS = ${JSON.stringify(CATEGORIES)};
@@ -552,6 +577,7 @@ export function getLiveHtml(port: number): string {
     ${fmtCompact.toString()}
     ${shortModel.toString()}
     ${extractMessageInfo.toString()}
+    ${extractSessionId.toString()}
     ${extractTokenCount.toString()}
     ${extractUsageInfo.toString()}
     ${assembleAssistant.toString()}
@@ -603,6 +629,48 @@ export function getLiveHtml(port: number): string {
     };
     applyTheme(getThemePref());
 
+    // ---- Header context: project name + current Claude session id ----
+
+    const ctxEl = document.getElementById('ctx');
+    if (META.project) document.title = META.project + ' \\u00b7 cctrace';
+
+    // The session Claude is in right now: newest live pair wins; prior-run
+    // pairs are the fallback so view-rebuilt snapshots still show an id.
+    function currentSessionId() {
+      let prior = '';
+      for (let i = pairs.length - 1; i >= 0; i--) {
+        const sid = extractSessionId(pairs[i]);
+        if (!sid) continue;
+        if (!pairs[i].prior) return sid;
+        if (!prior) prior = sid;
+      }
+      return prior;
+    }
+
+    let ctxSid = null;
+    function renderCtx() {
+      const sid = currentSessionId();
+      if (sid === ctxSid) return;
+      ctxSid = sid;
+      let html = '';
+      if (META.project) {
+        html += '<span class="ctx-proj" title="' + escapeHtml(META.projectPath || META.project) + '">' + escapeHtml(META.project) + '</span>';
+      }
+      if (sid) {
+        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
+        html += '<button class="ctx-sess" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+      }
+      ctxEl.innerHTML = html;
+      const btn = ctxEl.querySelector('.ctx-sess');
+      if (btn) btn.onclick = function() {
+        navigator.clipboard.writeText(sid).then(function() {
+          btn.classList.add('copied');
+          btn.textContent = 'copied';
+          setTimeout(function() { btn.classList.remove('copied'); btn.textContent = sid.slice(0, 8); }, 1200);
+        });
+      };
+    }
+
     function catCounts() {
       const counts = { all: pairs.length };
       for (const c of CATS) counts[c.id] = 0;
@@ -644,6 +712,7 @@ export function getLiveHtml(port: number): string {
           pairs.push(msg.pair);
           countEl.textContent = pairs.length;
           renderCats();
+          renderCtx();
           if (passesFilters(msg.pair)) {
             appendPair(msg.pair);
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
@@ -753,6 +822,7 @@ export function getLiveHtml(port: number): string {
 
     function render() {
       renderCats();
+      renderCtx();
       priorToggle.classList.toggle('avail', pairs.some(p => p.prior));
       countEl.textContent = pairs.length;
       pairsEl.innerHTML = '';
@@ -1320,8 +1390,8 @@ export function getLiveHtml(port: number): string {
  * view, but loads from window.__PAIRS__ and skips the WebSocket. For offline
  * review of a saved .jsonl trace.
  */
-export function renderSnapshot(tracePairs: TracePair[]): string {
-  const html = getLiveHtml(0);
+export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): string {
+  const html = getLiveHtml(0, meta);
   // Inject before </head> so __PAIRS__ is defined before the body script runs.
   const inject = `<script>window.__PAIRS__ = ${jsonForScript(tracePairs)};</script>`;
   // Function replacement: a string replacement would $-substitute the payload

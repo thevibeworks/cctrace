@@ -82,6 +82,10 @@ interface Capturer {
 
 One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
+The header identifies the run: project name (cwd basename, injected as
+`PageMeta` by the server/CLI; unknown for `cctrace view` rebuilds) and the
+current Claude session id (extracted client-side from pairs, newest live pair
+wins, click to copy) — the tab title becomes `<project> · cctrace`.
 Two views, hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline

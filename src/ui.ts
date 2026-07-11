@@ -692,6 +692,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const sid = currentSessionId();
       if (sid === ctxSid) return;
       ctxSid = sid;
+      var t = '';
+      if (META.project) t += META.project;
+      if (sid) { if (t) t += ' \\u00b7 '; t += sid.slice(0, 8); }
+      document.title = t ? t + ' \\u00b7 cctrace' : (IS_SNAPSHOT ? 'cctrace' : 'cctrace live');
       let html = '';
       if (META.project) {
         html += '<span class="ctx-proj" title="' + escapeHtml(META.projectPath || META.project) + '">' + escapeHtml(META.project) + '</span>';

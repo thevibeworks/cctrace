@@ -6,8 +6,14 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-11
+
 ### Added
 
+- **Tab title includes the session id** — the browser tab now reads
+  `<project> · <session-prefix> · cctrace` once the session id is known,
+  so multiple live UIs (or saved snapshots) of the same project are
+  distinguishable at a glance. Previously only the project name appeared.
 - **Session view tails like tail -f** — opening or refreshing a live session
   lands on the newest turn; re-renders stick to the bottom while you're
   there and never yank the scroll while you're reading history (new activity
@@ -334,7 +340,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/thevibeworks/cctrace/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/thevibeworks/cctrace/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/thevibeworks/cctrace/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thevibeworks/cctrace/compare/v0.4.0...v0.5.0

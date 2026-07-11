@@ -95,4 +95,13 @@ describe("page meta", () => {
     expect(html).toContain('id="ctx"');
     expect(html).toContain("function extractSessionId");
   });
+
+  // The session view tails like tail -f in live mode; the pill and the
+  // snapshot/live switch live in the inline script — guard their presence.
+  test("the page wires the live-tail machinery", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain('id="tail-pill"');
+    expect(html).toContain("function convoAtBottom");
+    expect(html).toContain("const IS_SNAPSHOT");
+  });
 });

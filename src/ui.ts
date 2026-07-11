@@ -84,6 +84,18 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       color-scheme: light;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /* Chrome-quality details: quiet scrollbars, accent selection, visible
+       keyboard focus. The UI should feel like a well-kept terminal. */
+    :root { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border); border-radius: 5px;
+      border: 2px solid transparent; background-clip: padding-box;
+    }
+    ::-webkit-scrollbar-thumb:hover { background-color: var(--text-faint); }
+    ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+    :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
     body {
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 13px;
@@ -114,9 +126,17 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
-    .status { font-size: 12px; color: var(--text-muted); flex-shrink: 0; }
+    .status { font-size: 12px; color: var(--text-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
+    .status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
     .status.connected { color: var(--green); }
+    .status.connected::before { animation: heartbeat 2.4s ease-in-out infinite; }
     .status.disconnected { color: var(--red); }
+    .status.snapshot { color: var(--accent); }
+    @keyframes heartbeat { 50% { opacity: 0.3; } }
+    @media (prefers-reduced-motion: reduce) {
+      .status.connected::before { animation: none; }
+      * { scroll-behavior: auto !important; }
+    }
     .count { color: var(--text-muted); margin-left: auto; }
     .header-actions { display: flex; align-items: center; gap: 2px; }
     .icon-btn {
@@ -243,11 +263,21 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       body.detail-open #detail { flex: 1; max-width: 100%; border-left: none; }
     }
     /* ---- Session view: threads + conversation ---- */
-    #session-view { display: none; flex: 1; min-height: 0; }
+    #session-view { display: none; flex: 1; min-height: 0; position: relative; }
     body.view-session #session-view { display: flex; }
     #threads { flex: 0 0 320px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
+    #tail-pill {
+      position: absolute; right: 24px; bottom: 16px; z-index: 5;
+      display: none; align-items: center; gap: 6px;
+      font: inherit; font-size: 12px; color: var(--text);
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 999px; padding: 5px 12px; cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+    }
+    #tail-pill.show { display: inline-flex; }
+    #tail-pill:hover { border-color: var(--accent); color: var(--accent); }
     /* Shared value colors (index chips + detail) */
     .ok { color: var(--green); }
     .warn { color: var(--amber); }
@@ -318,6 +348,12 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       color: var(--text-faint);
     }
     .empty a { color: var(--accent); }
+    .empty-hint { margin-top: 10px; font-size: 11px; color: var(--text-faint); opacity: 0.8; }
+    .empty-hint kbd {
+      font: inherit; color: var(--text-muted);
+      border: 1px solid var(--border); border-bottom-width: 2px;
+      border-radius: 4px; padding: 0 5px;
+    }
     .section { margin-bottom: 14px; }
     .section:last-child { margin-bottom: 0; }
     .section h4 {
@@ -523,7 +559,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
   <header>
     <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="ctx" id="ctx"></span>
-    <span class="status disconnected" id="status">disconnected</span>
+    <span class="status disconnected" id="status">offline</span>
     <span class="count"><span id="count">0</span> requests</span>
     <span class="header-actions">
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
@@ -535,7 +571,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       <button class="tab active" id="tab-requests">Requests</button>
       <button class="tab" id="tab-session">Session</button>
     </span>
-    <input type="text" id="filter" placeholder="Filter by URL, method, status...">
+    <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
     <button id="prior-toggle" class="active" title="Show/hide requests merged from previous runs of this session">Prev runs</button>
     <button id="autoscroll" class="active">Auto-scroll</button>
     <button id="clear">Clear</button>
@@ -548,10 +584,13 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
   <div id="session-view">
     <aside id="threads"></aside>
     <main id="convo"></main>
+    <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
   </div>
 
   <script>
     const pairs = [];
+    // Snapshot pages embed their pairs in <head>; live pages stream over WS.
+    const IS_SNAPSHOT = Array.isArray(window.__PAIRS__);
     let autoScroll = true;
     let filter = '';
     let activeCat = 'all';
@@ -598,6 +637,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     const detailEl = document.getElementById('detail');
     const threadsEl = document.getElementById('threads');
     const convoEl = document.getElementById('convo');
+    const tailPill = document.getElementById('tail-pill');
     const filterEl = document.getElementById('filter');
     const autoScrollBtn = document.getElementById('autoscroll');
     const clearBtn = document.getElementById('clear');
@@ -695,9 +735,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
 
     function connect() {
       const ws = new WebSocket('ws://localhost:${port}/ws');
-      ws.onopen = () => { statusEl.textContent = 'connected'; statusEl.className = 'status connected'; };
+      ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'status connected'; };
       ws.onclose = () => {
-        statusEl.textContent = 'disconnected'; statusEl.className = 'status disconnected';
+        statusEl.textContent = 'offline'; statusEl.className = 'status disconnected';
         setTimeout(connect, 1000);
       };
       ws.onmessage = (e) => {
@@ -827,7 +867,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       countEl.textContent = pairs.length;
       pairsEl.innerHTML = '';
       if (pairs.length === 0) {
-        pairsEl.innerHTML = '<div class="empty">Waiting for requests...</div>';
+        pairsEl.innerHTML = '<div class="empty">Waiting for requests...' +
+          '<div class="empty-hint"><kbd>j</kbd> <kbd>k</kbd> walk requests \\u00b7 <kbd>/</kbd> filter \\u00b7 <kbd>Esc</kbd> close</div></div>';
         return;
       }
       let any = false;
@@ -911,7 +952,11 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     window.navDetail = navDetail;
 
     document.addEventListener('keydown', (e) => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
+        if (e.key === 'Escape') e.target.blur();
+        return;
+      }
+      if (e.key === '/') { filterEl.focus(); e.preventDefault(); return; }
       if (view === 'requests' && detailId) {
         if (e.key === 'Escape') location.hash = '';
         else if (e.key === 'j' || e.key === 'ArrowDown') { navDetail(1); e.preventDefault(); }
@@ -1228,6 +1273,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       if (!threads.length) {
         threadsEl.innerHTML = '';
         convoEl.innerHTML = '<div class="empty">No /v1/messages requests captured yet.</div>';
+        convoKey = null;
+        tailPill.classList.remove('show');
         return;
       }
       let sel = null;
@@ -1274,7 +1321,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         for (const t of utils) inner += threadCard(t, t.key === sel.key);
         html += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
       }
+      const top = threadsEl.scrollTop; // live re-renders must not move the list
       threadsEl.innerHTML = html;
+      threadsEl.scrollTop = top;
     }
 
     // Tools that mutate or spawn work render expanded (ccx convention);
@@ -1322,7 +1371,38 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         '<div class="turn-role">' + escapeHtml(String(turn.role)) + meta + '</div>' + inner + '</div>';
     }
 
+    // ---- Live tail ----
+    // The conversation pane behaves like tail -f: opening a session live
+    // (including a page refresh) lands on the newest turn, re-renders stick
+    // to the bottom while you're there, and never yank the view while you're
+    // reading history — new activity surfaces as a pill instead. Snapshots
+    // open at the top: reviewing a finished session is reading, not tailing.
+    let convoKey = null;   // thread key currently rendered in the convo pane
+    const TAIL_SLACK = 60; // px from the bottom that still counts as tailing
+
+    function convoAtBottom() {
+      return convoEl.scrollHeight - convoEl.scrollTop - convoEl.clientHeight < TAIL_SLACK;
+    }
+    function convoToBottom() {
+      convoEl.scrollTop = convoEl.scrollHeight;
+      tailPill.classList.remove('show');
+    }
+    tailPill.onclick = convoToBottom;
+    convoEl.addEventListener('scroll', () => {
+      if (convoAtBottom()) tailPill.classList.remove('show');
+    });
+
     function renderConvoPane(t) {
+      const sameThread = convoKey === t.key;
+      const stick = sameThread && convoAtBottom();
+      const prevTop = convoEl.scrollTop;
+      const prevHeight = convoEl.scrollHeight;
+      // Fold state survives re-renders positionally: turns only mutate at the
+      // tail (new turns append; the last one re-reconstructs), so details N
+      // is the same fold before and after for everything the user toggled.
+      const foldState = sameThread
+        ? Array.prototype.map.call(convoEl.querySelectorAll('details'), d => d.open)
+        : null;
       let chips = '';
       chips += kv('model', escapeHtml(t.model || '?'), 'model');
       chips += kv('requests', t.usage.requests);
@@ -1344,7 +1424,20 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         html += renderSessionTurn(turn, results);
       }
       convoEl.innerHTML = html;
-      convoEl.scrollTop = 0;
+      if (foldState) {
+        const details = convoEl.querySelectorAll('details');
+        for (let i = 0; i < details.length && i < foldState.length; i++) details[i].open = foldState[i];
+      }
+      convoKey = t.key;
+      if (!sameThread) {
+        convoEl.scrollTop = IS_SNAPSHOT ? 0 : convoEl.scrollHeight;
+        tailPill.classList.remove('show');
+      } else if (stick) {
+        convoToBottom();
+      } else {
+        convoEl.scrollTop = prevTop;
+        if (convoEl.scrollHeight > prevHeight) tailPill.classList.add('show');
+      }
     }
 
     filterEl.oninput = () => { filter = filterEl.value; render(); refreshDetailNav(); };
@@ -1362,6 +1455,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       pairs.length = 0;
       activeCat = 'all';
       sessionCache = { n: -1, threads: [] };
+      convoKey = null;
+      tailPill.classList.remove('show');
       if (detailId) location.hash = '';
       render();
     };
@@ -1369,10 +1464,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     renderCats();
     // Offline snapshot: if pairs are embedded (static export), load them and
     // skip the WebSocket. Otherwise connect live.
-    if (Array.isArray(window.__PAIRS__)) {
+    if (IS_SNAPSHOT) {
       for (const p of window.__PAIRS__) { p._cat = categorize(p.request.url); pairs.push(p); }
       statusEl.textContent = 'snapshot';
-      statusEl.className = 'status connected';
+      statusEl.className = 'status snapshot';
       autoScroll = false;
       autoScrollBtn.classList.remove('active');
     } else {

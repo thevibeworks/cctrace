@@ -6,8 +6,26 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Session view tails like tail -f** — opening or refreshing a live session
+  lands on the newest turn; re-renders stick to the bottom while you're
+  there and never yank the scroll while you're reading history (new activity
+  surfaces as a "↓ new activity" pill instead). Folds you open survive live
+  re-renders; the thread sidebar keeps its scroll. Snapshots still open at
+  the top — reviewing a finished session is reading, not tailing.
+- UI polish: thin quiet scrollbars, live/offline/snapshot status dot (with a
+  heartbeat pulse when live), accent `::selection` + `:focus-visible`, `/`
+  focuses the filter, keyboard hints in the empty state,
+  `prefers-reduced-motion` respected.
+- `docs/design/` — written design docs: the UI design language
+  (`ui.md`) and the session-replay proposal (`session-replay.md`).
+
 ### Planned
 
+- **Session replay** — step / scrub / play through a captured session as it
+  happened; viewer-side over existing traces, phased P1–P4
+  (design: `docs/design/session-replay.md`).
 - **Codex support** — trace OpenAI Codex CLI through the same MITM front door
   (OpenAI host filters, endpoint categories, Codex-aware conversation
   reconstruction).

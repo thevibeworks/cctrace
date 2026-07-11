@@ -364,6 +364,10 @@ Never paste raw output into a public issue. Seriously.
 
 ## Roadmap
 
+- **Session replay** -- re-experience a captured session as it happened:
+  step through turns, scrub a timeline, play at speed, deep-link a moment.
+  Works on every existing trace (the wire is already a timeline). Design:
+  [docs/design/session-replay.md](docs/design/session-replay.md).
 - **Codex support** -- trace OpenAI Codex CLI through the same MITM front
   door. The proxy layer is already agent-agnostic; what's left is OpenAI host
   filters, endpoint categories, and conversation reconstruction for its wire

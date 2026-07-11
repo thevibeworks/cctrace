@@ -106,10 +106,16 @@ Two views, hash-routed:
   history length; later same-length requests win). tool_results fold into
   their tool_use by id (ccx convention); result-only user turns are skipped;
   mutating tools (Bash/Edit/Write/Task...) render expanded, lookups collapsed.
-  Every assistant turn links back to its wire request.
+  Every assistant turn links back to its wire request. The conversation pane
+  tails like tail -f in live mode (open/refresh lands on the newest turn,
+  sticky bottom, "new activity" pill when scrolled up, folds survive
+  re-renders via positional restore); snapshots open at the top.
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
   `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.
+- UI design language and feature designs are written down in `docs/design/`
+  (`ui.md` = the rules; `session-replay.md` = the replay proposal). Read
+  `ui.md` before adding UI.
 
 ## Commands
 

@@ -6,6 +6,29 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Generated markup is now grammar-clean** — two classes of captured
+  content broke the page's HTML: `fmtCost`'s `<$0.0001` label reached
+  `innerHTML` with a raw `<` (chips, thread meta, turn usage), and ANSI
+  escape sequences in captured terminal output passed through `escapeHtml`
+  — control characters are HTML parse errors and rendered as garbled
+  `[1m` text. `kv()` now escapes its value (a chip can never open a tag),
+  and `escapeHtml` strips ANSI CSI sequences and all other C0 control
+  chars. A parse5-backed test sweeps every fragment the page generates
+  from hostile captures and fails on any parse error.
+
+### Added
+
+- **Snapshots self-check and self-repair** — every pair enters the page
+  through one guard: a structurally broken pair (torn trace line, no
+  request/url) is dropped with a console note instead of blanking the page,
+  and each list row / detail panel / session turn / thread card renders
+  inside its own try/catch, so one corrupt item degrades to one visible
+  "broken item" card. `cctrace view` warns about skipped torn/broken lines,
+  and every written snapshot is verified (the embedded pair payload is
+  re-extracted and re-parsed) before the CLI reports success.
+
 ## [0.8.0] - 2026-07-11
 
 ### Added

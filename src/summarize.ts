@@ -1,9 +1,11 @@
+import { pairCost, fmtCost, costTitle } from "./pricing";
+
 // Pure extraction/summary helpers shared by the web UI and unit tests.
 //
 // Every function here is ALSO inlined into the live web UI via
 // Function.prototype.toString() (same pattern as categorize.ts), so each must
-// be self-contained: no imports, no captured module state, and calls only to
-// other functions in this file (which are inlined alongside it, names intact).
+// be self-contained: no captured module state, and calls only to other
+// inlined functions by name (pricing.ts helpers are inlined alongside).
 
 /** Parse an SSE stream ("data: {...}" lines) into an array of JSON events. */
 export function parseSse(raw: unknown): any[] {
@@ -237,6 +239,8 @@ export function summarizePair(pair: any, cat: string): any[] {
         title: m.cacheWrite.toLocaleString() + " prompt tokens written to cache",
       });
     if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
+    const cost = pairCost(m);
+    if (cost && cost.total > 0) chips.push({ t: fmtCost(cost.total), title: costTitle(cost) });
     if (m.stopReason && m.stopReason !== "end_turn" && m.stopReason !== "tool_use")
       chips.push({ t: m.stopReason, c: "warn", title: "stop reason" });
   } else if (cat === "tokens") {

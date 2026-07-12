@@ -21,6 +21,7 @@ src/
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
 ├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
+├── pricing.ts      # Claude model pricing + per-pair cost estimation (inlined into UI)
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
 ├── html.ts         # Static HTML generator (legacy node mode only)
@@ -90,8 +91,13 @@ Two views, hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
   human-readable chips — model, in/out tokens, cache read/write + hit %,
-  count_tokens results, usage window percentages (5h / 7d / per-model),
-  telemetry event counts, error types. Clicking a row opens a split detail
+  estimated cost (src/pricing.ts: embedded sticker prices; cache rates via
+  the universal multipliers 0.1x read, 1.25x 5m write, 2x 1h write; writes
+  without a TTL breakdown are assumed 5m, same as ccusage), count_tokens
+  results, usage window percentages (5h / 7d / per-model), telemetry event
+  counts, error types. The detail panel adds prompt size, output tok/s, and
+  a cost tooltip broken down by component; the Session view shows per-turn
+  and per-thread cost. Clicking a row opens a split detail
   panel beside the list (no page jump); prev/next + `j`/`k` walk the
   FILTERED list; `Esc` closes. Messages render conversation-first (system
   prompt, tools, thinking, tool_use collapsed; long texts clamp with a

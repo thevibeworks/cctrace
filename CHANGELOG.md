@@ -6,6 +6,21 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Estimated cost everywhere** (`src/pricing.ts`) — every `/v1/messages`
+  request now shows an estimated USD cost: as a chip in the Requests list,
+  in the detail panel (with a tooltip breaking it down into input / output /
+  cache read / cache write), per assistant turn and per thread in the
+  Session view. Pricing is an embedded sticker-price table (works offline in
+  snapshots); cache rates use Anthropic's universal multipliers (0.1x read,
+  1.25x 5m write, 2x 1h write — the 5m/1h split comes from the wire's
+  `cache_creation` breakdown, and writes without one are billed at the
+  cheaper 5m rate, matching ccusage). Unknown models simply show no cost.
+- **More token metrics in the detail panel** — effective prompt size
+  (input + cache read + cache write) and output speed (tok/s over
+  wall-clock duration).
+
 ## [0.7.0] - 2026-07-11
 
 ### Added

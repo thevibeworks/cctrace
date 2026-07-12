@@ -66,7 +66,8 @@ Prints as `Live UI: http://localhost:<port>` (9317 by default; concurrent
 instances land on 9318, 9319, ...). Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with chips — model,
-  in/out tokens, cache read/write + hit %, estimated USD cost, errors. Click a
+  in/out tokens, a cache verdict (green hit with ↓read ↑write + hit %, amber
+  cold write or miss), estimated USD cost, errors. Click a
   row for the detail panel: full conversation, prompt size, tok/s, cost
   breakdown, raw payloads. `j`/`k` walk rows, `/` filters, `Esc` closes.
 - **Session** (`#/session[/<key>]`): reconstructed conversation (main chat,

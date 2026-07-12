@@ -10,6 +10,8 @@ import {
   extractUsageInfo,
   assembleAssistant,
   summarizePair,
+  hasCacheControl,
+  summarizeCache,
 } from "./summarize";
 import {
   threadSig,
@@ -646,6 +648,13 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
     .treq:first-child { border-top: none; }
     .treq:hover { background: var(--hover); color: var(--text); }
+    /* prompt-cache verdict per wire request: green hit, amber cold/miss */
+    .cdot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--border); flex: none; align-self: center;
+    }
+    .cdot-hit { background: var(--green); }
+    .cdot-cold, .cdot-miss { background: var(--amber); }
     .treq-io { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
@@ -756,6 +765,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     ${extractTokenCount.toString()}
     ${extractUsageInfo.toString()}
     ${assembleAssistant.toString()}
+    ${hasCacheControl.toString()}
+    ${summarizeCache.toString()}
     ${summarizePair.toString()}
 
     // Pricing + cost estimation, injected from src/pricing.ts.
@@ -1294,16 +1305,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       row2 += kv('input', m.input.toLocaleString());
       row2 += kv('output', m.output.toLocaleString());
       if (m.thinking > 0) row2 += kv('thinking', m.thinking.toLocaleString());
-      row2 += kv('cache read', m.cacheRead.toLocaleString() +
-        (m.cacheRead > 0 && m.cachePct != null ? ' (' + m.cachePct + '% of prompt)' : ''), m.cacheRead > 0 ? 'ok' : '');
-      let cw = m.cacheWrite.toLocaleString();
-      if (m.cacheWrite > 0) {
-        const parts = [];
-        if (m.cacheWrite5m > 0) parts.push(m.cacheWrite5m.toLocaleString() + ' 5m');
-        if (m.cacheWrite1h > 0) parts.push(m.cacheWrite1h.toLocaleString() + ' 1h');
-        if (parts.length) cw += ' (' + parts.join(' + ') + ')';
-      }
-      row2 += kv('cache write', cw, m.cacheWrite > 0 ? 'warn' : '');
+      const cache = summarizeCache(m, pair.request.body);
+      if (cache) row2 += kv('cache', cache.v, cache.c, cache.title);
       // Derived metrics: effective prompt size, streaming speed, estimated cost.
       const prompt = m.input + m.cacheRead + m.cacheWrite;
       if (prompt > 0) row2 += kv('prompt', fmtCompact(prompt), '', prompt.toLocaleString() + ' prompt tokens = input + cache read + cache write');
@@ -1573,7 +1576,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
           const p = pairs.find(x => x.id === pid);
           if (!p) continue;
           const m = extractMessageInfo(p);
+          const cc = summarizeCache(m, p.request.body);
           rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
+            '<span class="cdot' + (cc ? ' cdot-' + cc.kind : '') + '" title="' + (cc ? escapeHtml(cc.title) : 'no prompt caching on this request') + '"></span>' +
             '<span>' + new Date(p.request.timestamp * 1000).toLocaleTimeString() + '</span>' +
             '<span class="treq-io">in ' + fmtCompact(m.input + m.cacheRead + m.cacheWrite) + ' \\u00b7 out ' + fmtCompact(m.output) + '</span>' +
             '<span>' + formatDuration(p.duration) + '</span></a>';
@@ -1691,8 +1696,14 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());
-      if (t.usage.cacheRead) chips += kv('cache read', t.usage.cacheRead.toLocaleString(), 'ok');
-      if (t.usage.cacheWrite) chips += kv('cache write', t.usage.cacheWrite.toLocaleString(), 'warn');
+      if (t.usage.cacheRead || t.usage.cacheWrite) {
+        chips += kv('cache',
+          (t.usage.cacheRead ? '\\u2193' + fmtCompact(t.usage.cacheRead) : '') +
+          (t.usage.cacheRead && t.usage.cacheWrite ? ' ' : '') +
+          (t.usage.cacheWrite ? '\\u2191' + fmtCompact(t.usage.cacheWrite) : ''),
+          t.usage.cacheRead ? 'ok' : 'warn',
+          'prompt cache totals over this thread\\u2019s requests \\u2014 \\u2193 read, \\u2191 written');
+      }
       if (t.usage.cost) chips += kv('cost', fmtCost(t.usage.cost), '', 'estimated from sticker pricing \\u2014 sum over this thread\\u2019s requests');
       let html = '<div class="chips">' + chips + '</div>';
       if (t.agentOf) {

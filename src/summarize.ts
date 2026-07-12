@@ -106,6 +106,73 @@ export function extractMessageInfo(pair: any): any {
   };
 }
 
+/** True when any system/tools/messages block sets cache_control. */
+export function hasCacheControl(body: any): boolean {
+  if (!body || typeof body !== "object") return false;
+  const blocks: any[] = [];
+  if (Array.isArray(body.system)) blocks.push(...body.system);
+  if (Array.isArray(body.tools)) blocks.push(...body.tools);
+  if (Array.isArray(body.messages)) {
+    for (const msg of body.messages) if (msg && Array.isArray(msg.content)) blocks.push(...msg.content);
+  }
+  return blocks.some((b) => b && typeof b === "object" && b.cache_control);
+}
+
+/**
+ * Prompt-cache verdict for one /v1/messages pair, as one compact chip:
+ *   hit  — prompt prefix served from cache (cacheRead > 0)        [green]
+ *   cold — nothing read, prefix (re)written: first request of a
+ *          conversation, or the cached prefix changed/expired     [amber]
+ *   miss — cache_control was set but nothing read OR written
+ *          (cacheable prefix below the ~1k-token minimum)         [amber]
+ * Returns {kind, v, c, title} — v is the compact value ("↓116.9k 97% ↑1.2k"),
+ * title the spelled-out tooltip — or null when the request doesn't use the
+ * cache at all. Takes extractMessageInfo's result + the request body.
+ */
+export function summarizeCache(m: any, body: any): any {
+  if (!m || m.error) return null;
+  const read = m.cacheRead || 0;
+  const write = m.cacheWrite || 0;
+  if (!read && !write) {
+    if (!hasCacheControl(body)) return null;
+    return {
+      kind: "miss",
+      v: "miss",
+      c: "warn",
+      title:
+        "prompt cache: cache_control is set but nothing was read or written — " +
+        "the cacheable prefix is likely below the ~1k-token minimum",
+    };
+  }
+  const bits: string[] = [];
+  const tip: string[] = [];
+  if (read) {
+    bits.push("↓" + fmtCompact(read) + (m.cachePct != null ? " " + m.cachePct + "%" : ""));
+    tip.push(
+      read.toLocaleString() + " tokens read from cache" +
+        (m.cachePct != null ? " (" + m.cachePct + "% of prompt, billed at 0.1x input)" : ""),
+    );
+  }
+  if (write) {
+    let w = "↑" + fmtCompact(write);
+    const ttl: string[] = [];
+    if (m.cacheWrite5m > 0) ttl.push(fmtCompact(m.cacheWrite5m) + " 5m");
+    if (m.cacheWrite1h > 0) ttl.push(fmtCompact(m.cacheWrite1h) + " 1h");
+    if (m.cacheWrite1h > 0) w += " (" + ttl.join(" + ") + ")";
+    bits.push(w);
+    tip.push(write.toLocaleString() + " tokens written to cache" + (ttl.length ? " (" + ttl.join(" + ") + ")" : ""));
+  }
+  const kind = read > 0 ? "hit" : "cold";
+  return {
+    kind,
+    v: bits.join(" "),
+    c: kind === "hit" ? "ok" : "warn",
+    title:
+      "prompt cache: " + tip.join(" · ") +
+      (read ? "" : " — cold: no prefix reuse (conversation start, or the cached prefix changed/expired)"),
+  };
+}
+
 /**
  * Claude Code session id from a /v1/messages request. The wire carries it in
  * request.body.metadata.user_id — current builds send a JSON string
@@ -226,18 +293,8 @@ export function summarizePair(pair: any, cat: string): any[] {
     }
     chips.push({ t: "in " + fmtCompact(m.input), title: m.input.toLocaleString() + " uncached input tokens" });
     chips.push({ t: "out " + fmtCompact(m.output), title: m.output.toLocaleString() + " output tokens" });
-    if (m.cacheRead > 0)
-      chips.push({
-        t: "cache read " + fmtCompact(m.cacheRead) + (m.cachePct != null ? " (" + m.cachePct + "%)" : ""),
-        c: "ok",
-        title: m.cacheRead.toLocaleString() + " prompt tokens read from cache (" + m.cachePct + "% of prompt)",
-      });
-    if (m.cacheWrite > 0)
-      chips.push({
-        t: "cache write " + fmtCompact(m.cacheWrite),
-        c: "warn",
-        title: m.cacheWrite.toLocaleString() + " prompt tokens written to cache",
-      });
+    const cache = summarizeCache(m, pair.request && pair.request.body);
+    if (cache) chips.push({ t: "cache " + cache.v, c: cache.c, title: cache.title });
     if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
     const cost = pairCost(m);
     if (cost && cost.total > 0) chips.push({ t: fmtCost(cost.total), title: costTitle(cost) });

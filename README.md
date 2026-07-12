@@ -194,8 +194,11 @@ traffic gets its own filter category in the UI.
 ## The web UI
 
 - **Inline row summaries** -- every request row reads at a glance: model,
-  in/out tokens, cache read/write + hit %, count_tokens results, usage window
-  percentages (5h / 7d / per-model), telemetry event counts, error types.
+  in/out tokens, a prompt-cache verdict (green hit with read/write arrows +
+  hit %, amber cold write or miss -- the session view's wire rows carry a
+  matching dot, so cache breaks stand out), count_tokens results, usage
+  window percentages (5h / 7d / per-model), telemetry event counts, error
+  types.
 - **Category filter chips** with live counts: Messages, Usage/Credits, OAuth,
   MCP, Bootstrap, Telemetry, Other. Click to filter; combine with text search.
 - **Split detail panel** -- click a row and the detail opens beside the list

@@ -6,6 +6,20 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Prompt-cache hit/miss attribution** — every /v1/messages request now
+  carries one compact cache verdict instead of two verbose chips: green
+  `cache ↓116.9k 97% ↑1.2k` when the prompt prefix was served from cache
+  (hit % of prompt), amber `cache ↑50.0k` for a cold write (conversation
+  start, or the cached prefix changed/expired), amber `cache miss` when
+  cache_control was set but nothing was read or written, and no chip when
+  the request doesn't use the cache. 1h-TTL writes get their own breakdown
+  (they bill at 2x). Tooltips spell out the full numbers. The session
+  view's wire-request rows carry a matching colored dot, so scanning a
+  thread shows exactly where the cache broke; thread chips compact to the
+  same ↓/↑ format.
+
 ### Fixed
 
 - **Generated markup is now grammar-clean** — two classes of captured

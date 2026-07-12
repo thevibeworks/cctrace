@@ -6,6 +6,8 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-12
+
 ### Added
 
 - **Update checker** — cctrace now knows when it's stale. The npm registry
@@ -436,7 +438,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/thevibeworks/cctrace/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/thevibeworks/cctrace/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/thevibeworks/cctrace/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/thevibeworks/cctrace/compare/v0.6.0...v0.6.1

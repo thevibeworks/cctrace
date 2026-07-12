@@ -9,6 +9,8 @@ import {
   extractUsageInfo,
   assembleAssistant,
   summarizePair,
+  hasCacheControl,
+  summarizeCache,
 } from "../src/summarize";
 
 // Fixtures mirror real captured shapes (sanitized), see .cctrace/*.jsonl.
@@ -217,16 +219,65 @@ describe("extractUsageInfo", () => {
   });
 });
 
+describe("summarizeCache", () => {
+  const m = (over: Record<string, unknown> = {}) => ({
+    cacheRead: 0, cacheWrite: 0, cacheWrite5m: 0, cacheWrite1h: 0, cachePct: null, error: null, ...over,
+  });
+  const cachedBody = { system: [{ type: "text", text: "x", cache_control: { type: "ephemeral" } }] };
+
+  test("hit: read > 0 is green with hit% and read/write arrows", () => {
+    const c = summarizeCache(m({ cacheRead: 90000, cacheWrite: 1200, cacheWrite5m: 1200, cachePct: 97 }), cachedBody);
+    expect(c).toMatchObject({ kind: "hit", c: "ok", v: "↓90.0k 97% ↑1.2k" });
+    expect(c.title).toContain("read from cache");
+  });
+
+  test("cold: write without read is amber and says why", () => {
+    const c = summarizeCache(m({ cacheWrite: 50000, cacheWrite5m: 50000 }), cachedBody);
+    expect(c).toMatchObject({ kind: "cold", c: "warn", v: "↑50.0k" });
+    expect(c.title).toContain("cold");
+  });
+
+  test("1h-TTL writes get a breakdown (they bill at 2x)", () => {
+    const c = summarizeCache(m({ cacheWrite: 3000, cacheWrite5m: 1000, cacheWrite1h: 2000 }), cachedBody);
+    expect(c.v).toBe("↑3.0k (1.0k 5m + 2.0k 1h)");
+  });
+
+  test("miss: cache_control set but nothing read or written", () => {
+    const c = summarizeCache(m(), cachedBody);
+    expect(c).toMatchObject({ kind: "miss", v: "miss", c: "warn" });
+  });
+
+  test("null when the request doesn't use the cache", () => {
+    expect(summarizeCache(m(), { messages: [{ role: "user", content: "hi" }] })).toBeNull();
+    expect(summarizeCache(m({ error: "overloaded_error" }), cachedBody)).toBeNull();
+  });
+});
+
+describe("hasCacheControl", () => {
+  test("finds cache_control in system, tools, and message blocks", () => {
+    expect(hasCacheControl({ system: [{ cache_control: { type: "ephemeral" } }] })).toBe(true);
+    expect(hasCacheControl({ tools: [{ name: "t" }, { name: "u", cache_control: {} }] })).toBe(true);
+    expect(hasCacheControl({ messages: [{ role: "user", content: [{ type: "text", text: "x", cache_control: {} }] }] })).toBe(true);
+  });
+
+  test("false for plain bodies and junk", () => {
+    expect(hasCacheControl({ messages: [{ role: "user", content: "hi" }] })).toBe(false);
+    expect(hasCacheControl(null)).toBe(false);
+    expect(hasCacheControl("nope")).toBe(false);
+  });
+});
+
 describe("summarizePair", () => {
   test("messages: model, tokens, cache, thinking", () => {
     const chips = summarizePair(streamingPair(), "messages");
     const texts = chips.map((c: any) => c.t);
-    // Last chip is the estimated cost (opus-4-6 sticker pricing).
-    expect(texts.slice(0, 6)).toEqual(["opus-4-6", "in 3", "out 76", "cache read 19.6k (50%)", "cache write 19.6k", "think 44"]);
-    expect(texts[6]).toMatch(/^\$0\./);
-    expect(chips[6].title).toContain("estimated");
-    expect(chips[3].c).toBe("ok");
-    expect(chips[4].c).toBe("warn");
+    // One compact cache chip: read + hit% + write. Last chip is the cost.
+    expect(texts.slice(0, 5)).toEqual(["opus-4-6", "in 3", "out 76", "cache ↓19.6k 50% ↑19.6k (19.6k 1h)", "think 44"]);
+    expect(texts[5]).toMatch(/^\$0\./);
+    expect(chips[5].title).toContain("estimated");
+    expect(chips[3].c).toBe("ok"); // cacheRead > 0 -> hit
+    expect(chips[3].title).toContain("read from cache");
+    expect(chips[3].title).toContain("written to cache");
   });
 
   test("messages: error chip short-circuits token chips", () => {

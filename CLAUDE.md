@@ -95,7 +95,11 @@ wins, click to copy) — the tab title becomes `<project> · cctrace`.
 Two views, hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
-  human-readable chips — model, in/out tokens, cache read/write + hit %,
+  human-readable chips — model, in/out tokens, one compact prompt-cache
+  verdict chip (`summarizeCache` in src/summarize.ts: hit = read > 0, green,
+  "↓read hit% ↑write" with a 1h-TTL breakdown since 1h bills 2x; cold =
+  write only, amber; miss = cache_control set but nothing read/written;
+  no chip when caching isn't used — tooltips spell the numbers out),
   estimated cost (src/pricing.ts: embedded sticker prices; cache rates via
   the universal multipliers 0.1x read, 1.25x 5m write, 2x 1h write; writes
   without a TTL breakdown are assumed 5m, same as ccusage), count_tokens

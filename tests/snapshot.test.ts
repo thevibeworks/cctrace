@@ -104,6 +104,13 @@ describe("page meta", () => {
     expect(html).toContain("function fmtCost");
   });
 
+  // Cache hit/miss chips + dots depend on these being inlined.
+  test("the page inlines the cache-verdict helpers", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain("function summarizeCache");
+    expect(html).toContain("function hasCacheControl");
+  });
+
   // The session view tails like tail -f in live mode; the pill and the
   // snapshot/live switch live in the inline script — guard their presence.
   test("the page wires the live-tail machinery", () => {

@@ -19,6 +19,7 @@ src/
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
 ├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
+├── version.ts      # CCTRACE_VERSION + daily npm update check (cached in data dir, fail-soft)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
 ├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
@@ -168,6 +169,7 @@ cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz
 cctrace ps [--json]                       # list live cctrace instances (URL, project, session)
+cctrace --version                         # print version (+ newer version if known)
 ```
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
@@ -178,6 +180,19 @@ runs; the server exposes `/api/instances`; the web UI header grows a "⇄ N
 more" switcher when other instances exist. Port allocation walks
 9317, 9318, ... before falling back to an OS-assigned port, so concurrent
 runs land on predictable neighbors.
+
+**Update check** (`src/version.ts`): startup reads only a local cache
+(`<data-dir>/update-check.json`) — never the network — and refreshes it in
+the background at most every 24h from the npm registry (3s timeout,
+fail-soft), so a new release is offered on the run after it's seen. On a
+TTY (and never in Claude's `-p` print mode) a newer version prompts
+`upgrade now? [y/N]` (10s timeout = No); declining snoozes that version
+(quiet one-line notice from then on). Accepting auto-runs `npm i -g` /
+`bun add -g` only when the install method is unambiguous from
+`import.meta.path`; compiled/source installs get printed instructions
+instead. The UI header shows the version and an amber "vX available" link
+(`PageMeta.version` / `latestVersion`). Opt out: `--no-update-check` or
+`CCTRACE_NO_UPDATE_CHECK=1`.
 
 The MITM CA / data dir is `~/.local/share/cctrace` (XDG data — the CA is
 identity material; rotating it breaks any trust exported via `--print-ca`, so

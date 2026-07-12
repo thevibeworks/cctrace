@@ -32,6 +32,8 @@ cctrace -s                       # static: no live server, just files
 cctrace --no-open                # don't auto-open the browser
 cctrace --dir path/to/logs       # trace dir (default: ./.cctrace)
 cctrace --fresh                  # don't merge prior traces of a continued session
+cctrace --version                # print version (+ newer version if known)
+cctrace --no-update-check        # skip the daily npm version check / prompt
 ```
 
 Two gotchas worth knowing before suggesting commands:

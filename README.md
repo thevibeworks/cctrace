@@ -232,6 +232,11 @@ traffic gets its own filter category in the UI.
   force-merges any trace file.
 - **Offline snapshots** -- the saved `.html` embeds the full trace and renders
   the same UI with no server. Open it a year from now, it still works.
+- **Stays fresh** -- a daily background check against npm (never blocks
+  startup, fail-soft) offers new releases with an `upgrade now? [y/N]`
+  prompt on interactive runs; declining snoozes that version. The header
+  shows the running version, and an amber notice when a newer one exists.
+  Opt out with `--no-update-check` or `CCTRACE_NO_UPDATE_CHECK=1`.
 
 ## Working with saved traces
 

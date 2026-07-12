@@ -8,6 +8,21 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Added
 
+- **Update checker** — cctrace now knows when it's stale. The npm registry
+  is queried in the background at most once a day (3s timeout, fail-soft,
+  cached in `<data-dir>/update-check.json`); startup itself never waits on
+  the network. When a newer version is known, an interactive run asks
+  `upgrade now? [y/N]` (10s timeout; only on a TTY, never in `-p` print
+  mode) — accepting runs `npm i -g`/`bun add -g` when the install method
+  is unambiguous, otherwise prints the right instructions; declining
+  snoozes that version to a quiet one-line notice. Opt out with
+  `--no-update-check` or `CCTRACE_NO_UPDATE_CHECK=1`.
+- **Version everywhere** — the startup banner prints `cctrace vX.Y.Z`,
+  `cctrace --version`/`-V` reports it (plus any known newer version), the
+  web UI header shows it next to the session id with an amber
+  "vX.Y.Z available" link when an update is known, and snapshots record
+  the version that produced them.
+
 - **Prompt-cache hit/miss attribution** — every /v1/messages request now
   carries one compact cache verdict instead of two verbose chips: green
   `cache ↓116.9k 97% ↑1.2k` when the prompt prefix was served from cache

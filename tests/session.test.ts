@@ -108,7 +108,9 @@ describe("buildSession", () => {
     expect(chat.turns[1].pairId).toBe(r1.id);
     expect(chat.turns[3].pairId).toBe(r2.id);
     expect(chat.turns[1].usage.output).toBe(20);
-    expect(chat.usage).toEqual({ input: 20, output: 40, cacheRead: 200, cacheWrite: 10, requests: 2 });
+    const { cost, ...usage } = chat.usage;
+    expect(usage).toEqual({ input: 20, output: 40, cacheRead: 200, cacheWrite: 10, requests: 2 });
+    expect(cost).toBeGreaterThan(0); // per-request pairCost summed into the thread
 
     expect(threads.find((t: any) => t.label === "quota probe").kind).toBe("utility");
     expect(threads.find((t: any) => t.label === "title generation").kind).toBe("utility");

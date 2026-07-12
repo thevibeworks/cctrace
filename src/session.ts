@@ -1,4 +1,5 @@
 import { parseSse, assembleAssistant, extractMessageInfo, shortModel } from "./summarize";
+import { pairCost } from "./pricing";
 
 // Reconstruct Claude Code conversations from captured /v1/messages wire pairs.
 //
@@ -121,13 +122,15 @@ export function buildSession(pairs: any[]): any {
       }
     }
 
-    const agg = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: t.reqs.length };
+    const agg = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, requests: t.reqs.length };
     for (const p of t.reqs) {
       const m = extractMessageInfo(p);
       agg.input += m.input;
       agg.output += m.output;
       agg.cacheRead += m.cacheRead;
       agg.cacheWrite += m.cacheWrite;
+      const c = pairCost(m);
+      if (c) agg.cost += c.total;
     }
     t.usage = agg;
 

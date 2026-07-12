@@ -96,6 +96,14 @@ describe("page meta", () => {
     expect(html).toContain("function extractSessionId");
   });
 
+  // Cost chips depend on the pricing helpers being inlined into the page.
+  test("the page inlines the pricing/cost helpers", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain("function modelPricing");
+    expect(html).toContain("function pairCost");
+    expect(html).toContain("function fmtCost");
+  });
+
   // The session view tails like tail -f in live mode; the pill and the
   // snapshot/live switch live in the inline script — guard their presence.
   test("the page wires the live-tail machinery", () => {

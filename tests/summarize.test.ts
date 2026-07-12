@@ -221,7 +221,10 @@ describe("summarizePair", () => {
   test("messages: model, tokens, cache, thinking", () => {
     const chips = summarizePair(streamingPair(), "messages");
     const texts = chips.map((c: any) => c.t);
-    expect(texts).toEqual(["opus-4-6", "in 3", "out 76", "cache read 19.6k (50%)", "cache write 19.6k", "think 44"]);
+    // Last chip is the estimated cost (opus-4-6 sticker pricing).
+    expect(texts.slice(0, 6)).toEqual(["opus-4-6", "in 3", "out 76", "cache read 19.6k (50%)", "cache write 19.6k", "think 44"]);
+    expect(texts[6]).toMatch(/^\$0\./);
+    expect(chips[6].title).toContain("estimated");
     expect(chips[3].c).toBe("ok");
     expect(chips[4].c).toBe("warn");
   });

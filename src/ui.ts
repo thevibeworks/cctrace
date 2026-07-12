@@ -20,6 +20,7 @@ import {
   mainThread,
   toolPreview,
 } from "./session";
+import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
 
 // The whole web UI lives in this file: one self-contained HTML page serving
 // three views — the Requests list (with a split detail panel) and the Session
@@ -622,6 +623,12 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     ${assembleAssistant.toString()}
     ${summarizePair.toString()}
 
+    // Pricing + cost estimation, injected from src/pricing.ts.
+    ${modelPricing.toString()}
+    ${pairCost.toString()}
+    ${fmtCost.toString()}
+    ${costTitle.toString()}
+
     // Session reconstruction, injected from src/session.ts.
     ${threadSig.toString()}
     ${normalizeTurns.toString()}
@@ -1022,8 +1029,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       return html;
     }
 
-    function kv(label, value, cls) {
-      return '<span class="chip ' + (cls || '') + '"><b>' + label + '</b>' + value + '</span>';
+    function kv(label, value, cls, title) {
+      return '<span class="chip ' + (cls || '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><b>' + label + '</b>' + value + '</span>';
     }
 
     function messagesChips(pair) {
@@ -1051,6 +1058,15 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         if (parts.length) cw += ' (' + parts.join(' + ') + ')';
       }
       row2 += kv('cache write', cw, m.cacheWrite > 0 ? 'warn' : '');
+      // Derived metrics: effective prompt size, streaming speed, estimated cost.
+      const prompt = m.input + m.cacheRead + m.cacheWrite;
+      if (prompt > 0) row2 += kv('prompt', fmtCompact(prompt), '', prompt.toLocaleString() + ' prompt tokens = input + cache read + cache write');
+      if (m.output > 0 && pair.duration > 400) {
+        const tps = m.output / (pair.duration / 1000);
+        row2 += kv('speed', (tps >= 10 ? Math.round(tps) : tps.toFixed(1)) + ' tok/s', '', 'output tokens / wall-clock duration (includes time-to-first-token)');
+      }
+      const cost = pairCost(m);
+      if (cost && cost.total > 0) row2 += kv('cost', fmtCost(cost.total), '', costTitle(cost));
       return '<div class="chips">' + row1 + '</div><div class="chips">' + row2 + '</div>';
     }
 
@@ -1292,7 +1308,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     function threadCard(t, selected) {
       const u = t.usage;
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
-        (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '');
+        (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
+        (u.cost ? ' \\u00b7 ' + fmtCost(u.cost) : '');
       let reqs = '';
       if (selected) {
         let rows = '';
@@ -1367,6 +1384,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         bits.push('in ' + fmtCompact(u.input));
         bits.push('out ' + fmtCompact(u.output));
         if (u.cacheRead) bits.push('cache ' + fmtCompact(u.cacheRead));
+        const c = pairCost(u);
+        if (c && c.total > 0) bits.push(fmtCost(c.total));
         if (p) bits.push(formatDuration(p.duration));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
@@ -1414,6 +1433,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       chips += kv('output', t.usage.output.toLocaleString());
       if (t.usage.cacheRead) chips += kv('cache read', t.usage.cacheRead.toLocaleString(), 'ok');
       if (t.usage.cacheWrite) chips += kv('cache write', t.usage.cacheWrite.toLocaleString(), 'warn');
+      if (t.usage.cost) chips += kv('cost', fmtCost(t.usage.cost), '', 'estimated from sticker pricing \\u2014 sum over this thread\\u2019s requests');
       let html = '<div class="chips">' + chips + '</div>';
       if (t.agentOf) {
         html += '<div class="agent-note">subagent run' +

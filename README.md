@@ -391,14 +391,11 @@ Never paste raw output into a public issue. Seriously.
   format.
 - **Conversation dump** -- export the reconstructed conversation as Markdown
   or JSON, ready for sharing or post-mortem analysis.
-- **Agent skill** -- a purpose-built Claude Code skill/MCP server for
-  interacting with cctrace programmatically: query captured traffic, inspect
-  specific requests, export conversations.
-- **Multi-session live view** -- run multiple cctrace sessions without port
-  conflicts by routing each session to a path like
-  `http://localhost:9317/<project>/<session-id>`.
-- **Token metrics** -- per-turn and cumulative token usage, cache hit rates,
-  cost estimates, and `service_tier` / `inference_geo` visibility.
+- **MCP server** -- query captured traffic programmatically from any agent
+  (an agent *skill* ships in [skills/cctrace](skills/cctrace/SKILL.md); the
+  MCP surface is the remaining half).
+- **`inference_geo` / deeper tier visibility** -- surface where inference ran
+  and per-tier breakdowns alongside the existing cost estimates.
 
 See [CHANGELOG.md](CHANGELOG.md) for released changes.
 

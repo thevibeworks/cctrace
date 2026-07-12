@@ -206,6 +206,16 @@ traffic gets its own filter category in the UI.
   side: threads for the main chat and subagent runs (matched to their Task
   dispatch), utility noise collapsed, tool results folded into their tool
   calls, and per-turn token/duration linked back to the wire request.
+- **Session replay** -- re-experience a captured session as it happened, right
+  inside the Session view: `←`/`→` step through turns (`shift` steps every
+  wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,
+  and the scrubber doubles as a session minimap (turns, errors, probes).
+  Pause anywhere and the URL (`#/session/<key>/@<pair-id>`) deep-links that
+  exact moment. Works on every trace ever captured -- live, snapshot, or
+  `cctrace view` rebuild -- because the wire is already a timeline.
+- **Estimated cost** -- every messages request shows an estimated USD cost
+  (embedded sticker pricing, cache read/write TTLs priced separately), with
+  per-turn and per-thread totals in the Session view. Estimates, not bills.
 - **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up
   where a previous traced run left off: every Claude Code request carries its
   session id on the wire, so cctrace finds the earlier runs' traces in the log
@@ -364,9 +374,9 @@ Never paste raw output into a public issue. Seriously.
 
 ## Roadmap
 
-- **Session replay** -- re-experience a captured session as it happened:
-  step through turns, scrub a timeline, play at speed, deep-link a moment.
-  Works on every existing trace (the wire is already a timeline). Design:
+- **Session replay P3/P4** -- opt-in `--record-timing` for chunk-timed
+  streaming replay (true typewriter pacing), replay-polished snapshots.
+  P1+P2 (stepper, transport bar, minimap, deep links) shipped. Design:
   [docs/design/session-replay.md](docs/design/session-replay.md).
 - **Codex support** -- trace OpenAI Codex CLI through the same MITM front
   door. The proxy layer is already agent-agnostic; what's left is OpenAI host

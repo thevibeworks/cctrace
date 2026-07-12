@@ -21,6 +21,7 @@ src/
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
 ├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
+├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Claude model pricing + per-pair cost estimation (inlined into UI)
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
@@ -116,6 +117,20 @@ Two views, hash-routed:
   tails like tail -f in live mode (open/refresh lands on the newest turn,
   sticky bottom, "new activity" pill when scrolled up, folds survive
   re-renders via positional restore); snapshots open at the top.
+- **Replay** (inside the Session view): a time cursor over the same data —
+  pairs whose response completed at or before the cursor are visible,
+  everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the
+  session rebuilds from the visible subset via the normal `buildSession`
+  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps turns, shift+←/→
+  steps wire requests, Space plays (setTimeout ladder over response-end
+  boundaries, idle gaps compressed to ≤2s, speeds 1/2/8/60x), Home/End
+  jump, Esc exits. The scrubber doubles as a minimap (turns = tall accent
+  marks, errors red, probes short ticks). Deep links anchor on pair id —
+  `#/session/<key>/@<pair-id>` opens paused at that moment (ids survive
+  cross-run merges; wall-clock offsets wouldn't). Works identically in
+  snapshots; live captures extend the track and "live ⤓" re-attaches the
+  tail. P1+P2 shipped; P3 (--record-timing chunk replay) + P4 remain
+  (docs/design/session-replay.md).
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
   `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.

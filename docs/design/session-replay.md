@@ -1,8 +1,9 @@
 # Design: Session Replay
 
-Status: proposed (design only — no implementation yet)
+Status: P1 + P2 implemented (src/replay.ts + the transport bar in ui.ts);
+        P3 (--record-timing) and P4 polish remain proposed
 Owner: cctrace core
-Date: 2026-07-10
+Date: 2026-07-10 (updated 2026-07-11)
 
 ## Problem
 
@@ -105,12 +106,21 @@ capture, which is why it comes last.
 
 ## Phasing
 
-| Phase | Ship | Needs capture change |
-|-------|------|----------------------|
-| P1 | Turn stepper: ←/→ walk the conversation as-of each turn, wire pane synced, cumulative usage at cursor | no |
-| P2 | Transport bar: time-scaled play, scrubber/minimap, idle compression, deep-link anchors | no |
-| P3 | `--record-timing`: chunk-timed streaming replay (true typewriter) | yes (opt-in) |
-| P4 | Shareable replay snapshots (open paused at an anchor) | no |
+| Phase | Ship | Needs capture change | Status |
+|-------|------|----------------------|--------|
+| P1 | Turn stepper: ←/→ walk the conversation as-of each turn, wire pane synced, cumulative usage at cursor | no | shipped |
+| P2 | Transport bar: time-scaled play, scrubber/minimap, idle compression, deep-link anchors | no | shipped |
+| P3 | `--record-timing`: chunk-timed streaming replay (true typewriter) | yes (opt-in) | proposed |
+| P4 | Shareable replay snapshots (open paused at an anchor) | no | mostly free (snapshots replay; deep links open paused at the anchor) |
+
+Implementation notes (2026-07-11): the pure primitives live in `src/replay.ts`
+(`visibleAt`, `replayEvents`, `nextTick`, `anchorAt`, boundary walkers),
+inlined into the page and unit-tested. Open questions resolved: (2) the
+requests list stays full during replay — replay is a session-view concept;
+(3) probes/telemetry render as short ticks on the minimap, turns as tall
+accent marks, errors red. (1) multi-run scrubber segmentation is still open —
+the track is linear time for now, idle compression absorbs the gaps during
+playback.
 
 P1 alone already answers the post-mortem job and is a weekend-sized change;
 it also forces `visibleAt()` into existence, which P2 merely animates.

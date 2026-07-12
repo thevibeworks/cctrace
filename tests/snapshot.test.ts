@@ -112,4 +112,16 @@ describe("page meta", () => {
     expect(html).toContain("function convoAtBottom");
     expect(html).toContain("const IS_SNAPSHOT");
   });
+
+  // Session replay is a time cursor over the same page — the transport bar
+  // markup and the inlined timeline primitives must both ship.
+  test("the page wires the replay machinery", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain('id="replay-bar"');
+    expect(html).toContain('id="rp-track"');
+    expect(html).toContain('id="replay-toggle"');
+    expect(html).toContain("function visibleAt");
+    expect(html).toContain("function nextTick");
+    expect(html).toContain("function anchorAt");
+  });
 });

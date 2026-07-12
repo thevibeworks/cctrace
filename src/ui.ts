@@ -21,6 +21,18 @@ import {
   toolPreview,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
+import {
+  pairStartMs,
+  pairEndMs,
+  isTurnPair,
+  replayEvents,
+  replaySpan,
+  visibleAt,
+  nextBoundary,
+  prevBoundary,
+  anchorAt,
+  nextTick,
+} from "./replay";
 
 // The whole web UI lives in this file: one self-contained HTML page serving
 // three views — the Requests list (with a split detail panel) and the Session
@@ -264,11 +276,68 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       body.detail-open #detail { flex: 1; max-width: 100%; border-left: none; }
     }
     /* ---- Session view: threads + conversation ---- */
-    #session-view { display: none; flex: 1; min-height: 0; position: relative; }
+    #session-view { display: none; flex: 1; min-height: 0; position: relative; flex-direction: column; }
     body.view-session #session-view { display: flex; }
+    #session-main { display: flex; flex: 1; min-height: 0; }
     #threads { flex: 0 0 320px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
+    /* ---- Replay transport bar (body.replaying) ---- */
+    #replay-toggle { display: none; }
+    body.view-session #replay-toggle { display: inline-block; }
+    body.replaying #replay-toggle { background: var(--accent); border-color: var(--accent); color: #fff; }
+    #replay-bar {
+      display: none; align-items: center; gap: 8px;
+      padding: 7px 16px;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+    }
+    body.replaying #replay-bar { display: flex; }
+    .rp-btn {
+      font: inherit; font-size: 12px; line-height: 1;
+      background: var(--btn-bg); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--text); cursor: pointer;
+      padding: 4px 9px;
+    }
+    .rp-btn:hover { border-color: var(--accent); }
+    .rp-speeds { display: inline-flex; gap: 2px; }
+    .rp-speed {
+      font: inherit; font-size: 11px; line-height: 1;
+      background: none; border: 1px solid transparent; border-radius: 4px;
+      color: var(--text-faint); cursor: pointer; padding: 4px 6px;
+      font-variant-numeric: tabular-nums;
+    }
+    .rp-speed:hover { color: var(--text); }
+    .rp-speed.active { color: var(--accent); border-color: var(--border); background: var(--bg); }
+    #rp-track {
+      flex: 1; min-width: 80px; position: relative; height: 24px;
+      cursor: pointer; touch-action: none;
+    }
+    #rp-track::before {
+      content: ''; position: absolute; left: 0; right: 0; top: 50%;
+      border-top: 1px solid var(--border);
+    }
+    #rp-fill {
+      position: absolute; left: 0; top: 0; bottom: 0; width: 0;
+      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      pointer-events: none;
+    }
+    #rp-marks { position: absolute; inset: 0; pointer-events: none; }
+    .rp-mark {
+      position: absolute; top: 50%; width: 2px; height: 7px;
+      transform: translate(-1px, -50%);
+      background: var(--text-faint); opacity: 0.7;
+    }
+    .rp-mark.turn { height: 13px; background: var(--accent); opacity: 0.9; }
+    .rp-mark.err { background: var(--red); opacity: 1; }
+    #rp-handle {
+      position: absolute; top: 2px; bottom: 2px; width: 2px; left: 0;
+      background: var(--accent); pointer-events: none;
+      box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+    }
+    #rp-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #rp-time .rp-skip { color: var(--text-faint); }
     #tail-pill {
       position: absolute; right: 24px; bottom: 16px; z-index: 5;
       display: none; align-items: center; gap: 6px;
@@ -573,6 +642,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       <button class="tab" id="tab-session">Session</button>
     </span>
     <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
+    <button id="replay-toggle" title="Replay this session — ←/→ step turns, Space plays">⏵ replay</button>
     <button id="prior-toggle" class="active" title="Show/hide requests merged from previous runs of this session">Prev runs</button>
     <button id="autoscroll" class="active">Auto-scroll</button>
     <button id="clear">Clear</button>
@@ -583,8 +653,27 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     <aside id="detail"></aside>
   </div>
   <div id="session-view">
-    <aside id="threads"></aside>
-    <main id="convo"></main>
+    <div id="replay-bar">
+      <button class="rp-btn" id="rp-restart" title="Jump to start (Home)">⏮</button>
+      <button class="rp-btn" id="rp-play" title="Play / pause (Space) — idle gaps compressed to ≤2s">▶</button>
+      <span class="rp-speeds">
+        <button class="rp-speed active" data-speed="1">1x</button>
+        <button class="rp-speed" data-speed="2">2x</button>
+        <button class="rp-speed" data-speed="8">8x</button>
+        <button class="rp-speed" data-speed="60">60x</button>
+      </span>
+      <div id="rp-track" title="Drag to scrub — ticks are wire requests, tall marks are turns">
+        <div id="rp-fill"></div>
+        <div id="rp-marks"></div>
+        <div id="rp-handle"></div>
+      </div>
+      <span id="rp-time">0:00 / 0:00</span>
+      <button class="rp-btn" id="rp-exit"></button>
+    </div>
+    <div id="session-main">
+      <aside id="threads"></aside>
+      <main id="convo"></main>
+    </div>
     <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
   </div>
 
@@ -599,7 +688,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     let view = 'requests';      // 'requests' | 'session'
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session view
-    let sessionCache = { n: -1, threads: [] };
+    let sessionCache = { key: '', threads: [] };
 
     // Run identity injected by the server / snapshot writer ({} when unknown,
     // e.g. a snapshot rebuilt by \`cctrace view\`).
@@ -629,6 +718,18 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     ${fmtCost.toString()}
     ${costTitle.toString()}
 
+    // Replay timeline primitives, injected from src/replay.ts.
+    ${pairStartMs.toString()}
+    ${pairEndMs.toString()}
+    ${isTurnPair.toString()}
+    ${replayEvents.toString()}
+    ${replaySpan.toString()}
+    ${visibleAt.toString()}
+    ${nextBoundary.toString()}
+    ${prevBoundary.toString()}
+    ${anchorAt.toString()}
+    ${nextTick.toString()}
+
     // Session reconstruction, injected from src/session.ts.
     ${threadSig.toString()}
     ${normalizeTurns.toString()}
@@ -645,6 +746,15 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     const threadsEl = document.getElementById('threads');
     const convoEl = document.getElementById('convo');
     const tailPill = document.getElementById('tail-pill');
+    const replayToggle = document.getElementById('replay-toggle');
+    const rpPlay = document.getElementById('rp-play');
+    const rpRestart = document.getElementById('rp-restart');
+    const rpExit = document.getElementById('rp-exit');
+    const rpTrack = document.getElementById('rp-track');
+    const rpFill = document.getElementById('rp-fill');
+    const rpMarks = document.getElementById('rp-marks');
+    const rpHandle = document.getElementById('rp-handle');
+    const rpTime = document.getElementById('rp-time');
     const filterEl = document.getElementById('filter');
     const autoScrollBtn = document.getElementById('autoscroll');
     const clearBtn = document.getElementById('clear');
@@ -770,6 +880,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
           }
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+          if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
           const known = new Set(pairs.map(p => p.id));
@@ -904,10 +1015,26 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         try { id = decodeURIComponent(id); } catch {}
         setView('requests');
         openDetail(id);
-      } else if ((m = h.match(/^#\\/session(?:\\/(.+))?$/))) {
+      } else if ((m = h.match(/^#\\/session(?:\\/([^/@][^/]*))?(?:\\/@(.+))?$/))) {
         let key = m[1] || null;
         if (key) { try { key = decodeURIComponent(key); } catch {} }
+        let anchor = m[2] || null;
+        if (anchor) { try { anchor = decodeURIComponent(anchor); } catch {} }
         setView('session');
+        if (anchor) {
+          // Deep link to a moment: enter replay paused at that pair's end.
+          const p = pairs.find(x => x.id === anchor);
+          if (p) {
+            replay.cursor = pairEndMs(p);
+            if (!replay.active) {
+              replay.active = true;
+              document.body.classList.add('replaying');
+              tailPill.classList.remove('show');
+              renderReplayMarks(true);
+            }
+            renderReplayBar();
+          }
+        }
         showSession(key);
       } else {
         setView('requests');
@@ -972,8 +1099,26 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         if (e.key === 'Escape') location.hash = '';
         else if (e.key === 'j' || e.key === 'ArrowDown') { navDetail(1); e.preventDefault(); }
         else if (e.key === 'k' || e.key === 'ArrowUp') { navDetail(-1); e.preventDefault(); }
-      } else if (view === 'session' && e.key === 'Escape') {
-        location.hash = '';
+      } else if (view === 'session') {
+        if (e.key === 'Escape') {
+          if (replay.active) exitReplay();
+          else location.hash = '';
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          if (replay.playing) { pausePlayback(); updateReplayHash(); }
+          else startPlayback();
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          e.preventDefault();
+          stepReplay(e.key === 'ArrowRight' ? 1 : -1, !e.shiftKey);
+        } else if (e.key === 'Home' && replay.active) {
+          e.preventDefault();
+          seekReplay(replaySpan(pairs).t0);
+          updateReplayHash();
+        } else if (e.key === 'End' && replay.active) {
+          e.preventDefault();
+          seekReplay(replaySpan(pairs).t1);
+          updateReplayHash();
+        }
       }
     });
 
@@ -1281,9 +1426,17 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
 
     // ---- Session view: wire threads (left) + reconstructed conversation ----
 
+    // With replay active the session is rebuilt from the wire as of the
+    // cursor — the same buildSession path that renders mid-capture sessions
+    // live, so a partial history needs no special casing.
     function getThreads() {
-      if (sessionCache.n !== pairs.length) {
-        sessionCache = { n: pairs.length, threads: buildSession(pairs).threads };
+      // Cache on the anchor pair, not the raw cursor: every cursor position
+      // between two boundaries sees the same wire, so scrubbing stays cheap.
+      const a = replay.active ? ((anchorAt(replayEvents(pairs), replay.cursor) || { id: '^' }).id) : 'live';
+      const key = pairs.length + ':' + a;
+      if (sessionCache.key !== key) {
+        const src = replay.active ? visibleAt(pairs, replay.cursor) : pairs;
+        sessionCache = { key, threads: buildSession(src).threads };
       }
       return sessionCache.threads;
     }
@@ -1292,7 +1445,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const threads = getThreads();
       if (!threads.length) {
         threadsEl.innerHTML = '';
-        convoEl.innerHTML = '<div class="empty">No /v1/messages requests captured yet.</div>';
+        convoEl.innerHTML = '<div class="empty">' + (replay.active
+          ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
+          : 'No /v1/messages requests captured yet.') + '</div>';
         convoKey = null;
         tailPill.classList.remove('show');
         return;
@@ -1460,9 +1615,178 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         convoToBottom();
       } else {
         convoEl.scrollTop = prevTop;
-        if (convoEl.scrollHeight > prevHeight) tailPill.classList.add('show');
+        // The pill means "the live tail moved" — replay reveals are the
+        // cursor's doing, not new activity.
+        if (convoEl.scrollHeight > prevHeight && !replay.active) tailPill.classList.add('show');
       }
     }
+
+    // ---- Session replay ----
+    // A time cursor over the same data (docs/design/session-replay.md):
+    // pairs whose response completed at or before the cursor are visible,
+    // everything after doesn't exist yet. Both panes rebuild from the
+    // visible subset via the normal buildSession path; playback is a
+    // setTimeout ladder over response-end boundaries with idle compression.
+    const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null };
+    const IDLE_CAP_MS = 2000;
+
+    function enterReplay(cursor) {
+      const span = replaySpan(pairs);
+      if (!span) return;
+      replay.active = true;
+      replay.cursor = cursor == null ? span.t1 : cursor;
+      document.body.classList.add('replaying');
+      tailPill.classList.remove('show');
+      if (view !== 'session') { location.hash = '#/session'; }
+      renderReplayMarks(true);
+      refreshReplay();
+      updateReplayHash();
+    }
+
+    function exitReplay() {
+      pausePlayback();
+      replay.active = false;
+      document.body.classList.remove('replaying');
+      if (view === 'session') {
+        showSession(sessionSelKey);
+        if (!IS_SNAPSHOT) convoToBottom();
+        if (sessionSelKey) history.replaceState(null, '', '#/session/' + encodeURIComponent(sessionSelKey));
+      }
+    }
+
+    function pausePlayback() {
+      replay.playing = false;
+      if (replay.timer) { clearTimeout(replay.timer); replay.timer = null; }
+      rpPlay.textContent = '\\u25b6';
+    }
+
+    function startPlayback() {
+      const span = replaySpan(pairs);
+      if (!span) return;
+      if (!replay.active) enterReplay(span.t0);
+      // Play at the end of the tape restarts from the top.
+      if (!nextBoundary(replayEvents(pairs), replay.cursor)) { replay.cursor = span.t0; refreshReplay(); }
+      replay.playing = true;
+      rpPlay.textContent = '\\u23f8';
+      scheduleTick();
+    }
+
+    function scheduleTick() {
+      const tick = nextTick(replayEvents(pairs), replay.cursor, replay.speed, IDLE_CAP_MS);
+      if (!tick) { pausePlayback(); updateReplayHash(); return; }
+      replay.timer = setTimeout(function() {
+        replay.cursor = tick.cursor;
+        refreshReplay();
+        if (replay.playing) scheduleTick();
+      }, tick.delay);
+    }
+
+    function stepReplay(dir, turnsOnly) {
+      const span = replaySpan(pairs);
+      if (!span) return;
+      if (!replay.active) enterReplay(dir > 0 ? span.t0 - 1 : span.t1);
+      pausePlayback();
+      const events = replayEvents(pairs);
+      const b = dir > 0 ? nextBoundary(events, replay.cursor, turnsOnly) : prevBoundary(events, replay.cursor, turnsOnly);
+      if (b) { replay.cursor = b.t; refreshReplay(); }
+      updateReplayHash();
+    }
+
+    function seekReplay(cursor) {
+      pausePlayback();
+      replay.cursor = cursor;
+      refreshReplay();
+    }
+
+    function fmtClock(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      const mm = (h > 0 && m < 10 ? '0' : '') + m;
+      const ss = (sec < 10 ? '0' : '') + sec;
+      return (h > 0 ? h + ':' + mm + ':' : mm + ':') + ss;
+    }
+
+    // Minimap marks: one per pair at its response end — turns tall + accent,
+    // errors red, everything else a quiet tick. Rebuilt when pairs arrive.
+    let rpMarksN = -1;
+    function renderReplayMarks(force) {
+      if (rpMarksN === pairs.length && !force) return;
+      rpMarksN = pairs.length;
+      const span = replaySpan(pairs);
+      if (!span) { rpMarks.innerHTML = ''; return; }
+      const dur = Math.max(1, span.t1 - span.t0);
+      let html = '';
+      for (const p of pairs) {
+        const x = ((pairEndMs(p) - span.t0) / dur) * 100;
+        const err = !p.response || p.response.status >= 400;
+        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
+      }
+      rpMarks.innerHTML = html;
+    }
+
+    function renderReplayBar() {
+      const span = replaySpan(pairs);
+      if (!span) return;
+      const dur = Math.max(1, span.t1 - span.t0);
+      const frac = Math.min(1, Math.max(0, (replay.cursor - span.t0) / dur));
+      rpFill.style.width = (frac * 100).toFixed(3) + '%';
+      rpHandle.style.left = (frac * 100).toFixed(3) + '%';
+      rpTime.textContent = fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      renderReplayMarks();
+    }
+
+    function refreshReplay() {
+      renderReplayBar();
+      if (view === 'session') showSession(sessionSelKey);
+    }
+
+    // Deep-link anchor: #/session/<key>/@<pair-id> — pair ids survive
+    // cross-run history merges where wall-clock offsets wouldn't. Only
+    // written when paused (replaceState is rate-limited by browsers).
+    function updateReplayHash() {
+      if (!replay.active || replay.playing || view !== 'session' || !sessionSelKey) return;
+      const a = anchorAt(replayEvents(pairs), replay.cursor);
+      const base = '#/session/' + encodeURIComponent(sessionSelKey);
+      history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
+    }
+
+    replayToggle.onclick = () => { replay.active ? exitReplay() : enterReplay(); };
+    rpExit.textContent = IS_SNAPSHOT ? '\\u2715 exit' : 'live \\u2913';
+    rpExit.title = IS_SNAPSHOT ? 'Exit replay (Esc)' : 'Exit replay, back to the live tail (Esc)';
+    rpExit.onclick = exitReplay;
+    rpRestart.onclick = () => {
+      if (!replay.active) enterReplay();
+      seekReplay(replaySpan(pairs).t0);
+      updateReplayHash();
+    };
+    rpPlay.onclick = () => {
+      if (replay.playing) { pausePlayback(); updateReplayHash(); }
+      else startPlayback();
+    };
+    document.querySelectorAll('.rp-speed').forEach(btn => {
+      btn.onclick = () => {
+        replay.speed = parseFloat(btn.dataset.speed) || 1;
+        document.querySelectorAll('.rp-speed').forEach(b => b.classList.toggle('active', b === btn));
+        if (replay.playing) { clearTimeout(replay.timer); scheduleTick(); }
+      };
+    });
+
+    let rpDragging = false;
+    function seekFromPointer(e) {
+      const span = replaySpan(pairs);
+      if (!span) return;
+      const rect = rpTrack.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
+      seekReplay(span.t0 + frac * (span.t1 - span.t0));
+    }
+    rpTrack.addEventListener('pointerdown', (e) => {
+      if (!replay.active) enterReplay();
+      rpDragging = true;
+      try { rpTrack.setPointerCapture(e.pointerId); } catch {}
+      seekFromPointer(e);
+    });
+    rpTrack.addEventListener('pointermove', (e) => { if (rpDragging) seekFromPointer(e); });
+    rpTrack.addEventListener('pointerup', () => { rpDragging = false; updateReplayHash(); });
 
     filterEl.oninput = () => { filter = filterEl.value; render(); refreshDetailNav(); };
     priorToggle.onclick = () => {
@@ -1478,9 +1802,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     clearBtn.onclick = () => {
       pairs.length = 0;
       activeCat = 'all';
-      sessionCache = { n: -1, threads: [] };
+      sessionCache = { key: '', threads: [] };
       convoKey = null;
       tailPill.classList.remove('show');
+      if (replay.active) exitReplay();
       if (detailId) location.hash = '';
       render();
     };

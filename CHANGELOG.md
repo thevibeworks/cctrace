@@ -8,6 +8,17 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Added
 
+- **Session replay (P1+P2 of the design)** — replay a captured session as it
+  happened, inside the Session view. "⏵ replay" (or ←/→) enters a time
+  cursor over the wire: ←/→ steps turns, shift+←/→ steps wire requests,
+  Space plays at 1/2/8/60x with idle gaps compressed to ≤2s, Home/End jump,
+  Esc exits. The scrubber doubles as a session minimap (turns tall, errors
+  red, probes as ticks). Moments are shareable: `#/session/<key>/@<pair-id>`
+  deep-links open paused at that pair, and pausing updates the URL. Works in
+  live captures (new pairs grow the track; "live ⤓" re-attaches the tail)
+  and in offline snapshots. Pure timeline primitives in `src/replay.ts`,
+  unit-tested and inlined like the rest of the page.
+
 - **Estimated cost everywhere** (`src/pricing.ts`) — every `/v1/messages`
   request now shows an estimated USD cost: as a chip in the Requests list,
   in the detail panel (with a tooltip breaking it down into input / output /

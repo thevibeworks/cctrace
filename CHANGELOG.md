@@ -8,6 +8,13 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Added
 
+- **Agent skill** (`skills/cctrace/SKILL.md`) — teaches any Claude Code
+  agent to drive cctrace: run traced sessions (with the `--`/`-p`/bun
+  gotchas spelled out), pick capture modes, read the UI (replay deep links,
+  cost chips), work saved traces (`view`/`clean`/`merge`/`compress`/`ps`),
+  parse trace .jsonl programmatically, and handle traces as the sensitive
+  artifacts they are.
+
 - **Multi-instance support** — running several cctrace sessions at once is
   no longer a port scavenger hunt. Every live run registers itself in
   `<data-dir>/instances/` (port, project, session id once seen on the wire)

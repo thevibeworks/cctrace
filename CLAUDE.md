@@ -30,6 +30,9 @@ src/
 └── types.ts        # Shared types
 ```
 
+`skills/cctrace/SKILL.md` is an agent skill teaching Claude Code agents to
+drive cctrace — keep it in sync when the CLI surface or UI routes change.
+
 ## Capture modes
 
 The CLI auto-selects, or force with `--mode <mitm|base-url|node>`.

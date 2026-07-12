@@ -139,6 +139,30 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
+    /* Instance switcher: appears only when other live cctrace runs exist. */
+    .inst { position: relative; flex-shrink: 0; }
+    .inst-btn {
+      font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
+      background: var(--btn-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 7px;
+    }
+    .inst-btn:hover { color: var(--text); border-color: var(--accent); }
+    .inst-menu {
+      display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
+      min-width: 260px; padding: 4px;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    }
+    .inst-menu.open { display: block; }
+    .inst-row {
+      display: flex; align-items: baseline; gap: 8px;
+      padding: 6px 10px; border-radius: 5px;
+      color: var(--text); text-decoration: none; font-size: 12px;
+      white-space: nowrap;
+    }
+    .inst-row:hover { background: var(--hover); }
+    .inst-sess { color: var(--text-muted); font-size: 11px; }
+    .inst-port { margin-left: auto; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
     .status { font-size: 12px; color: var(--text-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
     .status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
     .status.connected { color: var(--green); }
@@ -629,6 +653,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
   <header>
     <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="ctx" id="ctx"></span>
+    <span class="inst" id="inst"></span>
     <span class="status disconnected" id="status">offline</span>
     <span class="count"><span id="count">0</span> requests</span>
     <span class="header-actions">
@@ -831,6 +856,42 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         });
       };
     }
+
+    // ---- Instance switcher: other live cctrace runs on this machine ----
+    // The server exposes the registry at /api/instances (pid-liveness
+    // filtered). Only rendered when there is somewhere else to go.
+    const instEl = document.getElementById('inst');
+    function renderInstances(list) {
+      const others = (list || []).filter(i => i && !i.self && i.port);
+      if (!others.length) { instEl.innerHTML = ''; return; }
+      const open = !!instEl.querySelector('.inst-menu.open');
+      let rows = '';
+      for (const i of others) {
+        rows += '<a class="inst-row" href="http://localhost:' + Number(i.port) + '/"' +
+          ' title="' + escapeHtml((i.projectPath || i.project || '') + (i.sessionId ? ' \\u00b7 session ' + i.sessionId : '')) + '">' +
+          '<span>' + escapeHtml(i.project || '?') + '</span>' +
+          (i.sessionId ? '<span class="inst-sess">' + escapeHtml(String(i.sessionId).slice(0, 8)) + '</span>' : '') +
+          '<span class="inst-port">:' + Number(i.port) + '</span></a>';
+      }
+      instEl.innerHTML =
+        '<button class="inst-btn" title="Other live cctrace instances">\\u21c4 ' + others.length + ' more</button>' +
+        '<div class="inst-menu' + (open ? ' open' : '') + '">' + rows + '</div>';
+      const btn = instEl.querySelector('.inst-btn');
+      const menu = instEl.querySelector('.inst-menu');
+      btn.onclick = (e) => { e.stopPropagation(); menu.classList.toggle('open'); };
+    }
+    document.addEventListener('click', () => {
+      const menu = instEl.querySelector('.inst-menu.open');
+      if (menu) menu.classList.remove('open');
+    });
+    function pollInstances() {
+      fetch('/api/instances')
+        .then(r => r.json())
+        .then(renderInstances)
+        .catch(() => {})
+        .finally(() => setTimeout(pollInstances, 15000));
+    }
+    if (!IS_SNAPSHOT) pollInstances();
 
     function catCounts() {
       const counts = { all: pairs.length };

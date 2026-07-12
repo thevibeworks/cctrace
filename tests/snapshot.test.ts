@@ -113,6 +113,14 @@ describe("page meta", () => {
     expect(html).toContain("const IS_SNAPSHOT");
   });
 
+  // The instance switcher polls /api/instances in live mode only.
+  test("the page wires the instance switcher", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain('id="inst"');
+    expect(html).toContain("/api/instances");
+    expect(html).toContain("function renderInstances");
+  });
+
   // Session replay is a time cursor over the same page — the transport bar
   // markup and the inlined timeline primitives must both ship.
   test("the page wires the replay machinery", () => {

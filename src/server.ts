@@ -3,6 +3,7 @@ import type { TracePair } from "./types";
 import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
 import { loadPriorPairs, loadTraceFiles } from "./history";
+import { listInstances } from "./instances";
 
 export { renderSnapshot } from "./ui";
 
@@ -17,6 +18,10 @@ interface ServerConfig {
   withFiles?: string[];
   /** Run identity (project name/path) shown in the page header. */
   meta?: PageMeta;
+  /** Data dir holding the live-instance registry (enables /api/instances). */
+  dataDir?: string;
+  /** Called once per newly-seen Claude session id on the wire. */
+  onSession?: (sid: string) => void;
 }
 
 const clients = new Set<ServerWebSocket<unknown>>();
@@ -60,10 +65,11 @@ export function createServer(config: ServerConfig) {
   const onLivePair = (pair: TracePair) => {
     mergePairs([pair]);
     broadcast({ type: "pair", pair });
-    if (config.noHistory) return;
     const sid = extractSessionId(pair);
     if (!sid || seenSessions.has(sid)) return;
     seenSessions.add(sid);
+    config.onSession?.(sid);
+    if (config.noHistory) return;
     const prior = mergePairs(loadPriorPairs(config.logDir, config.logFile || "", new Set([sid])));
     if (prior.length) {
       const files = [...new Set(prior.map((p) => p.prior))].join(", ");
@@ -87,6 +93,12 @@ export function createServer(config: ServerConfig) {
       if (url.pathname === "/api/pairs") {
         return Response.json(pairs);
       }
+      if (url.pathname === "/api/instances") {
+        // Sibling live instances from the registry; `self` marks this one so
+        // the UI's switcher can offer only the others.
+        const list = config.dataDir ? listInstances(config.dataDir) : [];
+        return Response.json(list.map((i) => ({ ...i, self: i.pid === process.pid })));
+      }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         // Use the actually-bound port so the WebSocket URL is correct even
         // when we fell back off a busy preferred port.
@@ -108,15 +120,21 @@ export function createServer(config: ServerConfig) {
     },
   });
 
-  // Try the preferred port; if it's taken (e.g. a system proxy owns it),
-  // fall back to an OS-assigned free port instead of crashing.
-  try {
-    return serveOn(config.port);
-  } catch {
-    const server = serveOn(0);
-    console.log(`[cctrace] Port ${config.port} busy — using ${server.port} instead`);
-    return server;
+  // Try the preferred port, then the next few (so concurrent instances land
+  // on predictable neighbors: 9317, 9318, ...), then an OS-assigned free
+  // port as the last resort instead of crashing.
+  for (let i = 0; i < 10; i++) {
+    try {
+      const server = serveOn(config.port + i);
+      if (i > 0) console.log(`[cctrace] Port ${config.port} busy — using ${server.port} instead`);
+      return server;
+    } catch {
+      // taken (another instance, or a system proxy) — keep walking
+    }
   }
+  const server = serveOn(0);
+  console.log(`[cctrace] Ports ${config.port}-${config.port + 9} busy — using ${server.port} instead`);
+  return server;
 }
 
 async function handlePair(req: Request, onLivePair: (pair: TracePair) => void): Promise<Response> {

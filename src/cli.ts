@@ -3,7 +3,7 @@
 import { basename, dirname, join, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
-import { createServer, renderSnapshot } from "./server";
+import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir } from "./certs";
@@ -118,6 +118,7 @@ function runView(args: string[]) {
   try {
     const result = writeView(target, logDir);
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
+    for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
     if (!parsed.values["no-open"]) openBrowser(result.htmlPath);
   } catch (err) {
@@ -506,7 +507,10 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
         }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
-      writeFileSync(htmlFile, renderSnapshot(all, pageMeta()));
+      const snapHtml = renderSnapshot(all, pageMeta());
+      const problem = verifySnapshot(snapHtml, all.length);
+      if (problem) log(`warning: snapshot self-check failed: ${problem}`, C.yellow);
+      writeFileSync(htmlFile, snapHtml);
       return htmlFile;
     },
   };

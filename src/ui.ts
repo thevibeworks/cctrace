@@ -448,6 +448,12 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       border: 1px solid var(--border); border-bottom-width: 2px;
       border-radius: 4px; padding: 0 5px;
     }
+    .broken-item {
+      margin: 4px 0; padding: 6px 10px;
+      font-size: 11px; color: var(--red);
+      border: 1px dashed color-mix(in srgb, currentColor 40%, transparent);
+      border-radius: 6px; overflow-wrap: anywhere;
+    }
     .section { margin-bottom: 14px; }
     .section:last-child { margin-bottom: 0; }
     .section h4 {
@@ -706,6 +712,21 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     const pairs = [];
     // Snapshot pages embed their pairs in <head>; live pages stream over WS.
     const IS_SNAPSHOT = Array.isArray(window.__PAIRS__);
+    // Every pair enters through here: a structurally broken one (no request
+    // object / url — a torn trace line or a capture bug) is dropped with a
+    // console note. Renderers, buildSession, and the replay timeline all
+    // assume request.url exists; one bad pair must not blank the page.
+    let droppedPairs = 0;
+    function ingestPair(p) {
+      if (!p || !p.request || typeof p.request.url !== 'string') {
+        droppedPairs++;
+        console.warn('[cctrace] dropped broken pair', droppedPairs, p);
+        return false;
+      }
+      p._cat = categorize(p.request.url);
+      pairs.push(p);
+      return true;
+    }
     let autoScroll = true;
     let filter = '';
     let activeCat = 'all';
@@ -926,12 +947,11 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         const msg = JSON.parse(e.data);
         if (msg.type === 'init') {
           pairs.length = 0;
-          for (const p of msg.pairs) { p._cat = categorize(p.request.url); pairs.push(p); }
+          for (const p of msg.pairs) ingestPair(p);
           render();
           route();
         } else if (msg.type === 'pair') {
-          msg.pair._cat = categorize(msg.pair.request.url);
-          pairs.push(msg.pair);
+          if (!ingestPair(msg.pair)) return;
           countEl.textContent = pairs.length;
           renderCats();
           renderCtx();
@@ -946,9 +966,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
           // Prior-run pairs of a continued session: merge, resort, re-render.
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
-            if (known.has(p.id)) continue;
-            p._cat = categorize(p.request.url);
-            pairs.push(p);
+            if (!known.has(p.id)) ingestPair(p);
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
@@ -958,11 +976,24 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       };
     }
 
+    // Besides the entity escapes, drop ANSI escape sequences (captured
+    // terminal output is full of \\u001b[1m style SGR codes) and any other
+    // C0 control chars \\t\\n\\r aside: control characters are HTML parse
+    // errors and render as invisible junk like "[1m".
     function escapeHtml(str) {
-      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return String(str)
+        .replace(/\\u001b\\[[0-9;:?]*[a-zA-Z]/g, '')
+        .replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/g, '')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
     function formatJson(obj) {
       try { return escapeHtml(JSON.stringify(obj, null, 2)); } catch { return escapeHtml(String(obj)); }
+    }
+    // Fallback card for a single item whose renderer threw: one corrupt pair
+    // in a trace must degrade to one visible error, never a blank page.
+    function brokenItem(what, id, e) {
+      return '<div class="broken-item">broken ' + what + (id ? ' \\u00b7 ' + escapeHtml(id) : '') +
+        ' \\u2014 ' + escapeHtml((e && e.message) || String(e)) + '</div>';
     }
     function formatDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
     function getStatusClass(status) {
@@ -1022,24 +1053,29 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
 
     function appendPair(pair) {
-      const { request, response, duration } = pair;
-      const status = response ? response.status : 'ERR';
-      const cat = CAT_BY_ID[pair._cat] || CAT_BY_ID.other;
       const div = document.createElement('div');
-      div.className = 'pair' + (pair.id === detailId ? ' selected' : '') + (pair.prior ? ' prior' : '');
-      div.dataset.id = pair.id;
-      const when = new Date(request.timestamp * 1000);
-      div.innerHTML =
-        '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
-          '<span class="method">' + escapeHtml(request.method) + '</span>' +
-          '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + status + '">' + status + '</span>' +
-          '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
-          (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
-          '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
-          '<span class="sum">' + chipsHtml(pair) + '</span>' +
-          '<span class="duration" title="' + duration + 'ms">' + formatDuration(duration) + '</span>' +
-          '<span class="time" title="' + when.toLocaleString() + '">' + (pair.prior ? when.toLocaleString() : when.toLocaleTimeString()) + '</span>' +
-        '</a>';
+      try {
+        const { request, response, duration } = pair;
+        const status = response ? response.status : 'ERR';
+        const cat = CAT_BY_ID[pair._cat] || CAT_BY_ID.other;
+        div.className = 'pair' + (pair.id === detailId ? ' selected' : '') + (pair.prior ? ' prior' : '');
+        div.dataset.id = pair.id;
+        const when = new Date(request.timestamp * 1000);
+        div.innerHTML =
+          '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
+            '<span class="method">' + escapeHtml(request.method) + '</span>' +
+            '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
+            '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
+            (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
+            '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
+            '<span class="sum">' + chipsHtml(pair) + '</span>' +
+            '<span class="duration" title="' + escapeHtml(duration) + 'ms">' + formatDuration(duration) + '</span>' +
+            '<span class="time" title="' + when.toLocaleString() + '">' + (pair.prior ? when.toLocaleString() : when.toLocaleTimeString()) + '</span>' +
+          '</a>';
+      } catch (e) {
+        div.className = 'pair';
+        div.innerHTML = brokenItem('request', pair && pair.id, e);
+      }
       pairsEl.appendChild(div);
     }
 
@@ -1117,7 +1153,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const isNew = detailId !== id;
       detailId = id;
       document.body.classList.add('detail-open');
-      detailEl.innerHTML = renderDetail(id);
+      try { detailEl.innerHTML = renderDetail(id); }
+      catch (e) { detailEl.innerHTML = detailNavHtml(id) + brokenItem('request', id, e); }
       detailEl.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
       if (isNew) detailEl.scrollTop = 0;
       countEl.textContent = pairs.length;
@@ -1235,20 +1272,23 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       return html;
     }
 
+    // Values are escaped here, not by callers: fmtCost can emit "<$0.0001"
+    // and wire-derived strings can hold anything — a chip must never be able
+    // to open a tag.
     function kv(label, value, cls, title) {
-      return '<span class="chip ' + (cls || '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><b>' + label + '</b>' + value + '</span>';
+      return '<span class="chip ' + (cls || '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><b>' + label + '</b>' + escapeHtml(value) + '</span>';
     }
 
     function messagesChips(pair) {
       const m = extractMessageInfo(pair);
       let row1 = '';
-      if (m.error) row1 += kv('error', escapeHtml(m.error), 'err');
-      if (m.model) row1 += kv('model', escapeHtml(m.model), 'model');
+      if (m.error) row1 += kv('error', m.error, 'err');
+      if (m.model) row1 += kv('model', m.model, 'model');
       row1 += kv('stream', m.stream ? 'yes' : 'no');
       if (m.maxTokens != null) row1 += kv('max_tokens', m.maxTokens.toLocaleString());
       if (m.temperature != null) row1 += kv('temp', m.temperature);
-      if (m.stopReason) row1 += kv('stop', escapeHtml(m.stopReason), m.stopReason === 'end_turn' || m.stopReason === 'tool_use' ? '' : 'warn');
-      if (m.serviceTier) row1 += kv('tier', escapeHtml(m.serviceTier));
+      if (m.stopReason) row1 += kv('stop', m.stopReason, m.stopReason === 'end_turn' || m.stopReason === 'tool_use' ? '' : 'warn');
+      if (m.serviceTier) row1 += kv('tier', m.serviceTier);
       if (m.error) return '<div class="chips">' + row1 + '</div>';
       let row2 = '';
       row2 += kv('input', m.input.toLocaleString());
@@ -1280,7 +1320,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const t = extractTokenCount(pair);
       const req = pair.request.body || {};
       let out = '';
-      if (t.model) out += kv('model', escapeHtml(t.model), 'model');
+      if (t.model) out += kv('model', t.model, 'model');
       if (t.tokens != null) out += kv('input tokens', t.tokens.toLocaleString(), 'ok');
       if (Array.isArray(req.messages)) out += kv('messages', req.messages.length);
       if (Array.isArray(req.tools) && req.tools.length) out += kv('tools', req.tools.length);
@@ -1525,7 +1565,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const u = t.usage;
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
         (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
-        (u.cost ? ' \\u00b7 ' + fmtCost(u.cost) : '');
+        (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '');
       let reqs = '';
       if (selected) {
         let rows = '';
@@ -1551,11 +1591,15 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     function renderThreadsPane(threads, sel) {
       const convos = threads.filter(t => t.kind !== 'utility');
       const utils = threads.filter(t => t.kind === 'utility');
+      const card = (t) => {
+        try { return threadCard(t, t.key === sel.key); }
+        catch (e) { return brokenItem('thread', t && t.key, e); }
+      };
       let html = '';
-      for (const t of convos) html += threadCard(t, t.key === sel.key);
+      for (const t of convos) html += card(t);
       if (utils.length) {
         let inner = '';
-        for (const t of utils) inner += threadCard(t, t.key === sel.key);
+        for (const t of utils) inner += card(t);
         html += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
       }
       const top = threadsEl.scrollTop; // live re-renders must not move the list
@@ -1596,12 +1640,12 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         const u = turn.usage;
         const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
         const bits = [];
-        if (u.model) bits.push(shortModel(u.model));
+        if (u.model) bits.push(escapeHtml(shortModel(u.model)));
         bits.push('in ' + fmtCompact(u.input));
         bits.push('out ' + fmtCompact(u.output));
         if (u.cacheRead) bits.push('cache ' + fmtCompact(u.cacheRead));
         const c = pairCost(u);
-        if (c && c.total > 0) bits.push(fmtCost(c.total));
+        if (c && c.total > 0) bits.push(escapeHtml(fmtCost(c.total)));
         if (p) bits.push(formatDuration(p.duration));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
@@ -1643,7 +1687,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         ? Array.prototype.map.call(convoEl.querySelectorAll('details'), d => d.open)
         : null;
       let chips = '';
-      chips += kv('model', escapeHtml(t.model || '?'), 'model');
+      chips += kv('model', t.model || '?', 'model');
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());
@@ -1661,7 +1705,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const results = buildToolResultIndex(t.turns);
       for (const turn of t.turns) {
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
-        html += renderSessionTurn(turn, results);
+        try { html += renderSessionTurn(turn, results); }
+        catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
       }
       convoEl.innerHTML = html;
       if (foldState) {
@@ -1875,7 +1920,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     // Offline snapshot: if pairs are embedded (static export), load them and
     // skip the WebSocket. Otherwise connect live.
     if (IS_SNAPSHOT) {
-      for (const p of window.__PAIRS__) { p._cat = categorize(p.request.url); pairs.push(p); }
+      for (const p of window.__PAIRS__) ingestPair(p);
       statusEl.textContent = 'snapshot';
       statusEl.className = 'status snapshot';
       autoScroll = false;
@@ -1903,6 +1948,31 @@ export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): st
   // ($$ collapses, $& / $` splice document text into the JSON) — captured
   // conversations about code contain those daily.
   return html.replace("</head>", () => `${inject}\n</head>`);
+}
+
+/**
+ * Self-check for a rendered snapshot: re-extract the embedded __PAIRS__
+ * payload and prove it still parses to the pairs we meant to embed. This is
+ * the write-time grammar gate — if an escaping regression (or a payload we
+ * never anticipated) breaks the embedding, the CLI warns instead of silently
+ * shipping a snapshot that dies on load. Returns null when healthy, else a
+ * one-line problem description.
+ */
+export function verifySnapshot(html: string, expectedPairs: number): string | null {
+  const m = html.match(/<script>window\.__PAIRS__ = (.*?);<\/script>\n<\/head>/s);
+  if (!m) return "embedded __PAIRS__ script not found";
+  if (m[1].includes("<")) return "embedded payload contains a raw '<' (tag breakout)";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(m[1]);
+  } catch (e) {
+    return `embedded payload is not valid JSON: ${(e as Error).message}`;
+  }
+  if (!Array.isArray(parsed)) return "embedded payload is not an array";
+  if (parsed.length !== expectedPairs) {
+    return `embedded ${parsed.length} pairs, expected ${expectedPairs}`;
+  }
+  return null;
 }
 
 /**

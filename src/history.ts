@@ -37,16 +37,41 @@ export function scanTraceText(text: string, wanted: Set<string>): TracePair[] {
   return out;
 }
 
-/** All pairs of a .jsonl trace (for --with force-merge). */
-export function parseTraceText(text: string): TracePair[] {
+/** Per-file damage tally from parseTraceText, for user-facing warnings. */
+export interface TraceParseStats {
+  /** Non-empty lines that were not valid JSON (torn tail from a killed run). */
+  torn: number;
+  /** Lines that parsed but are not a usable pair (no request object/url). */
+  invalid: number;
+}
+
+/** A parsed line is renderable iff it carries a request with a url. */
+function isUsablePair(p: unknown): p is TracePair {
+  const r = (p as TracePair | null)?.request;
+  return !!r && typeof r === "object" && typeof r.url === "string";
+}
+
+/**
+ * All usable pairs of a .jsonl trace. Damaged lines — torn JSON from a killed
+ * run, or structurally broken objects — are skipped, never rendered; pass
+ * stats to count them so callers can warn instead of failing silently.
+ */
+export function parseTraceText(text: string, stats?: TraceParseStats): TracePair[] {
   const out: TracePair[] = [];
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
+    let pair: unknown;
     try {
-      out.push(JSON.parse(line));
+      pair = JSON.parse(line);
     } catch {
+      if (stats) stats.torn++;
       continue;
     }
+    if (!isUsablePair(pair)) {
+      if (stats) stats.invalid++;
+      continue;
+    }
+    out.push(pair);
   }
   return out;
 }

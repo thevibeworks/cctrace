@@ -1,7 +1,7 @@
 import { readdirSync, existsSync, statSync, writeFileSync } from "fs";
 import { join, basename, resolve } from "path";
-import { renderSnapshot } from "./ui";
-import { parseTraceText, readTraceText, isTraceFile } from "./history";
+import { renderSnapshot, verifySnapshot } from "./ui";
+import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { extractSessionId } from "./summarize";
 import type { TracePair } from "./types";
 
@@ -18,6 +18,8 @@ export interface ViewResult {
   /** Trace files that contributed pairs, basename only. */
   sources: string[];
   matchedBy: "file" | "session" | "filename";
+  /** Non-fatal problems worth telling the user about (damaged lines, ...). */
+  warnings: string[];
 }
 
 export class ViewError extends Error {}
@@ -49,9 +51,16 @@ function isSessionIdish(s: string): boolean {
 export function resolveView(target: string, logDir: string): ViewResult {
   // 1. Explicit file path.
   if (existsSync(target) && statSync(target).isFile()) {
-    const pairs = parseTraceText(readTraceText(target));
+    const stats: TraceParseStats = { torn: 0, invalid: 0 };
+    const pairs = parseTraceText(readTraceText(target), stats);
     if (!pairs.length) throw new ViewError(`${target} has no trace pairs`);
-    return { pairs, htmlPath: htmlSibling(resolve(target)), sources: [basename(target)], matchedBy: "file" };
+    return {
+      pairs,
+      htmlPath: htmlSibling(resolve(target)),
+      sources: [basename(target)],
+      matchedBy: "file",
+      warnings: damageWarnings(basename(target), stats),
+    };
   }
 
   const traces = listTraces(logDir);
@@ -87,6 +96,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
         htmlPath: join(logDir, `session-${safe}.html`),
         sources: [...sources],
         matchedBy: "session",
+        warnings: [],
       };
     }
   }
@@ -94,9 +104,16 @@ export function resolveView(target: string, logDir: string): ViewResult {
   // 3. Filename fragment (e.g. a timestamp) — unambiguous single match wins.
   const byName = traces.filter((p) => basename(p).includes(target));
   if (byName.length === 1) {
-    const pairs = parseTraceText(readTraceText(byName[0]));
+    const stats: TraceParseStats = { torn: 0, invalid: 0 };
+    const pairs = parseTraceText(readTraceText(byName[0]), stats);
     if (!pairs.length) throw new ViewError(`${basename(byName[0])} has no trace pairs`);
-    return { pairs, htmlPath: htmlSibling(byName[0]), sources: [basename(byName[0])], matchedBy: "filename" };
+    return {
+      pairs,
+      htmlPath: htmlSibling(byName[0]),
+      sources: [basename(byName[0])],
+      matchedBy: "filename",
+      warnings: damageWarnings(basename(byName[0]), stats),
+    };
   }
 
   if (byName.length > 1) {
@@ -125,9 +142,23 @@ function scanTraceTextPrefix(text: string, prefix: string): TracePair[] {
   return out;
 }
 
-/** Resolve, render, and write the snapshot .html. Returns the ViewResult. */
+function damageWarnings(file: string, stats: TraceParseStats): string[] {
+  const out: string[] = [];
+  if (stats.torn) out.push(`${file}: skipped ${stats.torn} torn line${stats.torn > 1 ? "s" : ""} (not valid JSON)`);
+  if (stats.invalid) out.push(`${file}: skipped ${stats.invalid} broken pair${stats.invalid > 1 ? "s" : ""} (no request/url)`);
+  return out;
+}
+
+/**
+ * Resolve, render, self-check, and write the snapshot .html. A failed
+ * self-check (embedded payload no longer round-trips) is reported as a
+ * warning, not a throw — a partially usable snapshot beats none.
+ */
 export function writeView(target: string, logDir: string): ViewResult {
   const result = resolveView(target, logDir);
-  writeFileSync(result.htmlPath, renderSnapshot(result.pairs));
+  const html = renderSnapshot(result.pairs);
+  const problem = verifySnapshot(html, result.pairs.length);
+  if (problem) result.warnings.push(`snapshot self-check failed: ${problem}`);
+  writeFileSync(result.htmlPath, html);
   return result;
 }

@@ -31,7 +31,8 @@
     "url": "https://github.com/thevibeworks/cctrace/issues"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "parse5": "^8.0.1"
   },
   "keywords": [
     "claude",

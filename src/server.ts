@@ -5,7 +5,7 @@ import { extractSessionId } from "./summarize";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { listInstances } from "./instances";
 
-export { renderSnapshot } from "./ui";
+export { renderSnapshot, verifySnapshot } from "./ui";
 
 interface ServerConfig {
   port: number;

@@ -10,6 +10,8 @@ import { parseArgs } from "util";
 
 export const CLI_OPTIONS = {
   help: { type: "boolean", short: "h" },
+  version: { type: "boolean", short: "V" },
+  "no-update-check": { type: "boolean" },
   static: { type: "boolean", short: "s" },
   mode: { type: "string" }, // auto | mitm | base-url | node
   "messages-only": { type: "boolean" },

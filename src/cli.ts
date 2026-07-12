@@ -12,6 +12,9 @@ import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, ViewError } from "./view";
 import { registerInstance, listInstances, type InstanceHandle } from "./instances";
+import {
+  CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
+} from "./version";
 import type { PageMeta } from "./ui";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
@@ -70,6 +73,84 @@ function log(msg: string, color = C.reset) {
 }
 
 const CAPTURE_MODES = ["auto", "mitm", "base-url", "node"] as const;
+
+// ---- update check ----
+// The startup path only ever reads the local cache (never the network), and
+// the cache refreshes in the background at most once a day — a new release
+// is offered on the run after it's seen. Opt out per-run (--no-update-check)
+// or permanently (CCTRACE_NO_UPDATE_CHECK=1).
+const NO_UPDATE_CHECK = !!values["no-update-check"] || process.env.CCTRACE_NO_UPDATE_CHECK === "1";
+
+/** How this install upgrades: an auto-runnable command, or instructions. */
+function upgradeHint(): { cmd: string[] | null; note: string } {
+  const p = import.meta.path;
+  if (p.includes("node_modules")) {
+    return p.includes("/.bun/") || p.includes("\\.bun\\")
+      ? { cmd: ["bun", "add", "-g", `${NPM_PACKAGE}@latest`], note: "bun global install" }
+      : { cmd: ["npm", "install", "-g", `${NPM_PACKAGE}@latest`], note: "npm global install" };
+  }
+  if (IS_COMPILED) {
+    return { cmd: null, note: `compiled binary — upgrade with: git pull && make install (or npm i -g ${NPM_PACKAGE}@latest)` };
+  }
+  return { cmd: null, note: "source checkout — upgrade with: git pull" };
+}
+
+/** One-line y/N on stdin with a timeout; timeout and anything but y/yes = no. */
+function promptYesNo(question: string, timeoutMs: number): Promise<boolean> {
+  process.stdout.write(question);
+  return new Promise((resolve) => {
+    const finish = (answer: boolean, newline = false) => {
+      clearTimeout(timer);
+      process.stdin.off("data", onData);
+      process.stdin.pause();
+      if (newline) process.stdout.write("\n");
+      resolve(answer);
+    };
+    const timer = setTimeout(() => finish(false, true), timeoutMs);
+    const onData = (buf: Buffer) => finish(/^y(es)?$/i.test(buf.toString().trim()));
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+  });
+}
+
+/**
+ * If the cache says a newer version exists, offer the upgrade. Interactive
+ * only on a TTY and never in Claude's print mode (-p/--print — the user is
+ * scripting); declining snoozes that version so it's a quiet notice, not a
+ * nag. Runs the upgrade command when the install method makes it
+ * unambiguous, otherwise prints the right instructions.
+ */
+async function maybeOfferUpdate(): Promise<void> {
+  if (NO_UPDATE_CHECK) return;
+  const cache = readUpdateCache(DATA_DIR);
+  const latest = availableUpdate(cache);
+  if (!latest || !cache) return;
+  const { cmd, note } = upgradeHint();
+  const interactive =
+    process.stdin.isTTY && process.stdout.isTTY &&
+    !claudeArgs.includes("-p") && !claudeArgs.includes("--print");
+  if (!interactive || cache.snoozed === latest) {
+    log(`update available: v${CCTRACE_VERSION} → v${latest} (${note})`, C.yellow);
+    return;
+  }
+  const yes = await promptYesNo(
+    `${C.yellow}[cctrace]${C.reset} update available: v${CCTRACE_VERSION} → v${latest} — upgrade now? [y/N] (10s) `,
+    10_000,
+  );
+  if (!yes) {
+    writeUpdateCache(DATA_DIR, { ...cache, snoozed: latest });
+    log(`skipping v${latest} — won't ask again for this version (--no-update-check silences the notice too)`, C.dim);
+    return;
+  }
+  if (!cmd) {
+    log(note, C.yellow);
+    return;
+  }
+  log(`running: ${cmd.join(" ")}`, C.cyan);
+  const res = Bun.spawnSync(cmd, { stdout: "inherit", stderr: "inherit" });
+  if (res.exitCode === 0) log(`upgraded to v${latest} — applies to your next run`, C.green);
+  else log(`upgrade failed (exit ${res.exitCode}) — ${note}`, C.yellow);
+}
 
 /** Does Claude get a flag that resumes an existing session? */
 function isContinuation(args: string[]): boolean {
@@ -357,6 +438,9 @@ ${C.yellow}OPTIONS:${C.reset}
   --claude-path PATH Custom Claude binary path
   --data-dir PATH    MITM CA / data dir (default: ~/.local/share/cctrace;
                      or set CCTRACE_DATA_DIR. --cache-dir still works)
+  --no-update-check  Skip the daily npm version check + upgrade prompt
+                     (or set CCTRACE_NO_UPDATE_CHECK=1)
+  -V, --version      Print the cctrace version and exit
   -h, --help         Show this help
 
 ${C.yellow}CAPTURE MODES:${C.reset}
@@ -455,7 +539,12 @@ interface LogSink {
 /** Run identity for the page header: Claude's project is the cwd it runs in. */
 function pageMeta(): PageMeta {
   const cwd = process.cwd();
-  return { project: basename(cwd) || cwd, projectPath: cwd };
+  const meta: PageMeta = { project: basename(cwd) || cwd, projectPath: cwd, version: CCTRACE_VERSION };
+  if (!NO_UPDATE_CHECK) {
+    const latest = availableUpdate(readUpdateCache(DATA_DIR));
+    if (latest) meta.latestVersion = latest;
+  }
+  return meta;
 }
 
 /** The current run's log paths, computed once so server + sink agree. */
@@ -743,6 +832,13 @@ async function main() {
     process.exit(0);
   }
 
+  if (values.version) {
+    console.log(`cctrace v${CCTRACE_VERSION}`);
+    const latest = availableUpdate(readUpdateCache(DATA_DIR));
+    if (latest) console.log(`latest: v${latest} (update available)`);
+    process.exit(0);
+  }
+
   if (values.help) {
     showHelp();
     process.exit(0);
@@ -771,6 +867,11 @@ async function main() {
     fresh: !!values.fresh,
     withFiles: values.with ? [...values.with] : [],
   };
+
+  log(`cctrace v${CCTRACE_VERSION}`, C.dim);
+  await maybeOfferUpdate();
+  // Refresh the update cache in the background — never blocks the session.
+  if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});
 
   const claudePath = findClaude();
   log(`Claude: ${claudePath}`, C.blue);

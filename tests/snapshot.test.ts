@@ -79,8 +79,15 @@ describe("page meta", () => {
     expect(JSON.parse(metaPayload(html))).toEqual({ project: "cctrace", projectPath: "/w/cctrace" });
   });
 
-  test("meta defaults to {} when unknown (cctrace view)", () => {
+  test("meta defaults to {} when unknown", () => {
     expect(JSON.parse(metaPayload(renderSnapshot([pairWith("hi")])))).toEqual({});
+  });
+
+  test("meta carries the producing version + update notice for the header", () => {
+    const html = renderSnapshot([], { version: "1.2.3", latestVersion: "1.3.0" });
+    expect(JSON.parse(metaPayload(html))).toEqual({ version: "1.2.3", latestVersion: "1.3.0" });
+    expect(html).toContain("ctx-ver");
+    expect(html).toContain("ctx-upd");
   });
 
   test("hostile project path cannot break out of the script tag", () => {

@@ -57,6 +57,10 @@ export interface PageMeta {
   project?: string;
   /** Full path of that directory (tooltip). */
   projectPath?: string;
+  /** cctrace version that produced this page/snapshot. */
+  version?: string;
+  /** Newer version known from the update check, if any. */
+  latestVersion?: string;
 }
 
 export function getLiveHtml(port: number, meta: PageMeta = {}): string {
@@ -141,6 +145,11 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
+    .ctx-ver { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
+    .ctx-upd {
+      color: var(--amber); font-size: 11px; margin-left: 6px;
+      text-decoration: none; border-bottom: 1px dashed var(--amber);
+    }
     /* Instance switcher: appears only when other live cctrace runs exist. */
     .inst { position: relative; flex-shrink: 0; }
     .inst-btn {
@@ -877,6 +886,15 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
         html += '<button class="ctx-sess" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+      }
+      if (META.version) {
+        html += '<span class="ctx-ver" title="cctrace v' + escapeHtml(META.version) + '">v' + escapeHtml(META.version) + '</span>';
+        if (META.latestVersion) {
+          html += '<a class="ctx-upd" href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md"' +
+            ' target="_blank" rel="noopener"' +
+            ' title="update available \\u2014 npm i -g @thevibeworks/cctrace@latest (or rerun cctrace and accept the prompt)">' +
+            'v' + escapeHtml(META.latestVersion) + ' available</a>';
+        }
       }
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');

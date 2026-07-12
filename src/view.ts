@@ -2,6 +2,7 @@ import { readdirSync, existsSync, statSync, writeFileSync } from "fs";
 import { join, basename, resolve } from "path";
 import { renderSnapshot, verifySnapshot } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
+import { CCTRACE_VERSION } from "./version";
 import { extractSessionId } from "./summarize";
 import type { TracePair } from "./types";
 
@@ -156,7 +157,7 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
  */
 export function writeView(target: string, logDir: string): ViewResult {
   const result = resolveView(target, logDir);
-  const html = renderSnapshot(result.pairs);
+  const html = renderSnapshot(result.pairs, { version: CCTRACE_VERSION });
   const problem = verifySnapshot(html, result.pairs.length);
   if (problem) result.warnings.push(`snapshot self-check failed: ${problem}`);
   writeFileSync(result.htmlPath, html);

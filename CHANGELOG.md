@@ -8,6 +8,15 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Added
 
+- **Multi-instance support** — running several cctrace sessions at once is
+  no longer a port scavenger hunt. Every live run registers itself in
+  `<data-dir>/instances/` (port, project, session id once seen on the wire)
+  and unregisters on exit; dead entries self-heal via pid checks.
+  `cctrace ps` lists live instances with their URLs; the web UI header
+  shows a "⇄ N more" switcher to jump straight to the other instances; and
+  port allocation now walks 9317, 9318, ... so concurrent runs land on
+  predictable neighbors instead of random OS-assigned ports.
+
 - **Session replay (P1+P2 of the design)** — replay a captured session as it
   happened, inside the Session view. "⏵ replay" (or ←/→) enters a time
   cursor over the wire: ←/→ steps turns, shift+←/→ steps wire requests,

@@ -11,6 +11,7 @@ import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, ViewError } from "./view";
+import { registerInstance, listInstances, type InstanceHandle } from "./instances";
 import type { PageMeta } from "./ui";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
@@ -51,7 +52,7 @@ function parseArgvOrExit() {
 // Subcommands (view/clean/merge/compress) bypass the OPTIONS/-- grammar, so
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "ps"]);
 const SUBCOMMAND = SUBCOMMANDS.has(RAW_ARGV[0]) ? RAW_ARGV[0] : null;
 const { values, claudeArgs } = SUBCOMMAND ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit();
 
@@ -126,6 +127,47 @@ function runView(args: string[]) {
     }
     throw err;
   }
+}
+
+// `cctrace ps` — list live cctrace instances from the registry. Every
+// live-mode run registers itself under <data-dir>/instances/; entries whose
+// process died are garbage-collected on read, so this is always current.
+function runPs(args: string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: { json: { type: "boolean" }, "data-dir": { type: "string" } },
+      allowPositionals: false,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] ps: ${(err as Error).message}\n  usage: cctrace ps [--json] [--data-dir PATH]`);
+    process.exit(1);
+  }
+  const dataDir = parsed.values["data-dir"] ? resolve(parsed.values["data-dir"] as string) : DATA_DIR;
+  const list = listInstances(dataDir);
+  if (parsed.values.json) {
+    console.log(JSON.stringify(list, null, 2));
+    return;
+  }
+  if (!list.length) {
+    log("No live cctrace instances", C.dim);
+    return;
+  }
+  const rows = list.map((i) => ({
+    url: `http://localhost:${i.port}`,
+    pid: String(i.pid),
+    project: i.project || "?",
+    session: i.sessionId ? i.sessionId.slice(0, 8) : "-",
+    started: i.startedAt ? new Date(i.startedAt).toLocaleTimeString() : "-",
+  }));
+  const w = (k: keyof (typeof rows)[0], h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
+  const widths = { url: w("url", "URL"), pid: w("pid", "PID"), project: w("project", "PROJECT"), session: w("session", "SESSION"), started: w("started", "STARTED") };
+  const line = (r: Record<string, string>) =>
+    `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
+  console.log(C.dim + line({ url: "URL", pid: "PID", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
+  for (const r of rows) console.log(line(r));
 }
 
 /** Parse a storage subcommand's flags; exit(1) with usage on error. */
@@ -297,6 +339,7 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset}                     Consolidate each session's pairs into one .jsonl.
   ${C.cyan}compress${C.reset}                  gzip -9 archive traces (view reads .gz directly).
+  ${C.cyan}ps${C.reset}                        List live cctrace instances (URL, project, session).
   ${C.dim}clean/merge/compress dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
@@ -531,6 +574,10 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   const { logFile, htmlFile } = logPaths(opts);
   let livePort: number | undefined;
   if (opts.liveMode) {
+    // Register in the live-instance registry so `cctrace ps` and the UI's
+    // instance switcher can find concurrent runs. The session id joins the
+    // entry once Claude's first request reveals it on the wire.
+    let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
       logDir: opts.logDir,
@@ -538,8 +585,20 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
       meta: pageMeta(),
+      dataDir: DATA_DIR,
+      onSession: (sid) => instance?.update({ sessionId: sid }),
     });
     livePort = server.port;
+    instance = registerInstance(DATA_DIR, {
+      pid: process.pid,
+      port: livePort ?? opts.port,
+      project: pageMeta().project || "",
+      projectPath: pageMeta().projectPath || "",
+      logFile,
+      mode,
+      startedAt: new Date().toISOString(),
+    });
+    process.on("exit", () => instance?.unregister());
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
@@ -586,14 +645,27 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
   if (opts.liveMode) {
     // Legacy mode: the preload names the log file itself, so the server can't
     // exclude it from prior-trace scans — pair-id dedupe covers that instead.
+    let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
       logDir: opts.logDir,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
       meta: pageMeta(),
+      dataDir: DATA_DIR,
+      onSession: (sid) => instance?.update({ sessionId: sid }),
     });
     livePort = server.port ?? opts.port;
+    instance = registerInstance(DATA_DIR, {
+      pid: process.pid,
+      port: livePort,
+      project: pageMeta().project || "",
+      projectPath: pageMeta().projectPath || "",
+      logFile: "",
+      mode: "node",
+      startedAt: new Date().toISOString(),
+    });
+    process.on("exit", () => instance?.unregister());
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
@@ -663,6 +735,7 @@ async function main() {
     else if (SUBCOMMAND === "clean") runClean(rest);
     else if (SUBCOMMAND === "merge") runMerge(rest);
     else if (SUBCOMMAND === "compress") runCompress(rest);
+    else if (SUBCOMMAND === "ps") runPs(rest);
     process.exit(0);
   }
 

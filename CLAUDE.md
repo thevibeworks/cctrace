@@ -18,6 +18,7 @@ src/
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
 ├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads
+├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
 ├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
@@ -159,7 +160,17 @@ cctrace view <file|session-id|fragment>   # rebuild a snapshot .html and open it
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz
+cctrace ps [--json]                       # list live cctrace instances (URL, project, session)
 ```
+
+**Multi-instance**: every live run registers itself in `<data-dir>/instances/
+<pid>.json` (port, project, session id once seen on the wire) and unregisters
+on exit; stale entries (crashes) are GC'd on every read via pid-liveness, so
+the registry is self-healing (`src/instances.ts`). `cctrace ps` lists live
+runs; the server exposes `/api/instances`; the web UI header grows a "⇄ N
+more" switcher when other instances exist. Port allocation walks
+9317, 9318, ... before falling back to an OS-assigned port, so concurrent
+runs land on predictable neighbors.
 
 The MITM CA / data dir is `~/.local/share/cctrace` (XDG data — the CA is
 identity material; rotating it breaks any trust exported via `--print-ca`, so

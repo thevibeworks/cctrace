@@ -216,6 +216,10 @@ traffic gets its own filter category in the UI.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (embedded sticker pricing, cache read/write TTLs priced separately), with
   per-turn and per-thread totals in the Session view. Estimates, not bills.
+- **Multi-instance aware** -- run cctrace in three repos at once and nothing
+  gets lost: ports allocate predictably (9317, 9318, ...), `cctrace ps`
+  lists every live instance with its URL and session, and the web UI header
+  grows a switcher to jump between them.
 - **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up
   where a previous traced run left off: every Claude Code request carries its
   session id on the wire, so cctrace finds the earlier runs' traces in the log
@@ -247,6 +251,9 @@ cctrace merge --prune --yes                # also remove fully-merged sources
 
 # Archive for backup: gzip -9 (view reads .jsonl.gz directly)
 cctrace compress --older-than 7 --yes      # only traces older than 7 days
+
+# Which cctrace sessions are live right now, and on which port?
+cctrace ps                                 # URL, PID, project, session, started
 ```
 
 Housekeeping never shrinks your data. `clean` only deletes an `.html` whose

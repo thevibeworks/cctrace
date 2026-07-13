@@ -6,6 +6,43 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`cctrace view --serve`** — serve a saved trace from the live web server
+  instead of writing a snapshot `.html`. For big sessions a static snapshot
+  runs to hundreds of MB and dies in the browser; `--serve` loads the same
+  pairs into the normal live UI (registered in the instance registry as mode
+  `view`, visible in `cctrace ps`, Ctrl-C to stop). The snapshot path prints
+  a hint when the written `.html` exceeds 100 MB.
+- **Client profiles** (#20, first cut) — `cctrace codex -- exec "..."` and
+  `cctrace grok -- ...` trace the OpenAI Codex and Grok CLIs. A leading
+  client word selects the profile (binary discovery + `--client-path`
+  override); non-Claude clients always run mitm, where `HTTPS_PROXY` plus
+  the 0.10 combined CA bundle already cover their Rust/native TLS stacks
+  (verified end-to-end against both CLIs). OpenAI-format session
+  reconstruction remains follow-up work.
+- **Shape-first categorization** (#19) — `categorizeUrl` now classifies the
+  wire shape before the host: `/v1/messages` (and `count_tokens`) on ANY
+  host is Messages/Count Tokens, so third-party Anthropic-compatible
+  providers behind `ANTHROPIC_BASE_URL` no longer drown in the External
+  bucket. OpenAI shapes (`.../responses`, `.../chat/completions`, matched by
+  path tail — custom providers mount them under arbitrary prefixes) count as
+  Messages too, and `--messages-only` honors the same shapes. The
+  Anthropic-only taxonomy (usage/oauth/mcp/telemetry keywords) stays
+  host-gated: those substrings are far too generic for foreign hosts.
+
+### Fixed
+
+- Diagnosed the "Identifier 'pairs' has already been declared" snapshot
+  corruption reported on large traces: the broken `.html` carried the exact
+  `$&`-substitution signature of the pre-0.5.0 `renderSnapshot`, i.e. it was
+  written by a stale installed binary (npm never had 0.5.0 — 0.4.0 installs
+  jumped straight to 0.6.0+). Current escaping (`jsonForScript` +
+  function-replacement, both since 0.5.0) verifies clean on the same
+  375 MB trace; the write-time self-check (0.9.0) would have flagged any
+  real regression. Fix: upgrade the binary that generates the snapshot —
+  and prefer `view --serve` at that size anyway.
+
 ## [0.10.0] - 2026-07-13
 
 ### Fixed

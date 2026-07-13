@@ -21,6 +21,8 @@ export const CLI_OPTIONS = {
   dir: { type: "string" },
   port: { type: "string", short: "p" },
   "claude-path": { type: "string" },
+  "client-path": { type: "string" }, // generic form for codex/grok profiles
+
   "data-dir": { type: "string" },
   "cache-dir": { type: "string" }, // legacy alias for --data-dir (pre-0.6)
   fresh: { type: "boolean" },

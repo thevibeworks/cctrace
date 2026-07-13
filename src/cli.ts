@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { basename, dirname, join, resolve } from "path";
-import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
@@ -10,8 +10,9 @@ import { ensureCerts, migrateCaDir } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
-import { writeView, ViewError } from "./view";
+import { writeView, resolveView, ViewError } from "./view";
 import { registerInstance, listLiveInstances, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
+import { CLIENTS, findClientBinary } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
 } from "./version";
@@ -32,9 +33,9 @@ const IS_COMPILED = import.meta.path.includes("$bunfs") || import.meta.path.incl
 
 // cctrace [OPTIONS] [-- CLAUDE_ARGS...] — everything after "--" goes to the
 // Claude CLI verbatim; unknown flags before it error with a hint (args.ts).
-function parseArgvOrExit() {
+function parseArgvOrExit(argv: string[]) {
   try {
-    return parseCliArgs(Bun.argv.slice(2));
+    return parseCliArgs(argv);
   } catch (err) {
     if (err instanceof CliUsageError) {
       let msg = err.message;
@@ -54,9 +55,15 @@ function parseArgvOrExit() {
 // Subcommands (view/clean/merge/compress) bypass the OPTIONS/-- grammar, so
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
+const ARGV_HEAD = RAW_ARGV[0] ?? "";
 const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "ps"]);
-const SUBCOMMAND = SUBCOMMANDS.has(RAW_ARGV[0]) ? RAW_ARGV[0] : null;
-const { values, claudeArgs } = SUBCOMMAND ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit();
+const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
+// A leading client word picks who gets traced: `cctrace codex -- exec ...`.
+// Omitted (or "claude") keeps the original grammar; the rest parses the same.
+const CLIENT_SELECTED = !SUBCOMMAND && ARGV_HEAD in CLIENTS;
+const CLIENT = CLIENTS[CLIENT_SELECTED ? ARGV_HEAD : "claude"]!;
+const OWN_ARGV = CLIENT_SELECTED ? RAW_ARGV.slice(1) : RAW_ARGV;
+const { values, claudeArgs } = SUBCOMMAND ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit(OWN_ARGV);
 
 const C = {
   reset: "\x1b[0m",
@@ -170,10 +177,15 @@ function openBrowser(url: string) {
   }
 }
 
-// `cctrace view <target> [--dir DIR] [--no-open]` — rebuild a snapshot .html
-// from a saved trace (a .jsonl path, a Claude Code session id, or a trace
-// filename fragment) and open it. No proxy, no Claude spawn.
-function runView(args: string[]) {
+// `cctrace view <target> [--serve] [--dir DIR] [--no-open]` — rebuild a saved
+// trace (a .jsonl path, a Claude Code session id, or a trace filename
+// fragment). Default writes a self-contained snapshot .html; --serve skips
+// the file and serves the same UI from the live web server instead — the
+// right tool for big sessions, where a several-hundred-MB .html chokes the
+// browser. No proxy, no Claude spawn either way. Returns true when a server
+// was started and the process must stay alive.
+function runView(args: string[]): boolean {
+  const usage = "usage: cctrace view <file.jsonl | session-id> [--serve] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -181,25 +193,38 @@ function runView(args: string[]) {
       options: {
         dir: { type: "string" },
         "no-open": { type: "boolean" },
+        serve: { type: "boolean" },
+        port: { type: "string" },
       },
       allowPositionals: true,
       strict: true,
     });
   } catch (err) {
-    console.error(`[cctrace] view: ${(err as Error).message}\n  usage: cctrace view <file.jsonl | session-id> [--dir DIR] [--no-open]`);
+    console.error(`[cctrace] view: ${(err as Error).message}\n  ${usage}`);
     process.exit(1);
   }
   const target = parsed.positionals[0];
   if (!target) {
-    console.error("[cctrace] view: need a target\n  usage: cctrace view <file.jsonl | session-id> [--dir DIR] [--no-open]");
+    console.error(`[cctrace] view: need a target\n  ${usage}`);
     process.exit(1);
   }
   const logDir = (parsed.values.dir as string) || ".cctrace";
   try {
+    if (parsed.values.serve) {
+      serveView(target, logDir, {
+        port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
+        noOpen: !!parsed.values["no-open"],
+      });
+      return true;
+    }
     const result = writeView(target, logDir);
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
     for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
+    const mb = statSync(result.htmlPath).size / (1024 * 1024);
+    if (mb > 100) {
+      log(`snapshot is ${mb.toFixed(0)}MB — browsers struggle at this size; try: cctrace view ${target} --serve`, C.yellow);
+    }
     if (!parsed.values["no-open"]) openBrowser(result.htmlPath);
   } catch (err) {
     if (err instanceof ViewError) {
@@ -208,6 +233,45 @@ function runView(args: string[]) {
     }
     throw err;
   }
+  return false;
+}
+
+// The --serve half of `cctrace view`: same target resolution, but the pairs
+// are seeded into the live web server instead of embedded in a file. The run
+// registers in the instance registry like any live capture (mode "view"), so
+// `cctrace ps` and the header switcher see it. Ctrl-C stops it.
+function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean }) {
+  const result = resolveView(target, logDir);
+  log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
+  for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
+
+  const traceName = (result.sources[0] || target).replace(/\.jsonl(\.gz)?$/, "");
+  const instanceId = crypto.randomUUID();
+  let instance: InstanceHandle | null = null;
+  const server = createServer({
+    port: opts.port,
+    logDir,
+    meta: { ...pageMeta(), project: traceName, projectPath: resolve(logDir) },
+    dataDir: DATA_DIR,
+    instanceId,
+    initialPairs: result.pairs,
+    self: () => instance?.snapshot() ?? null,
+  });
+  instance = registerInstance(DATA_DIR, {
+    id: instanceId,
+    pid: process.pid,
+    port: server.port ?? opts.port,
+    project: traceName,
+    projectPath: resolve(logDir),
+    logFile: join(logDir, result.sources[0] || ""),
+    mode: "view",
+    startedAt: new Date().toISOString(),
+  });
+  process.on("exit", () => instance?.unregister());
+  process.on("SIGINT", () => process.exit(0));
+  process.on("SIGTERM", () => process.exit(0));
+  log(`Serving ${result.sources.join(", ")} at http://localhost:${server.port} — Ctrl-C to stop`, C.green);
+  if (!opts.noOpen) setTimeout(() => openBrowser(`http://localhost:${server.port}`), 300);
 }
 
 // `cctrace ps` — list live cctrace instances from the registry. Every
@@ -409,15 +473,18 @@ function showHelp() {
 ${C.cyan}cctrace${C.reset} - Trace HTTP traffic from Claude Code CLI
 
 ${C.yellow}USAGE:${C.reset}
-  cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+  cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
   cctrace <SUBCOMMAND> [ARGS]
 
-  Everything after ${C.cyan}--${C.reset} is passed to the Claude CLI verbatim.
+  Everything after ${C.cyan}--${C.reset} is passed to the traced CLI verbatim.
+  CLIENT picks who gets traced: ${C.cyan}claude${C.reset} (default), ${C.cyan}codex${C.reset}, ${C.cyan}grok${C.reset}.
+  Non-Claude clients always use mitm capture.
 
 ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no Claude)${C.reset}
   ${C.cyan}view${C.reset} <file|session-id>   Rebuild a snapshot .html and open it. Target is a
                           .jsonl/.jsonl.gz path, a Claude Code session id, or a
-                          trace filename fragment.
+                          trace filename fragment. ${C.cyan}--serve${C.reset} serves the UI from
+                          a local server instead (best for very large traces).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset}                     Consolidate each session's pairs into one .jsonl.
   ${C.cyan}compress${C.reset}                  gzip -9 archive traces (view reads .gz directly).
@@ -436,6 +503,7 @@ ${C.yellow}OPTIONS:${C.reset}
   --fresh            Don't merge prior traces of a continued session
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
+  --client-path PATH Custom binary path for any client (codex/grok too)
   --data-dir PATH    MITM CA / data dir (default: ~/.local/share/cctrace;
                      or set CCTRACE_DATA_DIR. --cache-dir still works)
   --no-update-check  Skip the daily npm version check + upgrade prompt
@@ -459,39 +527,19 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace -- --continue            ${C.dim}# Resume last Claude session, traced${C.reset}
   cctrace -- -p "explain this"     ${C.dim}# Claude print mode, traced${C.reset}
   cctrace --mode base-url -- --model opus --continue
+  cctrace codex -- exec "fix tests" ${C.dim}# trace the OpenAI Codex CLI${C.reset}
+  cctrace grok                      ${C.dim}# trace the Grok CLI${C.reset}
   cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl  ${C.dim}# reopen a saved trace${C.reset}
   cctrace view 4f9a2c1e             ${C.dim}# rebuild by Claude Code session id${C.reset}
+  cctrace view <big-trace> --serve  ${C.dim}# serve a huge trace instead of a giant .html${C.reset}
 
   ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}
 `);
 }
 
-function findClaude(): string {
-  const custom = values["claude-path"];
-  if (custom) {
-    return resolve(custom);
-  }
-
-  const home = process.env.HOME || "";
-  const paths = [
-    join(home, ".claude", "bin", "claude"),
-    join(home, ".claude", "local", "claude"),
-    join(home, ".local", "bin", "claude"),
-    join(home, ".npm-global", "bin", "claude"),
-    "/opt/homebrew/bin/claude",
-    "/usr/local/bin/claude",
-  ];
-
-  for (const p of paths) {
-    if (existsSync(p)) return p;
-  }
-
-  const which = Bun.spawnSync(["which", "claude"]);
-  if (which.exitCode === 0) {
-    return which.stdout.toString().trim();
-  }
-
-  throw new Error("Claude not found. Install Claude Code or use --claude-path");
+function findClient(): string {
+  const custom = values["client-path"] || values["claude-path"];
+  return findClientBinary(CLIENT, custom ? resolve(custom) : undefined);
 }
 
 async function buildPreload(): Promise<string> {
@@ -727,7 +775,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
 
   // --continue/--resume can't reveal which session until Claude's first request
   // hits the wire, so prior turns merge then, not now. Say so, or a user waits.
-  if (!opts.fresh && isContinuation(claudeArgs)) {
+  if (CLIENT.name === "claude" && !opts.fresh && isContinuation(claudeArgs)) {
     log("Continuing a session — prior turns merge into Session view on Claude's first request", C.dim);
   }
 
@@ -834,7 +882,9 @@ function resolveMode(claudePath: string): { mode: "mitm" | "base-url" | "node"; 
 async function main() {
   if (SUBCOMMAND) {
     const rest = RAW_ARGV.slice(1);
-    if (SUBCOMMAND === "view") runView(rest);
+    if (SUBCOMMAND === "view") {
+      if (runView(rest)) return; // --serve: the web server keeps us alive
+    }
     else if (SUBCOMMAND === "clean") runClean(rest);
     else if (SUBCOMMAND === "merge") runMerge(rest);
     else if (SUBCOMMAND === "compress") runCompress(rest);
@@ -883,11 +933,24 @@ async function main() {
   // Refresh the update cache in the background — never blocks the session.
   if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});
 
-  const claudePath = findClaude();
-  log(`Claude: ${claudePath}`, C.blue);
-  if (claudeArgs.length) log(`Claude args: ${claudeArgs.join(" ")}`, C.blue);
+  const clientPath = findClient();
+  log(`${CLIENT.name === "claude" ? "Claude" : CLIENT.name}: ${clientPath}`, C.blue);
+  if (claudeArgs.length) log(`${CLIENT.name} args: ${claudeArgs.join(" ")}`, C.blue);
 
-  const { mode, runPath } = resolveMode(claudePath);
+  // Non-Claude clients (codex, grok) always run mitm: base-url rides
+  // ANTHROPIC_BASE_URL and node mode injects into Claude's fetch — both are
+  // Claude-specific plumbing. The mitm side needs neither; HTTPS_PROXY plus
+  // the combined CA bundle (#17) cover Rust/Go/Node clients alike.
+  if (CLIENT.name !== "claude") {
+    if (requestedMode && requestedMode !== "auto" && requestedMode !== "mitm") {
+      console.error(`[cctrace] Error: --mode ${requestedMode} only applies to Claude — ${CLIENT.name} is traced via mitm.`);
+      process.exit(1);
+    }
+    await runProxyCapture("mitm", clientPath, claudeArgs, opts);
+    return;
+  }
+
+  const { mode, runPath } = resolveMode(clientPath);
 
   // Legacy node mode injects .cache/preload.cjs + src/loader.cjs, which only
   // exist when running from the repo — the compiled binary carries neither.

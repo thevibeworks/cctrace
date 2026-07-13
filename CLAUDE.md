@@ -162,7 +162,21 @@ cctrace --print-ca            # print MITM CA cert path
 cctrace -s                    # static mode (files only, no live UI)
 cctrace -- --continue         # everything after -- goes to Claude verbatim
 cctrace -- -p "explain this"  # (-p after -- is Claude's, before it cctrace's)
+cctrace codex -- exec "..."   # trace the OpenAI Codex CLI instead of Claude
+cctrace grok -- -p "..."      # trace the Grok CLI
 ```
+
+**Client profiles** (`src/clients.ts`, issue #20 first cut): a leading client
+word (`claude`|`codex`|`grok`) picks who gets traced; the rest of the grammar
+is unchanged. Non-Claude clients always run mitm — HTTPS_PROXY + the combined
+CA bundle (#17) cover their Rust/Go/native TLS stacks; `--client-path`
+overrides discovery for any client. Their model calls are OpenAI-shaped
+(`.../responses`, `.../chat/completions` — matched by path tail since custom
+providers mount them under arbitrary prefixes) and categorize as Messages
+(`categorizeUrl` classifies wire shape BEFORE host, issue #19 — which also
+puts third-party `ANTHROPIC_BASE_URL` providers' `/v1/messages` in Messages
+instead of External). Session-view reconstruction of OpenAI SSE remains
+follow-up work (#20).
 
 Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 `cli.ts` before the strict parser). They read saved traces only — no proxy, no
@@ -170,6 +184,9 @@ Claude spawn. `clean`/`merge`/`compress` are dry-run by default; `--yes` applies
 
 ```bash
 cctrace view <file|session-id|fragment>   # rebuild a snapshot .html and open it
+cctrace view <target> --serve [--port N]  # serve it from the live web server instead
+                                          # (huge traces: no 400MB .html; registers
+                                          # in the instance registry, mode "view")
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz

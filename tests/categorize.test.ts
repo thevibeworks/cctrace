@@ -40,3 +40,34 @@ describe("categorizeUrl — real Claude Code endpoints", () => {
     expect(categorizeUrl("")).toBe("other");
   });
 });
+
+describe("categorizeUrl — shape first, host second (#19)", () => {
+  const cases: Array<[string, string]> = [
+    // Third-party Anthropic-compatible providers (ANTHROPIC_BASE_URL)
+    ["https://api.moonshot.cn/anthropic/v1/messages", "messages"],
+    ["https://open.bigmodel.cn/api/anthropic/v1/messages?beta=true", "messages"],
+    ["https://gateway.corp.example/v1/messages/count_tokens", "tokens"],
+    ["https://api.anthropic.com/v1/messages/count_tokens", "tokens"],
+    // OpenAI-style model APIs (codex, grok) are messages-shaped too. Custom
+    // providers mount them under arbitrary prefixes, so the path TAIL decides.
+    ["https://api.openai.com/v1/responses", "messages"],
+    ["https://chatgpt.com/backend-api/codex/responses", "messages"],
+    ["https://relay.example/responses", "messages"],
+    ["https://cli-chat-proxy.grok.com/v1/responses?stream=true", "messages"],
+    ["https://api.x.ai/v1/chat/completions", "messages"],
+    // ...but only the tail: a REST resource merely named "responses" isn't one
+    ["https://example.com/survey/responses/list", "external"],
+    // The Anthropic-only taxonomy must NOT leak onto foreign hosts: its
+    // keywords ("logging", "cost", "mcp", ...) are generic substrings.
+    ["https://api.moonshot.cn/logging/batch", "external"],
+    ["https://example.com/pricing/cost", "external"],
+    ["https://registry.npmjs.org/some-mcp-package", "external"],
+    ["https://github.com/foo/bar", "external"],
+  ];
+
+  for (const [url, expected] of cases) {
+    test(`${url} -> ${expected}`, () => {
+      expect(categorizeUrl(url)).toBe(expected);
+    });
+  }
+});

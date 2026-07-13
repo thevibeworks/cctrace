@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, chmodSync, readFileSync, renameSync, cpSync, rmSync } from "fs";
+import { existsSync, mkdirSync, chmodSync, readFileSync, writeFileSync, renameSync, cpSync, rmSync } from "fs";
 import { join, dirname, resolve } from "path";
 
 // SANs the leaf cert must cover — every host cctrace intercepts must appear
@@ -138,6 +138,53 @@ export async function generateHostCert(host: string, caDir: string): Promise<{ c
   ]);
 
   return { cert: readFileSync(certPath, "utf-8"), key: readFileSync(keyPath, "utf-8") };
+}
+
+// Where the system trust store lives, per platform family. Checked in order;
+// Debian-style first because that's what most containers are.
+const SYSTEM_CA_BUNDLES = [
+  "/etc/ssl/certs/ca-certificates.crt", // Debian/Ubuntu/Alpine
+  "/etc/pki/tls/certs/ca-bundle.crt",   // RHEL/Fedora
+  "/etc/ssl/ca-bundle.pem",             // openSUSE
+  "/etc/ssl/cert.pem",                  // macOS, FreeBSD
+];
+
+/**
+ * The trust bundle the machine already uses: an explicit user bundle
+ * (corporate TLS inspection sets SSL_CERT_FILE/CURL_CA_BUNDLE) wins over the
+ * platform store, so stacking cctrace on top of another MITM keeps working.
+ */
+export function systemCaBundle(env: NodeJS.ProcessEnv = process.env): string | null {
+  for (const p of [env.SSL_CERT_FILE, env.CURL_CA_BUNDLE]) {
+    if (p && existsSync(p)) return p;
+  }
+  for (const p of SYSTEM_CA_BUNDLES) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Write system CAs + the mitm CA as one bundle for the env vars that REPLACE
+ * the trust store (SSL_CERT_FILE and friends — unlike NODE_EXTRA_CA_CERTS,
+ * which appends). The combination makes verification path-independent:
+ * proxied requests verify via the mitm cert, direct/NO_PROXY ones via the
+ * system CAs, so subprocesses never need to know which route a request took.
+ *
+ * Returns null when no system bundle can be found — exporting the mitm cert
+ * alone would break every non-proxied TLS connection in every subprocess, so
+ * the caller must skip those vars instead. Rebuilt on every startup (a cheap
+ * concat) so system store updates are picked up; written via rename so
+ * concurrent cctrace runs can't tear the file.
+ */
+export function buildCaBundle(caDir: string, sysBundle: string | null = systemCaBundle()): string | null {
+  if (!sysBundle) return null;
+  const caCert = readFileSync(join(caDir, "ca-cert.pem"), "utf-8");
+  const out = join(caDir, "ca-bundle.pem");
+  const tmp = `${out}.${process.pid}.tmp`;
+  writeFileSync(tmp, readFileSync(sysBundle, "utf-8").trimEnd() + "\n" + caCert);
+  renameSync(tmp, out);
+  return out;
 }
 
 /**

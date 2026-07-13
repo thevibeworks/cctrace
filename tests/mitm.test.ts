@@ -1,6 +1,6 @@
 import { describe, test, expect, afterEach, beforeAll, beforeEach } from "bun:test";
 import { startMitm } from "../src/mitm";
-import { ensureCerts, isInterceptHost, migrateCaDir } from "../src/certs";
+import { ensureCerts, isInterceptHost, migrateCaDir, buildCaBundle, systemCaBundle } from "../src/certs";
 import { createCapturer } from "../src/capture";
 import type { TracePair } from "../src/types";
 import { join } from "path";
@@ -157,10 +157,50 @@ describe("capture abstraction", () => {
     expect(cap.mode).toBe("mitm");
     expect(cap.env.HTTPS_PROXY).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(cap.env.NODE_EXTRA_CA_CERTS).toContain("ca-cert.pem");
-    // We must NOT set SSL_CERT_FILE / HTTP_PROXY: they leak into Claude's
-    // subprocesses (curl/python/MCP) and break their public TLS / http calls.
-    expect(cap.env.SSL_CERT_FILE).toBeUndefined();
+    // Subprocesses inherit HTTPS_PROXY, so they need trust too (issue #17):
+    // the standard vars carry the combined system+mitm bundle. HTTP_PROXY
+    // stays unset — the front door only speaks CONNECT.
+    expect(cap.env.SSL_CERT_FILE).toContain("ca-bundle.pem");
+    expect(cap.env.CURL_CA_BUNDLE).toBe(cap.env.SSL_CERT_FILE);
+    expect(cap.env.REQUESTS_CA_BUNDLE).toBe(cap.env.SSL_CERT_FILE);
     expect(cap.env.HTTP_PROXY).toBeUndefined();
     expect(cap.env.ANTHROPIC_BASE_URL).toBeUndefined();
+  });
+});
+
+// Issue #17: children of the traced CLI inherit HTTPS_PROXY but (before this)
+// not the trust — every non-Node subprocess (statusline curl, gh, python
+// hooks) failed TLS verify. The fix exports a COMBINED bundle: replacement
+// vars with only the mitm cert would break all non-proxied subprocess TLS.
+describe("buildCaBundle", () => {
+  test("bundle = system CAs + mitm CA appended", () => {
+    const sys = join(caDir, "fake-system.pem");
+    writeFileSync(sys, "-----BEGIN CERTIFICATE-----\nSYSTEMCERT\n-----END CERTIFICATE-----\n");
+    const out = buildCaBundle(caDir, sys);
+    expect(out).toBe(join(caDir, "ca-bundle.pem"));
+    const bundle = readFileSync(out!, "utf-8");
+    // System CAs first, mitm CA appended last.
+    expect(bundle.startsWith("-----BEGIN CERTIFICATE-----\nSYSTEMCERT")).toBe(true);
+    expect(bundle.trimEnd().endsWith(readFileSync(join(caDir, "ca-cert.pem"), "utf-8").trimEnd())).toBe(true);
+  });
+
+  test("no system bundle -> null (caller must skip the replacement vars)", () => {
+    expect(buildCaBundle(caDir, null)).toBeNull();
+    expect(existsSync(join(caDir, "ca-bundle.pem.999.tmp"))).toBe(false);
+  });
+
+  test("rebuild picks up a changed system store", () => {
+    const sys = join(caDir, "fake-system.pem");
+    writeFileSync(sys, "-----BEGIN CERTIFICATE-----\nROTATED\n-----END CERTIFICATE-----\n");
+    const bundle = readFileSync(buildCaBundle(caDir, sys)!, "utf-8");
+    expect(bundle).toContain("ROTATED");
+    expect(bundle).not.toContain("SYSTEMCERT");
+  });
+
+  test("systemCaBundle honors an existing user bundle over platform paths", () => {
+    const mine = join(caDir, "corporate.pem");
+    writeFileSync(mine, "x");
+    expect(systemCaBundle({ SSL_CERT_FILE: mine })).toBe(mine);
+    expect(systemCaBundle({ SSL_CERT_FILE: join(caDir, "gone.pem"), CURL_CA_BUNDLE: mine })).toBe(mine);
   });
 });

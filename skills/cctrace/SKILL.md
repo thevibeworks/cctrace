@@ -49,7 +49,7 @@ Two gotchas worth knowing before suggesting commands:
 
 | Mode | Sees | Setup | When |
 |---|---|---|---|
-| `mitm` (default for native claude) | ALL Anthropic traffic: messages, OAuth usage/credits, MCP registry, telemetry | auto-generates a CA under `~/.local/share/cctrace/mitm/`, trusted via `NODE_EXTRA_CA_CERTS` | full picture — usage limits, credits, everything |
+| `mitm` (default for native claude) | ALL Anthropic traffic: messages, OAuth usage/credits, MCP registry, telemetry | auto-generates a CA under `~/.local/share/cctrace/mitm/`, trusted via `NODE_EXTRA_CA_CERTS` (claude itself) + a combined system+mitm bundle in `SSL_CERT_FILE`/`CURL_CA_BUNDLE`/`REQUESTS_CA_BUNDLE` (its subprocesses) | full picture — usage limits, credits, everything |
 | `base-url` | `/v1/messages` only (OAuth/usage bypass `ANTHROPIC_BASE_URL`) | none | quick conversation/token debugging |
 | `node` | legacy fetch injection | repo sources | npm-installed (non-native) claude only |
 
@@ -58,9 +58,10 @@ The MITM proxy is designed to never take down the wrapped session; if a page
 of the UI dies, Claude keeps running.
 
 **Side effect to expect**: while a session runs under mitm, that shell's
-`HTTPS_PROXY` points at cctrace, so OTHER tools (git, gh, curl to non-Anthropic
-hosts) may fail TLS verification against the minted certs. Run them with
-`HTTPS_PROXY="" https_proxy=""` prefixed.
+`HTTPS_PROXY` points at cctrace. Since 0.10 the exported CA bundle makes
+curl/gh/python/go subprocesses verify fine; a tool that ignores those vars
+(or a pre-0.10 cctrace) still fails TLS against the minted certs — run it
+with `HTTPS_PROXY="" https_proxy=""` prefixed.
 
 ## The web UI
 
@@ -100,8 +101,10 @@ cctrace ps [--json]                       # live instances: URL, PID, project, s
 ```
 
 `cctrace ps` answers "which port is my other session on?" — every live run
-registers itself; dead entries self-heal. The UI header shows a "⇄ N more"
-switcher when siblings exist.
+registers itself (heartbeat + port-probe verified, works across containers
+sharing a data dir), and the default port walk 9317..9326 is swept for
+instances the registry lost, so the listing reflects what actually serves.
+The UI header shows a "⇄ N more" switcher when siblings exist.
 
 ## Reading a trace programmatically
 

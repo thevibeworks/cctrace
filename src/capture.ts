@@ -1,6 +1,6 @@
 import { startProxy } from "./proxy";
 import { startMitm } from "./mitm";
-import { ensureCerts } from "./certs";
+import { ensureCerts, buildCaBundle } from "./certs";
 import type { TracePair } from "./types";
 
 export type CaptureMode = "mitm" | "base-url";
@@ -42,21 +42,34 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
     });
     const proxyUrl = `http://127.0.0.1:${server.port}`;
     opts.onStatus?.(`MITM proxy listening on ${proxyUrl}`);
+    // Subprocesses inherit HTTPS_PROXY whether we like it or not, so they must
+    // inherit the trust too (issue #17: statusline curl, gh, python hooks all
+    // died on TLS verify — NODE_EXTRA_CA_CERTS is Node-only). The standard
+    // vars REPLACE the trust store rather than extend it, hence the combined
+    // system-CAs + mitm-CA bundle: proxied requests verify via the mitm cert,
+    // direct/NO_PROXY ones via the system CAs. Without a system bundle we skip
+    // the vars (mitm cert alone would break all non-proxied subprocess TLS).
+    const bundle = buildCaBundle(certs.caDir);
+    if (!bundle) {
+      opts.onStatus?.("No system CA bundle found — non-Node subprocesses (curl, gh, ...) will fail TLS through the proxy");
+    }
     return {
       mode,
       label: `MITM proxy ${proxyUrl} (all Anthropic hosts)`,
-      // Only what Claude needs, nothing that leaks into its subprocesses:
-      //  - HTTPS_PROXY routes Claude's TLS through us (front door does CONNECT).
-      //  - NODE_EXTRA_CA_CERTS *appends* our CA to Bun's trust store, so Claude
-      //    trusts our leaf while public TLS still works (verified empirically).
-      // We deliberately do NOT set SSL_CERT_FILE (it *replaces* the OpenSSL trust
-      // store for any inherited curl/python subprocess, breaking their public
-      // TLS) or HTTP_PROXY (our front door only speaks CONNECT and 405s plain
-      // HTTP, which would break subprocess http:// calls).
+      //  - HTTPS_PROXY routes TLS through us (the front door does CONNECT).
+      //    HTTP_PROXY stays unset: the front door only speaks CONNECT and
+      //    405s plain HTTP, which would break subprocess http:// calls.
+      //  - NODE_EXTRA_CA_CERTS *appends* our CA for Claude itself (Bun/Node).
+      //  - SSL_CERT_FILE (OpenSSL, Go, Ruby, Python ssl), CURL_CA_BUNDLE
+      //    (curl), REQUESTS_CA_BUNDLE (python-requests), NIX_SSL_CERT_FILE
+      //    (nix-built tools) carry the combined bundle to everything else.
       env: {
         HTTPS_PROXY: proxyUrl,
         https_proxy: proxyUrl,
         NODE_EXTRA_CA_CERTS: server.caCertPath,
+        ...(bundle
+          ? { SSL_CERT_FILE: bundle, CURL_CA_BUNDLE: bundle, REQUESTS_CA_BUNDLE: bundle, NIX_SSL_CERT_FILE: bundle }
+          : {}),
       },
       flush: () => server.flush(),
       stop: () => server.stop(),

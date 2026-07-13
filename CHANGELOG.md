@@ -6,6 +6,41 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Subprocess TLS trust** (#17) — children of the traced CLI inherit
+  `HTTPS_PROXY`, but `NODE_EXTRA_CA_CERTS` is Node-only, so every non-Node
+  subprocess (statusline `curl`, `gh`, python hooks) died on TLS
+  verification. mitm mode now builds a combined bundle (system CAs + mitm
+  CA — the standard vars *replace* the trust store, so the union keeps
+  non-proxied connections working) and exports it as `SSL_CERT_FILE`,
+  `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, and `NIX_SSL_CERT_FILE`. An
+  existing user bundle (corporate TLS inspection) is respected as the base,
+  so stacking works.
+- **`cctrace ps` no longer lies** — liveness was judged by pid, which is
+  meaningless when the registry dir is shared across pid namespaces
+  (containers sharing a `$HOME` volume with forwarded localhost ports):
+  every read *deleted* live entries registered from other namespaces, and
+  `ps` reported "No live cctrace instances" while several were serving.
+  Liveness is now heartbeat + port truth: instances rewrite their entry
+  every 30s, stale entries must answer `/api/self` on their port (matched
+  by a unique run id; new endpoint), only definitively-dead entries are
+  GC'd, and wrongly-deleted entries self-heal on the next heartbeat.
+  Registry files are keyed by run id, not pid — pids collide across
+  namespaces too.
+- **Instance discovery survives a wiped registry** — `cctrace ps`,
+  `/api/instances`, and the UI's "⇄ N more" switcher also sweep the UI
+  port walk (9317..9326) and synthesize entries from each live port's
+  `/api/self`, so instances the registry lost (e.g. entries deleted by a
+  still-running pre-0.10 cctrace) are found anyway. Older instances that
+  can't identify themselves show as minimal `?` rows.
+
+### Changed
+
+- **Version badge moved top-right** — the UI header's `vX.Y.Z` (+ amber
+  "vX available" link) now lives on the right side next to the actions,
+  instead of crowding the project · session-id run identity.
+
 ## [0.9.0] - 2026-07-12
 
 ### Added

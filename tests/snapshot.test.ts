@@ -86,8 +86,10 @@ describe("page meta", () => {
   test("meta carries the producing version + update notice for the header", () => {
     const html = renderSnapshot([], { version: "1.2.3", latestVersion: "1.3.0" });
     expect(JSON.parse(metaPayload(html))).toEqual({ version: "1.2.3", latestVersion: "1.3.0" });
-    expect(html).toContain("ctx-ver");
-    expect(html).toContain("ctx-upd");
+    // Rendered top-right in its own mount, not inside the run-identity ctx.
+    expect(html).toContain('id="ver"');
+    expect(html).toContain("ver-badge");
+    expect(html).toContain("ver-upd");
   });
 
   test("hostile project path cannot break out of the script tag", () => {

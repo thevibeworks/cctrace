@@ -3,7 +3,7 @@ import type { TracePair } from "./types";
 import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
 import { loadPriorPairs, loadTraceFiles } from "./history";
-import { listInstances } from "./instances";
+import { listLiveInstances, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 
 export { renderSnapshot, verifySnapshot } from "./ui";
 
@@ -20,6 +20,10 @@ interface ServerConfig {
   meta?: PageMeta;
   /** Data dir holding the live-instance registry (enables /api/instances). */
   dataDir?: string;
+  /** This run's unique registry id — marks `self` in /api/instances. */
+  instanceId?: string;
+  /** This run's registry entry, served at /api/self for liveness probes. */
+  self?: () => InstanceInfo | null;
   /** Called once per newly-seen Claude session id on the wire. */
   onSession?: (sid: string) => void;
 }
@@ -80,7 +84,7 @@ export function createServer(config: ServerConfig) {
 
   const serveOn = (port: number) => Bun.serve({
     port,
-    fetch(req, server) {
+    async fetch(req, server) {
       const url = new URL(req.url);
 
       if (url.pathname === "/ws") {
@@ -93,11 +97,24 @@ export function createServer(config: ServerConfig) {
       if (url.pathname === "/api/pairs") {
         return Response.json(pairs);
       }
+      if (url.pathname === "/api/self") {
+        // Identity for cross-instance liveness probes. Answers from memory
+        // only — touching the registry here would let probes chain.
+        const me = config.self?.();
+        return Response.json(me ?? (config.instanceId ? { id: config.instanceId } : null));
+      }
       if (url.pathname === "/api/instances") {
-        // Sibling live instances from the registry; `self` marks this one so
-        // the UI's switcher can offer only the others.
-        const list = config.dataDir ? listInstances(config.dataDir) : [];
-        return Response.json(list.map((i) => ({ ...i, self: i.pid === process.pid })));
+        // Sibling live instances, heartbeat/probe-verified, plus a sweep of
+        // the port walk for runs the registry lost; `self` marks this one so
+        // the UI's switcher can offer only the others. The id compare
+        // matters: pids collide across containers sharing this registry.
+        const list = config.dataDir
+          ? await listLiveInstances(config.dataDir, { scanPorts: SCAN_PORTS })
+          : [];
+        return Response.json(list.map((i) => ({
+          ...i,
+          self: config.instanceId ? i.id === config.instanceId : i.pid === process.pid,
+        })));
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         // Use the actually-bound port so the WebSocket URL is correct even
@@ -121,9 +138,10 @@ export function createServer(config: ServerConfig) {
   });
 
   // Try the preferred port, then the next few (so concurrent instances land
-  // on predictable neighbors: 9317, 9318, ...), then an OS-assigned free
-  // port as the last resort instead of crashing.
-  for (let i = 0; i < 10; i++) {
+  // on predictable neighbors: 9317, 9318, ... — the same walk SCAN_PORTS
+  // sweeps for discovery), then an OS-assigned free port as the last resort
+  // instead of crashing.
+  for (let i = 0; i < PORT_WALK; i++) {
     try {
       const server = serveOn(config.port + i);
       if (i > 0) console.log(`[cctrace] Port ${config.port} busy — using ${server.port} instead`);
@@ -133,7 +151,7 @@ export function createServer(config: ServerConfig) {
     }
   }
   const server = serveOn(0);
-  console.log(`[cctrace] Ports ${config.port}-${config.port + 9} busy — using ${server.port} instead`);
+  console.log(`[cctrace] Ports ${config.port}-${config.port + PORT_WALK - 1} busy — using ${server.port} instead`);
   return server;
 }
 

@@ -308,13 +308,20 @@ flowchart LR
 流做 `tee` -- Claude 立即拿到字节，cctrace 同时抓一份副本，SSE 响应完全不缓冲。
 每个捕获到的请求对，在进入任何落点之前都会先脱敏。
 
-我们只往 Claude 环境里注入两样东西：`HTTPS_PROXY`（让流量走我们的代理）和
+我们往 Claude 环境里注入 `HTTPS_PROXY`（让流量走我们的代理）和
 `NODE_EXTRA_CA_CERTS`（它会把我们的 CA **追加**到 Bun 的信任库，于是 Claude 信任
 我们的叶子证书，同时公网 TLS 照常工作）。
 
-我们刻意**不**设置 `SSL_CERT_FILE` 或 `HTTP_PROXY` -- 它们会泄漏到 Claude 的子
-进程（bash 工具的 `curl`/`python`、MCP 服务器）里，把它们的网络搞坏。这种 bug 能
-让你凌晨两点开始怀疑人生。
+Claude 的子进程同样会继承 `HTTPS_PROXY` -- bash 工具里的 `curl`/`gh`、python
+钩子、statusline 脚本 -- 而 `NODE_EXTRA_CA_CERTS` 对它们毫无意义，TLS 校验会
+直接失败。所以我们为它们构建一份**合并证书包**（系统 CA + 我们的 CA -- 标准
+环境变量是**替换**信任库而不是追加，只放 mitm 证书会弄坏所有不走代理的连接），
+并导出为 `SSL_CERT_FILE`、`CURL_CA_BUNDLE`、`REQUESTS_CA_BUNDLE` 和
+`NIX_SSL_CERT_FILE`：走代理的请求用我们的证书校验，直连的用系统 CA --
+子进程根本不需要知道请求走了哪条路。
+
+我们刻意**不**设置 `HTTP_PROXY` -- 前门只会说 CONNECT，设了会弄坏子进程的
+明文 `http://` 调用。这种 bug 能让你凌晨两点开始怀疑人生。
 
 ## 安全与隐私
 

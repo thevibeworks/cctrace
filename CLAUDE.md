@@ -52,9 +52,13 @@ credits) independent of `ANTHROPIC_BASE_URL`.
    last resort when cert generation fails)
 3. The TLS terminator decrypts, forwards to the real host, tees the response
    (stream to Claude + capture in parallel), logs the pair
-4. Claude trusts our CA via `NODE_EXTRA_CA_CERTS` (deliberately NOT
-   `SSL_CERT_FILE` — it leaks into subprocesses), and routes through us via
-   `HTTPS_PROXY`
+4. Claude trusts our CA via `NODE_EXTRA_CA_CERTS` and routes through us via
+   `HTTPS_PROXY`. Its subprocesses inherit the proxy too, so they get trust
+   via a combined bundle (system CAs + mitm CA — `buildCaBundle` in
+   src/certs.ts) exported as `SSL_CERT_FILE` / `CURL_CA_BUNDLE` /
+   `REQUESTS_CA_BUNDLE` / `NIX_SSL_CERT_FILE`; those vars *replace* the trust
+   store, hence the union (issue #17). `HTTP_PROXY` stays unset — the front
+   door only speaks CONNECT and would break plain-http subprocess calls
 
 Captures `/v1/messages`, `/api/oauth/*` (incl. usage/credits), `/api/claude_cli/*`,
 `/mcp-registry/*`, `/api/event_logging/*`.
@@ -92,8 +96,9 @@ and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
 The header identifies the run: project name (cwd basename, injected as
 `PageMeta` by the server/CLI; unknown for `cctrace view` rebuilds) and the
 current Claude session id (extracted client-side from pairs, newest live pair
-wins, click to copy) — the tab title becomes `<project> · cctrace`.
-Two views, hash-routed:
+wins, click to copy) — the tab title becomes `<project> · cctrace`. The
+cctrace version (+ amber update link) sits top-right in its own `#ver` mount,
+separate from the run identity. Two views, hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
   human-readable chips — model, in/out tokens, one compact prompt-cache
@@ -173,13 +178,22 @@ cctrace --version                         # print version (+ newer version if kn
 ```
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
-<pid>.json` (port, project, session id once seen on the wire) and unregisters
-on exit; stale entries (crashes) are GC'd on every read via pid-liveness, so
-the registry is self-healing (`src/instances.ts`). `cctrace ps` lists live
-runs; the server exposes `/api/instances`; the web UI header grows a "⇄ N
-more" switcher when other instances exist. Port allocation walks
-9317, 9318, ... before falling back to an OS-assigned port, so concurrent
-runs land on predictable neighbors.
+<run-id>.json` (unique run id, port, project, session id once seen on the
+wire), rewrites it every 30s (heartbeat), and unregisters on exit. Liveness
+is NEVER judged by pid — the registry dir is often shared across pid
+namespaces (containers sharing a $HOME volume + forwarded localhost ports),
+where pid checks fail both ways; pre-0.10 readers even deleted other
+namespaces' live entries. Instead: a heartbeat-fresh file counts as alive, a
+stale one must answer a probe of `/api/self` on its port (matched by run id;
+refused/mismatch ⇒ GC, timeout ⇒ hidden but kept, no heartbeat for 24h ⇒
+GC), and the listing also sweeps the port walk (9317..9326) to synthesize
+entries for live-but-unregistered instances straight from `/api/self`
+(`src/instances.ts`). `cctrace ps` lists live runs; the server exposes
+`/api/instances` (verified listing) and `/api/self` (identity, from memory —
+never triggers registry reads). The web UI header grows a "⇄ N more"
+switcher when other instances exist. Port allocation walks 9317, 9318, ...
+before falling back to an OS-assigned port, so concurrent runs land on
+predictable neighbors — the same walk the discovery sweep covers.
 
 **Update check** (`src/version.ts`): startup reads only a local cache
 (`<data-dir>/update-check.json`) — never the network — and refreshes it in

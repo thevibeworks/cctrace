@@ -359,14 +359,23 @@ forwards to the real API, and `tee`s the response stream so Claude gets bytes
 immediately while cctrace captures a copy -- zero buffering of SSE responses.
 Every captured pair is redacted before it reaches any sink.
 
-We inject only two things into Claude's environment: `HTTPS_PROXY` (to route
-traffic through us) and `NODE_EXTRA_CA_CERTS` (which *appends* our CA to Bun's
-trust store, so Claude trusts our leaf while public TLS still works).
+We inject `HTTPS_PROXY` (to route traffic through us) and
+`NODE_EXTRA_CA_CERTS` (which *appends* our CA to Bun's trust store, so Claude
+trusts our leaf while public TLS still works).
 
-We deliberately do **not** set `SSL_CERT_FILE` or `HTTP_PROXY` -- those leak
-into Claude's subprocesses (the bash tool's `curl`/`python`, MCP servers) and
-would break their networking. That's the kind of bug that makes you question
-your life choices at 2 AM.
+Claude's subprocesses inherit `HTTPS_PROXY` too -- the bash tool's
+`curl`/`gh`, python hooks, statusline scripts -- and `NODE_EXTRA_CA_CERTS`
+means nothing to them, so they'd die on TLS verification. For them we build a
+**combined bundle** (your system CAs + our CA -- the standard vars *replace*
+the trust store, so the mitm cert alone would break every non-proxied
+connection) and export it as `SSL_CERT_FILE`, `CURL_CA_BUNDLE`,
+`REQUESTS_CA_BUNDLE`, and `NIX_SSL_CERT_FILE`. Proxied requests verify via
+our cert, direct ones via the system CAs -- subprocesses never need to know
+which path a request took.
+
+We deliberately do **not** set `HTTP_PROXY` -- the front door only speaks
+CONNECT and would break subprocess plain-`http://` calls. That's the kind of
+bug that makes you question your life choices at 2 AM.
 
 ## Security & privacy
 

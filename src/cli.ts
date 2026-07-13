@@ -11,7 +11,7 @@ import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, ViewError } from "./view";
-import { registerInstance, listInstances, type InstanceHandle } from "./instances";
+import { registerInstance, listLiveInstances, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
 } from "./version";
@@ -22,9 +22,8 @@ import {
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
-// Live-UI port. Avoids 7890/7891 (Clash/mihomo proxy defaults). Falls back to
-// an OS-assigned free port if this is taken (see createServer).
-const DEFAULT_PORT = 9317;
+// Live-UI port: DEFAULT_PORT (9317, avoids Clash/mihomo defaults) lives in
+// instances.ts so the discovery sweep and the allocation walk stay one list.
 
 // True when running as a `bun build --compile` standalone binary (sources live
 // in the virtual /$bunfs). Matters twice: the on-disk cache can't sit next to
@@ -212,9 +211,10 @@ function runView(args: string[]) {
 }
 
 // `cctrace ps` — list live cctrace instances from the registry. Every
-// live-mode run registers itself under <data-dir>/instances/; entries whose
-// process died are garbage-collected on read, so this is always current.
-function runPs(args: string[]) {
+// live-mode run registers itself under <data-dir>/instances/ and heartbeats;
+// stale entries must answer a port probe or they're garbage-collected, so
+// what's printed is what actually serves (see instances.ts).
+async function runPs(args: string[]) {
   let parsed;
   try {
     parsed = parseArgs({
@@ -228,7 +228,7 @@ function runPs(args: string[]) {
     process.exit(1);
   }
   const dataDir = parsed.values["data-dir"] ? resolve(parsed.values["data-dir"] as string) : DATA_DIR;
-  const list = listInstances(dataDir);
+  const list = await listLiveInstances(dataDir, { scanPorts: SCAN_PORTS });
   if (parsed.values.json) {
     console.log(JSON.stringify(list, null, 2));
     return;
@@ -669,7 +669,10 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
-    // entry once Claude's first request reveals it on the wire.
+    // entry once Claude's first request reveals it on the wire. The id is
+    // the run's identity for cross-instance probes — pids can't be, they
+    // collide across containers sharing the data dir.
+    const instanceId = crypto.randomUUID();
     let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
@@ -679,10 +682,13 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       withFiles: opts.withFiles,
       meta: pageMeta(),
       dataDir: DATA_DIR,
+      instanceId,
+      self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
     });
     livePort = server.port;
     instance = registerInstance(DATA_DIR, {
+      id: instanceId,
       pid: process.pid,
       port: livePort ?? opts.port,
       project: pageMeta().project || "",
@@ -738,6 +744,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
   if (opts.liveMode) {
     // Legacy mode: the preload names the log file itself, so the server can't
     // exclude it from prior-trace scans — pair-id dedupe covers that instead.
+    const instanceId = crypto.randomUUID();
     let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
@@ -746,10 +753,13 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       withFiles: opts.withFiles,
       meta: pageMeta(),
       dataDir: DATA_DIR,
+      instanceId,
+      self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
     });
     livePort = server.port ?? opts.port;
     instance = registerInstance(DATA_DIR, {
+      id: instanceId,
       pid: process.pid,
       port: livePort,
       project: pageMeta().project || "",
@@ -828,7 +838,7 @@ async function main() {
     else if (SUBCOMMAND === "clean") runClean(rest);
     else if (SUBCOMMAND === "merge") runMerge(rest);
     else if (SUBCOMMAND === "compress") runCompress(rest);
-    else if (SUBCOMMAND === "ps") runPs(rest);
+    else if (SUBCOMMAND === "ps") await runPs(rest);
     process.exit(0);
   }
 

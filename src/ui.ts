@@ -145,9 +145,11 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
-    .ctx-ver { color: var(--text-faint); font-size: 11px; margin-left: 6px; }
-    .ctx-upd {
-      color: var(--amber); font-size: 11px; margin-left: 6px;
+    /* Version badge: lives on the header's right, out of the run-identity ctx. */
+    .ver { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .ver-badge { color: var(--text-faint); font-size: 11px; }
+    .ver-upd {
+      color: var(--amber); font-size: 11px;
       text-decoration: none; border-bottom: 1px dashed var(--amber);
     }
     /* Instance switcher: appears only when other live cctrace runs exist. */
@@ -680,6 +682,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     <span class="inst" id="inst"></span>
     <span class="status disconnected" id="status">offline</span>
     <span class="count"><span id="count">0</span> requests</span>
+    <span class="ver" id="ver"></span>
     <span class="header-actions">
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -887,15 +890,6 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
         html += '<button class="ctx-sess" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
       }
-      if (META.version) {
-        html += '<span class="ctx-ver" title="cctrace v' + escapeHtml(META.version) + '">v' + escapeHtml(META.version) + '</span>';
-        if (META.latestVersion) {
-          html += '<a class="ctx-upd" href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md"' +
-            ' target="_blank" rel="noopener"' +
-            ' title="update available \\u2014 npm i -g @thevibeworks/cctrace@latest (or rerun cctrace and accept the prompt)">' +
-            'v' + escapeHtml(META.latestVersion) + ' available</a>';
-        }
-      }
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
       if (btn) btn.onclick = function() {
@@ -906,6 +900,21 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         });
       };
     }
+
+    // ---- Version badge: static META, so rendered once, top-right ----
+    // Separate from the run-identity ctx (project · session): what cctrace
+    // version produced the page has nothing to do with which run it shows.
+    (function renderVer() {
+      if (!META.version) return;
+      let html = '<span class="ver-badge" title="cctrace v' + escapeHtml(META.version) + '">v' + escapeHtml(META.version) + '</span>';
+      if (META.latestVersion) {
+        html += '<a class="ver-upd" href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md"' +
+          ' target="_blank" rel="noopener"' +
+          ' title="update available \\u2014 npm i -g @thevibeworks/cctrace@latest (or rerun cctrace and accept the prompt)">' +
+          'v' + escapeHtml(META.latestVersion) + ' available</a>';
+      }
+      document.getElementById('ver').innerHTML = html;
+    })();
 
     // ---- Instance switcher: other live cctrace runs on this machine ----
     // The server exposes the registry at /api/instances (pid-liveness

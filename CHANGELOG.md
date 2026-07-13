@@ -6,6 +6,8 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-13
+
 ### Fixed
 
 - **Subprocess TLS trust** (#17) — children of the traced CLI inherit

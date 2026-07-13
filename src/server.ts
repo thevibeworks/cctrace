@@ -16,6 +16,8 @@ interface ServerConfig {
   noHistory?: boolean;
   /** Trace files to force-merge at startup (--with). */
   withFiles?: string[];
+  /** Pre-resolved pairs to seed the server with (`cctrace view --serve`). */
+  initialPairs?: TracePair[];
   /** Run identity (project name/path) shown in the page header. */
   meta?: PageMeta;
   /** Data dir holding the live-instance registry (enables /api/instances). */
@@ -61,6 +63,7 @@ function mergePairs(incoming: TracePair[]): TracePair[] {
 // history (pair.prior = source file), so a --continue'd conversation keeps
 // its old turns' usage/duration/wire links instead of looking incomplete.
 export function createServer(config: ServerConfig) {
+  if (config.initialPairs?.length) mergePairs(config.initialPairs);
   if (config.withFiles?.length) {
     const merged = mergePairs(loadTraceFiles(config.withFiles));
     if (merged.length) console.log(`[cctrace] merged ${merged.length} pairs from --with`);

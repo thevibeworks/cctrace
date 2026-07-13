@@ -52,7 +52,10 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     const targetHost = hostHeader.split(":")[0];
     const path = new URL(req.url).pathname + new URL(req.url).search;
     const targetUrl = `https://${targetHost}${path}`;
-    const shouldLog = logAll || path.includes("/v1/messages");
+    // --messages-only means "just the model API calls" — match the same wire
+    // shapes categorize.ts calls "messages", so codex/grok filtering works.
+    const shouldLog = logAll || path.includes("/v1/messages") ||
+      path.includes("/v1/chat/completions") || path.includes("/v1/responses") || path.includes("/codex/responses");
     const startTime = Date.now();
 
     const reqHeaders: Record<string, string> = {};

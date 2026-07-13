@@ -10,7 +10,8 @@ description: >
   bug report, replay or share a captured session, work with saved .jsonl
   traces (view, clean, merge, compress), or find which port a running cctrace
   instance is on. Also use it when the user mentions cctrace, trace files in
-  a .cctrace/ directory, or MITM-capturing Claude traffic.
+  a .cctrace/ directory, MITM-capturing Claude traffic, tracing a third-party
+  ANTHROPIC_BASE_URL provider, or tracing the codex / grok CLIs.
 ---
 
 # cctrace — trace Claude Code's HTTP traffic
@@ -34,6 +35,8 @@ cctrace --dir path/to/logs       # trace dir (default: ./.cctrace)
 cctrace --fresh                  # don't merge prior traces of a continued session
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
+cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
+cctrace grok -- -p "..."         # trace the Grok CLI (both always use mitm)
 ```
 
 Two gotchas worth knowing before suggesting commands:
@@ -94,6 +97,8 @@ trio is **dry-run by default**; add `--yes` to apply.
 
 ```bash
 cctrace view <file|session-id|fragment>   # rebuild + open a snapshot .html
+cctrace view <target> --serve             # serve it instead — use for huge traces
+                                          # (no multi-hundred-MB .html to choke on)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # gzip -9 (view reads .jsonl.gz directly)

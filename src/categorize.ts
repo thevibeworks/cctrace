@@ -30,9 +30,20 @@ export function categorizeUrl(url: string): string {
     path = String(url).toLowerCase();
     host = "";
   }
-  if (host && !host.endsWith("anthropic.com") && !host.endsWith("claude.ai") && !host.endsWith("claude.com")) return "external";
+  // Wire shape first, host second: a model API endpoint is what it is on ANY
+  // host — third-party Anthropic-compatible providers (ANTHROPIC_BASE_URL
+  // gateways, moonshot/deepseek-style compat endpoints) and OpenAI-style APIs
+  // (codex/grok) must not drown in the External bucket.
   if (path.includes("/v1/messages/count_tokens")) return "tokens";
   if (path.includes("/v1/messages")) return "messages";
+  // OpenAI wire shapes: custom providers mount them under arbitrary prefixes
+  // (api.openai.com/v1/responses, chatgpt.com/backend-api/codex/responses,
+  // relay.example/responses), so match the path tail, not a /v1/ prefix.
+  if (/\/(responses|chat\/completions)($|\?)/.test(path)) return "messages";
+  // The remaining taxonomy is Anthropic's own — its keywords are far too
+  // broad for foreign hosts (any URL containing "logging" or "cost" would
+  // match), so everything else off-domain is honestly External.
+  if (host && !host.endsWith("anthropic.com") && !host.endsWith("claude.ai") && !host.endsWith("claude.com")) return "external";
   if (["usage", "credit", "prepaid", "overage", "spend", "cost"].some((s) => path.includes(s))) return "usage";
   if (path.includes("oauth") || path.includes("account/settings") || path.includes("/roles") || path.includes("/profile")) return "oauth";
   if (path.includes("mcp")) return "mcp";

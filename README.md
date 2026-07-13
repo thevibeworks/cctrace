@@ -248,6 +248,8 @@ itemized plan and touch nothing); add `--yes` to apply.
 # Rebuild a snapshot .html and open it -- by file, session id, or filename bit
 cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
 cctrace view 4f9a2c1e                      # a Claude Code session id (or prefix)
+cctrace view <target> --serve              # serve it from a local server instead
+                                           # (best for huge traces -- no giant .html)
 
 # Reclaim space: drop regenerable .html snapshots + 0-byte aborted traces
 cctrace clean                              # dry run: lists what would go
@@ -276,7 +278,7 @@ housekeeping while a live capture is appending is safe.
 ## Options
 
 ```
-cctrace [OPTIONS] [-- CLAUDE_ARGS...]
+cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 ```
 
 | Option | Description |
@@ -292,6 +294,7 @@ cctrace [OPTIONS] [-- CLAUDE_ARGS...]
 | `--fresh` | Don't merge prior traces of a continued session |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
+| `--client-path PATH` | Custom binary path for any client (codex/grok too) |
 | `--data-dir PATH` | MITM CA / data dir (default: `~/.local/share/cctrace`; or `CCTRACE_DATA_DIR`. Legacy `--cache-dir` / `CCTRACE_CACHE_DIR` still work; a pre-0.6 CA in `~/.cache/cctrace` migrates over automatically) |
 
 ### Passing args to Claude
@@ -315,6 +318,32 @@ know: `-p` before `--` is cctrace's port, after `--` it's Claude's print mode.
 > (`make install`) is immune -- that's the recommended install. On a bun-run
 > install, put any cctrace flag before the `--`
 > (e.g. `cctrace --no-open -- --continue`).
+
+## Beyond Claude
+
+The capture core is client-agnostic -- it's a TLS-intercepting proxy, and any
+CLI that honors `HTTPS_PROXY` plus the standard cert env vars gets traced.
+
+**Other clients** -- a leading client word picks who runs:
+
+```bash
+cctrace codex -- exec "fix the failing tests"   # OpenAI Codex CLI
+cctrace grok -- -p "explain this stack trace"   # Grok CLI
+```
+
+Non-Claude clients always use mitm capture. Their model calls
+(`.../responses`, `.../chat/completions`) show up as Messages in the
+Requests view; the reconstructed Session view is Anthropic-format-only for
+now (openai/x.ai SSE reconstruction is on the roadmap, #20).
+
+**Third-party Anthropic-compatible providers** -- point `ANTHROPIC_BASE_URL`
+at a gateway or a compat endpoint and run `cctrace` as usual. mitm mode needs
+no extra setup: non-Anthropic hosts get a per-host certificate minted on
+first contact (requires `openssl`), and `/v1/messages` is classified by wire
+shape, not host, so provider traffic lands in Messages with the provider's
+hostname visible on each row. OAuth/usage/credits categories will simply be
+absent -- those endpoints are hardcoded to Anthropic hosts and bypass
+`ANTHROPIC_BASE_URL` by design (which is exactly why mitm mode exists).
 
 ## Output
 

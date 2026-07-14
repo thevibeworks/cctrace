@@ -10,7 +10,7 @@ PREFIX ?= $(HOME)/.local
 BINDIR := $(PREFIX)/bin
 BIN    := dist/cctrace
 
-.PHONY: help build test install uninstall link clean
+.PHONY: help build test install uninstall link clean publish
 
 help:
 	@echo "cctrace targets:"
@@ -19,6 +19,7 @@ help:
 	@echo "  make uninstall  remove $(BINDIR)/cctrace"
 	@echo "  make test       run unit tests (bun test)"
 	@echo "  make link       dev install via bun link (runs from source; bun eats a leading '--')"
+	@echo "  make publish    npm publish using token from .env"
 	@echo "  make clean      remove dist/ and .cache/"
 
 build:
@@ -39,6 +40,10 @@ uninstall:
 
 link:
 	bun link
+
+publish:
+	@set -a && . ./.env && set +a && \
+	npm publish --fetch-timeout=300000 --fetch-retry-maxtimeout=60000
 
 clean:
 	rm -rf dist .cache

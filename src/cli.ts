@@ -18,8 +18,10 @@ import {
 } from "./version";
 import type { PageMeta } from "./ui";
 import {
-  planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
+  planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
+  planPurge, applyPurge, human,
 } from "./storage";
+import { CATEGORIES, categorizeUrl } from "./categorize";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
@@ -56,7 +58,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "ps"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "ps"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
@@ -402,8 +404,10 @@ function runMerge(args: string[]) {
   }
 }
 
-// `cctrace compress` — gzip -9 archive .jsonl traces for backup; view reads
-// .gz transparently. --older-than N limits to traces older than N days.
+// `cctrace compress` — zstd-archive .jsonl traces; view reads .zst (and
+// legacy .gz) transparently. Session traces are mostly re-sent conversation
+// prefixes, which zstd's long window compresses 40-60x where gzip got 3x.
+// --older-than N limits to traces older than N days.
 function runCompress(args: string[]) {
   const { values: v } = parseStorageArgs(
     "compress", args,
@@ -417,22 +421,90 @@ function runCompress(args: string[]) {
     process.exit(1);
   }
   const plan = planCompress(logDir, Date.now(), olderThan);
-  if (!plan.files.length) {
+  if (!plan.files.length && !plan.upgrades.length) {
     log(`No .jsonl traces to compress in ${logDir}${olderThan != null ? ` older than ${olderThan}d` : ""}`, C.green);
     return;
   }
-  log(`${plan.files.length} trace(s), ${human(plan.bytes)} to gzip -9:`, C.cyan);
-  for (const f of plan.files) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  if (plan.files.length) {
+    log(`${plan.files.length} trace(s), ${human(plan.bytes)} to archive as .zst:`, C.cyan);
+    for (const f of plan.files) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  }
+  if (plan.upgrades.length) {
+    log(`${plan.upgrades.length} legacy .gz archive(s) to re-encode as .zst (long-window: typically 10-20x smaller):`, C.cyan);
+    for (const f of plan.upgrades) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+  }
   if (!v.yes) {
-    log(`Would archive ${human(plan.bytes)} (JSON gzips ~10-20x)${v["keep-jsonl"] ? "" : "; originals removed after"}. ${DRY}`, C.yellow);
+    log(`Would archive ${human(plan.bytes)} (session traces compress 40-60x)${v["keep-jsonl"] ? "" : "; originals removed after"}. ${DRY}`, C.yellow);
     return;
   }
   const res = applyCompress(plan, { keepJsonl: !!v["keep-jsonl"] });
   for (const a of res.archived) {
-    console.log(`    ${a.name}.gz  ${C.dim}${human(a.before)} → ${human(a.after)}${C.reset}`);
+    console.log(`    ${a.name.replace(/\.gz$/, "")}.zst  ${C.dim}${human(a.before)} → ${human(a.after)}${C.reset}`);
   }
   const ratio = res.before > 0 ? (res.before / Math.max(res.after, 1)).toFixed(1) : "0";
   log(`Archived ${res.archived.length} trace(s): ${human(res.before)} → ${human(res.after)} (${ratio}x), saved ${human(res.before - res.after)}`, C.green);
+  if (res.skipped.length) {
+    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+  }
+}
+
+// `cctrace purge` — drop whole categories of pairs from saved traces. The
+// default set (telemetry + count_tokens) is the noise: on a real large trace
+// it's ~45% of rows but only ~9% of bytes, so the summary is explicit about
+// rows vs disk — `compress` is the space tool, purge is the noise tool.
+function runPurge(args: string[]) {
+  const usage = "cctrace purge [--dir DIR] [--drop CATS] [--keep CATS] [--yes]";
+  const { values: v } = parseStorageArgs(
+    "purge", args,
+    { drop: { type: "string" }, keep: { type: "string" } },
+    usage,
+  );
+  const logDir = (v.dir as string) || ".cctrace";
+  const ids = new Set(CATEGORIES.map((c) => c.id));
+  const parseCats = (flag: string, raw: string): Set<string> => {
+    const cats = new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+    for (const c of cats) {
+      if (!ids.has(c)) {
+        console.error(`[cctrace] purge: unknown category "${c}" for ${flag}\n  categories: ${[...ids].join(", ")}`);
+        process.exit(1);
+      }
+    }
+    return cats;
+  };
+  if (v.drop && v.keep) {
+    console.error(`[cctrace] purge: --drop and --keep are mutually exclusive\n  ${usage}`);
+    process.exit(1);
+  }
+  let drop: Set<string>;
+  if (v.keep) {
+    const keep = parseCats("--keep", v.keep as string);
+    drop = new Set([...ids].filter((c) => !keep.has(c)));
+  } else {
+    drop = v.drop ? parseCats("--drop", v.drop as string) : new Set(["telemetry", "tokens"]);
+  }
+  if (drop.has("messages")) {
+    log(`dropping "messages" deletes the conversations themselves — that's the 87% of bytes the other tools preserve`, C.yellow);
+  }
+
+  const plan = planPurge(logDir, drop, categorizeUrl);
+  if (!plan.files.length) {
+    log(`Nothing to purge in ${logDir} (no pairs in: ${[...drop].join(", ")})`, C.green);
+    return;
+  }
+  log(`Dropping categories: ${[...drop].join(", ")}`, C.cyan);
+  for (const f of plan.files) {
+    const cats = Object.entries(f.dropped).map(([c, n]) => `${n} ${c}`).join(", ");
+    const fate = f.empty ? "→ empty, file removed" : `keep ${f.kept}`;
+    console.log(`    ${f.name}  ${C.dim}drop ${cats} (${human(f.droppedBytes)}), ${fate}${C.reset}`);
+  }
+  log(`${plan.droppedCount} pair(s) / ${human(plan.droppedBytes)} of raw trace lines; ${plan.keptCount} pair(s) stay`, C.cyan);
+  log(`purge trims rows, not disk — messages dominate trace bytes; for space use 'cctrace compress' (40-60x)`, C.dim);
+  if (!v.yes) {
+    log(DRY, C.yellow);
+    return;
+  }
+  const res = applyPurge(plan, categorizeUrl, drop);
+  log(`Rewrote ${res.rewritten.length} trace(s), removed ${res.removed.length}, freed ${human(res.bytes)}`, C.green);
   if (res.skipped.length) {
     log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
   }
@@ -487,9 +559,12 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           a local server instead (best for very large traces).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset}                     Consolidate each session's pairs into one .jsonl.
-  ${C.cyan}compress${C.reset}                  gzip -9 archive traces (view reads .gz directly).
+  ${C.cyan}compress${C.reset}                  zstd-archive traces, 40-60x on session traces
+                          (view reads .zst/.gz directly; upgrades old .gz).
+  ${C.cyan}purge${C.reset}                     Drop categories from saved traces (default:
+                          telemetry,tokens — trims rows/noise, not disk).
   ${C.cyan}ps${C.reset}                        List live cctrace instances (URL, project, session).
-  ${C.dim}clean/merge/compress dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
+  ${C.dim}clean/merge/compress/purge dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
@@ -888,6 +963,7 @@ async function main() {
     else if (SUBCOMMAND === "clean") runClean(rest);
     else if (SUBCOMMAND === "merge") runMerge(rest);
     else if (SUBCOMMAND === "compress") runCompress(rest);
+    else if (SUBCOMMAND === "purge") runPurge(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
     process.exit(0);
   }

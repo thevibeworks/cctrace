@@ -36,7 +36,7 @@ function listTraces(logDir: string): string[] {
 }
 
 function htmlSibling(tracePath: string): string {
-  return tracePath.replace(/\.jsonl(\.gz)?$/, "") + ".html";
+  return tracePath.replace(/\.jsonl(\.zst|\.gz)?$/, "") + ".html";
 }
 
 function isSessionIdish(s: string): boolean {

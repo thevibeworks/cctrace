@@ -79,6 +79,12 @@ describe("page meta", () => {
     expect(JSON.parse(metaPayload(html))).toEqual({ project: "cctrace", projectPath: "/w/cctrace" });
   });
 
+  test("meta carries the traced client for the header chip + title", () => {
+    const html = renderSnapshot([pairWith("hi")], { client: "codex" });
+    expect(JSON.parse(metaPayload(html))).toEqual({ client: "codex" });
+    expect(html).toContain("ctx-client");
+  });
+
   test("meta defaults to {} when unknown", () => {
     expect(JSON.parse(metaPayload(renderSnapshot([pairWith("hi")])))).toEqual({});
   });

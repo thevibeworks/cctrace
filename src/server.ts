@@ -56,7 +56,9 @@ function mergePairs(incoming: TracePair[]): TracePair[] {
 
 // The live server is a broadcast relay only — it holds pairs in memory and
 // pushes them to connected browsers. The CLI's log sink owns the .jsonl/.html
-// files, so we never double-write. The page itself lives in ui.ts.
+// files, so we never double-write. The page itself lives in ui.ts. The sink
+// hands pairs over via the returned in-process `ingest` — never a loopback
+// HTTP hop, which is both a wasted round trip and an injection surface.
 //
 // Session continuity: when a live pair reveals a session_id we haven't seen,
 // prior traces in logDir are scanned for that session and merged in as
@@ -95,6 +97,12 @@ export function createServer(config: ServerConfig) {
         return new Response("WebSocket upgrade failed", { status: 400 });
       }
       if (url.pathname === "/api/pair" && req.method === "POST") {
+        // Only this run's own capture may inject pairs (legacy node mode
+        // POSTs from the child process; proxy modes ingest in-process). The
+        // socket can be reachable across containers/LAN, so reject the rest.
+        if (config.instanceId && req.headers.get("x-cctrace-instance") !== config.instanceId) {
+          return Response.json({ error: "wrong or missing x-cctrace-instance" }, { status: 403 });
+        }
         return handlePair(req, onLivePair);
       }
       if (url.pathname === "/api/pairs") {
@@ -120,9 +128,10 @@ export function createServer(config: ServerConfig) {
         })));
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
-        // Use the actually-bound port so the WebSocket URL is correct even
-        // when we fell back off a busy preferred port.
-        return new Response(getLiveHtml(server.port ?? port, config.meta), {
+        // The page connects its WebSocket origin-relative, so no port is
+        // baked in — behind container/host port forwards the bound port is
+        // not the port the browser sees.
+        return new Response(getLiveHtml(config.meta), {
           headers: { "Content-Type": "text/html" },
         });
       }
@@ -144,18 +153,24 @@ export function createServer(config: ServerConfig) {
   // on predictable neighbors: 9317, 9318, ... — the same walk SCAN_PORTS
   // sweeps for discovery), then an OS-assigned free port as the last resort
   // instead of crashing.
-  for (let i = 0; i < PORT_WALK; i++) {
+  let server;
+  for (let i = 0; i < PORT_WALK && !server; i++) {
     try {
-      const server = serveOn(config.port + i);
+      server = serveOn(config.port + i);
       if (i > 0) console.log(`[cctrace] Port ${config.port} busy — using ${server.port} instead`);
-      return server;
     } catch {
       // taken (another instance, or a system proxy) — keep walking
     }
   }
-  const server = serveOn(0);
-  console.log(`[cctrace] Ports ${config.port}-${config.port + PORT_WALK - 1} busy — using ${server.port} instead`);
-  return server;
+  if (!server) {
+    server = serveOn(0);
+    console.log(`[cctrace] Ports ${config.port}-${config.port + PORT_WALK - 1} busy — using ${server.port} instead`);
+  }
+  return {
+    port: server.port ?? config.port,
+    ingest: onLivePair,
+    stop: () => server.stop(true),
+  };
 }
 
 async function handlePair(req: Request, onLivePair: (pair: TracePair) => void): Promise<Response> {

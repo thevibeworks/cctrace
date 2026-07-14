@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { isInterceptHost, generateHostCert } from "./certs";
 import { redactPair } from "./redact";
-import { captureTee } from "./stream";
+import { captureTee, decodeBodyForTrace } from "./stream";
 import type { TracePair } from "./types";
 
 export interface MitmConfig {
@@ -62,20 +62,51 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     req.headers.forEach((v, k) => { reqHeaders[k] = v; });
     reqHeaders["accept-encoding"] = "identity";
 
+    // WebSocket upgrades can't be relayed yet — the terminator has no ws
+    // handler, and forwarding the handshake via fetch() hands the client a
+    // convincing 101 whose frames then go nowhere (codex hung ~82s per
+    // attempt until upstream's ping timeout). Refuse fast instead, so the
+    // client falls back to plain HTTP immediately, and log the attempt.
+    if ((req.headers.get("upgrade") || "").toLowerCase().includes("websocket")) {
+      if (shouldLog) {
+        pairCount++;
+        onPair({
+          id: `${Date.now()}_${pairCount.toString(36)}`,
+          request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: null },
+          response: {
+            timestamp: Date.now() / 1000,
+            status: 501,
+            headers: {},
+            body: { cctrace: "websocket upgrade refused — ws interception is not supported yet; the client should fall back to HTTP" },
+          },
+          duration: Date.now() - startTime,
+          loggedAt: new Date().toISOString(),
+        });
+      }
+      return new Response("cctrace: websocket interception not supported", { status: 501 });
+    }
+
     const doCapture = async (): Promise<Response> => {
       let reqBody: unknown = null;
-      let rawReqBody: string | null = null;
+      let fwdBody: Uint8Array | null = null;
       if (req.body && req.method !== "GET" && req.method !== "HEAD") {
-        rawReqBody = await req.text();
-        try { reqBody = JSON.parse(rawReqBody); } catch { reqBody = rawReqBody; }
+        // Raw bytes for the upstream, decoded copy for the trace — codex
+        // zstd-compresses request JSON; a text round trip would corrupt it.
+        fwdBody = new Uint8Array(await req.arrayBuffer());
+        reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
       }
+
+      // fetch() recomputes the length of the body it actually sends; a stale
+      // forwarded content-length can only disagree.
+      const fetchHeaders = { ...reqHeaders };
+      delete fetchHeaders["content-length"];
 
       let upstream: Response;
       try {
         upstream = await fetch(targetUrl, {
           method: req.method,
-          headers: reqHeaders,
-          body: rawReqBody,
+          headers: fetchHeaders,
+          body: fwdBody,
           redirect: "manual",
         });
       } catch (err) {

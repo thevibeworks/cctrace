@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
+  firstUserText,
   threadSig,
   normalizeTurns,
   buildToolResultIndex,
@@ -49,12 +50,37 @@ function msgPair(messages: any[], opts: any = {}) {
   };
 }
 
+// Claude Code prepends the SAME <system-reminder> context block (claudeMd,
+// hook output) to the first user message of every thread — main and all
+// subagents. The signature must key on the user text, never the reminder.
+const REMINDER = "<system-reminder>\nAs you answer the user's questions, you can use the following context:\n# claudeMd\n" + "x".repeat(500) + "\n</system-reminder>";
+
+describe("firstUserText", () => {
+  test("skips injected reminder blocks, returns the real prompt", () => {
+    expect(firstUserText([{ type: "text", text: REMINDER }, { type: "text", text: "do the thing" }])).toBe("do the thing");
+    expect(firstUserText("plain")).toBe("plain");
+    expect(firstUserText([{ type: "text", text: "no reminder" }])).toBe("no reminder");
+  });
+
+  test("all-reminder content falls back to the first block", () => {
+    expect(firstUserText([{ type: "text", text: REMINDER }])).toBe(REMINDER);
+    expect(firstUserText([{ type: "tool_result", content: "x" }])).toBe("");
+    expect(firstUserText(null)).toBe("");
+  });
+});
+
 describe("threadSig", () => {
-  test("same first message -> same signature; different -> different", () => {
+  test("keys on user text: same text -> same signature, regardless of block shape", () => {
     const a = threadSig({ role: "user", content: "hello" });
     expect(threadSig({ role: "user", content: "hello" })).toBe(a);
     expect(threadSig({ role: "user", content: "other" })).not.toBe(a);
-    expect(threadSig({ role: "user", content: [{ type: "text", text: "hello" }] })).not.toBe(a);
+    expect(threadSig({ role: "user", content: [{ type: "text", text: "hello" }] })).toBe(a);
+  });
+
+  test("identical reminder prefixes do not collide different prompts", () => {
+    const a = threadSig({ content: [{ type: "text", text: REMINDER }, { type: "text", text: "prompt A" }] });
+    const b = threadSig({ content: [{ type: "text", text: REMINDER }, { type: "text", text: "prompt B" }] });
+    expect(a).not.toBe(b);
   });
 
   test("never throws on garbage", () => {
@@ -139,6 +165,61 @@ describe("buildSession", () => {
     expect(at.agentOf.toolUseId).toBe("tu_task");
     expect(at.agentOf.thread).toBe(threads[0].key);
     expect(mainThread(threads)).toBe(threads[0]); // agent thread never wins main
+  });
+
+  // The exact failure seen on real traces (cc 2.1.209): every thread's first
+  // user message starts with the same reminder block, and the Task prompt is
+  // content[1], not content[0]. Pre-fix this collapsed main + all subagents
+  // into ONE thread and never set agentOf.
+  test("reminder-prefixed sidechains split from main and link to their dispatch", () => {
+    seq = 0;
+    const agentPrompt = "Explore the repo and report the architecture in detail.";
+    const main = msgPair([{ role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: "map this codebase" }] }], {
+      response: {
+        timestamp: 0, status: 200, headers: {},
+        body: {
+          model: "claude-sonnet-5", stop_reason: "tool_use",
+          content: [{ type: "tool_use", id: "tu_agent", name: "Agent", input: { subagent_type: "general-purpose", description: "explore repo", prompt: agentPrompt } }],
+          usage: { input_tokens: 5, output_tokens: 9 },
+        },
+      },
+    });
+    const agent = msgPair(
+      [{ role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: agentPrompt }] }],
+      { reply: "arch report", system: [{ type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." }] },
+    );
+
+    const { threads } = buildSession([main, agent]);
+    expect(threads.length).toBe(2);
+    const at = threads.find((t: any) => t.kind === "agent");
+    expect(at).toBeDefined();
+    expect(at.agentOf.toolUseId).toBe("tu_agent");
+    expect(at.label).toBe("[general-purpose] explore repo");
+    expect(mainThread(threads)).toBe(threads[0]);
+  });
+
+  test("agent-id header groups exactly and marks sidechains even without a dispatch", () => {
+    seq = 0;
+    // Two subagent runs with IDENTICAL first messages (same reminder, same
+    // prompt) — only the per-run agent-id header can tell them apart.
+    const msgs = [{ role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: "same prompt" }] }];
+    const a = msgPair(msgs, { reply: "run A" });
+    a.request.headers = { "x-claude-code-agent-id": "aaaa1111" };
+    const b = msgPair(msgs, { reply: "run B" });
+    b.request.headers = { "x-claude-code-agent-id": "bbbb2222" };
+    const { threads } = buildSession([a, b]);
+    expect(threads.length).toBe(2);
+    expect(threads.every((t: any) => t.kind === "agent")).toBe(true);
+    expect(mainThread(threads)).toBe(threads[0]); // fallback, no chat thread
+  });
+
+  test("cc_is_subagent billing marker classifies a sidechain", () => {
+    seq = 0;
+    const p = msgPair([{ role: "user", content: "orphan subagent run" }], {
+      system: [{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.209; cc_entrypoint=cli; cc_is_subagent=true;" }],
+    });
+    const { threads } = buildSession([p]);
+    expect(threads[0].kind).toBe("agent");
   });
 
   test("later same-length request wins the assistant slot (recap retries)", () => {

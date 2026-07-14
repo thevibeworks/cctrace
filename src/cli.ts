@@ -179,15 +179,16 @@ function openBrowser(url: string) {
   }
 }
 
-// `cctrace view <target> [--serve] [--dir DIR] [--no-open]` — rebuild a saved
-// trace (a .jsonl path, a Claude Code session id, or a trace filename
-// fragment). Default writes a self-contained snapshot .html; --serve skips
-// the file and serves the same UI from the live web server instead — the
-// right tool for big sessions, where a several-hundred-MB .html chokes the
-// browser. No proxy, no Claude spawn either way. Returns true when a server
+// `cctrace view <target> [--html] [--port N] [--dir DIR] [--no-open]` —
+// reopen a saved trace (a .jsonl[.zst|.gz] path, a session id, or a trace
+// filename fragment). Default serves the UI from the live web server — no
+// snapshot file, so a several-hundred-MB session can't choke the browser.
+// --html writes the self-contained snapshot .html instead (shareable, works
+// offline); --serve is the pre-0.13 spelling of the default, kept as a
+// no-op. No proxy, no Claude spawn either way. Returns true when a server
 // was started and the process must stay alive.
 function runView(args: string[]): boolean {
-  const usage = "usage: cctrace view <file.jsonl | session-id> [--serve] [--port N] [--dir DIR] [--no-open]";
+  const usage = "usage: cctrace view <file.jsonl[.zst|.gz] | session-id> [--html] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -195,7 +196,8 @@ function runView(args: string[]): boolean {
       options: {
         dir: { type: "string" },
         "no-open": { type: "boolean" },
-        serve: { type: "boolean" },
+        html: { type: "boolean" },
+        serve: { type: "boolean" }, // legacy alias of the default
         port: { type: "string" },
       },
       allowPositionals: true,
@@ -212,7 +214,7 @@ function runView(args: string[]): boolean {
   }
   const logDir = (parsed.values.dir as string) || ".cctrace";
   try {
-    if (parsed.values.serve) {
+    if (!parsed.values.html) {
       serveView(target, logDir, {
         port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
         noOpen: !!parsed.values["no-open"],
@@ -225,7 +227,7 @@ function runView(args: string[]): boolean {
     log(`HTML: ${result.htmlPath}`, C.green);
     const mb = statSync(result.htmlPath).size / (1024 * 1024);
     if (mb > 100) {
-      log(`snapshot is ${mb.toFixed(0)}MB — browsers struggle at this size; try: cctrace view ${target} --serve`, C.yellow);
+      log(`snapshot is ${mb.toFixed(0)}MB — browsers struggle at this size; serve it instead: cctrace view ${target}`, C.yellow);
     }
     if (!parsed.values["no-open"]) openBrowser(result.htmlPath);
   } catch (err) {
@@ -247,13 +249,16 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
-  const traceName = (result.sources[0] || target).replace(/\.jsonl(\.gz)?$/, "");
+  const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
+  // The rebuilt pairs know who produced them (0.13+ traces); older traces
+  // carry no label and the header degrades to project-only.
+  const client = result.pairs.findLast((p) => p.client)?.client;
   const instanceId = crypto.randomUUID();
   let instance: InstanceHandle | null = null;
   const server = createServer({
     port: opts.port,
     logDir,
-    meta: { ...pageMeta(), project: traceName, projectPath: resolve(logDir) },
+    meta: { ...pageMeta(client), project: traceName, projectPath: resolve(logDir) },
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
@@ -262,11 +267,12 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   instance = registerInstance(DATA_DIR, {
     id: instanceId,
     pid: process.pid,
-    port: server.port ?? opts.port,
+    port: server.port,
     project: traceName,
     projectPath: resolve(logDir),
     logFile: join(logDir, result.sources[0] || ""),
     mode: "view",
+    client,
     startedAt: new Date().toISOString(),
   });
   process.on("exit", () => instance?.unregister());
@@ -306,15 +312,16 @@ async function runPs(args: string[]) {
   const rows = list.map((i) => ({
     url: `http://localhost:${i.port}`,
     pid: String(i.pid),
+    client: i.client || "-",
     project: i.project || "?",
     session: i.sessionId ? i.sessionId.slice(0, 8) : "-",
     started: i.startedAt ? new Date(i.startedAt).toLocaleTimeString() : "-",
   }));
   const w = (k: keyof (typeof rows)[0], h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
-  const widths = { url: w("url", "URL"), pid: w("pid", "PID"), project: w("project", "PROJECT"), session: w("session", "SESSION"), started: w("started", "STARTED") };
+  const widths = { url: w("url", "URL"), pid: w("pid", "PID"), client: w("client", "CLIENT"), project: w("project", "PROJECT"), session: w("session", "SESSION"), started: w("started", "STARTED") };
   const line = (r: Record<string, string>) =>
-    `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
-  console.log(C.dim + line({ url: "URL", pid: "PID", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
+    `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
+  console.log(C.dim + line({ url: "URL", pid: "PID", client: "CLIENT", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
   for (const r of rows) console.log(line(r));
 }
 
@@ -542,7 +549,7 @@ function migrateLegacyCa() {
 
 function showHelp() {
   console.log(`
-${C.cyan}cctrace${C.reset} - Trace HTTP traffic from Claude Code CLI
+${C.cyan}cctrace${C.reset} - Trace coding-agent CLI HTTP traffic (Claude Code, Codex, Grok)
 
 ${C.yellow}USAGE:${C.reset}
   cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
@@ -551,26 +558,36 @@ ${C.yellow}USAGE:${C.reset}
   Everything after ${C.cyan}--${C.reset} is passed to the traced CLI verbatim.
   CLIENT picks who gets traced: ${C.cyan}claude${C.reset} (default), ${C.cyan}codex${C.reset}, ${C.cyan}grok${C.reset}.
   Non-Claude clients always use mitm capture.
+  Every run writes .cctrace/trace-<ts>.jsonl — that file IS the trace;
+  reopen it anytime with ${C.cyan}cctrace view${C.reset}.
 
-${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no Claude)${C.reset}
-  ${C.cyan}view${C.reset} <file|session-id>   Rebuild a snapshot .html and open it. Target is a
-                          .jsonl/.jsonl.gz path, a Claude Code session id, or a
-                          trace filename fragment. ${C.cyan}--serve${C.reset} serves the UI from
-                          a local server instead (best for very large traces).
+${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no client spawn)${C.reset}
+  ${C.cyan}view${C.reset} <target> [--html] [--port N]
+                          Reopen a saved trace in the web UI (serves it from
+                          a local server; Ctrl-C stops). Target is a
+                          .jsonl[.zst|.gz] path, a session id, or a trace
+                          filename fragment. ${C.cyan}--html${C.reset} writes a self-contained
+                          snapshot .html instead (shareable, but huge traces
+                          choke browsers).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
-  ${C.cyan}merge${C.reset}                     Consolidate each session's pairs into one .jsonl.
-  ${C.cyan}compress${C.reset}                  zstd-archive traces, 40-60x on session traces
+  ${C.cyan}merge${C.reset} [--prune]           Consolidate each session's pairs into one deduped
+                          session-<id>.jsonl; --prune drops merged sources.
+  ${C.cyan}compress${C.reset} [--older-than N] [--keep-jsonl]
+                          zstd-archive traces, 40-60x on session traces
                           (view reads .zst/.gz directly; upgrades old .gz).
-  ${C.cyan}purge${C.reset}                     Drop categories from saved traces (default:
+  ${C.cyan}purge${C.reset} [--drop CATS | --keep CATS]
+                          Drop categories from saved traces (default drop:
                           telemetry,tokens — trims rows/noise, not disk).
-  ${C.cyan}ps${C.reset}                        List live cctrace instances (URL, project, session).
-  ${C.dim}clean/merge/compress/purge dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
+  ${C.cyan}ps${C.reset} [--json]               List live cctrace instances (URL, client, project,
+                          session).
+  ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge are${C.reset}
+  ${C.dim}dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
-  -s, --static       Static mode (no live server, just files)
-  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT})
-  --messages-only    Only capture /v1/messages (default: capture everything)
+  -s, --static       Static mode: no live server, write .jsonl + snapshot .html
+  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy)
+  --messages-only    Only capture model API calls (default: capture everything)
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
@@ -587,26 +604,28 @@ ${C.yellow}OPTIONS:${C.reset}
   -h, --help         Show this help
 
 ${C.yellow}CAPTURE MODES:${C.reset}
-  ${C.cyan}mitm${C.reset}      TLS-intercepting proxy. Captures ALL Anthropic traffic
-            (messages, OAuth, usage/credits, MCP). Auto-generates a CA that
-            Claude trusts via NODE_EXTRA_CA_CERTS. ${C.dim}Default for native binaries.${C.reset}
+  ${C.cyan}mitm${C.reset}      TLS-intercepting proxy. Captures ALL traffic (messages, OAuth,
+            usage/credits, MCP, telemetry). Auto-generates a CA trusted via
+            NODE_EXTRA_CA_CERTS + a combined bundle for subprocesses.
+            ${C.dim}Default for native binaries; the only mode for codex/grok.${C.reset}
   ${C.cyan}base-url${C.reset}  Reverse proxy via ANTHROPIC_BASE_URL. Zero setup, but only
-            sees /v1/messages (OAuth/usage bypass it).
+            sees /v1/messages (OAuth/usage bypass it). Claude only.
   ${C.cyan}node${C.reset}      Legacy fetch() injection via node --require. Only works for
             npm-installed (non-native) Claude. ${C.dim}Auto-selected for JS installs.${C.reset}
 
 ${C.yellow}EXAMPLES:${C.reset}
   cctrace                          ${C.dim}# Auto mode, capture everything${C.reset}
   cctrace --mode base-url          ${C.dim}# Lightweight, messages only, no CA${C.reset}
-  cctrace -s                       ${C.dim}# Static mode (files only)${C.reset}
+  cctrace -s                       ${C.dim}# Static mode (files + snapshot .html)${C.reset}
   cctrace -- --continue            ${C.dim}# Resume last Claude session, traced${C.reset}
   cctrace -- -p "explain this"     ${C.dim}# Claude print mode, traced${C.reset}
   cctrace --mode base-url -- --model opus --continue
   cctrace codex -- exec "fix tests" ${C.dim}# trace the OpenAI Codex CLI${C.reset}
   cctrace grok                      ${C.dim}# trace the Grok CLI${C.reset}
-  cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl  ${C.dim}# reopen a saved trace${C.reset}
-  cctrace view 4f9a2c1e             ${C.dim}# rebuild by Claude Code session id${C.reset}
-  cctrace view <big-trace> --serve  ${C.dim}# serve a huge trace instead of a giant .html${C.reset}
+  cctrace view trace-2026-07-08     ${C.dim}# reopen a saved trace (filename fragment)${C.reset}
+  cctrace view 4f9a2c1e             ${C.dim}# reopen by Claude Code session id${C.reset}
+  cctrace view 4f9a2c1e --html      ${C.dim}# write a shareable snapshot .html instead${C.reset}
+  cctrace purge --drop telemetry --yes ${C.dim}# strip telemetry rows from saved traces${C.reset}
 
   ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}
 `);
@@ -659,10 +678,13 @@ interface LogSink {
   writeHtml: () => string;
 }
 
-/** Run identity for the page header: Claude's project is the cwd it runs in. */
-function pageMeta(): PageMeta {
+/** Run identity for the page header: the project is the cwd the client runs
+ * in; `client` is who gets traced (omit when unknown, e.g. view rebuilds —
+ * the UI then falls back to per-pair labels). */
+function pageMeta(client?: string): PageMeta {
   const cwd = process.cwd();
   const meta: PageMeta = { project: basename(cwd) || cwd, projectPath: cwd, version: CCTRACE_VERSION };
+  if (client) meta.client = client;
   if (!NO_UPDATE_CHECK) {
     const latest = availableUpdate(readUpdateCache(DATA_DIR));
     if (latest) meta.latestVersion = latest;
@@ -679,7 +701,7 @@ function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
   };
 }
 
-function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?: number): LogSink {
+function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: (pair: TracePair) => void): LogSink {
   if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
   writeFileSync(logFile, "");
   log(`Log: ${logFile}`, C.blue);
@@ -688,15 +710,12 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
 
   return {
     onPair: (pair: TracePair) => {
+      // Label who produced this traffic — the one choke point every pair
+      // passes through, so the file and the live UI can't disagree.
+      pair.client = CLIENT.name;
       collected.push(pair);
       appendFileSync(logFile, JSON.stringify(pair) + "\n");
-      if (livePort) {
-        fetch(`http://localhost:${livePort}/api/pair`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(pair),
-        }).catch(() => {});
-      }
+      ingest?.(pair);
     },
     // The snapshot merges prior-run pairs of the same Claude session (and any
     // --with files) so a --continue'd session's .html is complete on its own.
@@ -728,7 +747,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, livePort?
   };
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, onFinalize?: () => string) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, onFinalize?: () => string) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -761,15 +780,12 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     capturer.stop();
     if (onFinalize) {
+      // Static mode: the self-contained snapshot is the deliverable.
       const htmlFile = onFinalize();
       log(`HTML: ${htmlFile}`, C.green);
-      // Static mode has no live tab, so open the finished snapshot. Live mode
-      // already has the same UI on screen; point at `view` to reopen instead.
-      if (!opts.noOpen && !opts.liveMode) {
-        openBrowser(htmlFile);
-      } else {
-        log(`Reopen anytime: cctrace view ${htmlFile.replace(/\.html$/, ".jsonl")}`, C.dim);
-      }
+      if (!opts.noOpen) openBrowser(htmlFile);
+    } else {
+      log(`Reopen anytime: cctrace view ${logFile}`, C.dim);
     }
     if (signal) log(`Terminated: ${signal}`, C.yellow);
     else if (code === 0) log("Session complete", C.green);
@@ -788,7 +804,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 
 async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs: string[], opts: RunOpts) {
   const { logFile, htmlFile } = logPaths(opts);
-  let livePort: number | undefined;
+  let ingest: ((pair: TracePair) => void) | undefined;
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
@@ -803,31 +819,32 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       logFile,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
-      meta: pageMeta(),
+      meta: pageMeta(CLIENT.name),
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
     });
-    livePort = server.port;
+    ingest = server.ingest;
     instance = registerInstance(DATA_DIR, {
       id: instanceId,
       pid: process.pid,
-      port: livePort ?? opts.port,
+      port: server.port,
       project: pageMeta().project || "",
       projectPath: pageMeta().projectPath || "",
       logFile,
       mode,
+      client: CLIENT.name,
       startedAt: new Date().toISOString(),
     });
     process.on("exit", () => instance?.unregister());
-    log(`Live UI: http://localhost:${livePort}`, C.green);
+    log(`Live UI: http://localhost:${server.port}`, C.green);
     if (!opts.noOpen) {
-      setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
+      setTimeout(() => openBrowser(`http://localhost:${server.port}`), 500);
     }
   }
 
-  const sink = makeLogSink(opts, logFile, htmlFile, livePort);
+  const sink = makeLogSink(opts, logFile, htmlFile, ingest);
   const targetHost = process.env.ANTHROPIC_BASE_URL
     ? new URL(process.env.ANTHROPIC_BASE_URL).host
     : "api.anthropic.com";
@@ -854,7 +871,11 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     log("Continuing a session — prior turns merge into Session view on Claude's first request", C.dim);
   }
 
-  spawnClaudeWithCapturer(claudePath, claudeArgs, capturer, opts, sink.writeHtml);
+  // Live mode: the .jsonl is the deliverable — `cctrace view` rebuilds the UI
+  // from it anytime, so don't also write a snapshot .html at exit (on big
+  // sessions it runs to hundreds of MB). Static mode's whole point is the
+  // self-contained .html, so it keeps the finalize step.
+  spawnClaudeWithCapturer(claudePath, claudeArgs, capturer, opts, logFile, opts.liveMode ? undefined : sink.writeHtml);
 }
 
 async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOpts) {
@@ -864,23 +885,24 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
   const loaderPath = join(dirname(import.meta.path), "loader.cjs");
 
   let livePort = opts.port;
+  // The child process authenticates its /api/pair POSTs with this id.
+  const instanceId = crypto.randomUUID();
   if (opts.liveMode) {
     // Legacy mode: the preload names the log file itself, so the server can't
     // exclude it from prior-trace scans — pair-id dedupe covers that instead.
-    const instanceId = crypto.randomUUID();
     let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
       logDir: opts.logDir,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
-      meta: pageMeta(),
+      meta: pageMeta(CLIENT.name),
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
     });
-    livePort = server.port ?? opts.port;
+    livePort = server.port;
     instance = registerInstance(DATA_DIR, {
       id: instanceId,
       pid: process.pid,
@@ -889,6 +911,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       projectPath: pageMeta().projectPath || "",
       logFile: "",
       mode: "node",
+      client: CLIENT.name,
       startedAt: new Date().toISOString(),
     });
     process.on("exit", () => instance?.unregister());
@@ -905,6 +928,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
     CCTRACE_OPEN_BROWSER: opts.noOpen ? "false" : "true",
     CCTRACE_SERVER_MODE: opts.liveMode ? "true" : "false",
     CCTRACE_SERVER_PORT: String(livePort),
+    CCTRACE_INSTANCE_ID: instanceId,
     CCTRACE_LOG_DIR: opts.logDir,
   };
   if (opts.logName) env.CCTRACE_LOG_NAME = opts.logName;

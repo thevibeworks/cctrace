@@ -1,5 +1,5 @@
 import { redactPair } from "./redact";
-import { captureTee } from "./stream";
+import { captureTee, decodeBodyForTrace } from "./stream";
 import type { TracePair } from "./types";
 
 export interface ProxyConfig {
@@ -49,18 +49,23 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       reqHeaders["accept-encoding"] = "identity";
 
       let reqBody: unknown = null;
-      let rawReqBody: string | null = null;
+      let fwdBody: Uint8Array | null = null;
       if (req.body && req.method !== "GET" && req.method !== "HEAD") {
-        rawReqBody = await req.text();
-        try { reqBody = JSON.parse(rawReqBody); } catch { reqBody = rawReqBody; }
+        // Raw bytes for the upstream, decoded copy for the trace — a text
+        // round trip corrupts compressed request bodies (see mitm.ts).
+        fwdBody = new Uint8Array(await req.arrayBuffer());
+        reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
       }
+
+      const fetchHeaders = { ...reqHeaders };
+      delete fetchHeaders["content-length"];
 
       let upstreamRes: Response;
       try {
         upstreamRes = await fetch(targetUrl, {
           method: req.method,
-          headers: reqHeaders,
-          body: rawReqBody,
+          headers: fetchHeaders,
+          body: fwdBody,
           redirect: "follow",
         });
       } catch (err) {

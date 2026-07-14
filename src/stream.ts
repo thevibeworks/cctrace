@@ -1,3 +1,5 @@
+import { gunzipSync, inflateSync, brotliDecompressSync } from "zlib";
+
 /**
  * Fork a response body into (a) a stream forwarded to the client and (b) an
  * in-memory capture — without ReadableStream.tee().
@@ -19,6 +21,33 @@
 export interface CapturedBody {
   text: string;
   complete: boolean;
+}
+
+/**
+ * Decode a captured request body for the trace: undo the declared
+ * content-encoding (codex zstd-compresses its request JSON), then parse.
+ * The bytes forwarded upstream must always be the raw ones — a lossy UTF-8
+ * round trip of compressed data corrupts it irreversibly (observed as
+ * chatgpt.com 400s). Binary that survives no decode is summarized, never
+ * mangled into replacement characters.
+ */
+export function decodeBodyForTrace(bytes: Uint8Array, encoding?: string): unknown {
+  let buf: Uint8Array = bytes;
+  try {
+    if (encoding === "zstd") buf = Bun.zstdDecompressSync(bytes);
+    else if (encoding === "gzip") buf = gunzipSync(bytes);
+    else if (encoding === "deflate") buf = inflateSync(bytes);
+    else if (encoding === "br") buf = brotliDecompressSync(bytes);
+  } catch {
+    buf = bytes; // mis-declared encoding — try the raw bytes below
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+  } catch {
+    return `<binary body: ${bytes.length} bytes${encoding ? `, content-encoding: ${encoding}` : ""}>`;
+  }
+  try { return JSON.parse(text); } catch { return text; }
 }
 
 export function captureTee(source: ReadableStream<Uint8Array>): {

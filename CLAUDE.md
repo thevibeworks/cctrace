@@ -93,12 +93,17 @@ interface Capturer {
 
 One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
-The header identifies the run: project name (cwd basename, injected as
-`PageMeta` by the server/CLI; unknown for `cctrace view` rebuilds) and the
-current Claude session id (extracted client-side from pairs, newest live pair
-wins, click to copy) — the tab title becomes `<project> · cctrace`. The
-cctrace version (+ amber update link) sits top-right in its own `#ver` mount,
-separate from the run identity. Two views, hash-routed:
+The header identifies the run: traced client (chip, from `PageMeta.client` or
+the newest labeled pair — absent for pre-0.13 traces), project name (cwd
+basename, injected as `PageMeta` by the server/CLI; unknown for `cctrace
+view` rebuilds) and the current session id (extracted client-side from pairs,
+newest live pair wins, click to copy) — the tab title is brand-first:
+`CCTrace · <client> · <project> · <sid>`. The page opens its WebSocket
+origin-relative (never a baked port: behind container/host port forwards the
+bound port isn't the browser's port, and a baked URL once handed a view page
+another instance's live stream). The cctrace version (+ amber update link)
+sits top-right in its own `#ver` mount, separate from the run identity. Two
+views, hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
   human-readable chips — model, in/out tokens, one compact prompt-cache
@@ -114,20 +119,36 @@ separate from the run identity. Two views, hash-routed:
   a cost tooltip broken down by component; the Session view shows per-turn
   and per-thread cost. Clicking a row opens a split detail
   panel beside the list (no page jump); prev/next + `j`/`k` walk the
-  FILTERED list; `Esc` closes. Messages render conversation-first (system
-  prompt, tools, thinking, tool_use collapsed; long texts clamp with a
-  "show all" expander; streamed assistant reply reconstructed from SSE).
-  Usage requests render limit bars. Raw payloads are lazy `<details>`.
+  FILTERED list; `Esc` closes. The detail toolbar (close/prev/next/position)
+  is sticky, so it stays reachable inside megabyte conversations. Messages
+  render conversation-first (system prompt, tools, thinking, tool_use
+  collapsed; long texts clamp with a "show all" expander; streamed assistant
+  reply reconstructed from SSE). Usage requests render limit bars. Raw
+  payloads are lazy `<details>`. A quiet nav rail overlays the detail panel
+  and the session convo (same targets both places): jump top/bottom, prev/
+  next turn, prev/next user prompt, system prompt — in the session view
+  also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
 - **Session** (`#/session[/<key>]`): wire view + reconstructed conversation
-  side by side. `session.ts` groups /v1/messages pairs into threads by
-  first-message signature (main chat, subagent runs matched to their Task
-  dispatch by prompt, quota probes/title-gen as utility), rebuilds turns from
-  each thread's longest request + its response, and attributes per-turn
-  usage/duration to the wire request that produced it (index = the request's
-  history length; later same-length requests win). tool_results fold into
-  their tool_use by id (ccx convention); result-only user turns are skipped;
-  mutating tools (Bash/Edit/Write/Task...) render expanded, lookups collapsed.
-  Every assistant turn links back to its wire request. The conversation pane
+  side by side. `session.ts` groups /v1/messages pairs into threads: by the
+  `x-claude-code-agent-id` header when present (cc ≥ ~2.1.2xx stamps every
+  sidechain request with it — exact grouping), else by a signature of the
+  first message's USER text (`firstUserText` skips the injected
+  `<system-reminder>` context block — Claude Code prepends the same
+  claudeMd/hook reminder to EVERY thread's first message, so hashing raw
+  content collapses main + all subagents into one thread; that was a real
+  bug). Subagent threads link to the Task/Agent tool_use that spawned them
+  by prompt (the dispatch prompt lands verbatim as the first user text) and
+  are classified `agent` even unlinked via wire markers (agent-id header,
+  `cc_is_subagent=true` billing block, Agent-SDK system prompt) so they
+  never compete with the main chat. Turns rebuild from each thread's longest
+  request + its response; per-turn usage/duration attributes to the wire
+  request that produced it (index = the request's history length; later
+  same-length requests win). tool_results fold into their tool_use by id
+  (ccx convention); result-only user turns are skipped. EVERY tool_use folds
+  to one line (focus hierarchy: user prompts get an accent border, subagent
+  spawns / Skill / MCP calls keep a purple title and a subagent fold links
+  to its reconstructed thread; Read/Bash dumps stay quiet). Every assistant
+  turn links back to its wire request. The conversation pane
   tails like tail -f in live mode (open/refresh lands on the newest turn,
   sticky bottom, "new activity" pill when scrolled up, folds survive
   re-renders via positional restore); snapshots open at the top.
@@ -180,19 +201,30 @@ follow-up work (#20).
 
 Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 `cli.ts` before the strict parser). They read saved traces only — no proxy, no
-Claude spawn. `clean`/`merge`/`compress` are dry-run by default; `--yes` applies.
+Claude spawn. `clean`/`merge`/`compress`/`purge` are dry-run by default;
+`--yes` applies.
 
 ```bash
-cctrace view <file|session-id|fragment>   # rebuild a snapshot .html and open it
-cctrace view <target> --serve [--port N]  # serve it from the live web server instead
-                                          # (huge traces: no 400MB .html; registers
-                                          # in the instance registry, mode "view")
+cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves it
+                                          # from the live web server (registers in
+                                          # the instance registry, mode "view";
+                                          # --port N; --serve = legacy alias)
+cctrace view <target> --html              # write a snapshot .html instead (shareable,
+                                          # but a big session renders 100s of MB)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
-cctrace compress [--older-than N] [--yes] # gzip -9 archive; view reads .jsonl.gz
-cctrace ps [--json]                       # list live cctrace instances (URL, project, session)
+cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly
+cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens)
+cctrace ps [--json]                       # live instances (URL, client, project, session)
 cctrace --version                         # print version (+ newer version if known)
 ```
+
+The `.jsonl` is the deliverable: live runs do NOT write a snapshot `.html` at
+exit anymore (a 2h session produced ~400MB of HTML) — `view --html` renders
+one on demand; static mode (`-s`) still writes one, that's its point. Every
+captured pair is labeled with the producing client (`pair.client`, set in the
+cli.ts log sink), which feeds the UI header chip/title, `ps`'s CLIENT column,
+and the instance registry.
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
 <run-id>.json` (unique run id, port, project, session id once seen on the
@@ -280,6 +312,21 @@ make test       # bun test
   `flush()` is capped at 5s so an abandoned capture can't hang exit.
 - **accept-encoding: identity**: avoid gzip/br decompression mismatch when
   forwarding to Claude.
+- **Request bodies forward as raw bytes**: codex zstd-compresses request
+  JSON; the old `req.text()` decode corrupted it irreversibly (upstream
+  400s). The proxies forward the untouched bytes and decode a copy for the
+  trace (`decodeBodyForTrace` in src/stream.ts — undoes declared
+  content-encoding, summarizes undecodable binary instead of mangling it).
+- **WebSocket upgrades are refused fast (501)**: the TLS terminator has no ws
+  handler; forwarding the handshake via fetch() handed clients a convincing
+  101 whose frames went nowhere (codex hung ~82s/attempt until upstream's
+  ping timeout, `request_kind: prewarm`). A fast refusal makes clients fall
+  back to plain HTTP immediately; a real ws relay is follow-up work (#20).
+- **Pair ingestion is in-process**: the CLI sink hands pairs to the live
+  server via the `ingest` callback `createServer` returns, not a loopback
+  POST. `/api/pair` remains only for legacy node mode's child process and
+  requires the run's instance id (`x-cctrace-instance`) — the socket can be
+  reachable across containers/LAN.
 - **flush() before exit**: async captures must finish before the process exits,
   or pairs are lost.
 - **Session continuity is viewer-side, keyed by wire session_id**: each run

@@ -34,6 +34,8 @@ export interface InstanceInfo {
   mode: string;
   startedAt: string; // ISO
   sessionId?: string;
+  /** CLI being traced: claude | codex | grok. */
+  client?: string;
 }
 
 export interface InstanceHandle {

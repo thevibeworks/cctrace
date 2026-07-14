@@ -167,7 +167,11 @@ export class Tracer {
     const url = `http://localhost:${this.config.serverPort}/api/pair`;
     this.originalFetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        // The server rejects pair injection that can't prove it's this run.
+        "x-cctrace-instance": process.env.CCTRACE_INSTANCE_ID || "",
+      },
       body: JSON.stringify(pair),
     }).catch(() => {});
   }

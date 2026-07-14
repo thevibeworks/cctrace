@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { captureTee } from "../src/stream";
+import { gzipSync } from "zlib";
+import { captureTee, decodeBodyForTrace } from "../src/stream";
 
 // Regression territory: ReadableStream.tee() crashed the whole process
 // ("TypeError: null is not an object" in Bun's stream builtins) when the
@@ -75,5 +76,36 @@ describe("captureTee", () => {
     const cap = await captured;
     expect(cap.text).toBe("");
     expect(cap.complete).toBe(true);
+  });
+});
+
+// Codex zstd-compresses its request JSON. The old text decode of the body
+// corrupted the bytes both on the wire (upstream 400s) and in the trace —
+// the trace-side decode must undo declared encodings and never mangle
+// binary into replacement characters.
+describe("decodeBodyForTrace", () => {
+  const body = { model: "gpt-5", input: [{ role: "user", content: "hi" }] };
+  const raw = enc.encode(JSON.stringify(body));
+
+  test("zstd request body decodes to its JSON", () => {
+    expect(decodeBodyForTrace(new Uint8Array(Bun.zstdCompressSync(raw)), "zstd")).toEqual(body);
+  });
+
+  test("gzip request body decodes to its JSON", () => {
+    expect(decodeBodyForTrace(new Uint8Array(gzipSync(raw)), "gzip")).toEqual(body);
+  });
+
+  test("plain JSON and plain text pass through", () => {
+    expect(decodeBodyForTrace(raw)).toEqual(body);
+    expect(decodeBodyForTrace(enc.encode("hello"))).toBe("hello");
+  });
+
+  test("undecodable binary is summarized, never mangled", () => {
+    // Declared zstd but truncated: decompress fails, raw bytes aren't UTF-8.
+    const junk = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0xff]);
+    const out = decodeBodyForTrace(junk, "zstd");
+    expect(typeof out).toBe("string");
+    expect(out as string).toContain("binary body");
+    expect(out as string).not.toContain("�");
   });
 });

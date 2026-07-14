@@ -4,6 +4,7 @@
 .cctrace/
 .cctrace-*/
 .claude-trace/
+temp-example-*/
 # MITM CA + leaf keys (private keys — never commit)
 .cache/mitm/
 # test run output (real captures + logs)

@@ -38,8 +38,14 @@ to protect that feeling.
 - `::selection` and `:focus-visible` use the accent.
 - Raw payloads live behind `<details>` folds; folds the user toggles must
   survive live re-renders (positional restore — mutations are tail-only).
-- The header carries run identity (project · session id) — the page must
-  always answer "what am I looking at" without scrolling.
+- The header carries run identity (client · project · session id) — the page
+  must always answer "what am I looking at" without scrolling.
+- Every tool_use folds to one line. The reader's attention belongs to system
+  prompt, user prompts, subagent spawns, skills/MCP calls, and the final
+  reply — a Read/Bash dump never earns default expansion. Notable folds keep
+  a colored title, not an open body.
+- Floating chrome is limited to the tail pill and the nav rail; the rail is
+  faint until hovered and every button names its keyboard shortcut.
 
 ## When adding UI
 

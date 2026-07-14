@@ -22,6 +22,8 @@ export interface TracePair {
   response: ResponseData | null;
   duration: number;
   loggedAt: string;
+  /** CLI that produced this traffic: claude | codex | grok. Absent pre-0.13. */
+  client?: string;
   /** Source file base name when merged in from a previous run's trace. */
   prior?: string;
 }

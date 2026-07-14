@@ -19,8 +19,9 @@ English | [简体中文](README.zh-CN.md)
 </p>
 
 cctrace sits between Claude Code and the Anthropic API, recording every HTTP
-call to a live categorized web UI -- then saves a self-contained HTML snapshot
-you can open any time. No cloud, no account, nothing leaves your machine.
+call to a live categorized web UI and a `.jsonl` trace you can reopen any
+time with `cctrace view`. No cloud, no account, nothing leaves your machine.
+It traces the OpenAI Codex and Grok CLIs too (`cctrace codex`, `cctrace grok`).
 
 ```bash
 cctrace
@@ -61,8 +62,9 @@ base-URL proxy physically cannot reach (Claude hardcodes their host).
 - **Live, categorized UI.** Filter chips with counts, colored badges, expandable
   headers/bodies, decoded SSE streams. It looks good. You'll actually want to
   keep it open.
-- **Shareable snapshots.** Every run writes a self-contained `.html` that
-  renders the same UI offline, no server needed. Send it to a colleague.
+- **Replayable traces.** Every run writes a `.jsonl` trace; `cctrace view`
+  reopens it in the same UI anytime, and `cctrace view --html` renders a
+  self-contained snapshot you can send to a colleague (works offline).
 - **Zero config.** Auto-generates its CA, auto-detects your Claude install, and
   captures everything by default. No config files to edit, no flags to memorize.
 - **Safe by default.** Credentials are redacted from headers, bodies, *and* URLs
@@ -241,15 +243,17 @@ traffic gets its own filter category in the UI.
 ## Working with saved traces
 
 Subcommands operate on traces already on disk -- no proxy, no Claude spawn.
-The three housekeeping commands are **dry-run by default** (they print an
-itemized plan and touch nothing); add `--yes` to apply.
+The housekeeping commands (`clean`/`merge`/`compress`/`purge`) are **dry-run
+by default** (they print an itemized plan and touch nothing); add `--yes` to
+apply.
 
 ```bash
-# Rebuild a snapshot .html and open it -- by file, session id, or filename bit
+# Reopen a saved trace in the web UI -- by file, session id, or filename bit
 cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
 cctrace view 4f9a2c1e                      # a Claude Code session id (or prefix)
-cctrace view <target> --serve              # serve it from a local server instead
-                                           # (best for huge traces -- no giant .html)
+cctrace view <target> --html               # write a self-contained snapshot .html
+                                           # instead (shareable; huge traces choke
+                                           # browsers -- the default serve doesn't)
 
 # Reclaim space: drop regenerable .html snapshots + 0-byte aborted traces
 cctrace clean                              # dry run: lists what would go
@@ -259,11 +263,14 @@ cctrace clean --yes
 cctrace merge                              # one session-<id>.jsonl per session
 cctrace merge --prune --yes                # also remove fully-merged sources
 
-# Archive for backup: gzip -9 (view reads .jsonl.gz directly)
+# Archive for backup: zstd (view reads .jsonl.zst / legacy .gz directly)
 cctrace compress --older-than 7 --yes      # only traces older than 7 days
 
+# Drop noise categories (telemetry, count_tokens) from saved traces
+cctrace purge --yes                        # rows, not disk -- compress is for space
+
 # Which cctrace sessions are live right now, and on which port?
-cctrace ps                                 # URL, PID, project, session, started
+cctrace ps                                 # URL, PID, client, project, session
 ```
 
 Housekeeping never shrinks your data. `clean` only deletes an `.html` whose
@@ -284,9 +291,9 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | Option | Description |
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
-| `-s, --static` | Static mode (no live server, just files) |
+| `-s, --static` | Static mode (no live server; writes the `.jsonl` + a snapshot `.html`) |
 | `-p, --port PORT` | Live UI port (default: 9317; auto-falls back if busy) |
-| `--messages-only` | Capture only `/v1/messages` |
+| `--messages-only` | Capture only the model API calls (`/v1/messages` and friends) |
 | `--no-open` | Don't auto-open the browser |
 | `--print-ca` | Print the MITM CA cert path and exit |
 | `--log NAME` | Custom log file base name |

@@ -6,6 +6,93 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-14
+
+### Fixed
+
+- **Cross-instance stream leak** — the live page baked an absolute
+  `ws://localhost:<bound-port>` WebSocket URL into the HTML. Behind
+  container/host port forwards the bound port is not the port the browser
+  sees, so a `view --serve` page could attach to a *different* instance's
+  live stream (observed: a grok capture streaming into a codex view page).
+  The WebSocket now connects origin-relative; instance-switcher links use
+  `location.hostname`. Relatedly, `/api/pair` accepted unauthenticated
+  POSTs from anything that could reach the socket — proxy modes now hand
+  pairs to the server in-process, and the endpoint (kept for legacy node
+  mode's child process) requires the run's instance id.
+- **Codex through the proxy** — two stacked failures. Codex opens a
+  WebSocket to `chatgpt.com/backend-api/codex/responses`; the TLS
+  terminator forwarded the handshake via `fetch()` and returned a
+  convincing 101 whose frames went nowhere, hanging ~82s per attempt until
+  upstream's ping timeout. WebSocket upgrades are now refused immediately
+  (501, logged as a pair) so clients fall back to plain HTTP at once. Then
+  the fallback failed too: codex zstd-compresses request bodies, and the
+  proxies read them with a lossy UTF-8 text decode before re-sending —
+  upstream 400s. Request bodies now forward as raw untouched bytes; the
+  trace stores a decoded copy (zstd/gzip/br/deflate undone; true binary
+  summarized, never mangled).
+- **Sidechain session reconstruction** — subagent (Task) runs never
+  appeared as linked threads; on real traces main + every subagent
+  collapsed into ONE thread, corrupting per-turn attribution. Claude Code
+  prepends the same `<system-reminder>` context block to every thread's
+  first user message, which defeated both the first-message signature and
+  the dispatch-prompt match (the prompt is `content[1]`, after the
+  reminder). Threads now group by the `x-claude-code-agent-id` header when
+  present (exact, cc ≥ ~2.1.2xx) or by a reminder-skipping signature of the
+  first user text; dispatch linking reads the real prompt (verbatim on the
+  wire); sidechains without a captured dispatch are still classified
+  `agent` via wire markers (`cc_is_subagent=true`, Agent-SDK system
+  prompt) so they never compete with the main chat. Linked threads are
+  labeled `[subagent_type] description`.
+
+### Changed
+
+- **Live runs no longer write a snapshot `.html` at exit** — the `.jsonl`
+  is the deliverable (`cctrace view` reopens it anytime); a 2h session was
+  producing ~400MB of HTML nobody asked for. Static mode (`-s`) still
+  writes the snapshot — that's its point.
+- **`cctrace view` serves by default** (what `--serve` did; the flag stays
+  as a silent alias). `cctrace view <target> --html` writes the shareable
+  self-contained snapshot instead.
+- **Session view: every tool_use folds to one line.** The old "mutating
+  tools render expanded" rule buried conversations under Read/Bash output.
+  Focus goes to what matters: user prompts (accent border), subagent
+  spawns (purple, with an "open thread →" link to the reconstructed
+  sidechain), Skill and MCP calls (purple), and the assistant's replies.
+- Brand-first tab title: `CCTrace · <client> · <project> · <session>`.
+
+### Added
+
+- **Client labeling** — every captured pair records who produced it
+  (`"client": "claude" | "codex" | "grok"`); the UI header shows a client
+  chip, `cctrace ps` gains a CLIENT column, and the instance registry
+  carries it.
+- **In-page navigation** — the detail-panel toolbar (close/prev/next) is
+  sticky; a quiet nav rail overlays the session conversation and the
+  detail panel: jump top/bottom, prev/next turn, prev/next user prompt,
+  system prompt. Session-view keys: `g`/`G` top/bottom, `j`/`k` turns,
+  `p`/`u` user prompts, `s` system prompt.
+- `--help` rewritten to match the actual CLI surface (multi-client
+  tagline, `purge`, per-subcommand flags, zstd, `.zst` view targets);
+  README / CLAUDE.md / agent skill synced.
+
+## [0.12.0] - 2026-07-14
+
+### Added
+
+- **Long-window zstd `compress`** (#25) — session traces are mostly
+  re-sent conversation prefixes; Bun's built-in zstd at level 19 windows
+  the whole input. Measured on a real 375MB trace: 5.7MB (63x,
+  byte-identical round trip) where `gzip -9` got 2.8x. Legacy `.jsonl.gz`
+  archives stay readable and are upgraded (unioned, then removed) on the
+  next run.
+- **`cctrace purge`** — drop whole categories from saved traces (default:
+  telemetry + count_tokens). Measured honestly: ~45% of rows but ~9% of
+  bytes, so the CLI says "rows, not disk" and points at `compress` for
+  space. Dry-run by default, atomic rewrite, re-stat before unlink.
+- **`make publish`** — project-local `.npmrc` + `.env` token handling with
+  long fetch timeouts; `~/.npmrc` is never touched.
+
 ## [0.11.0] - 2026-07-13
 
 ### Added
@@ -514,7 +601,11 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/thevibeworks/cctrace/compare/v0.12.0...v0.13.0
+[0.12.0]: https://github.com/thevibeworks/cctrace/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/thevibeworks/cctrace/compare/v0.10.0...v0.11.0
+[0.10.0]: https://github.com/thevibeworks/cctrace/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/thevibeworks/cctrace/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/thevibeworks/cctrace/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/thevibeworks/cctrace/compare/v0.6.1...v0.7.0

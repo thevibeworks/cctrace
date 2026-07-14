@@ -14,6 +14,7 @@ import {
   summarizeCache,
 } from "./summarize";
 import {
+  firstUserText,
   threadSig,
   normalizeTurns,
   buildToolResultIndex,
@@ -57,19 +58,21 @@ export interface PageMeta {
   project?: string;
   /** Full path of that directory (tooltip). */
   projectPath?: string;
+  /** CLI being traced: claude | codex | grok. */
+  client?: string;
   /** cctrace version that produced this page/snapshot. */
   version?: string;
   /** Newer version known from the update check, if any. */
   latestVersion?: string;
 }
 
-export function getLiveHtml(port: number, meta: PageMeta = {}): string {
+export function getLiveHtml(meta: PageMeta = {}): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cctrace live</title>
+  <title>CCTrace</title>
   <link rel="icon" href="${FAVICON_HREF}">
   <script>(function(){var t=localStorage.getItem('cctrace-theme');if(t&&t!=='system')document.documentElement.setAttribute('data-theme',t)})()</script>
   <style>
@@ -137,6 +140,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
     .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
     .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx-client {
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 0 5px; font-size: 11px; color: var(--text-muted); flex: none;
+    }
     .ctx-sep { color: var(--text-faint); }
     .ctx-sess {
       font: inherit; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
@@ -297,14 +304,14 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       flex-shrink: 0;
     }
     /* ---- Requests view: list + split detail panel ---- */
-    #split { flex: 1; display: flex; min-height: 0; }
+    #split { flex: 1; display: flex; min-height: 0; position: relative; }
     body.view-session #split { display: none; }
     #pairs { flex: 1; min-width: 0; overflow-y: auto; padding: 8px; }
     #detail {
       display: none;
       min-width: 0;
       overflow-y: auto;
-      padding: 12px 16px;
+      padding: 0 16px 12px;
       border-left: 1px solid var(--border);
     }
     body.detail-open #detail { display: block; flex: 0 0 60%; max-width: 60%; }
@@ -315,7 +322,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     /* ---- Session view: threads + conversation ---- */
     #session-view { display: none; flex: 1; min-height: 0; position: relative; flex-direction: column; }
     body.view-session #session-view { display: flex; }
-    #session-main { display: flex; flex: 1; min-height: 0; }
+    #session-main { display: flex; flex: 1; min-height: 0; position: relative; }
     #threads { flex: 0 0 320px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
@@ -500,9 +507,37 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     .copy-btn.copied { color: var(--green); border-color: var(--green); }
     .copy-btn svg { width: 14px; height: 14px; }
     /* ---- Detail panel ---- */
-    .detail-top { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    /* Sticky: prev/next/close stay reachable while scrolled deep into a
+       megabyte conversation. Solid bg so content never bleeds through. */
+    .detail-top {
+      display: flex; align-items: center; gap: 8px;
+      position: sticky; top: 0; z-index: 4;
+      background: var(--bg);
+      padding: 10px 0; margin-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
     .detail-pos { color: var(--text-muted); font-size: 11px; }
-    .detail-id { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+    .detail-id { margin-left: auto; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+    .btn-icon { padding: 4px 8px; font-size: 13px; line-height: 1; }
+    /* ---- In-document nav rail (session convo + detail panel) ----
+       Quiet until hovered; every affordance repeats a keyboard shortcut. */
+    .nav-rail {
+      position: absolute; right: 18px; top: 12px; z-index: 6;
+      display: flex; flex-direction: column; gap: 2px;
+      opacity: 0.45;
+    }
+    .nav-rail:hover, .nav-rail:focus-within { opacity: 1; }
+    .nav-rail button {
+      width: 26px; height: 22px; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 4px; color: var(--text-muted); cursor: pointer;
+      font: inherit; font-size: 11px; line-height: 1;
+    }
+    .nav-rail button:hover { color: var(--text); border-color: var(--accent); }
+    .nav-rail .rail-gap { height: 6px; }
+    #rail-detail { display: none; top: 48px; }
+    body.detail-open #rail-detail { display: flex; }
     .btn {
       padding: 4px 10px;
       background: var(--btn-bg);
@@ -543,6 +578,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       border-bottom: 1px solid var(--border);
     }
     .turn-user .turn-role { color: var(--accent); }
+    .turn-user { border-left: 2px solid var(--accent); }
     .turn-assistant .turn-role { color: var(--green); }
     .turn-tag { color: var(--text-faint); text-transform: none; letter-spacing: 0; }
     .turn-usage {
@@ -608,6 +644,14 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     .turn .fold { border-top: 1px solid var(--border); }
     .fold.box { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
     .fold.errline > summary .fold-title { color: var(--red); }
+    /* Notable tool events keep their color even folded: subagent spawns,
+       skill invocations, MCP calls. Everything else stays quiet. */
+    .fold.fold-agent > summary .fold-title,
+    .fold.fold-skill > summary .fold-title,
+    .fold.fold-mcp > summary .fold-title { color: var(--purple); }
+    .fold.fold-agent > summary .fold-hint { color: var(--text-muted); }
+    .fold-link { color: var(--accent); font-size: 11px; text-decoration: none; flex: none; margin-left: auto; }
+    .fold-link:hover { text-decoration: underline; }
     .sys-block { border-bottom: 1px dashed var(--border); }
     .sys-block:last-child { border-bottom: none; }
     .cc-tag { padding: 8px 12px 0; font-size: 10px; color: var(--amber); }
@@ -703,6 +747,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
   <div id="split">
     <main id="pairs"></main>
     <aside id="detail"></aside>
+    <div class="nav-rail" id="rail-detail"></div>
   </div>
   <div id="session-view">
     <div id="replay-bar">
@@ -725,6 +770,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     <div id="session-main">
       <aside id="threads"></aside>
       <main id="convo"></main>
+      <div class="nav-rail" id="rail-session"></div>
     </div>
     <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
   </div>
@@ -800,6 +846,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     ${nextTick.toString()}
 
     // Session reconstruction, injected from src/session.ts.
+    ${firstUserText.toString()}
     ${threadSig.toString()}
     ${normalizeTurns.toString()}
     ${buildToolResultIndex.toString()}
@@ -855,10 +902,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     };
     applyTheme(getThemePref());
 
-    // ---- Header context: project name + current Claude session id ----
+    // ---- Header context: traced client + project + current session id ----
 
     const ctxEl = document.getElementById('ctx');
-    if (META.project) document.title = META.project + ' \\u00b7 cctrace';
 
     // The session Claude is in right now: newest live pair wins; prior-run
     // pairs are the fallback so view-rebuilt snapshots still show an id.
@@ -873,17 +919,34 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       return prior;
     }
 
-    let ctxSid = null;
+    // The traced client (claude/codex/grok): newest labeled pair wins, the
+    // run meta is the fallback. Old traces carry no label — show nothing
+    // rather than guess.
+    function currentClient() {
+      for (let i = pairs.length - 1; i >= 0; i--) {
+        if (pairs[i].client) return pairs[i].client;
+      }
+      return META.client || '';
+    }
+
+    let ctxKey = null;
     function renderCtx() {
       const sid = currentSessionId();
-      if (sid === ctxSid) return;
-      ctxSid = sid;
+      const client = currentClient();
+      const key = client + '|' + sid;
+      if (key === ctxKey) return;
+      ctxKey = key;
       var t = '';
-      if (META.project) t += META.project;
+      if (client) t += client;
+      if (META.project) { if (t) t += ' \\u00b7 '; t += META.project; }
       if (sid) { if (t) t += ' \\u00b7 '; t += sid.slice(0, 8); }
-      document.title = t ? t + ' \\u00b7 cctrace' : (IS_SNAPSHOT ? 'cctrace' : 'cctrace live');
+      document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_SNAPSHOT ? 'CCTrace' : 'CCTrace live');
       let html = '';
+      if (client) {
+        html += '<span class="ctx-client" title="traced CLI">' + escapeHtml(client) + '</span>';
+      }
       if (META.project) {
+        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
         html += '<span class="ctx-proj" title="' + escapeHtml(META.projectPath || META.project) + '">' + escapeHtml(META.project) + '</span>';
       }
       if (sid) {
@@ -926,9 +989,12 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const open = !!instEl.querySelector('.inst-menu.open');
       let rows = '';
       for (const i of others) {
-        rows += '<a class="inst-row" href="http://localhost:' + Number(i.port) + '/"' +
+        // location.hostname, not localhost: this page may itself be viewed
+        // through a forward. The port is still the sibling's own bound port —
+        // across container namespaces it may not be reachable as-is.
+        rows += '<a class="inst-row" href="http://' + location.hostname + ':' + Number(i.port) + '/"' +
           ' title="' + escapeHtml((i.projectPath || i.project || '') + (i.sessionId ? ' \\u00b7 session ' + i.sessionId : '')) + '">' +
-          '<span>' + escapeHtml(i.project || '?') + '</span>' +
+          '<span>' + escapeHtml((i.client ? i.client + ' \\u00b7 ' : '') + (i.project || '?')) + '</span>' +
           (i.sessionId ? '<span class="inst-sess">' + escapeHtml(String(i.sessionId).slice(0, 8)) + '</span>' : '') +
           '<span class="inst-port">:' + Number(i.port) + '</span></a>';
       }
@@ -975,7 +1041,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
     }
 
     function connect() {
-      const ws = new WebSocket('ws://localhost:${port}/ws');
+      // Origin-relative, never a baked port: behind container/host port
+      // forwards the server's bound port is not the port the browser sees,
+      // and a baked URL can hand this page another instance's stream.
+      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
       ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'status connected'; };
       ws.onclose = () => {
         statusEl.textContent = 'offline'; statusEl.className = 'status disconnected';
@@ -1236,6 +1305,13 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         else if (e.key === 'j' || e.key === 'ArrowDown') { navDetail(1); e.preventDefault(); }
         else if (e.key === 'k' || e.key === 'ArrowUp') { navDetail(-1); e.preventDefault(); }
       } else if (view === 'session') {
+        if (e.key === 'g') { railJump(convoEl, 'top'); return; }
+        if (e.key === 'G') { railJump(convoEl, 'bottom'); return; }
+        if (e.key === 's') { railJump(convoEl, 'sys'); return; }
+        if (e.key === 'k') { railJump(convoEl, 'tprev'); return; }
+        if (e.key === 'j') { railJump(convoEl, 'tnext'); return; }
+        if (e.key === 'p') { railJump(convoEl, 'uprev'); return; }
+        if (e.key === 'u') { railJump(convoEl, 'unext'); return; }
         if (e.key === 'Escape') {
           if (replay.active) exitReplay();
           else location.hash = '';
@@ -1267,9 +1343,9 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         ? 'filtered out'
         : (vIdx + 1) + ' / ' + vis.length + (vis.length !== pairs.length ? ' shown' : '');
       return '<div class="detail-top">' +
-        '<a class="btn" href="#" title="Close (Esc)">\\u2715 close</a>' +
-        '<button class="btn" onclick="navDetail(-1)"' + (vIdx <= 0 ? ' disabled' : '') + ' title="Previous shown request (k)">\\u2039 prev</button>' +
-        '<button class="btn" onclick="navDetail(1)"' + (vIdx === -1 || vIdx >= vis.length - 1 ? ' disabled' : '') + ' title="Next shown request (j)">next \\u203a</button>' +
+        '<a class="btn btn-icon" href="#" title="Close (Esc)">\\u2715</a>' +
+        '<button class="btn btn-icon" onclick="navDetail(-1)"' + (vIdx <= 0 ? ' disabled' : '') + ' title="Previous shown request (k)">\\u2039</button>' +
+        '<button class="btn btn-icon" onclick="navDetail(1)"' + (vIdx === -1 || vIdx >= vis.length - 1 ? ' disabled' : '') + ' title="Next shown request (j)">\\u203a</button>' +
         '<span class="detail-pos">' + pos + '</span>' +
         '<span class="detail-id" title="request id">' + escapeHtml(id) + '</span>' +
       '</div>';
@@ -1280,6 +1356,62 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       const nav = detailEl.querySelector('.detail-top');
       if (nav) nav.outerHTML = detailNavHtml(detailId);
     }
+
+    // ---- In-document nav rail ----
+    // Jump within the open conversation: top/bottom, prev/next turn,
+    // prev/next user prompt, system prompt. One rail overlays the session
+    // convo, one the request detail panel; same targets, same keys.
+    const RAIL_BUTTONS = [
+      { act: 'top', label: '\\u2912', title: 'Jump to top (g)' },
+      { act: 'sys', label: '\\u00a7', title: 'System prompt (s)' },
+      { gap: true },
+      { act: 'tprev', label: '\\u2191', title: 'Previous turn (k)' },
+      { act: 'tnext', label: '\\u2193', title: 'Next turn (j)' },
+      { gap: true },
+      { act: 'uprev', label: 'u\\u2191', title: 'Previous user prompt (p)' },
+      { act: 'unext', label: 'u\\u2193', title: 'Next user prompt (u)' },
+      { gap: true },
+      { act: 'bottom', label: '\\u2913', title: 'Jump to bottom (G)' },
+    ];
+
+    function railJump(container, act) {
+      if (!container) return;
+      if (act === 'top') { container.scrollTop = 0; return; }
+      if (act === 'bottom') { container.scrollTop = container.scrollHeight; return; }
+      const cbox = container.getBoundingClientRect();
+      if (act === 'sys') {
+        const el = container.querySelector('.sys-fold');
+        if (el) {
+          el.open = true;
+          container.scrollTop += el.getBoundingClientRect().top - cbox.top - 8;
+        }
+        return;
+      }
+      const sel = act === 'uprev' || act === 'unext' ? '.turn-user' : '.turn';
+      const dir = act === 'uprev' || act === 'tprev' ? -1 : 1;
+      let target = null;
+      for (const el of container.querySelectorAll(sel)) {
+        const rel = el.getBoundingClientRect().top - cbox.top;
+        if (dir > 0) { if (rel > 6) { target = el; break; } }
+        else { if (rel < -6) target = el; else break; }
+      }
+      if (target) container.scrollTop += target.getBoundingClientRect().top - cbox.top - 8;
+    }
+
+    function initRail(railEl, getContainer) {
+      let html = '';
+      for (const b of RAIL_BUTTONS) {
+        html += b.gap
+          ? '<span class="rail-gap"></span>'
+          : '<button data-act="' + b.act + '" title="' + b.title + '">' + b.label + '</button>';
+      }
+      railEl.innerHTML = html;
+      railEl.querySelectorAll('button').forEach(btn => {
+        btn.onclick = () => railJump(getContainer(), btn.dataset.act);
+      });
+    }
+    initRail(document.getElementById('rail-session'), () => convoEl);
+    initRail(document.getElementById('rail-detail'), () => detailEl);
 
     function renderDetail(id) {
       const pair = pairs.find(p => p.id === id);
@@ -1357,10 +1489,13 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       return '<div class="chips">' + out + '</div>';
     }
 
-    function fold(title, hint, body, cls, open) {
+    // extraHtml is raw (not escaped) — only trusted, renderer-built markup
+    // like the subagent thread link goes there, never wire-derived strings.
+    function fold(title, hint, body, cls, open, extraHtml) {
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
         '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
+        (extraHtml || '') +
         '</summary><div class="fold-body">' + body + '</div></details>';
     }
 
@@ -1441,7 +1576,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
           : '';
         body += '<div class="sys-block">' + cc + textBlock(text) + '</div>';
       }
-      return fold('system prompt', blocks.length + ' block' + (blocks.length === 1 ? '' : 's') + ' \\u00b7 ' + fmtCompact(total) + ' chars', body, 'box');
+      // .sys-fold is the nav rail's jump target (§ / s key).
+      return fold('system prompt', blocks.length + ' block' + (blocks.length === 1 ? '' : 's') + ' \\u00b7 ' + fmtCompact(total) + ' chars', body, 'box sys-fold');
     }
 
     function renderTools(tools) {
@@ -1587,6 +1723,10 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       for (const t of threads) if (t.key === key) sel = t;
       if (!sel) sel = mainThread(threads);
       sessionSelKey = sel.key;
+      agentThreadIndex = {};
+      for (const t of threads) {
+        if (t.agentOf && t.agentOf.toolUseId) agentThreadIndex[t.agentOf.toolUseId] = t.key;
+      }
       renderThreadsPane(threads, sel);
       renderConvoPane(sel);
     }
@@ -1639,14 +1779,38 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
       threadsEl.scrollTop = top;
     }
 
-    // Tools that mutate or spawn work render expanded (ccx convention);
-    // read-only lookups stay folded.
-    const ACTIVE_TOOLS = { Bash: 1, Write: 1, Edit: 1, NotebookEdit: 1, Task: 1, Agent: 1, TaskCreate: 1, Skill: 1, AskUserQuestion: 1 };
+    // Focus hierarchy: EVERY tool_use folds to one line — on real sessions
+    // the old "mutating tools render expanded" rule buried the conversation
+    // under Read/Bash output. What stays visually distinct (purple title,
+    // still folded) are the notable events: subagent spawns (with a jump
+    // link to the reconstructed thread), skill invocations, and MCP calls.
+    const SPAWN_TOOLS = { Task: 1, Agent: 1, TaskCreate: 1 };
+
+    // tool_use id -> subagent thread key, rebuilt on each session render.
+    let agentThreadIndex = {};
 
     function renderBlockS(b, results) {
       if (b && (b.type === 'tool_use' || b.type === 'server_tool_use')) {
         const name = b.name || '?';
-        const pv = toolPreview(name, b.input) || snippet(b.input, 110);
+        let title = name;
+        let pv = toolPreview(name, b.input) || snippet(b.input, 110);
+        let cls = '';
+        let extra = '';
+        if (SPAWN_TOOLS[name]) {
+          title = 'subagent';
+          cls = 'fold-agent';
+          const dest = b.id && agentThreadIndex[b.id];
+          if (dest) {
+            extra = '<a class="fold-link" href="#/session/' + encodeURIComponent(dest) + '"' +
+              ' onclick="event.stopPropagation()" title="open the reconstructed subagent thread">open thread \\u2192</a>';
+          }
+        } else if (name === 'Skill') {
+          title = 'skill';
+          cls = 'fold-skill';
+        } else if (name.lastIndexOf('mcp__', 0) === 0) {
+          title = 'mcp \\u00b7 ' + name.slice(5).split('__').join(' \\u00b7 ');
+          cls = 'fold-mcp';
+        }
         let body = preBlock(formatJson(b.input));
         const res = results[b.id];
         if (res) {
@@ -1659,7 +1823,8 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
         } else {
           body += '<div class="block-note">no result captured</div>';
         }
-        return fold(name, pv, body, res && res.is_error ? 'errline' : '', !!ACTIVE_TOOLS[name]);
+        if (res && res.is_error) cls += ' errline';
+        return fold(title, pv, body, cls, false, extra);
       }
       return renderBlock(b);
     }
@@ -1979,7 +2144,7 @@ export function getLiveHtml(port: number, meta: PageMeta = {}): string {
  * review of a saved .jsonl trace.
  */
 export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): string {
-  const html = getLiveHtml(0, meta);
+  const html = getLiveHtml(meta);
   // Inject before </head> so __PAIRS__ is defined before the body script runs.
   const inject = `<script>window.__PAIRS__ = ${jsonForScript(tracePairs)};</script>`;
   // Function replacement: a string replacement would $-substitute the payload

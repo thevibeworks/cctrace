@@ -14,14 +14,36 @@ import { pairCost } from "./pricing";
 // the web UI via toString() — keep them self-contained (cross-calls only to
 // other inlined functions by name).
 
-/** Stable signature of a thread's first message (djb2 over its content). */
+/**
+ * The user-authored text of a message content: the first text block that is
+ * NOT an injected <system-reminder> context block. Claude Code prepends the
+ * same claudeMd / hook-context reminder to the first user message of EVERY
+ * thread — main chat and all subagent runs alike — so anything keyed on
+ * "first text block" sees the reminder, not the prompt.
+ */
+export function firstUserText(content: any): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let fallback = "";
+  for (const b of content) {
+    if (!b || b.type !== "text" || typeof b.text !== "string") continue;
+    if (!fallback) fallback = b.text;
+    if (b.text.lastIndexOf("<system-reminder>", 0) !== 0) return b.text;
+  }
+  return fallback;
+}
+
+/** Stable signature of a thread's first message (djb2 over its user text —
+ * never over the shared reminder prefix, which would collide every thread). */
 export function threadSig(firstMessage: any): string {
-  let s = "";
-  try {
-    const c = firstMessage && firstMessage.content;
-    s = typeof c === "string" ? c : JSON.stringify(c) || "";
-  } catch {
-    s = String(firstMessage);
+  let s = firstUserText(firstMessage && firstMessage.content);
+  if (!s) {
+    try {
+      const c = firstMessage && firstMessage.content;
+      s = typeof c === "string" ? c : JSON.stringify(c) || "";
+    } catch {
+      s = String(firstMessage);
+    }
   }
   s = s.slice(0, 400);
   let h = 5381;
@@ -88,7 +110,11 @@ export function buildSession(pairs: any[]): any {
     if (path.indexOf("/v1/messages") === -1 || path.indexOf("count_tokens") !== -1) continue;
     const req = p.request.body || {};
     if (!Array.isArray(req.messages) || !req.messages.length) continue;
-    const key = threadSig(req.messages[0]);
+    // cc >= ~2.1.2xx stamps every sidechain request with a stable per-run
+    // agent id — exact, collision-proof grouping. Older versions fall back
+    // to the first-user-text signature.
+    const agentId = (p.request.headers || {})["x-claude-code-agent-id"] || "";
+    const key = agentId ? "agent:" + agentId : threadSig(req.messages[0]);
     let t = byKey[key];
     if (!t) {
       t = { key, kind: "chat", label: "", model: "", reqs: [] };
@@ -146,6 +172,16 @@ export function buildSession(pairs: any[]): any {
     } else if (!t.tools.length && t.turns.length <= 2 && /concise[^.]*title/i.test(sysText)) {
       t.kind = "utility";
       t.label = "title generation";
+    } else if (
+      // Sidechain markers: the agent-id header (cc >= ~2.1.2xx), the billing
+      // block's cc_is_subagent flag, or the subagent system prompt. A
+      // sidechain must never compete as "chat" — mainThread() picks chats —
+      // even when its Task dispatch isn't on the wire to link against.
+      (spine.request.headers || {})["x-claude-code-agent-id"] ||
+      sysText.indexOf("cc_is_subagent=true") !== -1 ||
+      /You are (a Claude agent|an agent for Claude Code)/.test(sysText)
+    ) {
+      t.kind = "agent";
     }
 
     t.pairIds = t.reqs.map((p: any) => p.id);
@@ -172,11 +208,13 @@ export function buildSession(pairs: any[]): any {
     }
   }
   for (const t of threads) {
-    if (t.kind !== "chat") continue;
+    if (t.kind !== "chat" && t.kind !== "agent") continue;
+    // The dispatch prompt lands verbatim as the subagent's first user text —
+    // AFTER the injected reminder block, which firstUserText skips.
     let firstText = "";
     for (const turn of t.turns) {
       if (turn.role !== "user") continue;
-      for (const b of turn.blocks) if (b && b.type === "text" && b.text) { firstText = b.text; break; }
+      firstText = firstUserText(turn.blocks);
       break;
     }
     if (!firstText) continue;
@@ -186,6 +224,9 @@ export function buildSession(pairs: any[]): any {
       if (firstText === d.prompt || firstText.indexOf(head) !== -1 || d.prompt.indexOf(firstText.slice(0, 300)) !== -1) {
         t.kind = "agent";
         t.agentOf = { thread: d.from, toolUseId: d.toolUseId, agentType: d.agentType, description: d.description };
+        if (d.agentType || d.description) {
+          t.label = "[" + (d.agentType || "agent") + "] " + (d.description || "");
+        }
         break;
       }
     }

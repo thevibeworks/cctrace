@@ -77,9 +77,13 @@ instances land on 9318, 9319, ...). Hash-routed views:
   row for the detail panel: full conversation, prompt size, tok/s, cost
   breakdown, raw payloads. `j`/`k` walk rows, `/` filters, `Esc` closes.
 - **Session** (`#/session[/<key>]`): reconstructed conversation (main chat,
-  subagent runs, utility probes as separate threads) beside the wire requests,
-  with per-turn tokens/duration/cost linked back to each request. Tails like
-  `tail -f` while live.
+  subagent runs linked to the Task call that spawned them, utility probes as
+  separate threads) beside the wire requests, with per-turn
+  tokens/duration/cost linked back to each request. Tails like `tail -f`
+  while live. All tool calls fold to one line; subagent/skill/MCP calls stay
+  visually marked, and a subagent fold links to its reconstructed thread.
+  Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system
+  prompt (same jumps on the on-page rail).
 - **Replay** (inside Session view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a
@@ -87,23 +91,33 @@ instances land on 9318, 9319, ...). Hash-routed views:
   exact moment — use these links to point a human at "the turn where it went
   wrong".
 
-Every run also writes a self-contained `.html` snapshot next to the trace —
-same UI, works offline, safe to open years later.
+The `.jsonl` trace is the durable artifact — `cctrace view` reopens it in the
+same UI anytime. Live runs no longer write a snapshot `.html` at exit (big
+sessions produced multi-hundred-MB files); `cctrace view <target> --html`
+renders one on demand, and static mode (`-s`) still writes one, since the
+snapshot is its whole point.
 
 ## Saved traces
 
 Subcommands read traces on disk — no proxy, no Claude spawn. The housekeeping
-trio is **dry-run by default**; add `--yes` to apply.
+commands (clean/merge/compress/purge) are **dry-run by default**; add `--yes`
+to apply.
 
 ```bash
-cctrace view <file|session-id|fragment>   # rebuild + open a snapshot .html
-cctrace view <target> --serve             # serve it instead — use for huge traces
-                                          # (no multi-hundred-MB .html to choke on)
+cctrace view <file|session-id|fragment>   # reopen a trace in the web UI (serves
+                                          # it locally; Ctrl-C stops; --port N)
+cctrace view <target> --html              # write a snapshot .html instead
+                                          # (shareable; huge traces choke browsers)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
-cctrace compress [--older-than N] [--yes] # gzip -9 (view reads .jsonl.gz directly)
-cctrace ps [--json]                       # live instances: URL, PID, project, session
+cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)
+cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,tokens)
+cctrace ps [--json]                       # live instances: URL, client, project, session
 ```
+
+Note for agents: plain `cctrace view <target>` starts a server and blocks —
+run it in the background (or use `--html --no-open` when you just need the
+file).
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers
@@ -126,6 +140,7 @@ One JSON object per line, schema (`src/types.ts`):
                 "truncated": true // present iff upstream died mid-stream
               },                  // null when no response arrived
   "duration": 1234,               // ms
+  "client": "claude",             // who produced it: claude|codex|grok (0.13+)
   "prior": "trace-…jsonl"         // present iff merged from a previous run
 }
 ```

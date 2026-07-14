@@ -1,6 +1,6 @@
 {
   "name": "@thevibeworks/cctrace",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "TLS-intercepting HTTP tracer for Claude Code — captures every API call (messages, OAuth, usage/credits, MCP) with a live categorized web UI",
   "type": "module",
   "bin": {

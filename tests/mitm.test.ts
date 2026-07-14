@@ -140,6 +140,52 @@ describe("mitm proxy tunnel mechanics", () => {
   });
 });
 
+// Codex opens a WebSocket to chatgpt.com; the terminator has no ws handler,
+// and forwarding the handshake via fetch() used to hand the client a
+// convincing 101 whose frames went nowhere — an ~82s dead hang per attempt.
+// The refusal must be immediate (before any upstream fetch) and logged.
+describe("websocket upgrade refusal", () => {
+  test("upgrade through the terminator gets a fast 501 and logs the attempt", async () => {
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p) }));
+    const statusLine = await new Promise<string>((resolve) => {
+      const sock = net.connect(mitm.port, "127.0.0.1", () => {
+        sock.write("CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\n\r\n");
+      });
+      let buf = "";
+      const onData = (d: Buffer) => {
+        buf += d.toString("latin1");
+        if (buf.includes("\r\n\r\n")) {
+          sock.removeListener("data", onData);
+          const tlsSock = tls.connect({ socket: sock, servername: "chatgpt.com", rejectUnauthorized: false }, () => {
+            tlsSock.write(
+              "GET /backend-api/codex/responses HTTP/1.1\r\nHost: chatgpt.com\r\n" +
+              "Connection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\n" +
+              "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
+            );
+          });
+          let res = "";
+          tlsSock.on("data", (c: Buffer) => {
+            res += c.toString("latin1");
+            if (res.includes("\r\n")) {
+              resolve(res.split("\r\n")[0] ?? "");
+              tlsSock.destroy();
+            }
+          });
+          tlsSock.on("error", () => resolve("<tls-error>"));
+        }
+      };
+      sock.on("data", onData);
+      sock.on("error", () => resolve("<error>"));
+      setTimeout(() => resolve("<timeout>"), 8000);
+    });
+    expect(statusLine).toContain("501");
+    expect(pairs.length).toBe(1);
+    expect(pairs[0]!.response?.status).toBe(501);
+    expect(pairs[0]!.request.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+  });
+});
+
 describe("capture abstraction", () => {
   test("base-url capturer exposes ANTHROPIC_BASE_URL env", async () => {
     const cap = track(await createCapturer("base-url", {

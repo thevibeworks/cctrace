@@ -4,15 +4,17 @@ import { gunzipSync } from "zlib";
 import { extractSessionId } from "./summarize";
 import type { TracePair } from "./types";
 
-/** Read a trace file, transparently gunzipping a `.gz` archive. */
+/** Read a trace file, transparently decompressing a `.zst`/`.gz` archive. */
 export function readTraceText(path: string): string {
   const buf = readFileSync(path);
-  return path.endsWith(".gz") ? gunzipSync(buf).toString("utf8") : buf.toString("utf8");
+  if (path.endsWith(".zst")) return Buffer.from(Bun.zstdDecompressSync(buf)).toString("utf8");
+  if (path.endsWith(".gz")) return gunzipSync(buf).toString("utf8");
+  return buf.toString("utf8");
 }
 
-/** A trace file this run should consider: raw or gzip-archived .jsonl. */
+/** A trace file this run should consider: raw or archived .jsonl. */
 export function isTraceFile(name: string): boolean {
-  return name.endsWith(".jsonl") || name.endsWith(".jsonl.gz");
+  return name.endsWith(".jsonl") || name.endsWith(".jsonl.zst") || name.endsWith(".jsonl.gz");
 }
 
 // Cross-run session continuity. Claude Code's --continue/--resume re-sends the

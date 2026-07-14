@@ -4,7 +4,8 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { gunzipSync, gzipSync } from "zlib";
 import {
-  planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress, human,
+  planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
+  planPurge, applyPurge, human,
 } from "../src/storage";
 import { parseTraceText } from "../src/history";
 
@@ -168,16 +169,18 @@ describe("merge", () => {
   });
 });
 
+const unzstd = (path: string) => Buffer.from(Bun.zstdDecompressSync(readFileSync(path))).toString("utf8");
+
 describe("compress", () => {
-  test("gzips .jsonl, removes original, round-trips", () => {
+  test("zstd-archives .jsonl, removes original, round-trips byte-identical", () => {
     const body = jl(convPair("a", SID_A, 1), convPair("b", SID_A, 2));
     writeFileSync(join(dir, "trace-1.jsonl"), body);
     const res = applyCompress(planCompress(dir, 1_000_000), { keepJsonl: false });
     expect(res.archived).toHaveLength(1);
     expect(existsSync(join(dir, "trace-1.jsonl"))).toBe(false);
-    const gz = join(dir, "trace-1.jsonl.gz");
-    expect(existsSync(gz)).toBe(true);
-    expect(gunzipSync(readFileSync(gz)).toString("utf8")).toBe(body);
+    const zst = join(dir, "trace-1.jsonl.zst");
+    expect(existsSync(zst)).toBe(true);
+    expect(unzstd(zst)).toBe(body);
   });
 
   test("--older-than skips recent traces", () => {
@@ -191,18 +194,18 @@ describe("compress", () => {
     writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("a", SID_A, 1)));
     applyCompress(planCompress(dir, 1_000_000), { keepJsonl: true });
     expect(existsSync(join(dir, "trace-1.jsonl"))).toBe(true);
-    expect(existsSync(join(dir, "trace-1.jsonl.gz"))).toBe(true);
+    expect(existsSync(join(dir, "trace-1.jsonl.zst"))).toBe(true);
   });
 
   // Regression: an archive must never lose pairs it already holds — a trace
   // recreated after an earlier compress (live run, --log NAME reuse) used to
-  // clobber the .gz with only the new pairs.
+  // clobber the archive with only the new pairs.
   test("unions with an existing archive instead of overwriting it", () => {
     writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("a", SID_A, 1)));
     applyCompress(planCompress(dir, 1_000_000), { keepJsonl: false });
     writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("b", SID_A, 2))); // recreated
     applyCompress(planCompress(dir, 1_000_000), { keepJsonl: false });
-    const text = gunzipSync(readFileSync(join(dir, "trace-1.jsonl.gz"))).toString("utf8");
+    const text = unzstd(join(dir, "trace-1.jsonl.zst"));
     expect(parseTraceText(text).map((p) => p.id)).toEqual(["a", "b"]);
   });
 
@@ -215,7 +218,95 @@ describe("compress", () => {
     expect(res.archived).toHaveLength(0);
     expect(res.skipped).toEqual(["trace-1.jsonl"]);
     expect(existsSync(join(dir, "trace-1.jsonl"))).toBe(true);
+    expect(existsSync(join(dir, "trace-1.jsonl.zst"))).toBe(false);
+  });
+
+  test("upgrades a legacy standalone .gz archive to .zst, same lines", () => {
+    const body = jl(convPair("a", SID_A, 1), convPair("b", SID_A, 2));
+    writeFileSync(join(dir, "trace-old.jsonl.gz"), gzipSync(body));
+    const plan = planCompress(dir, 1_000_000);
+    expect(plan.upgrades.map((f) => f.name)).toEqual(["trace-old.jsonl.gz"]);
+    applyCompress(plan, { keepJsonl: false });
+    expect(existsSync(join(dir, "trace-old.jsonl.gz"))).toBe(false);
+    expect(unzstd(join(dir, "trace-old.jsonl.zst"))).toBe(body);
+  });
+
+  test("a .jsonl with a legacy .gz sibling unions both into the .zst", () => {
+    writeFileSync(join(dir, "trace-1.jsonl.gz"), gzipSync(jl(convPair("a", SID_A, 1))));
+    writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("b", SID_A, 2)));
+    applyCompress(planCompress(dir, 1_000_000), { keepJsonl: false });
     expect(existsSync(join(dir, "trace-1.jsonl.gz"))).toBe(false);
+    expect(parseTraceText(unzstd(join(dir, "trace-1.jsonl.zst"))).map((p) => p.id)).toEqual(["a", "b"]);
+  });
+});
+
+describe("purge", () => {
+  const cat = (url: string) => url.includes("event_logging") ? "telemetry"
+    : url.includes("count_tokens") ? "tokens"
+    : url.includes("/v1/messages") ? "messages" : "other";
+  const telemetryPair = (id: string, ts: number) => ({
+    id, request: { timestamp: ts, method: "POST", url: "https://api.anthropic.com/api/event_logging/v2/batch", headers: {}, body: { big: "x".repeat(500) } },
+    response: { timestamp: ts + 1, status: 202, headers: {}, body: {} }, duration: 1, loggedAt: "x",
+  });
+  const DROP = new Set(["telemetry", "tokens"]);
+
+  test("plans per-category drops, keeps messages, honest byte tally", () => {
+    writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("m1", SID_A, 1), telemetryPair("t1", 2), telemetryPair("t2", 3)));
+    const plan = planPurge(dir, DROP, cat);
+    expect(plan.files).toHaveLength(1);
+    expect(plan.files[0]!.dropped).toEqual({ telemetry: 2 });
+    expect(plan.files[0]!.kept).toBe(1);
+    expect(plan.droppedBytes).toBeGreaterThan(1000);
+    expect(plan.keptCount).toBe(1);
+  });
+
+  test("apply rewrites kept lines byte-identical, drops the rest", () => {
+    const keepLine = JSON.stringify(convPair("m1", SID_A, 1));
+    writeFileSync(join(dir, "trace-1.jsonl"), keepLine + "\n" + JSON.stringify(telemetryPair("t1", 2)) + "\n");
+    const plan = planPurge(dir, DROP, cat);
+    const res = applyPurge(plan, cat, DROP);
+    expect(res.rewritten).toEqual(["trace-1.jsonl"]);
+    expect(readFileSync(join(dir, "trace-1.jsonl"), "utf8")).toBe(keepLine + "\n");
+  });
+
+  test("a file left with zero pairs is removed", () => {
+    writeFileSync(join(dir, "trace-1.jsonl"), jl(telemetryPair("t1", 1)));
+    const plan = planPurge(dir, DROP, cat);
+    expect(plan.files[0]!.empty).toBe(true);
+    const res = applyPurge(plan, cat, DROP);
+    expect(res.removed).toEqual(["trace-1.jsonl"]);
+    expect(existsSync(join(dir, "trace-1.jsonl"))).toBe(false);
+  });
+
+  test("torn lines are never purge targets and survive verbatim", () => {
+    const torn = '{"id":"half-written';
+    writeFileSync(join(dir, "trace-1.jsonl"), JSON.stringify(telemetryPair("t1", 1)) + "\n" + torn + "\n");
+    const plan = planPurge(dir, DROP, cat);
+    applyPurge(plan, cat, DROP);
+    expect(readFileSync(join(dir, "trace-1.jsonl"), "utf8")).toBe(torn + "\n");
+  });
+
+  test("purges inside a .zst archive, stays a .zst archive", () => {
+    const body = jl(convPair("m1", SID_A, 1), telemetryPair("t1", 2));
+    writeFileSync(join(dir, "trace-1.jsonl.zst"), Buffer.from(Bun.zstdCompressSync(Buffer.from(body))));
+    const plan = planPurge(dir, DROP, cat);
+    applyPurge(plan, cat, DROP);
+    const text = unzstd(join(dir, "trace-1.jsonl.zst"));
+    expect(parseTraceText(text).map((p) => p.id)).toEqual(["m1"]);
+  });
+
+  test("skips a trace that changed since the plan", () => {
+    writeFileSync(join(dir, "trace-1.jsonl"), jl(telemetryPair("t1", 1)));
+    const plan = planPurge(dir, DROP, cat);
+    appendFileSync(join(dir, "trace-1.jsonl"), jl(convPair("m1", SID_A, 2)));
+    const res = applyPurge(plan, cat, DROP);
+    expect(res.skipped).toEqual(["trace-1.jsonl"]);
+    expect(parseTraceText(readFileSync(join(dir, "trace-1.jsonl"), "utf8"))).toHaveLength(2);
+  });
+
+  test("no matching pairs -> empty plan", () => {
+    writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("m1", SID_A, 1)));
+    expect(planPurge(dir, DROP, cat).files).toHaveLength(0);
   });
 });
 

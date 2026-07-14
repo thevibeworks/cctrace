@@ -6,6 +6,8 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-07-13
+
 ### Added
 
 - **`cctrace view --serve`** — serve a saved trace from the live web server

@@ -4,6 +4,8 @@ import { wireTables } from "./clients";
 import {
   parseSse,
   fmtCompact,
+  fmtMs,
+  extractLatency,
   shortModel,
   extractMessageInfo,
   extractCallInfo,
@@ -837,6 +839,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // tested there; inlined here so live UI and snapshots stay identical).
     ${parseSse.toString()}
     ${fmtCompact.toString()}
+    ${fmtMs.toString()}
+    ${extractLatency.toString()}
     ${shortModel.toString()}
     ${extractMessageInfo.toString()}
     ${extractCallInfo.toString()}
@@ -1500,9 +1504,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // Derived metrics: effective prompt size, streaming speed, estimated cost.
       const prompt = m.input + m.cacheRead + m.cacheWrite;
       if (prompt > 0) row2 += kv('prompt', fmtCompact(prompt), '', prompt.toLocaleString() + ' prompt tokens = input + cache read + cache write');
+      const lat = extractLatency(pair);
+      if (lat) {
+        row2 += kv(lat.isToken ? 'first token' : 'first byte', fmtMs(lat.ms), '',
+          (lat.isToken ? 'time from request start to the first streamed token event'
+            : 'time from request start to the first response body byte (no token event seen)') +
+          (lat.pct != null ? ' \\u2014 ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : ''));
+      }
       if (m.output > 0 && pair.duration > 400) {
-        const tps = m.output / (pair.duration / 1000);
-        row2 += kv('speed', (tps >= 10 ? Math.round(tps) : tps.toFixed(1)) + ' tok/s', '', 'output tokens / wall-clock duration (includes time-to-first-token)');
+        const streamMs = lat && lat.isToken && pair.duration > lat.ttftMs ? pair.duration - lat.ttftMs : null;
+        const tps = m.output / ((streamMs || pair.duration) / 1000);
+        row2 += kv('speed', (tps >= 10 ? Math.round(tps) : tps.toFixed(1)) + ' tok/s', '', streamMs
+          ? 'output tokens / streaming time after the first token (' + fmtMs(streamMs) + ')'
+          : 'output tokens / wall-clock duration (includes time-to-first-token)');
       }
       const cost = pairCost(m);
       if (cost && cost.total > 0) row2 += kv('cost', fmtCost(cost.total), '', costTitle(cost));
@@ -1892,6 +1906,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const c = pairCost(u);
         if (c && c.total > 0) bits.push(escapeHtml(fmtCost(c.total)));
         if (p) bits.push(formatDuration(p.duration));
+        if (p && p.response && typeof p.response.firstTokenMs === 'number')
+          bits.push('ttft ' + fmtMs(p.response.firstTokenMs));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
       }

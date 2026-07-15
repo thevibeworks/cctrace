@@ -128,11 +128,17 @@ views, hash-routed:
   (gpt-5.6-sol -> gpt-5.6); the embedded Claude table stays as the offline
   fallback. Anthropic cache multipliers: 0.1x read, 1.25x 5m write, 2x 1h
   write, no-TTL writes assumed 5m same as ccusage; a catalog entry without
-  a cache rate means the provider doesn't bill it), count_tokens
+  a cache rate means the provider doesn't bill it), first-token delay
+  (ttft chip: `firstTokenMs` on the pair, stamped live by the proxy pump in
+  src/stream.ts when the first token event passes through — SSE events
+  carry no timestamps, so it can't be derived from a saved body; the first
+  body byte lands in `firstByteMs` as the fallback), count_tokens
   results, usage window percentages (5h / 7d / per-model), telemetry event
-  counts, error types. The detail panel adds prompt size, output tok/s, and
+  counts, error types. The detail panel adds prompt size, first token /
+  first byte delay with its share of wall-clock, output tok/s (computed
+  over post-first-token streaming time when ttft is known), and
   a cost tooltip broken down by component; the Session view shows per-turn
-  and per-thread cost. Clicking a row opens a split detail
+  and per-thread cost and ttft. Clicking a row opens a split detail
   panel beside the list (no page jump); prev/next + `j`/`k` walk the
   FILTERED list; `Esc` closes. The detail toolbar (close/prev/next/position)
   is sticky, so it stays reachable inside megabyte conversations. Messages

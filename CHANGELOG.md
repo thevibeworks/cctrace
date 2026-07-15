@@ -6,6 +6,24 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-15
+
+### Added
+
+- First-token latency (ttft). The capture pump (captureTee in
+  src/stream.ts) stamps two delays on every streamed pair: firstByteMs,
+  request arrival to the first response body byte, and firstTokenMs,
+  request arrival to the first token event (anthropic
+  content_block_delta, openai response.*.delta, chat completion chunks;
+  setup events like message_start and the trailing message_delta do not
+  count). Measured live in the pump because SSE events carry no
+  timestamps; saved traces cannot backfill it. Both capture modes, all
+  clients. The requests list gets a ttft chip with its share of
+  wall-clock, the detail panel shows the first token / first byte delay,
+  speed (tok/s) divides by post-first-token streaming time when ttft is
+  known instead of whole wall-clock, and session turns show ttft next to
+  duration. Pairs captured before 0.15 render unchanged.
+
 ## [0.14.0] - 2026-07-14
 
 ### Added
@@ -633,7 +651,9 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/thevibeworks/cctrace/compare/v0.14.0...v0.15.0
+[0.14.0]: https://github.com/thevibeworks/cctrace/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/thevibeworks/cctrace/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/thevibeworks/cctrace/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/thevibeworks/cctrace/compare/v0.10.0...v0.11.0

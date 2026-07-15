@@ -397,7 +397,7 @@ export interface PurgePlan {
  * from a killed run) is never a purge target — purge only removes what it
  * can positively categorize.
  */
-export function planPurge(logDir: string, drop: Set<string>, categorize: (url: string) => string): PurgePlan {
+export function planPurge(logDir: string, drop: Set<string>, categorize: (url: string, client?: string) => string): PurgePlan {
   const files: PurgeFile[] = [];
   const totals: Record<string, number> = {};
   let droppedCount = 0, droppedBytes = 0, keptCount = 0;
@@ -440,15 +440,15 @@ export function planPurge(logDir: string, drop: Set<string>, categorize: (url: s
 }
 
 /** Category of one trace line, or null when it isn't a categorizable pair. */
-function lineCategory(line: string, categorize: (url: string) => string): string | null {
+function lineCategory(line: string, categorize: (url: string, client?: string) => string): string | null {
   let pair: TracePair;
   try { pair = JSON.parse(line); } catch { return null; }
   const url = pair?.request?.url;
   if (typeof url !== "string") return null;
-  return categorize(url);
+  return categorize(url, pair.client);
 }
 
-export function applyPurge(plan: PurgePlan, categorize: (url: string) => string, drop: Set<string>): { rewritten: string[]; removed: string[]; skipped: string[]; bytes: number } {
+export function applyPurge(plan: PurgePlan, categorize: (url: string, client?: string) => string, drop: Set<string>): { rewritten: string[]; removed: string[]; skipped: string[]; bytes: number } {
   const rewritten: string[] = [];
   const removed: string[] = [];
   const skipped: string[] = [];

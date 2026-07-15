@@ -1,5 +1,6 @@
 import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
+import { wireTables } from "./clients";
 import {
   parseSse,
   fmtCompact,
@@ -790,7 +791,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         console.warn('[cctrace] dropped broken pair', droppedPairs, p);
         return false;
       }
-      p._cat = categorize(p.request.url);
+      p._cat = categorize(p.request.url, p.client, CLIENT_WIRE);
       pairs.push(p);
       return true;
     }
@@ -808,9 +809,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const META = ${jsonForScript(meta)};
 
     // Category metadata + categorizer are injected from src/categorize.ts, the
-    // single source of truth shared with the unit tests (no drift).
+    // single source of truth shared with the unit tests (no drift). The
+    // per-client wire tables come from src/clients — data, not code, so the
+    // plugin boundary stays in the source tree while the page stays flat.
     const CATS = ${JSON.stringify(CATEGORIES)};
     const CAT_BY_ID = Object.fromEntries(CATS.map(c => [c.id, c]));
+    const CLIENT_WIRE = ${jsonForScript(wireTables())};
     const categorize = ${categorizeUrl.toString()};
 
     // Pure extraction/summary helpers injected from src/summarize.ts (unit

@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { CLIENTS, findClientBinary } from "../src/clients";
+import { CLIENTS, findClientBinary, wireTables } from "../src/clients";
 
 describe("client profiles (#20)", () => {
   test("claude, codex, and grok are registered", () => {
@@ -12,6 +12,24 @@ describe("client profiles (#20)", () => {
       expect(p.candidates("/home/x").length).toBeGreaterThan(0);
       expect(p.installHint).toBeTruthy();
     }
+  });
+
+  test("every plugin carries a complete wire table", () => {
+    for (const p of Object.values(CLIENTS)) {
+      expect(["anthropic", "openai"]).toContain(p.wire.dialect);
+      expect(p.wire.firstPartyHosts.length).toBeGreaterThan(0);
+      expect(typeof p.wire.sessionHeader).toBe("string");
+      expect(p.wire.threadHeader).toBeTruthy();
+    }
+  });
+
+  // The tables are embedded into the web UI page as data — they must survive
+  // a JSON round-trip (no regexes, functions, or undefined).
+  test("wireTables() is JSON-safe and drops discovery fields", () => {
+    const w = wireTables();
+    expect(JSON.parse(JSON.stringify(w))).toEqual(w);
+    expect(Object.keys(w).sort()).toEqual(["claude", "codex", "grok"]);
+    expect((w.claude as any).candidates).toBeUndefined();
   });
 
   test("an explicit override wins without any lookup", () => {

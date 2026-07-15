@@ -12,7 +12,7 @@ import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, resolveView, ViewError } from "./view";
 import { registerInstance, listLiveInstances, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
-import { CLIENTS, findClientBinary } from "./clients";
+import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
 } from "./version";
@@ -493,7 +493,9 @@ function runPurge(args: string[]) {
     log(`dropping "messages" deletes the conversations themselves — that's the 87% of bytes the other tools preserve`, C.yellow);
   }
 
-  const plan = planPurge(logDir, drop, categorizeUrl);
+  const wire = wireTables();
+  const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
+  const plan = planPurge(logDir, drop, categorize);
   if (!plan.files.length) {
     log(`Nothing to purge in ${logDir} (no pairs in: ${[...drop].join(", ")})`, C.green);
     return;
@@ -510,7 +512,7 @@ function runPurge(args: string[]) {
     log(DRY, C.yellow);
     return;
   }
-  const res = applyPurge(plan, categorizeUrl, drop);
+  const res = applyPurge(plan, categorize, drop);
   log(`Rewrote ${res.rewritten.length} trace(s), removed ${res.removed.length}, freed ${human(res.bytes)}`, C.green);
   if (res.skipped.length) {
     log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);

@@ -1,6 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { gzipSync } from "zlib";
-import { captureTee, decodeBodyForTrace } from "../src/stream";
+import { captureTee, decodeBodyForTrace, isTokenChunk } from "../src/stream";
 
 // Regression territory: ReadableStream.tee() crashed the whole process
 // ("TypeError: null is not an object" in Bun's stream builtins) when the
@@ -76,6 +76,72 @@ describe("captureTee", () => {
     const cap = await captured;
     expect(cap.text).toBe("");
     expect(cap.complete).toBe(true);
+    expect(cap.firstByteAt).toBeUndefined();
+    expect(cap.firstTokenAt).toBeUndefined();
+  });
+
+  // First-token timing must be measured in the pump — SSE events carry no
+  // timestamps, so it can never be recovered from a saved trace.
+  test("records firstByteAt and firstTokenAt for a token stream", async () => {
+    const before = Date.now();
+    const { stream, captured } = captureTee(sourceOf([
+      'data: {"type":"message_start","message":{}}\n\n',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}\n\n',
+    ]));
+    await readAll(stream);
+    const cap = await captured;
+    expect(cap.firstByteAt).toBeGreaterThanOrEqual(before);
+    expect(cap.firstTokenAt).toBeGreaterThanOrEqual(cap.firstByteAt!);
+  });
+
+  test("no token event: firstByteAt set, firstTokenAt absent", async () => {
+    const { stream, captured } = captureTee(sourceOf(['{"ok":true,"type":"message_delta"}']));
+    await readAll(stream);
+    const cap = await captured;
+    expect(cap.firstByteAt).toBeGreaterThan(0);
+    expect(cap.firstTokenAt).toBeUndefined();
+  });
+
+  test("token marker split across chunk boundary still detected", async () => {
+    const { stream, captured } = captureTee(sourceOf([
+      'data: {"type":"content_bl',
+      'ock_delta","index":0}\n\n',
+    ]));
+    await readAll(stream);
+    expect((await captured).firstTokenAt).toBeGreaterThan(0);
+  });
+
+  test("client cancels early: timing still captured on the drain path", async () => {
+    const { stream, captured } = captureTee(sourceOf([
+      "event: ping\n\n",
+      'data: {"type":"content_block_delta"}\n\n',
+    ]));
+    await stream.cancel();
+    const cap = await captured;
+    expect(cap.firstByteAt).toBeGreaterThan(0);
+    expect(cap.firstTokenAt).toBeGreaterThan(0);
+  });
+});
+
+// The "model started producing output" markers, per proxied wire shape.
+// Stream-setup events (message_start, response.created, ping) and the final
+// anthropic message_delta must NOT count as tokens.
+describe("isTokenChunk", () => {
+  test("anthropic content_block_delta matches", () => {
+    expect(isTokenChunk('data: {"type":"content_block_delta","index":0}')).toBe(true);
+  });
+  test("anthropic setup/final events do not match", () => {
+    expect(isTokenChunk('data: {"type":"message_start","message":{}}')).toBe(false);
+    expect(isTokenChunk('data: {"type":"message_delta","usage":{}}')).toBe(false);
+    expect(isTokenChunk("event: ping\n\n")).toBe(false);
+  });
+  test("openai responses deltas match, setup events do not", () => {
+    expect(isTokenChunk("event: response.output_text.delta")).toBe(true);
+    expect(isTokenChunk('{"type":"response.reasoning_summary_text.delta"}')).toBe(true);
+    expect(isTokenChunk('{"type":"response.created"}')).toBe(false);
+  });
+  test("chat completion chunks match", () => {
+    expect(isTokenChunk('data: {"object":"chat.completion.chunk","choices":[]}')).toBe(true);
   });
 });
 

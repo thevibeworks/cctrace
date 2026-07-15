@@ -34,6 +34,38 @@ export function fmtCompact(n: unknown): string {
   return (n / 1000000).toFixed(2) + "m";
 }
 
+/** 850 -> "850ms", 8412 -> "8.41s" — same wall-clock format as the UI. */
+export function fmtMs(ms: unknown): string {
+  if (typeof ms !== "number" || !isFinite(ms) || ms < 0) return "";
+  return ms < 1000 ? Math.round(ms) + "ms" : (ms / 1000).toFixed(2) + "s";
+}
+
+/**
+ * First-token latency for a captured pair. firstTokenMs is measured live by
+ * the proxy pump (SSE events carry no timestamps, so it cannot be derived
+ * from a saved body): time from request arrival to the first streamed token
+ * event. firstByteMs (first response body byte) is the fallback when no
+ * token event was seen. Returns null for pairs captured before 0.15.
+ * pct = the delay's share of the pair's whole wall-clock duration.
+ */
+export function extractLatency(pair: any): any {
+  const resp = pair && pair.response;
+  if (!resp) return null;
+  const ttft = typeof resp.firstTokenMs === "number" ? resp.firstTokenMs : null;
+  const ttfb = typeof resp.firstByteMs === "number" ? resp.firstByteMs : null;
+  if (ttft == null && ttfb == null) return null;
+  const ms = ttft != null ? ttft : ttfb;
+  const total = typeof pair.duration === "number" && pair.duration > 0 ? pair.duration : null;
+  return {
+    ms,
+    isToken: ttft != null,
+    ttftMs: ttft,
+    ttfbMs: ttfb,
+    totalMs: total,
+    pct: total != null && ms != null ? Math.round((ms / total) * 100) : null,
+  };
+}
+
 /** "claude-haiku-4-5-20251001" -> "haiku-4-5" */
 export function shortModel(model: unknown): string {
   return String(model || "")
@@ -310,6 +342,13 @@ export function summarizePair(pair: any, cat: string): any[] {
     const cache = summarizeCache(m, pair.request && pair.request.body);
     if (cache) chips.push({ t: "cache " + cache.v, c: cache.c, title: cache.title });
     if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
+    const lat = extractLatency(pair);
+    if (lat && lat.isToken)
+      chips.push({
+        t: "ttft " + fmtMs(lat.ttftMs),
+        title: "time to first streamed token" +
+          (lat.pct != null ? " — " + lat.pct + "% of " + fmtMs(lat.totalMs) + " wall-clock" : ""),
+      });
     const cost = pairCost(m);
     if (cost && cost.total > 0) chips.push({ t: fmtCost(cost.total), title: costTitle(cost) });
     if (m.stopReason && m.stopReason !== "end_turn" && m.stopReason !== "tool_use")

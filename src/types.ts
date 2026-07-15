@@ -12,6 +12,10 @@ export interface ResponseData {
   headers: Record<string, string>;
   body?: unknown;
   bodyRaw?: string;
+  /** ms from request arrival to the first response body byte. */
+  firstByteMs?: number;
+  /** ms from request arrival to the first streamed token event (model calls). */
+  firstTokenMs?: number;
   /** The upstream stream errored before finishing; body holds what arrived. */
   truncated?: boolean;
 }

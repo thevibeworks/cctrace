@@ -154,6 +154,12 @@ describe("proxy: SSE streaming", () => {
     expect(pairs.length).toBe(1);
     expect(pairs[0].response?.bodyRaw).toContain("Hello");
     expect(pairs[0].response?.bodyRaw).toContain(" world");
+    // First-token timing: message_start arrives first, the token delta one
+    // upstream sleep later — the stamped delays must reflect that order.
+    const resp = pairs[0]!.response!;
+    expect(resp.firstByteMs).toBeGreaterThanOrEqual(0);
+    expect(resp.firstTokenMs).toBeGreaterThan(resp.firstByteMs!);
+    expect(resp.firstTokenMs).toBeLessThanOrEqual(pairs[0]!.duration);
   });
 
   test("client receives first chunk before stream ends", async () => {

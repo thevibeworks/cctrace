@@ -21,6 +21,22 @@ import { gunzipSync, inflateSync, brotliDecompressSync } from "zlib";
 export interface CapturedBody {
   text: string;
   complete: boolean;
+  /** Epoch ms when the first body chunk arrived. Absent for empty bodies. */
+  firstByteAt?: number;
+  /** Epoch ms when the first streamed token event arrived (model calls). */
+  firstTokenAt?: number;
+}
+
+/**
+ * True when streamed body text contains a "token" event — the model actually
+ * producing output, as opposed to stream setup (message_start,
+ * response.created, ping). Covers the wire shapes cctrace proxies:
+ * Anthropic SSE (content_block_delta), OpenAI Responses (response.*.delta),
+ * and chat completions chunks. Must be detected live in the pump — SSE
+ * events carry no timestamps, so this cannot be derived from a saved trace.
+ */
+export function isTokenChunk(text: string): boolean {
+  return /content_block_delta|response\.[a-z_.]+delta|"chat\.completion\.chunk"/.test(text);
 }
 
 /**
@@ -61,13 +77,28 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
   let settled = false;
   let draining = false;
 
+  // First-byte / first-token timing. Chunks are scanned only until the first
+  // token event is seen, with a small carry so a marker split across chunk
+  // boundaries still matches; after that the scan is a no-op.
+  let firstByteAt: number | undefined;
+  let firstTokenAt: number | undefined;
+  const scanDecoder = new TextDecoder(); // non-fatal: binary yields no marker
+  let scanCarry = "";
+  const sawChunk = (chunk: Uint8Array) => {
+    if (firstByteAt === undefined) firstByteAt = Date.now();
+    if (firstTokenAt !== undefined) return;
+    const text = scanCarry + scanDecoder.decode(chunk, { stream: true });
+    if (isTokenChunk(text)) firstTokenAt = Date.now();
+    else scanCarry = text.slice(-40);
+  };
+
   const finish = (complete: boolean) => {
     if (settled) return;
     settled = true;
     const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
     let offset = 0;
     for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-    settle({ text: new TextDecoder().decode(merged), complete });
+    settle({ text: new TextDecoder().decode(merged), complete, firstByteAt, firstTokenAt });
   };
 
   // The client is gone — finish reading upstream for the capture alone.
@@ -79,7 +110,7 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value) chunks.push(value);
+          if (value) { chunks.push(value); sawChunk(value); }
         }
         finish(true);
       } catch {
@@ -98,6 +129,7 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
           return;
         }
         chunks.push(r.value);
+        sawChunk(r.value);
         try {
           controller.enqueue(r.value);
         } catch {

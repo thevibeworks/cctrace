@@ -154,7 +154,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
       const ct = upstream.headers.get("content-type") || "";
 
-      const cap = captured.then(({ text, complete }) => {
+      const cap = captured.then(({ text, complete, firstByteAt, firstTokenAt }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
         try {
@@ -171,6 +171,8 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(firstByteAt !== undefined ? { firstByteMs: firstByteAt - startTime } : {}),
+            ...(firstTokenAt !== undefined ? { firstTokenMs: firstTokenAt - startTime } : {}),
             ...(complete ? {} : { truncated: true }),
           },
           duration: Date.now() - startTime,

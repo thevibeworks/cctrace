@@ -135,7 +135,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       const resHeaders = Object.fromEntries(fwdHeaders.entries());
       const ct = upstreamRes.headers.get("content-type") || "";
 
-      const capture = captured.then(({ text, complete }) => {
+      const capture = captured.then(({ text, complete, firstByteAt, firstTokenAt }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
 
@@ -164,6 +164,8 @@ export function startProxy(config: ProxyConfig): ProxyServer {
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(firstByteAt !== undefined ? { firstByteMs: firstByteAt - startTime } : {}),
+            ...(firstTokenAt !== undefined ? { firstTokenMs: firstTokenAt - startTime } : {}),
             ...(complete ? {} : { truncated: true }),
           },
           duration: Date.now() - startTime,

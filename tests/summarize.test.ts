@@ -2,6 +2,8 @@ import { describe, test, expect } from "bun:test";
 import {
   parseSse,
   fmtCompact,
+  fmtMs,
+  extractLatency,
   shortModel,
   extractMessageInfo,
   extractSessionId,
@@ -267,6 +269,38 @@ describe("hasCacheControl", () => {
   });
 });
 
+describe("fmtMs / extractLatency", () => {
+  test("fmtMs formats like the UI's wall-clock durations", () => {
+    expect(fmtMs(850)).toBe("850ms");
+    expect(fmtMs(8412)).toBe("8.41s");
+    expect(fmtMs(-1)).toBe("");
+    expect(fmtMs("x")).toBe("");
+  });
+
+  test("null for pairs captured before the timing fields existed", () => {
+    expect(extractLatency(streamingPair())).toBeNull();
+    expect(extractLatency({ request: {}, response: null })).toBeNull();
+    expect(extractLatency(null)).toBeNull();
+  });
+
+  test("token timing wins, share of wall-clock computed", () => {
+    const pair = streamingPair();
+    (pair.response as any).firstByteMs = 90;
+    (pair.response as any).firstTokenMs = 1250;
+    const l = extractLatency(pair);
+    expect(l).toEqual({ ms: 1250, isToken: true, ttftMs: 1250, ttfbMs: 90, totalMs: 5000, pct: 25 });
+  });
+
+  test("falls back to first-byte timing when no token event was seen", () => {
+    const pair = streamingPair();
+    (pair.response as any).firstByteMs = 90;
+    const l = extractLatency(pair);
+    expect(l.isToken).toBe(false);
+    expect(l.ms).toBe(90);
+    expect(l.pct).toBe(2);
+  });
+});
+
 describe("summarizePair", () => {
   test("messages: model, tokens, cache, thinking", () => {
     const chips = summarizePair(streamingPair(), "messages");
@@ -278,6 +312,22 @@ describe("summarizePair", () => {
     expect(chips[3].c).toBe("ok"); // cacheRead > 0 -> hit
     expect(chips[3].title).toContain("read from cache");
     expect(chips[3].title).toContain("written to cache");
+  });
+
+  test("messages: ttft chip appears when the pair carries firstTokenMs", () => {
+    const pair = streamingPair();
+    (pair.response as any).firstTokenMs = 1234;
+    const chips = summarizePair(pair, "messages");
+    const ttft = chips.find((c: any) => c.t.startsWith("ttft "));
+    expect(ttft.t).toBe("ttft 1.23s");
+    expect(ttft.title).toContain("25% of 5.00s"); // 1234ms of the 5000ms pair
+  });
+
+  test("messages: no ttft chip on pre-0.15 pairs or byte-only timing", () => {
+    expect(summarizePair(streamingPair(), "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
+    const byteOnly = streamingPair();
+    (byteOnly.response as any).firstByteMs = 90;
+    expect(summarizePair(byteOnly, "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
   });
 
   test("messages: error chip short-circuits token chips", () => {

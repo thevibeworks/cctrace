@@ -45,9 +45,11 @@ Claude Code 现在以 Bun 编译的**原生二进制**分发。过去用 `node -
 当下真正管用的方式：一个本地的 **TLS 拦截代理**（类似 Charles/mitmproxy，但零配
 置）。Claude 通过 `HTTPS_PROXY` 走这个代理，并信任自动生成的 CA。
 
-拦截发生在传输层 -- URL 还没拼出来的那一层 -- 所以它能看到**全部流量**，包括
-base-url 代理在结构上就碰不到的 OAuth 和用量/额度端点（Claude 把那些 host 写
-死了）。
+拦截发生在传输层 -- URL 还没拼出来的那一层 -- 所以它能看到**完整的第一方全貌**，
+包括 base-url 代理在结构上就碰不到的 OAuth 和用量/额度端点（Claude 把那些 host
+写死了）。从 0.16 起这个范围是刻意为之：第一方 host 才解密，会话碰到的其他一切
+（npm、GitHub、apt）都以不解密的字节计数隧道透传 -- 留下审计线索，不留 payload
+副本。
 
 ## 你能得到什么
 
@@ -55,10 +57,15 @@ base-url 代理在结构上就碰不到的 OAuth 和用量/额度端点（Claude
   遥测 -- 不只是聊天端点。
 - **实时分类界面。** 带计数的筛选标签、彩色徽章、可展开的 headers/bodies、解码后
   的 SSE 流。界面做得不错，你会愿意一直开着它。
-- **可分享快照。** 每次运行都写出一份自包含 `.html`，离线也能渲染同样的界面，不依
-  赖服务器。发给同事就能看。
-- **零配置。** 自动生成 CA、自动识别 Claude 安装、默认捕获全部。不用改配置文件，
-  不用背参数。
+- **可重开的 trace。** 每次运行写一份 `.jsonl` trace；`cctrace view` 随时在同一
+  界面里重开它，`cctrace view --html` 按需渲染一份自包含快照发给同事（离线可看）。
+- **零配置。** 自动生成 CA、自动识别 Claude 安装、默认捕获完整的第一方全貌。
+  不用改配置文件，不用背参数。
+- **范围即设计。** 只有第一方 host 会被解密。agent 子进程碰到的外部 host --
+  npm、GitHub、apt -- 以不透明隧道透传，只记录 host + 字节数，`go install` 再也
+  不会往 trace 里塞 53MB 的 tarball，`gh` 的 API 响应也不会落盘。调试时用
+  `--capture-external` 全部解密；`--intercept-host` 单独纳入指定 host（比如远程
+  MCP 服务器）。
 - **默认安全。** 凭据在落盘前就已从 headers、bodies **和** URL 中脱敏（见
   [安全与隐私](#安全与隐私)）。你的 API key 还是你的 API key。
 
@@ -120,7 +127,7 @@ make install        # 编译 dist/cctrace 并安装到 ~/.local/bin
 然后直接运行：
 
 ```bash
-cctrace                       # 捕获全部，打开实时界面
+cctrace                       # 追踪 claude，打开实时界面
 cctrace -- --continue         # 继续上一个 Claude 会话，并全程追踪
 cctrace -- -p "hello"         # 把参数原样传给 Claude
 ```
@@ -132,8 +139,8 @@ cctrace -- -p "hello"         # 把参数原样传给 Claude
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 
-打开 **Live UI** 链接即可看到请求实时流入。结束后按 Ctrl-C，cctrace 会打印保存的
-`.cctrace/trace-<timestamp>.html` 路径。
+打开 **Live UI** 链接即可看到请求实时流入。结束后按 Ctrl-C -- `.jsonl` trace 留在
+`.cctrace/` 里，随时 `cctrace view` 重开（直接回车选最新一份）。
 
 ## 运行方式（Bun 与 `bin`）
 
@@ -170,20 +177,27 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 
 | 模式 | 捕获范围 | 配置 |
 |------|----------|------|
-| **`mitm`**（原生二进制默认） | **全部** -- messages、OAuth、用量/额度、MCP、遥测 | 自动生成 CA；Claude 通过 `NODE_EXTRA_CA_CERTS` 信任它 |
+| **`mitm`**（原生二进制默认） | **完整的第一方全貌** -- messages、OAuth、用量/额度、MCP registry、遥测 | 自动生成 CA；Claude 通过 `NODE_EXTRA_CA_CERTS` 信任它 |
 | **`base-url`** | 仅 `/v1/messages` | 零配置 -- 只设置 `ANTHROPIC_BASE_URL` |
-| **`node`**（npm/JS 安装自动选用） | 通过 `fetch()` 钩子捕获全部 | 遗留方案；仅适用于非原生（JS）Claude |
+| **`node`**（npm/JS 安装自动选用） | 通过 `fetch()` 钩子捕获第一方流量 | 遗留方案；仅适用于非原生（JS）Claude |
 
-非 Anthropic 的 host 也会被**完整拦截** -- cctrace 会为每个 host 动态生成 TLS
-证书（由同一个 CA 签发），因此你能看到 Claude 联系的所有目标的完整请求和响应。
-外部流量在界面中有独立的筛选分类。
+捕获范围是一份白名单，在任何 TLS 发生之前、按每个连接在 CONNECT 行上决定
+（Charles 的 SSL-proxying 模型）：第一方 host、client 固定的遥测上报域名、
+`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` 指向的 host、以及 `--intercept-host`
+补充的 host 才会真正拦截（按 host 动态签发证书）。其余一切 -- 包管理器、`gh`
+调用、apt -- 都以**不透明隧道**透传，只记一行小小的元数据：host、上下行字节数、
+时长。这些 host 不会收到伪造证书，所以证书固定（cert-pinning）的工具和读系统
+信任库的程序照常工作。`--capture-external` 恢复全部解密。
 
 ## Web 界面
 
 - **行内摘要** -- 每行请求一眼可读：模型、输入/输出 token、缓存读/写与命中率、
   count_tokens 结果、用量窗口百分比（5h / 7d / 按模型）、遥测事件数、错误类型。
-- **分类筛选标签**，带实时计数：Messages、Usage/Credits、OAuth、MCP、Bootstrap、
-  Telemetry、Other。点击筛选，可与文本搜索组合。
+- **首 token 延迟** -- 每个流式模型调用都带 `ttft` 标签（在代理泵里实时测量；
+  SSE 事件不带时间戳，事后无法从 trace 还原）和按首 token 之后的流式时间计算
+  的 tok/s -- 起步慢还是生成慢，一眼分清。
+- **分类筛选标签**，带实时计数 -- 只显示这份 trace 真正有的分类（Codex 运行
+  不会出现空的 Count Tokens 标签）。点击筛选，可与文本搜索组合。
 - **分栏详情面板** -- 点击某行，详情在列表旁展开（可按请求 ID 深链）。Messages
   以对话形式呈现，流式回复从 SSE 解码；用量请求渲染成限额进度条；原始
   headers/bodies 折叠可查。`j`/`k` 在筛选后的列表中移动。
@@ -203,11 +217,14 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 **默认 dry-run**（只打印将要处理的清单，不动任何文件），加 `--yes` 才真正执行。
 
 ```bash
-# 重建快照 .html 并打开 -- 可用文件路径、session id 或文件名片段
-cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
+# 在 web 界面里重开已保存的 trace -- 不带参数也行
+cctrace view                               # 列出所有 trace（最新在前），回车选最新
+cctrace view latest                        # 直接打开最新一份
 cctrace view 4f9a2c1e                      # Claude Code 的 session id（可用前缀）
-cctrace view <target> --serve              # 改用本地服务器直接打开（超大 trace
-                                           # 首选 -- 不生成几百 MB 的 .html）
+cctrace view trace-2026-07-08              # 或文件名片段 / 路径
+cctrace view <target> --html               # 改为写出自包含快照 .html（可分享；
+                                           # 超大 trace 会撑爆浏览器，默认的
+                                           # 本地服务方式没这个问题）
 
 # 回收空间：删掉可重建的 .html 快照 + 0 字节的中断 trace
 cctrace clean                              # dry-run：列出将删除的文件
@@ -217,8 +234,14 @@ cctrace clean --yes
 cctrace merge                              # 每个 session 一个 session-<id>.jsonl
 cctrace merge --prune --yes                # 同时删除已被完全合并的源文件
 
-# 归档备份：gzip -9（view 能直接读 .jsonl.gz）
+# 归档备份：zstd（view 能直接读 .jsonl.zst / 旧的 .gz）
 cctrace compress --older-than 7 --yes      # 只压缩 7 天前的 trace
+
+# 从已保存的 trace 里丢掉噪音分类（遥测、count_tokens、外部隧道行）
+cctrace purge --yes                        # 删行不省盘 -- 省空间用 compress
+
+# 现在哪些 cctrace 会话在跑、各在哪个端口？
+cctrace ps                                 # URL、PID、client、项目、session
 ```
 
 清理绝不会让数据变少。`clean` 只删除源 `.jsonl`/`.jsonl.gz` 仍然存在的
@@ -240,6 +263,8 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `-s, --static` | 静态模式（不启动实时服务器，只写文件） |
 | `-p, --port PORT` | 实时界面端口（默认 9317；被占用时自动回退） |
 | `--messages-only` | 只捕获 `/v1/messages` |
+| `--capture-external` | 解密所有 host（默认：非第一方 host 走不透明的字节计数隧道） |
+| `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器、少见的服务方） |
 | `--no-open` | 不自动打开浏览器 |
 | `--print-ca` | 打印 MITM CA 证书路径并退出 |
 | `--log NAME` | 自定义日志文件基名 |
@@ -282,9 +307,11 @@ cctrace codex -- exec "修掉这些失败的测试"   # OpenAI Codex CLI
 cctrace grok -- -p "解释这段堆栈"            # Grok CLI
 ```
 
-非 Claude client 一律走 mitm 抓包。它们的模型调用（`.../responses`、
-`.../chat/completions`）在 Requests 视图里归为 Messages；重建的 Session
-视图目前只支持 Anthropic 格式（openai/x.ai 的 SSE 重建在路线图上，#20）。
+非 Claude client 一律走 mitm 抓包，并且享受完整待遇：模型调用
+（`.../responses`、`.../chat/completions`）归入 Messages，Session 视图同样
+重建它们的对话 -- 线程按各 client 的 wire header 分组，工具调用和推理归一到
+同一套 turn 模型，每轮的用量、费用、回放一应俱全。Codex 的加密推理显示为占位
+符；Grok 的推理摘要可以完整阅读。
 
 **第三方 Anthropic 兼容服务** -- 把 `ANTHROPIC_BASE_URL` 指向网关或兼容
 端点，照常运行 `cctrace` 即可。mitm 模式无需额外配置：非 Anthropic 域名
@@ -297,7 +324,10 @@ wire 形态而非域名分类，所以第三方流量会落进 Messages，每一
 
 每次运行都会写入 `.cctrace/`（或 `--dir`）：
 
-- `trace-<timestamp>.jsonl` -- 每行一个请求/响应对（机器可读）
+- `trace-<timestamp>.jsonl` -- 每行一个请求/响应对（机器可读）。这个文件就是
+  trace 本体：`cctrace view` 随时在 web 界面里重开，`cctrace view <target>
+  --html` 按需渲染可分享的自包含快照（0.13 起 live 运行退出时不再自动写
+  .html -- 一次 2 小时的会话能渲染出 400MB）。
 - `trace-<timestamp>.html` -- 自包含的分类查看器（人类可读）
 
 ## 工作原理
@@ -308,19 +338,25 @@ flowchart LR
     FD{"cctrace<br/>CONNECT 前门"}
     TLS["TLS 终止<br/>(我们的叶子证书)"]
     BT["TLS 终止<br/>(动态证书)"]
+    TUN["不透明隧道<br/>(只记字节数)"]
     API[("api.anthropic.com")]
-    ORI[("非 Anthropic<br/>源站")]
+    PIN[("白名单内的<br/>host")]
+    EXT[("外部 host<br/>npm · github · apt")]
     TEE(["tee 响应"])
     RD["脱敏<br/>headers · bodies · URLs"]
     UI["实时界面<br/>(分类)"]
-    OUT[[".cctrace/ · jsonl + html"]]
+    OUT[[".cctrace/ · jsonl"]]
 
     CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
     FD -- "Anthropic host" --> TLS
-    FD -- "其他 host" --> BT
+    FD -- "白名单 host" --> BT
+    FD -- "其余一切" --> TUN
     TLS --> API
-    BT --> ORI
+    BT --> PIN
+    TUN --> EXT
+    PIN -- "响应流" --> TEE
     API -- "响应流" --> TEE
+    TUN -- "一行元数据" --> RD
     TEE -- "流式给 Claude,<br/>不缓冲" --> CC
     TEE -- "捕获副本" --> RD
     RD --> UI
@@ -369,15 +405,17 @@ issue 里。真的别这么干。
 
 ## 路线图
 
-- **Codex 支持** -- 用同一套 MITM 前门追踪 OpenAI Codex CLI。代理层本来就不挑
-  agent，剩下的工作是 OpenAI host 过滤、端点分类，以及针对其线上格式的对话还原。
+- **会话回放 P3/P4** -- 可选的 `--record-timing` 记录分块时序，实现真正的
+  打字机节奏回放。P1+P2（步进、播放条、minimap、深链接）已发布。
+- **WebSocket 中继** -- 终止器现在快速拒绝 ws 升级（client 干净地回退到
+  HTTP）；真正捕获帧的中继是 #20 剩下的尾巴。
+- **隧道行的进程归属** -- Linux 上代理可以把连接的源端口映射到发起进程，
+  让隧道行标出是哪个子进程在调 npm。2026-07-15 devlog 里已调研，暂缓。
 - **对话导出** -- 将还原的对话导出为 Markdown 或 JSON，方便分享或事后分析。
-- **Agent Skill** -- 专门设计的 Claude Code skill / MCP 服务器，用于以编程方式与
-  cctrace 交互：查询捕获的流量、检查特定请求、导出对话。
-- **多会话实时视图** -- 同时运行多个 cctrace 会话而不端口冲突，每个会话路由到
-  `http://localhost:9317/<project>/<session-id>` 的独立路径。
-- **Token 指标** -- 每轮和累计 token 用量、缓存命中率、费用估算，以及
-  `service_tier` / `inference_geo` 可见性。
+- **MCP 服务器** -- 以编程方式查询捕获的流量（agent skill 已随
+  [skills/cctrace](skills/cctrace/SKILL.md) 发布；MCP 是剩下的另一半）。
+- **`inference_geo` / 更深的层级可见性** -- 在现有费用估算旁展示推理发生地
+  和按层级的细分。
 
 已发布的变更见 [CHANGELOG.md](CHANGELOG.md)。
 

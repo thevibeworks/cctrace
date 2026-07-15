@@ -16,6 +16,13 @@ src/
 ├── interceptor.ts  # fetch() monkey-patch for node mode (legacy)
 ├── loader.cjs      # CJS loader for --require (legacy)
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
+├── clients/        # Client plugins: binary discovery + declarative wire tables
+│                   #   (claude/codex/grok — dialect, firstPartyHosts, category
+│                   #   pins, session/thread headers; JSON-safe, embedded into
+│                   #   the page as CLIENT_WIRE; adding a client = one file)
+├── dialects/
+│   └── openai.ts   # OpenAI Responses adapters (codex/grok): SSE completed
+│                   #   parsing, input[]->turns, usage mapping (inlined into UI)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
 ├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
@@ -24,7 +31,10 @@ src/
 ├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
-├── pricing.ts      # Claude model pricing + per-pair cost estimation (inlined into UI)
+├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
+│                   #   table as the offline fallback (inlined into UI)
+├── pricing-catalog.ts # models.dev api.json fetch — 24h-TTL fail-soft cache in
+│                   #   the data dir, filtered to anthropic/openai/xai
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
 ├── html.ts         # Static HTML generator (legacy node mode only)
@@ -111,9 +121,14 @@ views, hash-routed:
   "↓read hit% ↑write" with a 1h-TTL breakdown since 1h bills 2x; cold =
   write only, amber; miss = cache_control set but nothing read/written;
   no chip when caching isn't used — tooltips spell the numbers out),
-  estimated cost (src/pricing.ts: embedded sticker prices; cache rates via
-  the universal multipliers 0.1x read, 1.25x 5m write, 2x 1h write; writes
-  without a TTL breakdown are assumed 5m, same as ccusage), count_tokens
+  estimated cost (src/pricing.ts: the models.dev catalog — refreshed by
+  src/pricing-catalog.ts into <data-dir>/pricing.json, injected as
+  META.pricing/window.__PRICING__ — resolves any model incl. gpt-5.x and
+  grok-4.5 by exact id, date-strip, then trailing-segment fallback
+  (gpt-5.6-sol -> gpt-5.6); the embedded Claude table stays as the offline
+  fallback. Anthropic cache multipliers: 0.1x read, 1.25x 5m write, 2x 1h
+  write, no-TTL writes assumed 5m same as ccusage; a catalog entry without
+  a cache rate means the provider doesn't bill it), count_tokens
   results, usage window percentages (5h / 7d / per-model), telemetry event
   counts, error types. The detail panel adds prompt size, output tok/s, and
   a cost tooltip broken down by component; the Session view shows per-turn
@@ -129,14 +144,27 @@ views, hash-routed:
   next turn, prev/next user prompt, system prompt — in the session view
   also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
 - **Session** (`#/session[/<key>]`): wire view + reconstructed conversation
-  side by side. `session.ts` groups /v1/messages pairs into threads: by the
-  `x-claude-code-agent-id` header when present (cc ≥ ~2.1.2xx stamps every
-  sidechain request with it — exact grouping), else by a signature of the
-  first message's USER text (`firstUserText` skips the injected
-  `<system-reminder>` context block — Claude Code prepends the same
-  claudeMd/hook reminder to EVERY thread's first message, so hashing raw
-  content collapses main + all subagents into one thread; that was a real
-  bug). Subagent threads link to the Task/Agent tool_use that spawned them
+  side by side. `session.ts` groups model-call pairs into threads, one
+  `buildSession(pairs, wire)` entry for BOTH wire dialects (`wireDialect`
+  dispatches per pair). Anthropic: by the `x-claude-code-agent-id` header
+  when present (cc ≥ ~2.1.2xx stamps every sidechain request with it —
+  exact grouping), else by a signature of the first message's USER text
+  (`firstUserText` skips the injected `<system-reminder>` context block —
+  Claude Code prepends the same claudeMd/hook reminder to EVERY thread's
+  first message, so hashing raw content collapses main + all subagents into
+  one thread; that was a real bug). OpenAI Responses (codex/grok,
+  `src/dialects/openai.ts`): by the wire conv header named in the client's
+  wire table (codex `thread-id`, grok `x-grok-conv-id` — grok's parallel
+  conversations split cleanly), sig fallback for header-less calls;
+  `input[]` items normalize into the same turn/block model (message->text,
+  function_call/custom_tool_call->tool_use, `*_output`->tool_result,
+  reasoning->thinking — grok summaries readable, codex encrypted -> a
+  placeholder), the final SSE `response.completed` event carries the whole
+  output + usage (OpenAI input_tokens includes cache, peeled off to match
+  the chips' convention; reasoning_tokens -> thinking), and codex
+  `request_kind:"prewarm"` probes / grok `recap-*` convs classify as
+  utility. Subagent linking has no known OpenAI wire marker yet — those
+  threads list as separate chats. Subagent threads link to the Task/Agent tool_use that spawned them
   by prompt (the dispatch prompt lands verbatim as the first user text) and
   are classified `agent` even unlinked via wire markers (agent-id header,
   `cc_is_subagent=true` billing block, Agent-SDK system prompt) so they
@@ -187,17 +215,33 @@ cctrace codex -- exec "..."   # trace the OpenAI Codex CLI instead of Claude
 cctrace grok -- -p "..."      # trace the Grok CLI
 ```
 
-**Client profiles** (`src/clients.ts`, issue #20 first cut): a leading client
-word (`claude`|`codex`|`grok`) picks who gets traced; the rest of the grammar
-is unchanged. Non-Claude clients always run mitm — HTTPS_PROXY + the combined
+**Client plugins** (`src/clients/`, #20): a leading client word
+(`claude`|`codex`|`grok`) picks who gets traced; the rest of the grammar is
+unchanged. Non-Claude clients always run mitm — HTTPS_PROXY + the combined
 CA bundle (#17) cover their Rust/Go/native TLS stacks; `--client-path`
-overrides discovery for any client. Their model calls are OpenAI-shaped
-(`.../responses`, `.../chat/completions` — matched by path tail since custom
-providers mount them under arbitrary prefixes) and categorize as Messages
-(`categorizeUrl` classifies wire shape BEFORE host, issue #19 — which also
-puts third-party `ANTHROPIC_BASE_URL` providers' `/v1/messages` in Messages
-instead of External). Session-view reconstruction of OpenAI SSE remains
-follow-up work (#20).
+overrides discovery for any client. Each plugin is one self-describing
+module: binary discovery + a declarative, JSON-safe `wire` table (dialect,
+firstPartyHosts, host->category pins, session/thread header names) — adding
+a client is one new file + a registry entry, zero core edits. The merged
+tables embed into the page as `CLIENT_WIRE` data, so the plugin boundary
+lives in the source tree while the page stays flat (the toString() inlining
+pattern is untouched).
+
+Their model calls are OpenAI-shaped (`.../responses`,
+`.../chat/completions` — matched by path tail since custom providers mount
+them under arbitrary prefixes) and categorize as Messages (`categorizeUrl`
+classifies wire shape BEFORE host, issue #19 — which also puts third-party
+`ANTHROPIC_BASE_URL` providers' `/v1/messages` in Messages instead of
+External). The rest of a labeled client's traffic categorizes through its
+wire table: host pins first (incl. third-party analytics the client calls —
+mixpanel/otlp pin to telemetry so `purge --drop telemetry` sweeps them),
+then unpinned first-party traffic lands in "other" (the keyword taxonomy
+stays Anthropic-only), and genuinely foreign hosts (github, npm, pypi) stay
+External. Unlabeled pre-0.13 pairs categorize exactly as before
+(regression-tested). Session reconstruction for the OpenAI dialect is in
+`src/dialects/openai.ts` (see the Session view above); wire session ids
+come from headers via `extractSessionId(pair, wire)`, so cross-run
+continuity works for codex/grok too.
 
 Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 `cli.ts` before the strict parser). They read saved traces only — no proxy, no

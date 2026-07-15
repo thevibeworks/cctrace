@@ -155,7 +155,12 @@ jq -r '.request.body.metadata.user_id // empty' t.jsonl | head   # session id JS
 
 The Claude Code session id lives in `request.body.metadata.user_id` (a JSON
 string with a `session_id` field) — that's how cctrace stitches `--continue`
-runs together.
+runs together. Codex and grok carry theirs in request headers instead
+(`session-id` / `x-grok-session-id`; thread ids in `thread-id` /
+`x-grok-conv-id`) — cctrace reads those too, so continuity, the Session
+view (threads/turns/tool folds), categories (oauth/usage/mcp/telemetry/
+bootstrap instead of one External blob), and models.dev-based cost chips
+all work for codex/grok traces the same as for Claude.
 
 ## Privacy — treat traces as sensitive
 

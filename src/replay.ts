@@ -19,7 +19,8 @@ export function pairEndMs(p: any): number {
   return pairStartMs(p) + ((p && p.duration) || 0);
 }
 
-/** Conversation-bearing pair: /v1/messages, excluding count_tokens probes. */
+/** Conversation-bearing pair: /v1/messages or an OpenAI Responses call,
+ * excluding count_tokens probes. */
 export function isTurnPair(p: any): boolean {
   let path = "";
   try {
@@ -27,7 +28,8 @@ export function isTurnPair(p: any): boolean {
   } catch {
     path = String((p && p.request && p.request.url) || "").toLowerCase();
   }
-  return path.indexOf("/v1/messages") !== -1 && path.indexOf("count_tokens") === -1;
+  if (path.indexOf("/v1/messages") !== -1 && path.indexOf("count_tokens") === -1) return true;
+  return /\/(responses|chat\/completions)$/.test(path);
 }
 
 /**

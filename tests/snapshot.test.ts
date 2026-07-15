@@ -120,6 +120,15 @@ describe("page meta", () => {
     expect(html).toContain("cli-chat-proxy.grok.com");
   });
 
+  // The session view + chips for codex/grok depend on the OpenAI dialect
+  // adapters being inlined (src/dialects/openai.ts).
+  test("the page inlines the OpenAI dialect adapters", () => {
+    const html = renderSnapshot([]);
+    for (const fn of ["wireDialect", "openaiCompleted", "openaiBlocks", "normalizeOpenaiTurns", "extractOpenaiInfo", "extractCallInfo"]) {
+      expect(html).toContain("function " + fn);
+    }
+  });
+
   // Cost chips depend on the pricing helpers being inlined into the page.
   test("the page inlines the pricing/cost helpers", () => {
     const html = renderSnapshot([]);

@@ -1,4 +1,5 @@
 import { pairCost, fmtCost, costTitle } from "./pricing";
+import { wireDialect, extractOpenaiInfo } from "./dialects/openai";
 
 // Pure extraction/summary helpers shared by the web UI and unit tests.
 //
@@ -106,6 +107,11 @@ export function extractMessageInfo(pair: any): any {
   };
 }
 
+/** Usage/params for ANY model-call pair — dispatches on the wire dialect. */
+export function extractCallInfo(pair: any): any {
+  return wireDialect(pair) === "openai" ? extractOpenaiInfo(pair) : extractMessageInfo(pair);
+}
+
 /** True when any system/tools/messages block sets cache_control. */
 export function hasCacheControl(body: any): boolean {
   if (!body || typeof body !== "object") return false;
@@ -174,12 +180,20 @@ export function summarizeCache(m: any, body: any): any {
 }
 
 /**
- * Claude Code session id from a /v1/messages request. The wire carries it in
- * request.body.metadata.user_id — current builds send a JSON string
+ * The traced client's session id for a model-call pair. Claude Code carries
+ * it in request.body.metadata.user_id — current builds send a JSON string
  * ({"device_id":...,"session_id":"<uuid>"}), older ones an underscored form
- * (..._session_<uuid>). Returns "" when absent.
+ * (..._session_<uuid>). Other clients carry it in a request header named by
+ * their wire table (codex "session-id", grok "x-grok-session-id") — pass the
+ * merged tables from src/clients as `wire` to read it; the pair's own
+ * `client` label picks the row. Returns "" when absent.
  */
-export function extractSessionId(pair: any): string {
+export function extractSessionId(pair: any, wire?: any): string {
+  const w = wire && pair && pair.client ? wire[pair.client] : null;
+  if (w && w.sessionHeader) {
+    const hid = ((pair.request && pair.request.headers) || {})[w.sessionHeader];
+    if (typeof hid === "string" && hid) return hid;
+  }
   const meta = pair && pair.request && pair.request.body && pair.request.body.metadata;
   const uid = meta && meta.user_id;
   if (typeof uid !== "string" || !uid) return "";
@@ -285,7 +299,7 @@ export function summarizePair(pair: any, cat: string): any[] {
   if (!resp) return [{ t: "no response", c: "err" }];
 
   if (cat === "messages") {
-    const m = extractMessageInfo(pair);
+    const m = extractCallInfo(pair);
     if (m.model) chips.push({ t: shortModel(m.model), c: "model", title: String(m.model) });
     if (m.error) {
       chips.push({ t: m.error, c: "err" });

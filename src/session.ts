@@ -1,5 +1,14 @@
-import { parseSse, assembleAssistant, extractMessageInfo, shortModel } from "./summarize";
+import { parseSse, assembleAssistant, extractCallInfo, shortModel } from "./summarize";
 import { pairCost } from "./pricing";
+import {
+  wireDialect,
+  openaiCompleted,
+  openaiBlocks,
+  normalizeOpenaiTurns,
+  openaiSystemText,
+  openaiTools,
+  openaiFirstUserText,
+} from "./dialects/openai";
 
 // Reconstruct Claude Code conversations from captured /v1/messages wire pairs.
 //
@@ -82,6 +91,14 @@ export function buildToolResultIndex(turns: any[]): Record<string, any> {
 
 /** Assistant content blocks from a pair's response (JSON body or SSE). */
 export function responseBlocks(pair: any): any[] {
+  if (wireDialect(pair) === "openai") {
+    const done = openaiCompleted(pair);
+    const out: any[] = [];
+    for (const item of (done && done.output) || []) {
+      for (const b of openaiBlocks(item)) out.push(b);
+    }
+    return out;
+  }
   const r = pair && pair.response;
   if (!r) return [];
   if (r.body && Array.isArray(r.body.content)) return r.body.content;
@@ -90,34 +107,51 @@ export function responseBlocks(pair: any): any[] {
 }
 
 /**
- * Group /v1/messages pairs into conversation threads and reconstruct each
- * thread's turns from its spine request + streamed response. Returns
- * { threads } in wire order; each thread: { key, kind, label, model, system,
- * tools, pairIds, turns, usage, agentOf? }.
+ * Group model-call pairs into conversation threads and reconstruct each
+ * thread's turns from its spine request + streamed response. Handles both
+ * wire dialects: Anthropic /v1/messages and OpenAI Responses (codex, grok) —
+ * normalized into the same turn/block model. `wire` is the merged per-client
+ * table from src/clients (embedded as CLIENT_WIRE in the page); it names the
+ * thread-id header for labeled OpenAI pairs. Returns { threads } in wire
+ * order; each thread: { key, kind, label, model, system, tools, pairIds,
+ * turns, usage, agentOf? }.
  */
-export function buildSession(pairs: any[]): any {
+export function buildSession(pairs: any[], wire?: any): any {
   const threads: any[] = [];
   const byKey: Record<string, any> = {};
+  // History length in normalized turns — the attribution index. Anthropic
+  // messages map 1:1; OpenAI input[] folds (reasoning/tool items join turns).
+  const histLen = (p: any, dialect: string) =>
+    dialect === "openai"
+      ? normalizeOpenaiTurns(p.request.body.input).length
+      : (p.request.body.messages || []).length;
 
   for (const p of pairs || []) {
     if (!p || !p.request) continue;
-    let path = "";
-    try {
-      path = new URL(p.request.url).pathname.toLowerCase();
-    } catch {
-      path = String(p.request.url || "").toLowerCase();
-    }
-    if (path.indexOf("/v1/messages") === -1 || path.indexOf("count_tokens") !== -1) continue;
+    const dialect = wireDialect(p);
     const req = p.request.body || {};
-    if (!Array.isArray(req.messages) || !req.messages.length) continue;
-    // cc >= ~2.1.2xx stamps every sidechain request with a stable per-run
-    // agent id — exact, collision-proof grouping. Older versions fall back
-    // to the first-user-text signature.
-    const agentId = (p.request.headers || {})["x-claude-code-agent-id"] || "";
-    const key = agentId ? "agent:" + agentId : threadSig(req.messages[0]);
+    let key = "";
+    if (dialect === "anthropic") {
+      if (!Array.isArray(req.messages) || !req.messages.length) continue;
+      // cc >= ~2.1.2xx stamps every sidechain request with a stable per-run
+      // agent id — exact, collision-proof grouping. Older versions fall back
+      // to the first-user-text signature.
+      const agentId = (p.request.headers || {})["x-claude-code-agent-id"] || "";
+      key = agentId ? "agent:" + agentId : threadSig(req.messages[0]);
+    } else if (dialect === "openai") {
+      if (!Array.isArray(req.input) || !req.input.length) continue;
+      // Thread identity is on the wire in a header (codex thread-id, grok
+      // x-grok-conv-id — named by the client's wire table); a few calls
+      // carry none and fall back to the first-user-text signature.
+      const w = wire && p.client ? wire[p.client] : null;
+      const convId = (w && w.threadHeader && (p.request.headers || {})[w.threadHeader]) || "";
+      key = convId ? "conv:" + convId : "osig:" + threadSig({ content: openaiFirstUserText(req.input) });
+    } else {
+      continue;
+    }
     let t = byKey[key];
     if (!t) {
-      t = { key, kind: "chat", label: "", model: "", reqs: [] };
+      t = { key, kind: "chat", label: "", model: "", dialect, reqs: [] };
       byKey[key] = t;
       threads.push(t);
     }
@@ -128,29 +162,40 @@ export function buildSession(pairs: any[]): any {
   for (const t of threads) {
     // Spine: the request carrying the longest history (ties -> latest).
     let spine = t.reqs[0];
+    let spineLen = histLen(spine, t.dialect);
     for (const p of t.reqs) {
-      if ((p.request.body.messages || []).length >= (spine.request.body.messages || []).length) spine = p;
+      const len = histLen(p, t.dialect);
+      if (len >= spineLen) {
+        spine = p;
+        spineLen = len;
+      }
     }
     const sreq = spine.request.body || {};
-    t.system = sreq.system || null;
-    t.tools = Array.isArray(sreq.tools) ? sreq.tools : [];
-    t.turns = normalizeTurns(sreq.messages);
+    if (t.dialect === "openai") {
+      t.system = openaiSystemText(sreq.input) || null;
+      t.tools = openaiTools(sreq);
+      t.turns = normalizeOpenaiTurns(sreq.input);
+    } else {
+      t.system = sreq.system || null;
+      t.tools = Array.isArray(sreq.tools) ? sreq.tools : [];
+      t.turns = normalizeTurns(sreq.messages);
+    }
     const rblocks = responseBlocks(spine);
     if (rblocks.length) t.turns.push({ role: "assistant", blocks: rblocks, toolResultsOnly: false, pairId: null, usage: null });
 
-    // A request with n history messages produced the assistant turn at index
+    // A request with n history turns produced the assistant turn at index
     // n; wire order means later (retried/injected) requests win the slot.
     for (const p of t.reqs) {
-      const turn = t.turns[(p.request.body.messages || []).length];
+      const turn = t.turns[histLen(p, t.dialect)];
       if (turn && turn.role === "assistant") {
         turn.pairId = p.id;
-        turn.usage = extractMessageInfo(p);
+        turn.usage = extractCallInfo(p);
       }
     }
 
     const agg = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, requests: t.reqs.length };
     for (const p of t.reqs) {
-      const m = extractMessageInfo(p);
+      const m = extractCallInfo(p);
       agg.input += m.input;
       agg.output += m.output;
       agg.cacheRead += m.cacheRead;
@@ -160,28 +205,42 @@ export function buildSession(pairs: any[]): any {
     }
     t.usage = agg;
 
-    // Utility classification: quota probes and title generation are harness
-    // noise, not conversation.
-    let sysText = "";
-    const sys = sreq.system;
-    if (typeof sys === "string") sysText = sys;
-    else if (Array.isArray(sys)) sysText = sys.map((b: any) => (b && b.text) || "").join("\n");
-    if (sreq.max_tokens === 1) {
-      t.kind = "utility";
-      t.label = "quota probe";
-    } else if (!t.tools.length && t.turns.length <= 2 && /concise[^.]*title/i.test(sysText)) {
-      t.kind = "utility";
-      t.label = "title generation";
-    } else if (
-      // Sidechain markers: the agent-id header (cc >= ~2.1.2xx), the billing
-      // block's cc_is_subagent flag, or the subagent system prompt. A
-      // sidechain must never compete as "chat" — mainThread() picks chats —
-      // even when its Task dispatch isn't on the wire to link against.
-      (spine.request.headers || {})["x-claude-code-agent-id"] ||
-      sysText.indexOf("cc_is_subagent=true") !== -1 ||
-      /You are (a Claude agent|an agent for Claude Code)/.test(sysText)
-    ) {
-      t.kind = "agent";
+    if (t.dialect === "openai") {
+      // Harness noise on the OpenAI wire: codex prewarm probes self-identify
+      // in the x-codex-turn-metadata JSON header; grok recap utilities in
+      // their conv id.
+      const meta = (spine.request.headers || {})["x-codex-turn-metadata"] || "";
+      if (String(meta).indexOf('"request_kind":"prewarm"') !== -1) {
+        t.kind = "utility";
+        t.label = "prewarm";
+      } else if (t.key.lastIndexOf("conv:recap-", 0) === 0) {
+        t.kind = "utility";
+        t.label = "recap";
+      }
+    } else {
+      // Utility classification: quota probes and title generation are harness
+      // noise, not conversation.
+      let sysText = "";
+      const sys = sreq.system;
+      if (typeof sys === "string") sysText = sys;
+      else if (Array.isArray(sys)) sysText = sys.map((b: any) => (b && b.text) || "").join("\n");
+      if (sreq.max_tokens === 1) {
+        t.kind = "utility";
+        t.label = "quota probe";
+      } else if (!t.tools.length && t.turns.length <= 2 && /concise[^.]*title/i.test(sysText)) {
+        t.kind = "utility";
+        t.label = "title generation";
+      } else if (
+        // Sidechain markers: the agent-id header (cc >= ~2.1.2xx), the billing
+        // block's cc_is_subagent flag, or the subagent system prompt. A
+        // sidechain must never compete as "chat" — mainThread() picks chats —
+        // even when its Task dispatch isn't on the wire to link against.
+        (spine.request.headers || {})["x-claude-code-agent-id"] ||
+        sysText.indexOf("cc_is_subagent=true") !== -1 ||
+        /You are (a Claude agent|an agent for Claude Code)/.test(sysText)
+      ) {
+        t.kind = "agent";
+      }
     }
 
     t.pairIds = t.reqs.map((p: any) => p.id);

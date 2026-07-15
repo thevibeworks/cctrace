@@ -3,7 +3,10 @@ import { join, basename } from "path";
 import { gzipSync } from "zlib";
 import { readTraceText, isTraceFile, parseTraceText } from "./history";
 import { extractSessionId } from "./summarize";
+import { wireTables } from "./clients";
 import type { TracePair } from "./types";
+
+const WIRE = wireTables();
 
 // Storage housekeeping for the log dir, shared by the clean/merge/compress
 // subcommands. Each operation is a pure-ish plan() (survey, no writes) plus an
@@ -152,7 +155,7 @@ export function planMerge(logDir: string): MergePlan {
     const name = basename(path);
     const stat = { total: pairs.length, attributed: 0 };
     for (const p of pairs) {
-      const sid = extractSessionId(p);
+      const sid = extractSessionId(p, WIRE);
       if (!sid) { unattributable++; continue; }
       stat.attributed++;
       let g = bySession.get(sid);

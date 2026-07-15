@@ -2,8 +2,11 @@ import type { ServerWebSocket } from "bun";
 import type { TracePair } from "./types";
 import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
+import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { listLiveInstances, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+
+const WIRE = wireTables();
 
 export { renderSnapshot, verifySnapshot } from "./ui";
 
@@ -74,7 +77,7 @@ export function createServer(config: ServerConfig) {
   const onLivePair = (pair: TracePair) => {
     mergePairs([pair]);
     broadcast({ type: "pair", pair });
-    const sid = extractSessionId(pair);
+    const sid = extractSessionId(pair, WIRE);
     if (!sid || seenSessions.has(sid)) return;
     seenSessions.add(sid);
     config.onSession?.(sid);

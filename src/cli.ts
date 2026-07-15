@@ -725,7 +725,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
       let all = collected;
       const extra: TracePair[] = opts.withFiles.length ? loadTraceFiles(opts.withFiles) : [];
       if (!opts.fresh) {
-        const sids = new Set(collected.map(extractSessionId).filter(Boolean));
+        const sids = new Set(collected.map((p) => extractSessionId(p, wireTables())).filter(Boolean));
         extra.push(...loadPriorPairs(opts.logDir, logFile, sids));
       }
       if (extra.length) {

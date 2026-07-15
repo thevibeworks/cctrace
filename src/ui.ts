@@ -6,6 +6,7 @@ import {
   fmtCompact,
   shortModel,
   extractMessageInfo,
+  extractCallInfo,
   extractSessionId,
   extractTokenCount,
   extractUsageInfo,
@@ -14,6 +15,16 @@ import {
   hasCacheControl,
   summarizeCache,
 } from "./summarize";
+import {
+  wireDialect,
+  openaiCompleted,
+  openaiBlocks,
+  normalizeOpenaiTurns,
+  openaiSystemText,
+  openaiTools,
+  openaiFirstUserText,
+  extractOpenaiInfo,
+} from "./dialects/openai";
 import {
   firstUserText,
   threadSig,
@@ -823,7 +834,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${fmtCompact.toString()}
     ${shortModel.toString()}
     ${extractMessageInfo.toString()}
+    ${extractCallInfo.toString()}
     ${extractSessionId.toString()}
+
+    // OpenAI Responses dialect (codex/grok), injected from src/dialects/openai.ts.
+    ${wireDialect.toString()}
+    ${openaiCompleted.toString()}
+    ${openaiBlocks.toString()}
+    ${normalizeOpenaiTurns.toString()}
+    ${openaiSystemText.toString()}
+    ${openaiTools.toString()}
+    ${openaiFirstUserText.toString()}
+    ${extractOpenaiInfo.toString()}
     ${extractTokenCount.toString()}
     ${extractUsageInfo.toString()}
     ${assembleAssistant.toString()}
@@ -915,7 +937,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function currentSessionId() {
       let prior = '';
       for (let i = pairs.length - 1; i >= 0; i--) {
-        const sid = extractSessionId(pairs[i]);
+        const sid = extractSessionId(pairs[i], CLIENT_WIRE);
         if (!sid) continue;
         if (!pairs[i].prior) return sid;
         if (!prior) prior = sid;
@@ -1454,7 +1476,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     function messagesChips(pair) {
-      const m = extractMessageInfo(pair);
+      const m = extractCallInfo(pair);
       let row1 = '';
       if (m.error) row1 += kv('error', m.error, 'err');
       if (m.model) row1 += kv('model', m.model, 'model');
@@ -1597,6 +1619,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderConversation(pair) {
       const req = pair.request.body || {};
       let html = '';
+      if (wireDialect(pair) === 'openai') {
+        // OpenAI Responses (codex/grok): normalize input[] into the same
+        // turn/block model, so the folds render identically.
+        const sys = openaiSystemText(req.input);
+        if (sys) html += renderSystem(sys);
+        const tools = openaiTools(req);
+        if (tools.length) html += renderTools(tools);
+        for (const t of normalizeOpenaiTurns(req.input)) {
+          html += renderTurn(t.role, t.blocks, '');
+        }
+        const done = openaiCompleted(pair);
+        let rblocks = [];
+        for (const item of (done && done.output) || []) rblocks = rblocks.concat(openaiBlocks(item));
+        if (rblocks.length) html += renderTurn('assistant', rblocks, 'response');
+        if (!html) return '';
+        return '<div class="section"><h4>Conversation</h4>' + html + '</div>';
+      }
       if (req.system) html += renderSystem(req.system);
       if (Array.isArray(req.tools) && req.tools.length) html += renderTools(req.tools);
       for (const msg of (Array.isArray(req.messages) ? req.messages : [])) {
@@ -1707,7 +1746,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const key = pairs.length + ':' + a;
       if (sessionCache.key !== key) {
         const src = replay.active ? visibleAt(pairs, replay.cursor) : pairs;
-        sessionCache = { key, threads: buildSession(src).threads };
+        sessionCache = { key, threads: buildSession(src, CLIENT_WIRE).threads };
       }
       return sessionCache.threads;
     }
@@ -1746,7 +1785,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (const pid of t.pairIds) {
           const p = pairs.find(x => x.id === pid);
           if (!p) continue;
-          const m = extractMessageInfo(p);
+          const m = extractCallInfo(p);
           const cc = summarizeCache(m, p.request.body);
           rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
             '<span class="cdot' + (cc ? ' cdot-' + cc.kind : '') + '" title="' + (cc ? escapeHtml(cc.title) : 'no prompt caching on this request') + '"></span>' +

@@ -18,8 +18,11 @@ export const CATEGORIES: CatMeta[] = [
 
 // Pure, self-contained: a request URL in, a category id out. This function is
 // ALSO inlined into the live web UI via toString(), so it must not reference
-// anything outside its own body.
-export function categorizeUrl(url: string): string {
+// anything outside its own body — per-client wire knowledge arrives as the
+// `wire` argument (the JSON-safe tables from src/clients, embedded into the
+// page as a constant). Pairs without a client label (pre-0.13 traces)
+// categorize exactly as before.
+export function categorizeUrl(url: string, client?: string, wire?: any): string {
   let path: string;
   let host: string;
   try {
@@ -40,6 +43,27 @@ export function categorizeUrl(url: string): string {
   // (api.openai.com/v1/responses, chatgpt.com/backend-api/codex/responses,
   // relay.example/responses), so match the path tail, not a /v1/ prefix.
   if (/\/(responses|chat\/completions)($|\?)/.test(path)) return "messages";
+  // Client wire table: explicit host/path pins first (these may pin
+  // third-party analytics hosts like mixpanel to telemetry), then the
+  // first-party check. Non-anthropic dialects stop at "other" for unpinned
+  // first-party traffic — the keyword taxonomy below is Anthropic's own and
+  // its keywords are too generic to trust on foreign APIs.
+  const w = wire && client ? wire[client] : null;
+  if (w && host) {
+    const hp = host + path;
+    for (const pin of w.hostCategories || []) {
+      if (hp.lastIndexOf(pin[0], 0) === 0) return pin[1];
+    }
+    let firstParty = false;
+    for (const h of w.firstPartyHosts || []) {
+      if (host === h || host.endsWith("." + h)) {
+        firstParty = true;
+        break;
+      }
+    }
+    if (firstParty && w.dialect !== "anthropic") return "other";
+    if (!firstParty && w.dialect !== "anthropic") return "external";
+  }
   // The remaining taxonomy is Anthropic's own — its keywords are far too
   // broad for foreign hosts (any URL containing "logging" or "cost" would
   // match), so everything else off-domain is honestly External.

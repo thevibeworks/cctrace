@@ -111,6 +111,15 @@ describe("page meta", () => {
     expect(html).toContain("function extractSessionId");
   });
 
+  // Client-scoped categorization: the page needs the wire tables (data) and
+  // a categorize that accepts (url, client, wire).
+  test("the page embeds CLIENT_WIRE and passes pair.client to categorize", () => {
+    const html = renderSnapshot([]);
+    expect(html).toContain("const CLIENT_WIRE = ");
+    expect(html).toContain("categorize(p.request.url, p.client, CLIENT_WIRE)");
+    expect(html).toContain("cli-chat-proxy.grok.com");
+  });
+
   // Cost chips depend on the pricing helpers being inlined into the page.
   test("the page inlines the pricing/cost helpers", () => {
     const html = renderSnapshot([]);

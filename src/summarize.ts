@@ -66,6 +66,14 @@ export function extractLatency(pair: any): any {
   };
 }
 
+/** 850 -> "850B", 53000 -> "51.8KB", 54700000 -> "52.2MB". */
+export function fmtBytes(b: unknown): string {
+  if (typeof b !== "number" || !isFinite(b) || b < 0) return "0B";
+  if (b < 1024) return Math.round(b) + "B";
+  if (b < 1024 * 1024) return (b / 1024).toFixed(1) + "KB";
+  return (b / (1024 * 1024)).toFixed(1) + "MB";
+}
+
 /** "claude-haiku-4-5-20251001" -> "haiku-4-5" */
 export function shortModel(model: unknown): string {
   return String(model || "")
@@ -375,6 +383,15 @@ export function summarizePair(pair: any, cat: string): any[] {
   } else if (cat === "bootstrap") {
     const mm = String((pair.request && pair.request.url) || "").match(/[?&]model=([^&]+)/);
     if (mm) chips.push({ t: shortModel(decodeURIComponent(mm[1])), c: "model" });
+  }
+
+  // Opaque tunnel meta rows (tunnel-by-default): show the byte counts, and
+  // say honestly that the payload was never captured.
+  if (resp.body && resp.body.tunneled) {
+    chips.push({
+      t: "tunnel ↑" + fmtBytes(resp.body.bytesUp) + " ↓" + fmtBytes(resp.body.bytesDown),
+      title: "opaque TLS tunnel — payload not captured (use --capture-external or --intercept-host to decrypt this host)",
+    });
   }
 
   if (resp.status >= 400 && !chips.some((c) => c.c === "err")) {

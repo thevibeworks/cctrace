@@ -4,6 +4,7 @@ import { wireTables } from "./clients";
 import {
   parseSse,
   fmtCompact,
+  fmtBytes,
   fmtMs,
   extractLatency,
   shortModel,
@@ -157,9 +158,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
     .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ctx-client {
+      display: inline-flex; align-items: center; gap: 5px;
       border: 1px solid var(--border); border-radius: 4px;
-      padding: 0 5px; font-size: 11px; color: var(--text-muted); flex: none;
+      padding: 1px 6px; font-size: 11px; color: var(--text-muted); flex: none;
     }
+    .ctx-ico { width: 11px; height: 11px; flex-shrink: 0; }
     .ctx-sep { color: var(--text-faint); }
     .ctx-sess {
       font: inherit; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
@@ -168,8 +171,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
-    /* Version badge: lives on the header's right, out of the run-identity ctx. */
-    .ver { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    /* Version badge: sits with the brand — what produced the page is a
+       brand fact, separate from the run identity in .ctx. */
+    .ver { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; margin-left: 2px; }
     .ver-badge { color: var(--text-faint); font-size: 11px; }
     .ver-upd {
       color: var(--amber); font-size: 11px;
@@ -296,7 +300,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cat-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cat, var(--text-faint)); }
     .cat-chip .n { color: var(--text-faint); font-variant-numeric: tabular-nums; }
     .cat-chip.active .n { color: var(--text); }
-    .cat-chip.zero { opacity: 0.4; }
     .cat-badge {
       padding: 1px 7px;
       border-radius: 999px;
@@ -309,6 +312,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     /* Pairs merged in from a previous run's trace (same Claude session). */
     .pair.prior .pair-header { opacity: 0.72; }
+    /* Live arrivals only: one 160ms opacity fade says "this row just landed"
+       — feedback, not ceremony (motion budget in docs/design/ui.md). Bulk
+       renders and filter re-renders never animate; opacity-only keeps it
+       acceptable under prefers-reduced-motion (movement is what's removed). */
+    @keyframes arrive { from { opacity: 0; } }
+    .pair.arrived { animation: arrive 160ms cubic-bezier(0.23, 1, 0.32, 1); }
     .prior-badge {
       padding: 1px 7px;
       border-radius: 999px;
@@ -737,12 +746,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 </head>
 <body>
   <header>
-    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
+    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1><span class="ver" id="ver"></span></span>
     <span class="ctx" id="ctx"></span>
     <span class="inst" id="inst"></span>
-    <span class="status disconnected" id="status">offline</span>
     <span class="count"><span id="count">0</span> requests</span>
-    <span class="ver" id="ver"></span>
+    <span class="status disconnected" id="status">offline</span>
     <span class="header-actions">
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -839,6 +847,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // tested there; inlined here so live UI and snapshots stay identical).
     ${parseSse.toString()}
     ${fmtCompact.toString()}
+    ${fmtBytes.toString()}
     ${fmtMs.toString()}
     ${extractLatency.toString()}
     ${shortModel.toString()}
@@ -964,6 +973,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return META.client || '';
     }
 
+    // Quiet monogram glyphs for the traced client — generic shapes drawn in
+    // currentColor (a spark, a hexagon, a slash), not vendor logos, so they
+    // read as identity hints without shouting brand.
+    const CLIENT_ICONS = {
+      claude: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
+      codex: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
+      grok: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
+    };
+
     let ctxKey = null;
     function renderCtx() {
       const sid = currentSessionId();
@@ -978,7 +996,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_SNAPSHOT ? 'CCTrace' : 'CCTrace live');
       let html = '';
       if (client) {
-        html += '<span class="ctx-client" title="traced CLI">' + escapeHtml(client) + '</span>';
+        html += '<span class="ctx-client" title="traced CLI">' + (CLIENT_ICONS[client] || '') +
+          '<span>' + escapeHtml(client) + '</span></span>';
       }
       if (META.project) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
@@ -999,7 +1018,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       };
     }
 
-    // ---- Version badge: static META, so rendered once, top-right ----
+    // ---- Version badge: static META, so rendered once, beside the brand ----
     // Separate from the run-identity ctx (project · session): what cctrace
     // version produced the page has nothing to do with which run it shows.
     (function renderVer() {
@@ -1063,12 +1082,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderCats() {
       const counts = catCounts();
       const chip = (id, label, color, n) =>
-        '<div class="cat-chip ' + (activeCat === id ? 'active' : '') + (n === 0 && id !== 'all' ? ' zero' : '') +
+        '<div class="cat-chip ' + (activeCat === id ? 'active' : '') +
         '" style="--cat:' + (color || 'var(--text-muted)') + (activeCat === id ? ';color:' + (color || 'var(--text)') : '') + '" data-cat="' + id + '">' +
         (id === 'all' ? '' : '<span class="dot"></span>') +
         '<span>' + label + '</span><span class="n">' + n + '</span></div>';
       let html = chip('all', 'All', 'var(--accent)', counts.all);
-      for (const c of CATS) html += chip(c.id, c.label, c.color, counts[c.id] || 0);
+      // Only categories this trace actually has: a codex run never issues
+      // count_tokens or oauth/usage calls, and an empty chip is dead weight.
+      // The active category stays visible even at zero so a live filter can
+      // always be clicked off.
+      for (const c of CATS) {
+        const n = counts[c.id] || 0;
+        if (n > 0 || activeCat === c.id) html += chip(c.id, c.label, c.color, n);
+      }
       catsEl.innerHTML = html;
       catsEl.querySelectorAll('.cat-chip').forEach(el => {
         el.onclick = () => { activeCat = el.dataset.cat; render(); refreshDetailNav(); };
@@ -1098,7 +1124,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           renderCats();
           renderCtx();
           if (passesFilters(msg.pair)) {
-            appendPair(msg.pair);
+            appendPair(msg.pair, true);
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
           }
           refreshDetailNav();
@@ -1138,6 +1164,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ' \\u2014 ' + escapeHtml((e && e.message) || String(e)) + '</div>';
     }
     function formatDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
+    // Wall-clock is always 24h — locale 12h AM/PM wastes row width and
+    // reads slower in a dense table.
+    function fmtTime(d) { return d.toTimeString().slice(0, 8); }
+    function fmtDateTime(d) {
+      const p = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + fmtTime(d);
+    }
     function getStatusClass(status) {
       if (!status) return 'status-err';
       if (status >= 200 && status < 300) return 'status-2xx';
@@ -1194,7 +1227,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ).join('');
     }
 
-    function appendPair(pair) {
+    function appendPair(pair, live) {
       const div = document.createElement('div');
       try {
         const { request, response, duration } = pair;
@@ -1212,12 +1245,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
             '<span class="sum">' + chipsHtml(pair) + '</span>' +
             '<span class="duration" title="' + escapeHtml(duration) + 'ms">' + formatDuration(duration) + '</span>' +
-            '<span class="time" title="' + when.toLocaleString() + '">' + (pair.prior ? when.toLocaleString() : when.toLocaleTimeString()) + '</span>' +
+            '<span class="time" title="' + fmtDateTime(when) + '">' + (pair.prior ? fmtDateTime(when) : fmtTime(when)) + '</span>' +
           '</a>';
       } catch (e) {
         div.className = 'pair';
         div.innerHTML = brokenItem('request', pair && pair.id, e);
       }
+      if (live) div.classList.add('arrived');
       pairsEl.appendChild(div);
     }
 
@@ -1467,7 +1501,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           (pair.prior ? '<span class="prior-badge" title="merged from a previous run of this session">prev \\u00b7 ' + escapeHtml(pair.prior) + '</span>' : '') +
           '<span class="detail-url">' + escapeHtml(request.url) + '</span>' +
           '<span class="duration">' + formatDuration(duration) + '</span>' +
-          '<span class="time">' + new Date(request.timestamp * 1000).toLocaleString() + '</span>' +
+          '<span class="time">' + fmtDateTime(new Date(request.timestamp * 1000)) + '</span>' +
         '</div>';
 
       if (pair._cat === 'messages') html += messagesChips(pair) + renderConversation(pair);
@@ -1808,7 +1842,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const cc = summarizeCache(m, p.request.body);
           rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
             '<span class="cdot' + (cc ? ' cdot-' + cc.kind : '') + '" title="' + (cc ? escapeHtml(cc.title) : 'no prompt caching on this request') + '"></span>' +
-            '<span>' + new Date(p.request.timestamp * 1000).toLocaleTimeString() + '</span>' +
+            '<span>' + fmtTime(new Date(p.request.timestamp * 1000)) + '</span>' +
             '<span class="treq-io">in ' + fmtCompact(m.input + m.cacheRead + m.cacheWrite) + ' \\u00b7 out ' + fmtCompact(m.output) + '</span>' +
             '<span>' + formatDuration(p.duration) + '</span></a>';
         }

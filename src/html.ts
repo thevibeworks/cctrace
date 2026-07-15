@@ -43,7 +43,7 @@ function renderPair(pair: TracePair, index: number): string {
         <span class="status" style="background:${statusColor}">${statusText}</span>
         <span class="url" title="${escapeHtml(request.url)}">${escapeHtml(shortUrl)}</span>
         <span class="duration">${formatDuration(duration)}</span>
-        <span class="time">${new Date(request.timestamp * 1000).toLocaleTimeString()}</span>
+        <span class="time">${new Date(request.timestamp * 1000).toTimeString().slice(0, 8)}</span>
       </div>
       <div class="pair-body" id="body-${index}" style="display:none">
         <div class="section">

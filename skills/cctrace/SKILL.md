@@ -105,6 +105,9 @@ commands (clean/merge/compress/purge) are **dry-run by default**; add `--yes`
 to apply.
 
 ```bash
+cctrace view                              # list traces newest-first, pick one
+                                          # (TTY: Enter = newest; non-TTY: list only)
+cctrace view latest                       # reopen the newest trace directly
 cctrace view <file|session-id|fragment>   # reopen a trace in the web UI (serves
                                           # it locally; Ctrl-C stops; --port N)
 cctrace view <target> --html              # write a snapshot .html instead
@@ -112,13 +115,20 @@ cctrace view <target> --html              # write a snapshot .html instead
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)
-cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,tokens)
+cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,tokens,external)
 cctrace ps [--json]                       # live instances: URL, client, project, session
 ```
 
-Note for agents: plain `cctrace view <target>` starts a server and blocks —
-run it in the background (or use `--html --no-open` when you just need the
-file).
+Note for agents: plain `cctrace view` (and `view <target>`) starts a server
+and blocks — run it in the background, pass an explicit target (non-TTY
+no-target runs only print the trace list), or use `--html --no-open` when
+you just need the file.
+
+Capture scope (0.16+): only first-party hosts (plus pinned telemetry sinks,
+base-url env hosts, and `--intercept-host` extras) are decrypted. Everything
+else — npm, github, apt, remote MCP servers — passes through as an opaque
+tunnel logged as one meta pair (host + byte counts, category External).
+`--capture-external` restores decrypt-everything for debugging.
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers

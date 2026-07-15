@@ -48,18 +48,26 @@ drive cctrace — keep it in sync when the CLI surface or UI routes change.
 
 The CLI auto-selects, or force with `--mode <mitm|base-url|node>`.
 
-### mitm (default for native binaries) — captures everything
+### mitm (default for native binaries) — captures all first-party traffic
 
-TLS-intercepting proxy, Charles/mitmproxy style. This is the only mode that
-sees the full picture, because Claude hardcodes some hosts (OAuth, usage,
+TLS-intercepting proxy with an SSL-proxying include-list — Charles' actual
+model (devlog 2026-07-15). This is the only mode that sees the full
+first-party picture, because Claude hardcodes some hosts (OAuth, usage,
 credits) independent of `ANTHROPIC_BASE_URL`.
 
 1. `ensureCerts()` generates a CA + leaf cert (Anthropic SANs) under
    `~/.local/share/cctrace/mitm/` (override: `--data-dir` / `CCTRACE_DATA_DIR`)
-2. Front door: an http.Server answers `CONNECT`. Anthropic hosts are routed to a
-   local `Bun.serve({ tls })` terminator; other hosts get a dynamically
-   generated per-host cert signed by the same CA (blind tunnel only as a
-   last resort when cert generation fails)
+2. Front door: an http.Server answers `CONNECT` and decides scope on the
+   CONNECT line, before any TLS. Include-listed hosts (`buildInterceptSet`
+   in src/certs.ts: the client's `firstPartyHosts` + `hostCategories` pins
+   + base-url env hosts + `--intercept-host` extras) are MITM'd — Anthropic
+   hosts via the static leaf terminator, others via dynamically generated
+   per-host certs signed by the same CA. Every other host is an OPAQUE
+   byte-counted tunnel: no forged cert (cert-pinning tools and system-store
+   readers like apt keep working), one ~100-byte meta pair per connection
+   (host, bytesUp/Down, duration — the "claude touched X" audit trail).
+   `--capture-external` restores MITM-everything; the tunnel is also the
+   last resort when cert generation fails
 3. The TLS terminator decrypts, forwards to the real host, tees the response
    (stream to Claude + capture in parallel), logs the pair
 4. Claude trusts our CA via `NODE_EXTRA_CA_CERTS` and routes through us via
@@ -71,7 +79,9 @@ credits) independent of `ANTHROPIC_BASE_URL`.
    door only speaks CONNECT and would break plain-http subprocess calls
 
 Captures `/v1/messages`, `/api/oauth/*` (incl. usage/credits), `/api/claude_cli/*`,
-`/mcp-registry/*`, `/api/event_logging/*`.
+`/mcp-registry/*`, `/api/event_logging/*`, plus Claude Code's datadog intake
+(pinned to telemetry in src/clients/claude.ts). Remote MCP servers on
+arbitrary hosts tunnel by default — enroll them with `--intercept-host`.
 
 ### base-url — lightweight, messages only
 
@@ -103,17 +113,24 @@ interface Capturer {
 
 One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
-The header identifies the run: traced client (chip, from `PageMeta.client` or
-the newest labeled pair — absent for pre-0.13 traces), project name (cwd
-basename, injected as `PageMeta` by the server/CLI; unknown for `cctrace
-view` rebuilds) and the current session id (extracted client-side from pairs,
-newest live pair wins, click to copy) — the tab title is brand-first:
-`CCTrace · <client> · <project> · <sid>`. The page opens its WebSocket
-origin-relative (never a baked port: behind container/host port forwards the
-bound port isn't the browser's port, and a baked URL once handed a view page
-another instance's live stream). The cctrace version (+ amber update link)
-sits top-right in its own `#ver` mount, separate from the run identity. Two
-views, hash-routed:
+The header identifies the run: traced client (icon + name chip — quiet
+generic monograms in `CLIENT_ICONS`, not vendor logos — from
+`PageMeta.client` or the newest labeled pair; absent for pre-0.13 traces),
+project name (cwd basename, injected as `PageMeta` by the server/CLI;
+unknown for `cctrace view` rebuilds) and the current session id (extracted
+client-side from pairs, newest live pair wins, click to copy) — the tab
+title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
+opens its WebSocket origin-relative (never a baked port: behind
+container/host port forwards the bound port isn't the browser's port, and a
+baked URL once handed a view page another instance's live stream). The
+cctrace version (+ amber update link) sits beside the wordmark in its own
+`#ver` mount — a brand fact, separate from the run identity; the right side
+is count · live-dot · theme/github actions. Wall-clock times render 24h
+(`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
+the trace actually contains (a codex run never shows Count Tokens), the
+active one staying visible even at zero. Live-arrived rows get one 160ms
+opacity fade (the motion budget lives in docs/design/ui.md). Two views,
+hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
   human-readable chips — model, in/out tokens, one compact prompt-cache
@@ -255,6 +272,10 @@ Claude spawn. `clean`/`merge`/`compress`/`purge` are dry-run by default;
 `--yes` applies.
 
 ```bash
+cctrace view                              # no target: list traces newest-first and
+                                          # pick one (TTY prompt, Enter = newest;
+                                          # non-TTY prints the list and a hint)
+cctrace view latest                       # reopen the newest trace directly
 cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves it
                                           # from the live web server (registers in
                                           # the instance registry, mode "view";
@@ -264,7 +285,7 @@ cctrace view <target> --html              # write a snapshot .html instead (shar
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly
-cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens)
+cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens,external)
 cctrace ps [--json]                       # live instances (URL, client, project, session)
 cctrace --version                         # print version (+ newer version if known)
 ```
@@ -337,6 +358,15 @@ make test       # bun test
 - **MITM default**: native Claude (>= v2.0.26) is a Bun-compiled binary;
   `node --require` can't inject. TLS interception captures everything at the
   transport layer, below URL construction.
+- **Tunnel-by-default (0.16, devlog 2026-07-15)**: MITM-everything was the
+  bug — a deva smoke test traced a 52MB npm tarball into mojibake, gh API
+  response bodies (token-authed) landed verbatim, and any subprocess that
+  takes CA trust from outside the env vars (apt, java, cert pinning) would
+  hard-fail TLS. The include-list dissolves all three: only first-party +
+  pinned + enrolled hosts decrypt; the rest pass through opaque with byte
+  counts. Scope decides at CONNECT time (host-level) because the path is
+  only visible after decryption. Per-process interception without env vars
+  was investigated and ruled out — no portable unprivileged mechanism.
 - **Dynamic certs for non-Anthropic hosts**: the pre-generated leaf only has
   Anthropic SANs; other hosts get a per-host cert minted on first contact
   (cached on disk), so external traffic is captured too. Blind tunnel remains

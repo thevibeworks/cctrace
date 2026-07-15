@@ -38,6 +38,27 @@ function listTraces(logDir: string): string[] {
   }
 }
 
+export interface TraceInfo {
+  path: string;
+  base: string;
+  size: number;
+  mtimeMs: number;
+}
+
+/** Every trace in the log dir, newest first — the `cctrace view` picker. */
+export function listTraceInfos(logDir: string): TraceInfo[] {
+  const out: TraceInfo[] = [];
+  for (const path of listTraces(logDir)) {
+    try {
+      const st = statSync(path);
+      out.push({ path, base: basename(path), size: st.size, mtimeMs: st.mtimeMs });
+    } catch {
+      // raced away between readdir and stat — skip
+    }
+  }
+  return out.sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
 function htmlSibling(tracePath: string): string {
   return tracePath.replace(/\.jsonl(\.zst|\.gz)?$/, "") + ".html";
 }
@@ -53,6 +74,13 @@ function isSessionIdish(s: string): boolean {
  * message (including nearby traces) when nothing matches.
  */
 export function resolveView(target: string, logDir: string): ViewResult {
+  // 0. "latest" — the newest trace in the log dir, no name gymnastics.
+  if (target === "latest") {
+    const newest = listTraceInfos(logDir)[0];
+    if (!newest) throw new ViewError(`no .jsonl traces in ${logDir}`);
+    target = newest.path;
+  }
+
   // 1. Explicit file path.
   if (existsSync(target) && statSync(target).isFile()) {
     const stats: TraceParseStats = { torn: 0, invalid: 0 };

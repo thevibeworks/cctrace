@@ -6,6 +6,50 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-15
+
+### Changed
+
+- Capture scope: tunnel-by-default (docs/devlog/2026-07-15-capture-scope-
+  tunnel-by-default.org). The mitm proxy now decrypts only an include-list
+  of hosts: the traced client's first-party infrastructure, its pinned
+  telemetry sinks (Claude Code's datadog intake joins the claude wire
+  table), hosts from base-url env overrides, and --intercept-host extras.
+  Every other CONNECT passes through as an opaque tunnel — no forged cert,
+  so cert-pinning tools and system-trust readers (apt, java) work — logged
+  as one meta pair with host, byte counts and duration. Field evidence: a
+  deva smoke test traced a 52MB npm tarball into mojibake; gh API response
+  bodies landed verbatim. --capture-external restores decrypt-everything.
+  Remote MCP servers on arbitrary hosts now need --intercept-host.
+- Response capture is binary-safe: undecodable bodies summarize as
+  <binary body: N bytes> instead of decoding tarballs into mojibake, same
+  handling requests already had. A torn multi-byte char at an abort point
+  keeps the body.
+- purge default drop is now telemetry,tokens,external (was telemetry,
+  tokens): old traces carry decoded third-party payloads worth sweeping;
+  new traces only lose ~100-byte tunnel meta rows.
+- Timestamps render 24h everywhere in the UI (list rows, detail panel,
+  session wire rows); locale 12h AM/PM wasted row width.
+- The category filter bar shows only categories the trace contains — a
+  codex/grok run no longer shows an empty Count Tokens chip. The active
+  category stays visible at zero so a filter can be clicked off.
+- Header layout: version badge (+ amber update link) moved next to the
+  cctrace wordmark, the traced-client chip gained a quiet monogram icon
+  (spark/hexagon/slash — generic shapes, not vendor logos), right side is
+  request count, live dot, theme/github actions.
+
+### Added
+
+- cctrace view with no target lists traces newest-first (index, size, age)
+  and, on a TTY, prompts for a pick — Enter opens the newest. Non-TTY runs
+  print the list and exit. New "latest" keyword opens the newest trace
+  directly: cctrace view latest.
+- Live-arrived request rows fade in (160ms, opacity only) so new wire
+  activity is visible without breaking the ~zero motion budget; bulk
+  renders and filter re-renders stay instant.
+- Tunnel meta rows show a "tunnel ↑bytes ↓bytes" chip and say plainly that
+  the payload was not captured.
+
 ## [0.15.0] - 2026-07-15
 
 ### Added
@@ -651,7 +695,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/thevibeworks/cctrace/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/thevibeworks/cctrace/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/thevibeworks/cctrace/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/thevibeworks/cctrace/compare/v0.12.0...v0.13.0

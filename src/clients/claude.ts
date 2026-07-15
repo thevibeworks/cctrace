@@ -20,7 +20,13 @@ export const claude: ClientPlugin = {
   wire: {
     dialect: "anthropic",
     firstPartyHosts: ["anthropic.com", "claude.ai", "claude.com"],
-    hostCategories: [],
+    hostCategories: [
+      // Claude Code ships its own logs to datadog (~200 reqs/session on real
+      // traces) — first-party telemetry on a third-party host. Pinned so it
+      // categorizes as telemetry (purge-able) AND stays on the intercept
+      // include-list instead of degrading to a meta-only tunnel.
+      ["http-intake.logs.us5.datadoghq.com/", "telemetry"],
+    ],
     sessionHeader: "", // session id lives in request.body.metadata.user_id
     threadHeader: "x-claude-code-agent-id",
   },

@@ -133,10 +133,84 @@ describe("mitm proxy tunnel mechanics", () => {
     expect(issuer).toBe("cctrace");
   });
 
-  test("non-Anthropic host gets a dynamically generated cert (issuer = cctrace)", async () => {
-    const mitm = track(await startMitm({ caDir, onPair: () => {} }));
+  test("include-listed host gets a dynamically generated cert (issuer = cctrace)", async () => {
+    const mitm = track(await startMitm({ caDir, onPair: () => {}, interceptHosts: ["example.com"] }));
     const issuer = await connectAndGetIssuer(mitm.port, "example.com");
     expect(issuer).toBe("cctrace");
+  });
+
+  test("--capture-external restores MITM for any host", async () => {
+    const mitm = track(await startMitm({ caDir, onPair: () => {}, captureExternal: true }));
+    const issuer = await connectAndGetIssuer(mitm.port, "external.example");
+    expect(issuer).toBe("cctrace");
+  });
+});
+
+// Tunnel-by-default (devlog 2026-07-15): a CONNECT to a host outside the
+// include-list must pass through as an opaque pipe — no forged cert — and
+// log exactly one meta pair with byte counts once the connection closes.
+describe("opaque tunnel for non-listed hosts", () => {
+  function echoUpstream(): Promise<{ port: number; stop: () => void }> {
+    return new Promise((resolve) => {
+      const srv = net.createServer((sock) => {
+        sock.on("data", () => sock.end("pong-from-upstream"));
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        const addr = srv.address();
+        resolve({ port: typeof addr === "object" && addr ? addr.port : 0, stop: () => srv.close() });
+      });
+    });
+  }
+
+  async function tunnelThrough(proxyPort: number, targetPort: number): Promise<string> {
+    return new Promise((resolve) => {
+      const sock = net.connect(proxyPort, "127.0.0.1", () => {
+        sock.write(`CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n\r\n`);
+      });
+      let buf = "";
+      let established = false;
+      sock.on("data", (d) => {
+        buf += d.toString("latin1");
+        if (!established && buf.includes("\r\n\r\n")) {
+          established = true;
+          buf = "";
+          sock.write("ping-through-tunnel");
+        } else if (established && buf.includes("pong")) {
+          sock.end();
+          resolve(buf);
+        }
+      });
+      sock.on("error", () => resolve("<error>"));
+      setTimeout(() => resolve("<timeout>"), 8000);
+    });
+  }
+
+  test("bytes pass through untouched and one meta pair records the counts", async () => {
+    const upstream = await echoUpstream();
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p) }));
+    const reply = await tunnelThrough(mitm.port, upstream.port);
+    expect(reply).toContain("pong-from-upstream");
+    await Bun.sleep(80); // close events settle
+    upstream.stop();
+    expect(pairs.length).toBe(1);
+    const p = pairs[0]!;
+    expect(p.request.method).toBe("CONNECT");
+    expect(p.request.url).toBe(`https://127.0.0.1:${upstream.port}/`);
+    const body: any = p.response?.body;
+    expect(body.tunneled).toBe(true);
+    expect(body.bytesUp).toBeGreaterThanOrEqual("ping-through-tunnel".length);
+    expect(body.bytesDown).toBeGreaterThanOrEqual("pong-from-upstream".length);
+  });
+
+  test("--messages-only suppresses tunnel meta pairs", async () => {
+    const upstream = await echoUpstream();
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p), logAll: false }));
+    await tunnelThrough(mitm.port, upstream.port);
+    await Bun.sleep(80);
+    upstream.stop();
+    expect(pairs.length).toBe(0);
   });
 });
 
@@ -147,7 +221,9 @@ describe("mitm proxy tunnel mechanics", () => {
 describe("websocket upgrade refusal", () => {
   test("upgrade through the terminator gets a fast 501 and logs the attempt", async () => {
     const pairs: TracePair[] = [];
-    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p) }));
+    // chatgpt.com is on codex's include-list in real runs; without it the
+    // CONNECT would now tunnel and never reach the terminator.
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p), interceptHosts: ["chatgpt.com"] }));
     const statusLine = await new Promise<string>((resolve) => {
       const sock = net.connect(mitm.port, "127.0.0.1", () => {
         sock.write("CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\n\r\n");

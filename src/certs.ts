@@ -218,7 +218,7 @@ export function migrateCaDir(from: string, to: string): boolean {
 
 /**
  * Hosts the pre-generated static leaf cert covers.
- * Other hosts get dynamically generated certs via generateHostCert.
+ * Other intercepted hosts get dynamically generated certs via generateHostCert.
  */
 export function isInterceptHost(host: string): boolean {
   const h = host.toLowerCase();
@@ -227,4 +227,47 @@ export function isInterceptHost(host: string): boolean {
     h === "claude.ai" || h.endsWith(".claude.ai") ||
     h === "claude.com" || h.endsWith(".claude.com")
   );
+}
+
+/**
+ * The SSL-proxying include-list (Charles' model, devlog 2026-07-15): only
+ * these host suffixes get MITM'd; every other CONNECT is an opaque
+ * byte-counted tunnel. Union of the traced client's own infrastructure
+ * (firstPartyHosts), its pinned third-party hosts (hostCategories — the
+ * telemetry sinks the UI reads), hosts from base-url env overrides found in
+ * the spawn env, and --intercept-host extras.
+ */
+export function buildInterceptSet(
+  wire: { firstPartyHosts: string[]; hostCategories: Array<[string, string]> },
+  opts: { env?: Record<string, string | undefined>; extraHosts?: string[] } = {},
+): string[] {
+  const suffixes = new Set<string>();
+  for (const h of wire.firstPartyHosts) suffixes.add(h.toLowerCase());
+  for (const [hostPath] of wire.hostCategories) {
+    const host = hostPath.split("/")[0];
+    if (host) suffixes.add(host.toLowerCase());
+  }
+  const env = opts.env || {};
+  for (const key of ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "OPENAI_API_BASE"]) {
+    const v = env[key];
+    if (!v) continue;
+    try {
+      suffixes.add(new URL(v).hostname.toLowerCase());
+    } catch {
+      // not a URL — nothing to enroll
+    }
+  }
+  for (const h of opts.extraHosts || []) {
+    if (h) suffixes.add(h.toLowerCase().replace(/^\*\./, ""));
+  }
+  return [...suffixes];
+}
+
+/** True when host equals a set entry or is a subdomain of one. */
+export function hostInSet(host: string, suffixes: Iterable<string>): boolean {
+  const h = host.toLowerCase();
+  for (const s of suffixes) {
+    if (h === s || h.endsWith("." + s)) return true;
+  }
+  return false;
 }

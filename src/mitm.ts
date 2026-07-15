@@ -2,7 +2,7 @@ import * as http from "http";
 import * as net from "net";
 import { readFileSync } from "fs";
 import { join } from "path";
-import { isInterceptHost, generateHostCert } from "./certs";
+import { isInterceptHost, hostInSet, generateHostCert } from "./certs";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
 import type { TracePair } from "./types";
@@ -11,6 +11,14 @@ export interface MitmConfig {
   caDir: string;
   onPair: (pair: TracePair) => void;
   logAll?: boolean;
+  /**
+   * Host suffixes to MITM beyond the static Anthropic set — the SSL-proxying
+   * include-list (buildInterceptSet in certs.ts). Hosts outside it are blind
+   * -tunneled with byte counts instead of decrypted.
+   */
+  interceptHosts?: string[];
+  /** MITM every host (the pre-0.16 behavior) — --capture-external. */
+  captureExternal?: boolean;
 }
 
 export interface MitmServer {
@@ -22,16 +30,20 @@ export interface MitmServer {
 }
 
 /**
- * TLS-intercepting HTTP proxy — intercepts ALL HTTPS traffic.
+ * TLS-intercepting HTTP proxy with an SSL-proxying include-list (Charles'
+ * model, devlog 2026-07-15).
  *
- * Front door: a plain http.Server answers CONNECT. For every host, it pipes
- * the raw tunnel to a local Bun.serve TLS terminator that presents a cert
- * signed by our CA. Anthropic hosts use a pre-generated static leaf cert;
- * other hosts get a dynamically generated cert (cached on disk).
- *
- * Because interception happens at the transport layer, it captures every
- * HTTPS call regardless of host — including external telemetry, MCP server
- * traffic, and anything else Claude Code touches.
+ * Front door: a plain http.Server answers CONNECT. Include-listed hosts
+ * (the traced client's first-party infrastructure + pinned telemetry sinks
+ * + base-url overrides + --intercept-host extras) are piped to a local
+ * Bun.serve TLS terminator presenting a cert signed by our CA — Anthropic
+ * hosts via the pre-generated static leaf, others via dynamically generated
+ * per-host certs (cached on disk). Every other host is an OPAQUE tunnel:
+ * bytes pass through untouched (no forged cert, so cert-pinning tools and
+ * system-store readers like apt keep working) and one meta pair records
+ * host, byte counts, and duration — the "claude touched X" audit trail at
+ * ~100 bytes instead of megabytes of decoded third-party payload.
+ * --capture-external restores MITM-everything.
  */
 export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const caDir = config.caDir;
@@ -239,29 +251,78 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     res.end("This proxy only supports HTTPS (CONNECT).");
   });
 
+  // Opaque pass-through for hosts outside the include-list (and the last
+  // resort when per-host cert generation fails). Bytes are piped untouched;
+  // one meta pair per connection keeps the audit trail: host, bytesUp/Down,
+  // duration. No forged cert, so cert-pinning tools and system-trust-store
+  // readers (apt, java) work through cctrace unharmed.
+  function countingTunnel(host: string, port: number, clientSocket: net.Socket, head: Buffer) {
+    const startTime = Date.now();
+    let bytesUp = head?.length || 0;
+    let bytesDown = 0;
+    let logged = false;
+    const finish = () => {
+      if (logged || !logAll) return;
+      logged = true;
+      pairCount++;
+      onPair({
+        id: `${Date.now()}_${pairCount.toString(36)}`,
+        request: {
+          timestamp: startTime / 1000,
+          method: "CONNECT",
+          url: `https://${host}${port === 443 ? "" : ":" + port}/`,
+          headers: {},
+          body: null,
+        },
+        response: {
+          timestamp: Date.now() / 1000,
+          status: 200,
+          headers: {},
+          body: {
+            cctrace: "opaque TLS tunnel — payload not captured (tunnel-by-default; --capture-external or --intercept-host " + host + " to decrypt)",
+            tunneled: true,
+            bytesUp,
+            bytesDown,
+          },
+        },
+        duration: Date.now() - startTime,
+        loggedAt: new Date().toISOString(),
+      });
+    };
+    const upstream = net.connect(port, host, () => {
+      clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      if (head?.length) upstream.write(head);
+      clientSocket.on("data", (c: Buffer) => { bytesUp += c.length; });
+      upstream.on("data", (c: Buffer) => { bytesDown += c.length; });
+      clientSocket.pipe(upstream);
+      upstream.pipe(clientSocket);
+    });
+    upstream.on("close", finish);
+    clientSocket.on("close", finish);
+    upstream.on("error", () => { clientSocket.destroy(); finish(); });
+    clientSocket.on("error", () => { upstream.destroy(); finish(); });
+  }
+
+  const interceptSet = config.interceptHosts ?? [];
+
   proxy.on("connect", async (req, clientSocket: net.Socket, head: Buffer) => {
     const [reqHost, reqPortStr] = (req.url || "").split(":");
     const host = reqHost || "api.anthropic.com";
-    const intercept = isInterceptHost(host);
+    const port = parseInt(reqPortStr || "443", 10);
+    // Policy gate, decided on the CONNECT line BEFORE any TLS exists: the
+    // path is only visible after decryption, so scope must be host-level.
+    const wantsMitm = config.captureExternal || isInterceptHost(host) || hostInSet(host, interceptSet);
+    if (!wantsMitm) return countingTunnel(host, port, clientSocket, head);
 
     let destPort: number;
-    if (intercept) {
+    if (isInterceptHost(host)) {
       destPort = tlsPort;
     } else {
       try {
         destPort = await getHostPort(host);
       } catch {
-        // Cert generation failed (no openssl?) — blind tunnel as last resort
-        const port = parseInt(reqPortStr || "443", 10);
-        const upstream = net.connect(port, host, () => {
-          clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-          if (head?.length) upstream.write(head);
-          clientSocket.pipe(upstream);
-          upstream.pipe(clientSocket);
-        });
-        upstream.on("error", () => clientSocket.destroy());
-        clientSocket.on("error", () => upstream.destroy());
-        return;
+        // Cert generation failed (no openssl?) — tunnel as last resort.
+        return countingTunnel(host, port, clientSocket, head);
       }
     }
 

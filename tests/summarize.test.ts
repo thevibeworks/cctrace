@@ -330,6 +330,16 @@ describe("summarizePair", () => {
     expect(summarizePair(byteOnly, "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
   });
 
+  test("tunnel meta rows get a byte-count chip", () => {
+    const pair = {
+      request: { url: "https://registry.npmjs.org/", method: "CONNECT" },
+      response: { status: 200, body: { cctrace: "opaque TLS tunnel", tunneled: true, bytesUp: 1400, bytesDown: 54700000 } },
+    };
+    const chips = summarizePair(pair, "external");
+    expect(chips[0].t).toBe("tunnel ↑1.4KB ↓52.2MB");
+    expect(chips[0].title).toContain("payload not captured");
+  });
+
   test("messages: error chip short-circuits token chips", () => {
     const pair = streamingPair({
       response: { timestamp: 0, status: 529, headers: {}, body: { type: "error", error: { type: "overloaded_error" } } },

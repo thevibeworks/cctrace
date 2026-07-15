@@ -6,6 +6,44 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-07-14
+
+### Added
+
+- **Client plugin layer** (#28) — `src/clients/` replaces `clients.ts`: one
+  self-describing module per client (claude/codex/grok) carrying binary
+  discovery + a declarative, JSON-safe wire table (dialect, firstPartyHosts,
+  host→category pins, session/thread header names). Adding a client is one
+  file + a registry entry, zero core edits. `categorizeUrl` gains
+  client-scoped rules: shape-first (unchanged) → client host pins →
+  first-party "other" → External. Third-party analytics the client calls
+  (mixpanel, otlp) pin to telemetry so `purge --drop telemetry` sweeps
+  them. Measured on real traces: grok External 857 → 2 pairs, codex
+  External → 9. Pairs without a client label (pre-0.13 traces) categorize
+  byte-identically — regression-tested.
+- **OpenAI Responses dialect: codex/grok session reconstruction** (#29) —
+  `src/dialects/openai.ts` adapts the wire dialect codex and grok speak
+  into the same session model: `input[]` → turns (message→text,
+  function_call→tool_use, `*_output`→tool_result, reasoning→thinking —
+  grok summaries readable, codex encrypted → placeholder), the final SSE
+  `response.completed` event carries output + usage (cached tokens peeled
+  off input to match the chips' convention; reasoning_tokens → thinking).
+  Threads key on the wire conv header (codex `thread-id`, grok
+  `x-grok-conv-id`); codex prewarm probes and grok `recap-*` convs
+  classify as utility. Requests chips, detail panel, session view, replay,
+  and cross-run continuity all work for codex/grok. `buildSession` stays
+  one entry for both dialects.
+- **Model pricing from the models.dev catalog** (#30) —
+  `src/pricing-catalog.ts` refreshes `https://models.dev/api.json` into
+  `<data-dir>/pricing.json` at most every 24h (fail-soft, 10s timeout),
+  filtered to anthropic/openai/xai. `modelPricing` consults the catalog
+  first (exact id, date-strip, trailing-segment fallback:
+  `gpt-5.6-sol` → `gpt-5.6`), the embedded Claude table stays as the
+  offline fallback. Costs now render for codex/grok models; unknown
+  models stay honestly unpriced.
+- Docs synced to the multi-client layer (#31): CLAUDE.md architecture +
+  plugin/pricing sections, README cost line, agent skill.
+
 ## [0.13.0] - 2026-07-14
 
 ### Fixed

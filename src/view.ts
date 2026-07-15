@@ -4,7 +4,10 @@ import { renderSnapshot, verifySnapshot } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { CCTRACE_VERSION } from "./version";
 import { extractSessionId } from "./summarize";
+import { wireTables } from "./clients";
 import type { TracePair } from "./types";
+
+const WIRE = wireTables();
 
 // `cctrace view <target>` — rebuild a snapshot .html from an existing trace,
 // no proxy and no Claude spawn. Target is one of, tried in order:
@@ -137,7 +140,7 @@ function scanTraceTextPrefix(text: string, prefix: string): TracePair[] {
     if (!line.trim()) continue;
     let pair: TracePair;
     try { pair = JSON.parse(line); } catch { continue; }
-    const sid = extractSessionId(pair);
+    const sid = extractSessionId(pair, WIRE);
     if (sid && sid.startsWith(prefix)) out.push(pair);
   }
   return out;

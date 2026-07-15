@@ -2,7 +2,10 @@ import { readdirSync, readFileSync, existsSync } from "fs";
 import { join, basename, resolve } from "path";
 import { gunzipSync } from "zlib";
 import { extractSessionId } from "./summarize";
+import { wireTables } from "./clients";
 import type { TracePair } from "./types";
+
+const WIRE = wireTables();
 
 /** Read a trace file, transparently decompressing a `.zst`/`.gz` archive. */
 export function readTraceText(path: string): string {
@@ -34,7 +37,7 @@ export function scanTraceText(text: string, wanted: Set<string>): TracePair[] {
     } catch {
       continue; // torn tail line from a killed run
     }
-    if (wanted.has(extractSessionId(pair))) out.push(pair);
+    if (wanted.has(extractSessionId(pair, WIRE))) out.push(pair);
   }
   return out;
 }

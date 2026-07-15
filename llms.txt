@@ -1,26 +1,35 @@
 # cctrace
 
-> TLS-intercepting HTTP tracer for the Claude Code CLI. Spawns `claude`
-> behind a local zero-config MITM proxy and captures every request it makes
-> (/v1/messages, OAuth, usage/credits, MCP registry, telemetry) into a live
-> categorized web UI plus a self-contained offline .html snapshot. Built for
-> two jobs: LLM tracing (see exactly what Claude Code sends and receives each
-> turn) and security/privacy auditing (see what actually leaves the machine).
-> Local-only; credentials are redacted before anything hits disk.
+> TLS-intercepting HTTP tracer for the Claude Code, OpenAI Codex, and Grok
+> CLIs. Spawns the client behind a local zero-config MITM proxy and captures
+> its first-party traffic (/v1/messages, OAuth, usage/credits, MCP registry,
+> telemetry) into a live categorized web UI with a reconstructed Session
+> view, replay, cost and first-token-latency chips. External hosts (npm,
+> github, apt) pass through as opaque byte-counted tunnels — logged, never
+> decrypted. Built for two jobs: LLM tracing (see exactly what the agent
+> sends and receives each turn) and security/privacy auditing (see what
+> actually leaves the machine). Local-only; credentials are redacted before
+> anything hits disk.
 
-Runs on Bun. `cctrace` wraps Claude transparently: `cctrace -- --continue`
-passes everything after `--` to the Claude CLI verbatim. Traces land in
-`.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair per line)
-plus a rendered `.html`. Capture modes: `mitm` (default, sees everything via
-HTTPS_PROXY + NODE_EXTRA_CA_CERTS), `base-url` (messages only, no CA).
+Runs on Bun. `cctrace` wraps the client transparently: `cctrace -- --continue`
+passes everything after `--` to the Claude CLI verbatim; a leading client
+word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`). Traces
+land in `.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair
+per line) — the .jsonl IS the trace; snapshots render on demand. Capture
+modes: `mitm` (default, full first-party picture via HTTPS_PROXY +
+NODE_EXTRA_CA_CERTS; `--capture-external` decrypts everything,
+`--intercept-host` enrolls extra hosts), `base-url` (messages only, no CA).
 
 Key commands:
 
-- `cctrace` — capture everything, open the live UI
-- `cctrace view <file|session-id|fragment>` — rebuild a snapshot .html from a
-  saved trace (reads .jsonl and .jsonl.gz)
-- `cctrace clean|merge|compress` — log-dir housekeeping; dry-run by default,
-  `--yes` applies, never deletes data not fully held elsewhere
+- `cctrace` — trace claude, open the live UI
+- `cctrace view [target|latest]` — reopen a saved trace in the web UI; no
+  target lists traces and prompts (Enter = newest); `--html` writes a
+  self-contained snapshot instead (reads .jsonl, .jsonl.zst, .jsonl.gz)
+- `cctrace clean|merge|compress|purge` — log-dir housekeeping; dry-run by
+  default, `--yes` applies, never deletes data not fully held elsewhere
+  (purge default drop: telemetry,tokens,external)
+- `cctrace ps` — live cctrace instances: URL, client, project, session
 - `cctrace --print-ca` — path to the auto-generated MITM CA
 
 ## Docs
@@ -29,6 +38,7 @@ Key commands:
 - [CHANGELOG](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CHANGELOG.md): released changes
 - [CLAUDE.md](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CLAUDE.md): architecture and design decisions (agent-oriented)
 - [SECURITY](https://raw.githubusercontent.com/thevibeworks/cctrace/main/SECURITY.md): redaction guarantees, reporting
+- [Agent skill](https://raw.githubusercontent.com/thevibeworks/cctrace/main/skills/cctrace/SKILL.md): how coding agents drive cctrace (commands, UI routes, jsonl anatomy)
 
 ## Notes
 

@@ -52,8 +52,12 @@ zero-config) that Claude routes through via `HTTPS_PROXY`, trusting an
 auto-generated CA.
 
 Because it intercepts at the transport layer -- below where URLs are built --
-it sees **everything**, including the OAuth and usage/credit endpoints that a
-base-URL proxy physically cannot reach (Claude hardcodes their host).
+it sees the **whole first-party picture**, including the OAuth and
+usage/credit endpoints that a base-URL proxy physically cannot reach (Claude
+hardcodes their host). Since 0.16 that scope is deliberate: first-party
+hosts are decrypted, everything else your session touches (npm, GitHub, apt)
+passes through as an opaque byte-counted tunnel -- an audit trail without
+the payload copies.
 
 ## What you get
 
@@ -66,7 +70,14 @@ base-URL proxy physically cannot reach (Claude hardcodes their host).
   reopens it in the same UI anytime, and `cctrace view --html` renders a
   self-contained snapshot you can send to a colleague (works offline).
 - **Zero config.** Auto-generates its CA, auto-detects your Claude install, and
-  captures everything by default. No config files to edit, no flags to memorize.
+  captures the full first-party picture by default. No config files to edit,
+  no flags to memorize.
+- **Scoped by design.** Only first-party hosts are decrypted. External hosts
+  your agent's subprocesses contact -- npm, GitHub, apt -- pass through as
+  opaque tunnels logged as host + byte counts, so a `go install` never lands
+  53MB of tarball in your trace and `gh` API responses never hit disk.
+  `--capture-external` decrypts everything when you're debugging;
+  `--intercept-host` enrolls specific hosts (remote MCP servers).
 - **Safe by default.** Credentials are redacted from headers, bodies, *and* URLs
   before anything hits disk (see [Security & privacy](#security--privacy)).
   Your API keys stay your API keys.
@@ -87,7 +98,7 @@ Claude Code went native. A base-URL proxy still works but only sees
 `/v1/messages` -- you're flying blind on OAuth, usage, and credits. A general
 TLS proxy like Charles sees everything but needs manual CA setup and knows
 nothing about Claude's endpoints. cctrace is the middle path: zero-config,
-sees everything, and speaks Claude.
+sees the whole first-party picture, and speaks Claude.
 
 ## Quick start
 
@@ -131,7 +142,7 @@ make install` changes the destination.
 Then just run it:
 
 ```bash
-cctrace                                    # capture everything, open the live UI
+cctrace                                    # trace claude, open the live UI
 cctrace -- --continue                      # resume your last Claude session, traced
 cctrace -- -p "hello"                      # pass args straight through to Claude
 cctrace -- --dangerously-skip-permissions  # full auto, traced
@@ -145,7 +156,8 @@ On start you'll see:
 ```
 
 Open the **Live UI** URL and watch requests stream in. When you're done, hit
-Ctrl-C -- cctrace prints the path to a saved `.cctrace/trace-<timestamp>.html`.
+Ctrl-C -- the `.jsonl` trace stays in `.cctrace/`; reopen it anytime with
+`cctrace view` (Enter picks the newest).
 
 ## Running cctrace (Bun & `bin`)
 
@@ -184,14 +196,19 @@ cctrace auto-selects based on your Claude install; override with `--mode`.
 
 | Mode | Captures | Setup |
 |------|----------|-------|
-| **`mitm`** (default, native binaries) | **Everything** -- messages, OAuth, usage/credits, MCP, telemetry | Auto-generates a CA; Claude trusts it via `NODE_EXTRA_CA_CERTS` |
+| **`mitm`** (default, native binaries) | **The full first-party picture** -- messages, OAuth, usage/credits, MCP registry, telemetry | Auto-generates a CA; Claude trusts it via `NODE_EXTRA_CA_CERTS` |
 | **`base-url`** | `/v1/messages` only | Zero -- just sets `ANTHROPIC_BASE_URL` |
-| **`node`** (auto for npm/JS installs) | Everything via `fetch()` hook | Legacy; only works on non-native (JS) Claude |
+| **`node`** (auto for npm/JS installs) | First-party via `fetch()` hook | Legacy; only works on non-native (JS) Claude |
 
-Non-Anthropic hosts are **fully intercepted** too -- cctrace dynamically
-generates a TLS cert for each host (signed by the same CA), so you see the
-complete request and response for everything Claude contacts. External
-traffic gets its own filter category in the UI.
+Capture scope is an include-list, decided per connection before any TLS
+(Charles' SSL-proxying model): first-party hosts, the client's pinned
+telemetry sinks, any `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` host, and
+`--intercept-host` extras get real interception with per-host certs.
+Everything else -- package registries, `gh` calls, apt -- passes through as
+an **opaque tunnel** logged as one small row: host, bytes up/down, duration.
+No forged certs for those hosts, so cert-pinning tools and system-trust
+readers work through cctrace unchanged. `--capture-external` restores
+decrypt-everything.
 
 ## The web UI
 
@@ -201,8 +218,13 @@ traffic gets its own filter category in the UI.
   matching dot, so cache breaks stand out), count_tokens results, usage
   window percentages (5h / 7d / per-model), telemetry event counts, error
   types.
-- **Category filter chips** with live counts: Messages, Usage/Credits, OAuth,
-  MCP, Bootstrap, Telemetry, Other. Click to filter; combine with text search.
+- **First-token latency** -- every streamed model call shows a `ttft` chip
+  (measured live at the proxy pump; SSE events carry no timestamps, so a
+  saved trace can't reconstruct it) and tok/s computed over the
+  post-first-token stream -- slow-start vs slow-stream is one glance.
+- **Category filter chips** with live counts -- only the categories the
+  trace actually has (a Codex run shows no Count Tokens chip). Click to
+  filter; combine with text search.
 - **Split detail panel** -- click a row and the detail opens beside the list
   (deep-linkable by request id). Messages render conversation-first with the
   streamed reply decoded from SSE; usage requests render limit bars; raw
@@ -249,9 +271,11 @@ by default** (they print an itemized plan and touch nothing); add `--yes` to
 apply.
 
 ```bash
-# Reopen a saved trace in the web UI -- by file, session id, or filename bit
-cctrace view .cctrace/trace-2026-07-08T05-51-43.jsonl
+# Reopen a saved trace in the web UI -- no target needed
+cctrace view                               # lists traces newest-first, Enter = newest
+cctrace view latest                        # newest trace, no questions
 cctrace view 4f9a2c1e                      # a Claude Code session id (or prefix)
+cctrace view trace-2026-07-08              # or a filename fragment / path
 cctrace view <target> --html               # write a self-contained snapshot .html
                                            # instead (shareable; huge traces choke
                                            # browsers -- the default serve doesn't)
@@ -267,7 +291,7 @@ cctrace merge --prune --yes                # also remove fully-merged sources
 # Archive for backup: zstd (view reads .jsonl.zst / legacy .gz directly)
 cctrace compress --older-than 7 --yes      # only traces older than 7 days
 
-# Drop noise categories (telemetry, count_tokens) from saved traces
+# Drop noise categories (telemetry, count_tokens, external) from saved traces
 cctrace purge --yes                        # rows, not disk -- compress is for space
 
 # Which cctrace sessions are live right now, and on which port?
@@ -295,6 +319,8 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `-s, --static` | Static mode (no live server; writes the `.jsonl` + a snapshot `.html`) |
 | `-p, --port PORT` | Live UI port (default: 9317; auto-falls back if busy) |
 | `--messages-only` | Capture only the model API calls (`/v1/messages` and friends) |
+| `--capture-external` | Decrypt every host (default: non-first-party hosts tunnel opaquely with byte counts) |
+| `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers, unusual providers) |
 | `--no-open` | Don't auto-open the browser |
 | `--print-ca` | Print the MITM CA cert path and exit |
 | `--log NAME` | Custom log file base name |
@@ -339,10 +365,13 @@ cctrace codex -- exec "fix the failing tests"   # OpenAI Codex CLI
 cctrace grok -- -p "explain this stack trace"   # Grok CLI
 ```
 
-Non-Claude clients always use mitm capture. Their model calls
-(`.../responses`, `.../chat/completions`) show up as Messages in the
-Requests view; the reconstructed Session view is Anthropic-format-only for
-now (openai/x.ai SSE reconstruction is on the roadmap, #20).
+Non-Claude clients always use mitm capture, and get the full treatment:
+their model calls (`.../responses`, `.../chat/completions`) land in
+Messages, and the Session view reconstructs their conversations too --
+threads keyed on each client's wire headers, tool calls and reasoning
+normalized into the same turn model, per-turn usage and cost, replay
+included. Codex's encrypted reasoning shows as a placeholder; Grok's
+summaries read in full.
 
 **Third-party Anthropic-compatible providers** -- point `ANTHROPIC_BASE_URL`
 at a gateway or a compat endpoint and run `cctrace` as usual. mitm mode needs
@@ -357,8 +386,11 @@ absent -- those endpoints are hardcoded to Anthropic hosts and bypass
 
 Every run writes to `.cctrace/` (or `--dir`):
 
-- `trace-<timestamp>.jsonl` -- one request/response pair per line (machine-readable)
-- `trace-<timestamp>.html` -- self-contained categorized viewer (human-readable)
+- `trace-<timestamp>.jsonl` -- one request/response pair per line
+  (machine-readable). That file IS the trace: `cctrace view` reopens it in
+  the web UI anytime, `cctrace view <target> --html` renders a shareable
+  self-contained snapshot on demand (live runs stopped writing one at exit
+  in 0.13 -- a 2-hour session rendered 400MB of HTML).
 
 ## How it works
 
@@ -368,20 +400,25 @@ flowchart LR
     FD{"cctrace<br/>CONNECT front door"}
     TLS["TLS terminator<br/>(our leaf cert)"]
     BT["TLS terminator<br/>(dynamic cert)"]
+    TUN["opaque tunnel<br/>(byte counts only)"]
     API[("api.anthropic.com")]
-    ORI[("non-Anthropic<br/>origin")]
+    PIN[("pinned / enrolled<br/>host")]
+    EXT[("external host<br/>npm · github · apt")]
     TEE(["tee response"])
     RD["redact<br/>headers · bodies · URLs"]
     UI["live UI<br/>(categorized)"]
-    OUT[[".cctrace/ · jsonl + html"]]
+    OUT[[".cctrace/ · jsonl"]]
 
     CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
     FD -- "Anthropic host" --> TLS
-    FD -- "other host" --> BT
+    FD -- "include-listed host" --> BT
+    FD -- "anything else" --> TUN
     TLS --> API
-    BT --> ORI
-    ORI -- "response stream" --> TEE
+    BT --> PIN
+    TUN --> EXT
+    PIN -- "response stream" --> TEE
     API -- "response stream" --> TEE
+    TUN -- "one meta row" --> RD
     TEE -- "streamed to Claude,<br/>no buffering" --> CC
     TEE -- "captured copy" --> RD
     RD --> UI
@@ -439,10 +476,12 @@ Never paste raw output into a public issue. Seriously.
   streaming replay (true typewriter pacing), replay-polished snapshots.
   P1+P2 (stepper, transport bar, minimap, deep links) shipped. Design:
   [docs/design/session-replay.md](docs/design/session-replay.md).
-- **Codex support** -- trace OpenAI Codex CLI through the same MITM front
-  door. The proxy layer is already agent-agnostic; what's left is OpenAI host
-  filters, endpoint categories, and conversation reconstruction for its wire
-  format.
+- **WebSocket relay** -- the terminator refuses ws upgrades fast (clients
+  fall back to HTTP cleanly); an actual relay that captures frames is the
+  remaining tail of #20.
+- **Tunnel PID attribution** -- on Linux the proxy can map a connection's
+  source port to the owning process, so tunnel rows could say *which*
+  subprocess called npm. Investigated in the 2026-07-15 devlog, deferred.
 - **Conversation dump** -- export the reconstructed conversation as Markdown
   or JSON, ready for sharing or post-mortem analysis.
 - **MCP server** -- query captured traffic programmatically from any agent

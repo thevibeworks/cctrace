@@ -219,7 +219,8 @@ traffic gets its own filter category in the UI.
   exact moment. Works on every trace ever captured -- live, snapshot, or
   `cctrace view` rebuild -- because the wire is already a timeline.
 - **Estimated cost** -- every messages request shows an estimated USD cost
-  (embedded sticker pricing, cache read/write TTLs priced separately), with
+  (live models.dev pricing with an embedded offline fallback, cache
+  read/write TTLs priced separately), with
   per-turn and per-thread totals in the Session view. Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
   gets lost: ports allocate predictably (9317, 9318, ...), `cctrace ps`

@@ -137,6 +137,15 @@ describe("page meta", () => {
     expect(html).toContain("function fmtCost");
   });
 
+  // The models.dev catalog rides in as META.pricing and becomes the ambient
+  // __PRICING__ that modelPricing consults; absent -> embedded table only.
+  test("META.pricing wires the ambient catalog; absent stays fail-soft", () => {
+    const priced = renderSnapshot([], { pricing: { "grok-4.5": { input: 2, output: 6 } } });
+    expect(priced).toContain("window.__PRICING__ = META.pricing");
+    expect(JSON.parse(priced.match(/const META = (.*?);\n/)![1]).pricing["grok-4.5"].output).toBe(6);
+    expect(JSON.parse(renderSnapshot([]).match(/const META = (.*?);\n/)![1]).pricing).toBeUndefined();
+  });
+
   // Cache hit/miss chips + dots depend on these being inlined.
   test("the page inlines the cache-verdict helpers", () => {
     const html = renderSnapshot([]);

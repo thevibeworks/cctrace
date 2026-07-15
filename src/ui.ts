@@ -76,6 +76,8 @@ export interface PageMeta {
   version?: string;
   /** Newer version known from the update check, if any. */
   latestVersion?: string;
+  /** models.dev pricing catalog (src/pricing-catalog.ts) for cost chips. */
+  pricing?: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }>;
 }
 
 export function getLiveHtml(meta: PageMeta = {}): string {
@@ -818,6 +820,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Run identity injected by the server / snapshot writer ({} when unknown,
     // e.g. a snapshot rebuilt by \`cctrace view\`).
     const META = ${jsonForScript(meta)};
+    // modelPricing consults the ambient models.dev catalog (fail-soft: the
+    // embedded Claude table still prices Claude traffic without it).
+    if (META.pricing) window.__PRICING__ = META.pricing;
 
     // Category metadata + categorizer are injected from src/categorize.ts, the
     // single source of truth shared with the unit tests (no drift). The

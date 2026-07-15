@@ -1,6 +1,6 @@
 import { readdirSync, existsSync, statSync, writeFileSync } from "fs";
 import { join, basename, resolve } from "path";
-import { renderSnapshot, verifySnapshot } from "./ui";
+import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { CCTRACE_VERSION } from "./version";
 import { extractSessionId } from "./summarize";
@@ -158,9 +158,9 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
  * self-check (embedded payload no longer round-trips) is reported as a
  * warning, not a throw — a partially usable snapshot beats none.
  */
-export function writeView(target: string, logDir: string): ViewResult {
+export function writeView(target: string, logDir: string, meta: PageMeta = {}): ViewResult {
   const result = resolveView(target, logDir);
-  const html = renderSnapshot(result.pairs, { version: CCTRACE_VERSION });
+  const html = renderSnapshot(result.pairs, { ...meta, version: CCTRACE_VERSION });
   const problem = verifySnapshot(html, result.pairs.length);
   if (problem) result.warnings.push(`snapshot self-check failed: ${problem}`);
   writeFileSync(result.htmlPath, html);

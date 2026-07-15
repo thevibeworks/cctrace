@@ -6,11 +6,11 @@ import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
-import { ensureCerts, migrateCaDir } from "./certs";
+import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
-import { writeView, resolveView, ViewError } from "./view";
+import { writeView, resolveView, listTraceInfos, ViewError } from "./view";
 import { registerInstance, listLiveInstances, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
@@ -106,17 +106,21 @@ function upgradeHint(): { cmd: string[] | null; note: string } {
 
 /** One-line y/N on stdin with a timeout; timeout and anything but y/yes = no. */
 function promptYesNo(question: string, timeoutMs: number): Promise<boolean> {
+  return promptLine(question, timeoutMs).then((a) => /^y(es)?$/i.test(a));
+}
+
+function promptLine(question: string, timeoutMs: number): Promise<string> {
   process.stdout.write(question);
   return new Promise((resolve) => {
-    const finish = (answer: boolean, newline = false) => {
+    const finish = (answer: string, newline = false) => {
       clearTimeout(timer);
       process.stdin.off("data", onData);
       process.stdin.pause();
       if (newline) process.stdout.write("\n");
       resolve(answer);
     };
-    const timer = setTimeout(() => finish(false, true), timeoutMs);
-    const onData = (buf: Buffer) => finish(/^y(es)?$/i.test(buf.toString().trim()));
+    const timer = setTimeout(() => finish("", true), timeoutMs);
+    const onData = (buf: Buffer) => finish(buf.toString().trim());
     process.stdin.resume();
     process.stdin.on("data", onData);
   });
@@ -166,6 +170,15 @@ function isContinuation(args: string[]): boolean {
   return args.some((a) => a === "--continue" || a === "-c" || a === "--resume" || a === "-r");
 }
 
+/** "2h ago" / "3d ago" — trace-picker age column. */
+function ago(mtimeMs: number): string {
+  const s = Math.max(0, (Date.now() - mtimeMs) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
 // Best-effort browser open, per platform. The URL is always printed too, so a
 // missing opener (headless box, no xdg-open) degrades to "open it yourself".
 function openBrowser(url: string) {
@@ -188,8 +201,8 @@ function openBrowser(url: string) {
 // offline); --serve is the pre-0.13 spelling of the default, kept as a
 // no-op. No proxy, no Claude spawn either way. Returns true when a server
 // was started and the process must stay alive.
-function runView(args: string[]): boolean {
-  const usage = "usage: cctrace view <file.jsonl[.zst|.gz] | session-id> [--html] [--port N] [--dir DIR] [--no-open]";
+async function runView(args: string[]): Promise<boolean> {
+  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--html] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -208,12 +221,36 @@ function runView(args: string[]): boolean {
     console.error(`[cctrace] view: ${(err as Error).message}\n  ${usage}`);
     process.exit(1);
   }
-  const target = parsed.positionals[0];
-  if (!target) {
-    console.error(`[cctrace] view: need a target\n  ${usage}`);
-    process.exit(1);
-  }
   const logDir = (parsed.values.dir as string) || ".cctrace";
+  let target = parsed.positionals[0];
+  // No target: show what's viewable instead of demanding a filename the
+  // user has no way to know. On a TTY, let them pick; Enter opens the
+  // newest — the answer they almost always want.
+  if (!target) {
+    const infos = listTraceInfos(logDir);
+    if (!infos.length) {
+      console.error(`[cctrace] view: no .jsonl traces in ${logDir}\n  ${usage}`);
+      process.exit(1);
+    }
+    const shown = infos.slice(0, 15);
+    log(`traces in ${logDir} (newest first):`, C.cyan);
+    shown.forEach((t, i) => {
+      console.log(
+        `  ${String(i + 1).padStart(2)}  ${t.base.padEnd(44)} ${human(t.size).padStart(9)}   ${ago(t.mtimeMs)}`,
+      );
+    });
+    if (infos.length > shown.length) console.log(`      ... ${infos.length - shown.length} more`);
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      log(`pick one: cctrace view <filename fragment | session-id | latest>`, C.dim);
+      return false;
+    }
+    const answer = await promptLine(`${C.cyan}[cctrace]${C.reset} view which? [1] `, 60_000);
+    if (/^q(uit)?$/i.test(answer)) return false;
+    const n = /^\d+$/.test(answer) ? parseInt(answer, 10) : answer === "" ? 1 : 0;
+    if (n > 0 && n <= shown.length) target = shown[n - 1]!.path;
+    else if (n > 0) { console.error(`[cctrace] view: no trace #${n}`); process.exit(1); }
+    else target = answer; // free-form: fragment / session id / path
+  }
   try {
     refreshPricingCache(DATA_DIR).catch(() => {});
     if (!parsed.values.html) {
@@ -489,7 +526,10 @@ function runPurge(args: string[]) {
     const keep = parseCats("--keep", v.keep as string);
     drop = new Set([...ids].filter((c) => !keep.has(c)));
   } else {
-    drop = v.drop ? parseCats("--drop", v.drop as string) : new Set(["telemetry", "tokens"]);
+    // Default drop: the non-valuable bulk. external joined in 0.16 — old
+    // traces carry decoded third-party payloads (npm tarballs, gh API
+    // bodies); new tunnel-by-default traces only lose ~100-byte meta rows.
+    drop = v.drop ? parseCats("--drop", v.drop as string) : new Set(["telemetry", "tokens", "external"]);
   }
   if (drop.has("messages")) {
     log(`dropping "messages" deletes the conversations themselves — that's the 87% of bytes the other tools preserve`, C.yellow);
@@ -566,11 +606,12 @@ ${C.yellow}USAGE:${C.reset}
   reopen it anytime with ${C.cyan}cctrace view${C.reset}.
 
 ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no client spawn)${C.reset}
-  ${C.cyan}view${C.reset} <target> [--html] [--port N]
+  ${C.cyan}view${C.reset} [target] [--html] [--port N]
                           Reopen a saved trace in the web UI (serves it from
-                          a local server; Ctrl-C stops). Target is a
-                          .jsonl[.zst|.gz] path, a session id, or a trace
-                          filename fragment. ${C.cyan}--html${C.reset} writes a self-contained
+                          a local server; Ctrl-C stops). No target lists the
+                          traces and lets you pick (Enter = newest). Target is
+                          ${C.cyan}latest${C.reset}, a .jsonl[.zst|.gz] path, a session id, or a
+                          trace filename fragment. ${C.cyan}--html${C.reset} writes a self-contained
                           snapshot .html instead (shareable, but huge traces
                           choke browsers).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
@@ -581,7 +622,7 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           (view reads .zst/.gz directly; upgrades old .gz).
   ${C.cyan}purge${C.reset} [--drop CATS | --keep CATS]
                           Drop categories from saved traces (default drop:
-                          telemetry,tokens — trims rows/noise, not disk).
+                          telemetry,tokens,external — trims rows/noise, not disk).
   ${C.cyan}ps${C.reset} [--json]               List live cctrace instances (URL, client, project,
                           session).
   ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge are${C.reset}
@@ -591,7 +632,11 @@ ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
   -s, --static       Static mode: no live server, write .jsonl + snapshot .html
   -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy)
-  --messages-only    Only capture model API calls (default: capture everything)
+  --messages-only    Only capture model API calls
+  --capture-external MITM every host (default: non-first-party hosts pass
+                     through as opaque byte-counted tunnels)
+  --intercept-host H Also MITM host H (repeatable — remote MCP servers,
+                     unusual providers)
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
@@ -626,6 +671,8 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace --mode base-url -- --model opus --continue
   cctrace codex -- exec "fix tests" ${C.dim}# trace the OpenAI Codex CLI${C.reset}
   cctrace grok                      ${C.dim}# trace the Grok CLI${C.reset}
+  cctrace view                      ${C.dim}# list traces, pick one (Enter = newest)${C.reset}
+  cctrace view latest               ${C.dim}# reopen the newest trace directly${C.reset}
   cctrace view trace-2026-07-08     ${C.dim}# reopen a saved trace (filename fragment)${C.reset}
   cctrace view 4f9a2c1e             ${C.dim}# reopen by Claude Code session id${C.reset}
   cctrace view 4f9a2c1e --html      ${C.dim}# write a shareable snapshot .html instead${C.reset}
@@ -863,11 +910,20 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   }
   if (mode === "mitm") migrateLegacyCa();
 
+  // Tunnel-by-default: only the include-list gets decrypted. The traced
+  // client's wire table + base-url env overrides + --intercept-host extras;
+  // everything else passes through as a byte-counted opaque tunnel.
+  const interceptHosts = buildInterceptSet(CLIENT.wire, {
+    env: process.env,
+    extraHosts: (values["intercept-host"] as string[] | undefined) || [],
+  });
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,
     logAll: opts.logAll,
     cacheDir: MITM_CA_DIR,
     targetHost,
+    interceptHosts,
+    captureExternal: !!values["capture-external"],
     onStatus: (msg) => log(msg, C.dim),
   });
 
@@ -988,7 +1044,7 @@ async function main() {
   if (SUBCOMMAND) {
     const rest = RAW_ARGV.slice(1);
     if (SUBCOMMAND === "view") {
-      if (runView(rest)) return; // --serve: the web server keeps us alive
+      if (await runView(rest)) return; // serving: the web server keeps us alive
     }
     else if (SUBCOMMAND === "clean") runClean(rest);
     else if (SUBCOMMAND === "merge") runMerge(rest);

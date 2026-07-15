@@ -111,6 +111,32 @@ describe("captureTee", () => {
     expect((await captured).firstTokenAt).toBeGreaterThan(0);
   });
 
+  // Response bodies get the same binary-safe handling as requests: a
+  // tarball must summarize, not decode into megabytes of mojibake — that
+  // asymmetry was the trace-bloat amplifier (devlog 2026-07-15).
+  test("binary response body summarizes instead of mojibake", async () => {
+    const junk = new Uint8Array([0x1f, 0x8b, 0x08, 0x00, 0xff, 0xfe, 0x80, 0x81]); // gzip magic + junk
+    const { stream, captured } = captureTee(new ReadableStream({
+      start(c) { c.enqueue(junk); c.close(); },
+    }));
+    await readAll(stream).catch(() => {});
+    const cap = await captured;
+    expect(cap.text).toBe("<binary body: 8 bytes>");
+    expect(cap.text).not.toContain("�");
+  });
+
+  test("a torn multi-byte char at an abort point does not condemn the body", async () => {
+    const full = enc.encode('data: {"type":"message_start"} é');
+    const torn = full.slice(0, full.length - 1); // cut inside the 2-byte é
+    const { stream, captured } = captureTee(new ReadableStream({
+      start(c) { c.enqueue(torn); c.close(); },
+    }));
+    await readAll(stream).catch(() => {});
+    const cap = await captured;
+    expect(cap.text).toContain("message_start"); // body kept, tail char dropped
+    expect(cap.text).not.toContain("<binary body");
+  });
+
   test("client cancels early: timing still captured on the drain path", async () => {
     const { stream, captured } = captureTee(sourceOf([
       "event: ping\n\n",

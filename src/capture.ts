@@ -11,6 +11,10 @@ export interface CaptureOptions {
   cacheDir: string;
   /** Upstream host for base-url mode; MITM reads it from each request. */
   targetHost?: string;
+  /** MITM include-list for mitm mode (buildInterceptSet in certs.ts). */
+  interceptHosts?: string[];
+  /** MITM every host instead of tunneling non-listed ones. */
+  captureExternal?: boolean;
   /** Progress messages (cert generation, proxy start) for the CLI to print. */
   onStatus?: (msg: string) => void;
 }
@@ -39,6 +43,8 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
       caDir: certs.caDir,
       onPair: opts.onPair,
       logAll: opts.logAll,
+      interceptHosts: opts.interceptHosts,
+      captureExternal: opts.captureExternal,
     });
     const proxyUrl = `http://127.0.0.1:${server.port}`;
     opts.onStatus?.(`MITM proxy listening on ${proxyUrl}`);

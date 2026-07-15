@@ -15,6 +15,8 @@ export const CLI_OPTIONS = {
   static: { type: "boolean", short: "s" },
   mode: { type: "string" }, // auto | mitm | base-url | node
   "messages-only": { type: "boolean" },
+  "capture-external": { type: "boolean" },
+  "intercept-host": { type: "string", multiple: true },
   "no-open": { type: "boolean" },
   "print-ca": { type: "boolean" },
   log: { type: "string" },

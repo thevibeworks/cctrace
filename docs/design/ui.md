@@ -19,8 +19,9 @@ to protect that feeling.
 4. **Keyboard is a first-class citizen.** j/k, Esc, / — every affordance is
    discoverable (title attrs, empty-state hints) but never required.
 5. **Motion budget: ~zero.** One heartbeat pulse on the live dot, one smooth
-   scroll on "jump to latest". Everything else is instant. Respect
-   `prefers-reduced-motion`.
+   scroll on "jump to latest", one 160ms opacity fade on a live-arrived row
+   (feedback that a row just landed — never on bulk renders or filter
+   re-renders). Everything else is instant. Respect `prefers-reduced-motion`.
 6. **Both themes are real.** Dark is the native habitat; light must not be an
    afterthought. Every new color goes through the variable block, never
    inline.

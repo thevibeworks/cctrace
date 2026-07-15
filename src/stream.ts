@@ -98,7 +98,18 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
     const merged = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
     let offset = 0;
     for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-    settle({ text: new TextDecoder().decode(merged), complete, firstByteAt, firstTokenAt });
+    // Binary-safe, mirroring decodeBodyForTrace: a tarball or image must
+    // summarize, not decode into megabytes of mojibake (that asymmetry was
+    // the trace-bloat amplifier). {stream:true} keeps a torn multi-byte
+    // char at the cut point of an aborted SSE capture from condemning the
+    // whole body — invalid bytes anywhere else still do.
+    let text: string;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(merged, { stream: true });
+    } catch {
+      text = `<binary body: ${merged.length} bytes>`;
+    }
+    settle({ text, complete, firstByteAt, firstTokenAt });
   };
 
   // The client is gone — finish reading upstream for the capture alone.

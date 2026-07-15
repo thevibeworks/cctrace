@@ -12,14 +12,46 @@
 // figure shown in the UI is an estimate, not a bill.
 
 /**
- * Per-MTok pricing for a Claude model id, or null when unrecognized.
+ * Per-MTok pricing for a model id, or null when unrecognized. Consults the
+ * models.dev catalog first (src/pricing-catalog.ts — passed as `catalog`, or
+ * ambient as globalThis.__PRICING__, which the web page sets from
+ * META.pricing), then falls back to the embedded Claude table so snapshots
+ * and offline runs still price Claude traffic. Catalog lookup normalizes:
+ * exact id, then without the date suffix, then progressively without
+ * trailing "-segment"s (gpt-5.6-sol -> gpt-5.6). Catalog cache rates default
+ * to Anthropic's universal multipliers when the entry has no explicit ones;
+ * an entry's cache_write is the 5m rate (1h = input x2, ccusage convention);
+ * a missing cache rate means the provider doesn't bill that operation (0).
  * Handles date suffixes (-20251001), bedrock prefixes (anthropic.), vertex
  * @-versions, and Claude Code's [1m] context marker. Unknown versions of a
  * known family fall back to the family's current price.
  */
-export function modelPricing(model: unknown): any {
+export function modelPricing(model: unknown, catalog?: any): any {
   let m = String(model || "").toLowerCase();
   if (!m) return null;
+  const cat = catalog || (typeof globalThis !== "undefined" && (globalThis as any).__PRICING__) || null;
+  if (cat) {
+    const id = m.replace(/\[.*\]$/, "");
+    const tries = [id, id.replace(/[-@]\d{8}$/, "")];
+    for (let i = 0; i < 2; i++) {
+      const base = tries[tries.length - 1].replace(/-[a-z0-9.]+$/, "");
+      if (!base || base === tries[tries.length - 1]) break;
+      tries.push(base);
+    }
+    for (const t of tries) {
+      const e = cat[t];
+      if (e && typeof e.input === "number" && typeof e.output === "number") {
+        const w = typeof e.cacheWrite === "number" ? e.cacheWrite : 0;
+        return {
+          input: e.input,
+          output: e.output,
+          cacheRead: typeof e.cacheRead === "number" ? e.cacheRead : 0,
+          cacheWrite5m: w,
+          cacheWrite1h: w > 0 ? e.input * 2 : 0,
+        };
+      }
+    }
+  }
   m = m
     .replace(/^anthropic\./, "")
     .replace(/\[.*\]$/, "")

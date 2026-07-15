@@ -17,6 +17,7 @@ import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
 } from "./version";
 import type { PageMeta } from "./ui";
+import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
   planPurge, applyPurge, human,
@@ -214,6 +215,7 @@ function runView(args: string[]): boolean {
   }
   const logDir = (parsed.values.dir as string) || ".cctrace";
   try {
+    refreshPricingCache(DATA_DIR).catch(() => {});
     if (!parsed.values.html) {
       serveView(target, logDir, {
         port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
@@ -221,7 +223,7 @@ function runView(args: string[]): boolean {
       });
       return true;
     }
-    const result = writeView(target, logDir);
+    const result = writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) });
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
     for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
@@ -691,6 +693,8 @@ function pageMeta(client?: string): PageMeta {
     const latest = availableUpdate(readUpdateCache(DATA_DIR));
     if (latest) meta.latestVersion = latest;
   }
+  const pricing = pricingCatalog(DATA_DIR);
+  if (pricing) meta.pricing = pricing;
   return meta;
 }
 
@@ -1034,6 +1038,7 @@ async function main() {
   await maybeOfferUpdate();
   // Refresh the update cache in the background — never blocks the session.
   if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});
+  refreshPricingCache(DATA_DIR).catch(() => {});
 
   const clientPath = findClient();
   log(`${CLIENT.name === "claude" ? "Claude" : CLIENT.name}: ${clientPath}`, C.blue);

@@ -160,6 +160,11 @@ describe("proxy: SSE streaming", () => {
     expect(resp.firstByteMs).toBeGreaterThanOrEqual(0);
     expect(resp.firstTokenMs).toBeGreaterThan(resp.firstByteMs!);
     expect(resp.firstTokenMs).toBeLessThanOrEqual(pairs[0]!.duration);
+    // Wire sizes: request body as sent, response body as received.
+    expect(pairs[0]!.request.bodyBytes).toBe(
+      JSON.stringify({ model: "claude-opus-4-8", messages: [{ role: "user", content: "hi" }], stream: true }).length,
+    );
+    expect(resp.bodyBytes).toBe(new TextEncoder().encode(fullText).length);
   });
 
   test("client receives first chunk before stream ends", async () => {

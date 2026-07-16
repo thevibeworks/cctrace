@@ -39,6 +39,9 @@ to protect that feeling.
 - `::selection` and `:focus-visible` use the accent.
 - Raw payloads live behind `<details>` folds; folds the user toggles must
   survive live re-renders (positional restore — mutations are tail-only).
+- Per-fold actions (copy, raw/pretty mode) are small quiet buttons inside
+  the fold summary (`.fold-btn`), never a second toolbar; they stop the
+  click from toggling the fold.
 - The header carries run identity (client · project · session id) — the page
   must always answer "what am I looking at" without scrolling.
 - Every tool_use folds to one line. The reader's attention belongs to system

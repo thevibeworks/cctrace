@@ -56,6 +56,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
         fwdBody = new Uint8Array(await req.arrayBuffer());
         reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
       }
+      const reqBytes = fwdBody && fwdBody.length ? { bodyBytes: fwdBody.length } : {};
 
       const fetchHeaders = { ...reqHeaders };
       delete fetchHeaders["content-length"];
@@ -79,6 +80,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
               url: targetUrl,
               headers: reqHeaders,
               body: reqBody,
+              ...reqBytes,
             },
             response: null,
             duration: Date.now() - startTime,
@@ -104,6 +106,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
               url: targetUrl,
               headers: reqHeaders,
               body: reqBody,
+              ...reqBytes,
             },
             response: {
               timestamp: Date.now() / 1000,
@@ -135,7 +138,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       const resHeaders = Object.fromEntries(fwdHeaders.entries());
       const ct = upstreamRes.headers.get("content-type") || "";
 
-      const capture = captured.then(({ text, complete, firstByteAt, firstTokenAt }) => {
+      const capture = captured.then(({ text, complete, bytes, firstByteAt, firstTokenAt }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
 
@@ -157,6 +160,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
             url: targetUrl,
             headers: reqHeaders,
             body: reqBody,
+            ...reqBytes,
           },
           response: {
             timestamp: Date.now() / 1000,
@@ -164,6 +168,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(bytes > 0 ? { bodyBytes: bytes } : {}),
             ...(firstByteAt !== undefined ? { firstByteMs: firstByteAt - startTime } : {}),
             ...(firstTokenAt !== undefined ? { firstTokenMs: firstTokenAt - startTime } : {}),
             ...(complete ? {} : { truncated: true }),

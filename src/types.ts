@@ -4,6 +4,8 @@ export interface RequestData {
   url: string;
   headers: Record<string, string>;
   body: unknown;
+  /** Request body bytes on the wire, pre-decode (codex zstd: compressed size). */
+  bodyBytes?: number;
 }
 
 export interface ResponseData {
@@ -12,6 +14,8 @@ export interface ResponseData {
   headers: Record<string, string>;
   body?: unknown;
   bodyRaw?: string;
+  /** Response body bytes as received (identity encoding, so decoded size). */
+  bodyBytes?: number;
   /** ms from request arrival to the first response body byte. */
   firstByteMs?: number;
   /** ms from request arrival to the first streamed token event (model calls). */

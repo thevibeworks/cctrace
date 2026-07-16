@@ -21,6 +21,8 @@ import { gunzipSync, inflateSync, brotliDecompressSync } from "zlib";
 export interface CapturedBody {
   text: string;
   complete: boolean;
+  /** Total body bytes received from upstream. */
+  bytes: number;
   /** Epoch ms when the first body chunk arrived. Absent for empty bodies. */
   firstByteAt?: number;
   /** Epoch ms when the first streamed token event arrived (model calls). */
@@ -109,7 +111,7 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
     } catch {
       text = `<binary body: ${merged.length} bytes>`;
     }
-    settle({ text, complete, firstByteAt, firstTokenAt });
+    settle({ text, complete, bytes: merged.length, firstByteAt, firstTokenAt });
   };
 
   // The client is gone — finish reading upstream for the capture alone.

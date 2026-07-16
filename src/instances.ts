@@ -36,6 +36,15 @@ export interface InstanceInfo {
   sessionId?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
+  /**
+   * Pid of the spawned client child. Informational only — pids are
+   * namespace-local (another container's pid isn't addressable here), so
+   * they identify/kill runs in YOUR namespace but must never feed liveness.
+   */
+  agentPid?: number;
+  /** Set = this entry is a tombstone: a finished run, kept as the catalog
+   * of past traces (project, client, trace file, session id, time range). */
+  endedAt?: string; // ISO
 }
 
 export interface InstanceHandle {
@@ -44,6 +53,10 @@ export interface InstanceHandle {
   /** The entry as currently written — served at /api/self. */
   snapshot(): InstanceInfo;
   unregister(): void;
+  /** Stop the heartbeat and leave a tombstone instead of deleting: the
+   * finished run stays findable (cctrace view picker, future trace library).
+   * Traces stay in-project; the registry only remembers where they are. */
+  tombstone(): void;
 }
 
 // The UI port walk: first choice, then neighbors, then an OS-assigned port
@@ -64,6 +77,8 @@ export const STALE_MS = HEARTBEAT_MS * 3;
  * can't be this stale: its heartbeat rewrites the file every HEARTBEAT_MS.
  */
 export const ABANDONED_MS = 24 * 60 * 60 * 1000;
+/** Tombstones older than this are pruned (at register time). */
+export const TOMBSTONE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function instancesDir(dataDir: string): string {
   return join(dataDir, "instances");
@@ -88,6 +103,7 @@ export function registerInstance(
     }
   };
   write();
+  pruneTombstones(dataDir);
   const beat = setInterval(write, heartbeatMs);
   beat.unref?.();
   return {
@@ -104,7 +120,36 @@ export function registerInstance(
         // already gone
       }
     },
+    tombstone() {
+      clearInterval(beat);
+      current = { ...current, endedAt: new Date().toISOString() };
+      write();
+    },
   };
+}
+
+/** Drop tombstones past their TTL. Best-effort, called at register time. */
+function pruneTombstones(dataDir: string, now: number = Date.now()) {
+  for (const e of readEntries(dataDir)) {
+    if (!e.info.endedAt) continue;
+    const ended = Date.parse(e.info.endedAt);
+    if (isFinite(ended) && now - ended > TOMBSTONE_TTL_MS) {
+      try { unlinkSync(e.file); } catch { /* raced — fine */ }
+    }
+  }
+}
+
+/**
+ * Finished runs (tombstones), grouped project-first, newest first within.
+ * The catalog behind the cross-project view picker: each entry names its
+ * trace file by absolute path — re-stat before opening, a path from another
+ * container/host may not resolve here (list as unopenable, never error).
+ */
+export function listPastRuns(dataDir: string): InstanceInfo[] {
+  return readEntries(dataDir)
+    .map((e) => e.info)
+    .filter((i) => i.endedAt)
+    .sort(byProjectThenTime);
 }
 
 interface RawEntry {
@@ -140,6 +185,16 @@ function byStart(a: InstanceInfo, b: InstanceInfo): number {
   // Entries of unknown age (port-sweep finds of old instances) sort last.
   if (!a.startedAt !== !b.startedAt) return a.startedAt ? -1 : 1;
   return String(a.startedAt).localeCompare(String(b.startedAt)) || a.port - b.port;
+}
+
+// User-facing listings group by project, newest first within — registry
+// scan order is arbitrary and stops reading once several containers run
+// concurrently. Unknown-age sweep finds sort last within their project.
+function byProjectThenTime(a: InstanceInfo, b: InstanceInfo): number {
+  const proj = String(a.projectPath || a.project).localeCompare(String(b.projectPath || b.project));
+  if (proj) return proj;
+  if (!a.startedAt !== !b.startedAt) return a.startedAt ? -1 : 1;
+  return String(b.startedAt).localeCompare(String(a.startedAt)) || a.port - b.port;
 }
 
 /**
@@ -249,6 +304,9 @@ export async function listLiveInstances(dataDir: string, opts: ListOptions = {})
   const out: InstanceInfo[] = [];
   await Promise.all(
     readEntries(dataDir).map(async ({ info, file, mtimeMs }) => {
+      // Tombstones are the past-run catalog (listPastRuns), never live and
+      // never subject to live GC — they'd always look abandoned here.
+      if (info.endedAt) return;
       if (now - mtimeMs < STALE_MS) {
         out.push(info);
         return;
@@ -279,5 +337,5 @@ export async function listLiveInstances(dataDir: string, opts: ListOptions = {})
       }
     }),
   );
-  return out.sort(byStart);
+  return out.sort(byProjectThenTime);
 }

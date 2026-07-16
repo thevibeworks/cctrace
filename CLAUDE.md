@@ -320,7 +320,7 @@ cctrace compact [--zstd] [--yes]          # fold redundant bodies: superseded me
                                           # full; session view renders identically), noise
                                           # cats -> meta-only except first/last/largest/
                                           # slowest/errors; never deletes pairs
-cctrace ps [--json]                       # live instances (URL, client, project, session)
+cctrace ps [--json]                       # live instances (URL, pids, client, project, session)
 cctrace --version                         # print version (+ newer version if known)
 ```
 
@@ -333,7 +333,18 @@ and the instance registry.
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
 <run-id>.json` (unique run id, port, project, session id once seen on the
-wire), rewrites it every 30s (heartbeat), and unregisters on exit. Liveness
+wire, plus its own pid and the traced client child's `agentPid` —
+informational only: pids are namespace-local and never feed liveness).
+Capture runs don't delete their entry on exit — they TOMBSTONE it
+(`endedAt` stamped, heartbeat stopped): the tombstones are the cross-project
+run catalog (client, project path, absolute trace file, session id) behind
+`cctrace view`'s "recent runs elsewhere" picker section, pruned after 30
+days, re-stat'd before offering (a path from another container may not
+resolve here — such runs just don't list, never error). `cctrace view`
+servers still unregister (a view is not a run). User-facing listings (`ps`,
+the switcher, `/api/instances`) sort project-first, newest first within —
+registry scan order is arbitrary. Live entries rewrite every 30s
+(heartbeat). Liveness
 is NEVER judged by pid — the registry dir is often shared across pid
 namespaces (containers sharing a $HOME volume + forwarded localhost ports),
 where pid checks fail both ways; pre-0.10 readers even deleted other

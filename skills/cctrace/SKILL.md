@@ -124,7 +124,7 @@ cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,t
 cctrace compact [--zstd] [--yes]          # fold redundant bodies (-95%+): superseded request
                                           # bodies stub, noise collapses to meta; the session
                                           # view renders identically, no pair is deleted
-cctrace ps [--json]                       # live instances: URL, client, project, session
+cctrace ps [--json]                       # live instances: URL, pids, client, project, session
 ```
 
 Note for agents: plain `cctrace view` (and `view <target>`) starts a server

@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, unlinkSyn
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  registerInstance, listInstances, listLiveInstances, probeInstance, instancesDir,
-  STALE_MS, ABANDONED_MS, type InstanceInfo, type ProbeVerdict, type SelfProbe,
+  registerInstance, listInstances, listLiveInstances, listPastRuns, probeInstance, instancesDir,
+  STALE_MS, ABANDONED_MS, TOMBSTONE_TTL_MS, type InstanceInfo, type ProbeVerdict, type SelfProbe,
 } from "../src/instances";
 
 let dir: string;
@@ -90,6 +90,55 @@ describe("register / list / update / unregister", () => {
     await new Promise((r) => setTimeout(r, 80));
     expect(existsSync(file)).toBe(true);
     h.unregister();
+  });
+});
+
+describe("tombstones", () => {
+  test("tombstone() leaves a catalog entry instead of deleting", () => {
+    const i = info({ agentPid: 4242 });
+    const h = registerInstance(dir, i);
+    h.update({ sessionId: "sess-1" });
+    h.tombstone();
+    const past = listPastRuns(dir);
+    expect(past.length).toBe(1);
+    expect(past[0]).toMatchObject({ id: i.id, sessionId: "sess-1", agentPid: 4242 });
+    expect(typeof past[0]!.endedAt).toBe("string");
+  });
+
+  test("tombstones are never listed live and never GC'd by the live lister", async () => {
+    const i = info();
+    registerInstance(dir, i).tombstone();
+    backdate(i, ABANDONED_MS + 60_000); // ancient — live GC would junk it
+    const live = await listLiveInstances(dir, { probe: always("dead") });
+    expect(live).toEqual([]);
+    expect(listPastRuns(dir).length).toBe(1); // survived
+  });
+
+  test("tombstones past their TTL are pruned at register time", () => {
+    const old = info({ id: "ancient" });
+    registerInstance(dir, old).tombstone();
+    // Rewrite with an endedAt beyond the TTL (tombstone() stamps now).
+    const file = join(instancesDir(dir), "ancient.json");
+    const entry = JSON.parse(readFileSync(file, "utf8"));
+    entry.endedAt = new Date(Date.now() - TOMBSTONE_TTL_MS - 60_000).toISOString();
+    writeFileSync(file, JSON.stringify(entry));
+    registerInstance(dir, info()).unregister();
+    expect(existsSync(file)).toBe(false);
+  });
+
+  test("listPastRuns groups project-first, newest first within", () => {
+    const mk = (id: string, projectPath: string, endedAt: string) => {
+      const h = registerInstance(dir, info({ id, projectPath, startedAt: endedAt }));
+      h.tombstone();
+      const file = join(instancesDir(dir), `${id}.json`);
+      const e = JSON.parse(readFileSync(file, "utf8"));
+      e.endedAt = endedAt;
+      writeFileSync(file, JSON.stringify(e));
+    };
+    mk("b-old", "/w/beta", "2026-07-10T01:00:00Z");
+    mk("a-new", "/w/alpha", "2026-07-12T01:00:00Z");
+    mk("a-old", "/w/alpha", "2026-07-11T01:00:00Z");
+    expect(listPastRuns(dir).map((i) => i.id)).toEqual(["a-new", "a-old", "b-old"]);
   });
 });
 

@@ -73,10 +73,13 @@ instances land on 9318, 9319, ...). Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with chips — model,
   in/out tokens, a cache verdict (green hit with ↓read ↑write + hit %, amber
-  cold write or miss), first-token delay (ttft), estimated USD cost, errors.
+  cold write or miss), first-token delay (ttft), estimated USD cost, errors —
+  plus a ↑req ↓resp body-size column (wire bytes stamped at capture).
   Click a row for the detail panel: full conversation, prompt size,
-  first-token delay vs wall-clock, tok/s, cost
-  breakdown, raw payloads. `j`/`k` walk rows, `/` filters, `Esc` closes.
+  first-token delay vs wall-clock, tok/s, cost breakdown, a DevTools-style
+  Headers section (general + parsed request/response headers, raw toggle,
+  copy), and body folds with pretty/raw and SSE events/raw toggles.
+  `j`/`k` walk rows, `/` filters, `Esc` closes.
 - **Session** (`#/session[/<key>]`): reconstructed conversation (main chat,
   subagent runs linked to the Task call that spawned them, utility probes as
   separate threads) beside the wire requests, with per-turn

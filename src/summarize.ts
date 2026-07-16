@@ -74,6 +74,51 @@ export function fmtBytes(b: unknown): string {
   return (b / (1024 * 1024)).toFixed(1) + "MB";
 }
 
+/**
+ * Request/response body sizes for a pair, DevTools-style. Wire byte counts
+ * are stamped at capture time (0.17+): request.bodyBytes is the body as sent
+ * (compressed when the client compressed it — codex zstd), response.bodyBytes
+ * as received (the proxy asks for identity encoding, so ~decoded size).
+ * Older traces fall back to an estimate from the decoded trace body
+ * (exact: false). Opaque tunnel meta pairs report whole-connection byte
+ * counts instead (tunneled: true — TLS + headers included, not just bodies).
+ */
+export function extractSizes(pair: any): any {
+  const req = pair && pair.request;
+  if (!req) return null;
+  const resp = pair.response;
+  const tb = resp && resp.body && resp.body.tunneled ? resp.body : null;
+  if (tb) {
+    return {
+      up: typeof tb.bytesUp === "number" ? tb.bytesUp : 0,
+      down: typeof tb.bytesDown === "number" ? tb.bytesDown : 0,
+      exact: true,
+      tunneled: true,
+    };
+  }
+  const est = (v: any) => {
+    if (v == null) return 0;
+    const s = typeof v === "string" ? v : JSON.stringify(v) || "";
+    return s.length;
+  };
+  // Absent bodies are exactly zero bytes — "estimated" only when we had to
+  // measure a decoded trace body instead of the wire.
+  const upExact = typeof req.bodyBytes === "number" || req.body == null;
+  const downExact = !resp || typeof resp.bodyBytes === "number" || (resp.body == null && resp.bodyRaw == null);
+  let down = 0;
+  if (resp) {
+    if (typeof resp.bodyBytes === "number") down = resp.bodyBytes;
+    else if (typeof resp.bodyRaw === "string") down = resp.bodyRaw.length;
+    else down = est(resp.body);
+  }
+  return {
+    up: typeof req.bodyBytes === "number" ? req.bodyBytes : est(req.body),
+    down,
+    exact: upExact && downExact,
+    tunneled: false,
+  };
+}
+
 /** "claude-haiku-4-5-20251001" -> "haiku-4-5" */
 export function shortModel(model: unknown): string {
   return String(model || "")

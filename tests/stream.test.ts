@@ -40,6 +40,22 @@ describe("captureTee", () => {
     const cap = await captured;
     expect(cap.text).toBe("event: a\n\nevent: b\n\n");
     expect(cap.complete).toBe(true);
+    expect(cap.bytes).toBe(enc.encode("event: a\n\nevent: b\n\n").length);
+  });
+
+  test("bytes counts wire bytes even when the body is binary", async () => {
+    const gz = gzipSync(Buffer.from("x".repeat(500)));
+    const src = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(gz));
+        controller.close();
+      },
+    });
+    const { stream, captured } = captureTee(src);
+    await readAll(stream).catch(() => {});
+    const cap = await captured;
+    expect(cap.bytes).toBe(gz.length);
+    expect(cap.text).toBe(`<binary body: ${gz.length} bytes>`);
   });
 
   test("client cancels mid-stream: capture still completes with the full body", async () => {

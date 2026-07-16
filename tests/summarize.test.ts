@@ -4,6 +4,7 @@ import {
   fmtCompact,
   fmtMs,
   extractLatency,
+  extractSizes,
   shortModel,
   extractMessageInfo,
   extractSessionId,
@@ -298,6 +299,44 @@ describe("fmtMs / extractLatency", () => {
     expect(l.isToken).toBe(false);
     expect(l.ms).toBe(90);
     expect(l.pct).toBe(2);
+  });
+});
+
+describe("extractSizes", () => {
+  test("wire byte counts stamped at capture time are exact", () => {
+    const pair = streamingPair();
+    (pair.request as any).bodyBytes = 4321;
+    (pair.response as any).bodyBytes = 987;
+    expect(extractSizes(pair)).toEqual({ up: 4321, down: 987, exact: true, tunneled: false });
+  });
+
+  test("pre-0.17 pairs estimate from the decoded trace body", () => {
+    const pair = streamingPair();
+    const s = extractSizes(pair);
+    expect(s.exact).toBe(false);
+    expect(s.up).toBe(JSON.stringify(pair.request.body).length);
+    expect(s.down).toBe((pair.response as any).bodyRaw.length);
+  });
+
+  test("absent bodies are exactly zero, not an estimate", () => {
+    const s = extractSizes({
+      request: { method: "GET", url: "https://x/", headers: {}, body: null },
+      response: { status: 204, headers: {} },
+    });
+    expect(s).toEqual({ up: 0, down: 0, exact: true, tunneled: false });
+  });
+
+  test("tunnel meta pairs report whole-connection byte counts", () => {
+    const s = extractSizes({
+      request: { method: "CONNECT", url: "https://registry.npmjs.org/", headers: {}, body: null },
+      response: { status: 200, headers: {}, body: { tunneled: true, bytesUp: 1400, bytesDown: 54700000 } },
+    });
+    expect(s).toEqual({ up: 1400, down: 54700000, exact: true, tunneled: true });
+  });
+
+  test("null without a request", () => {
+    expect(extractSizes(null)).toBeNull();
+    expect(extractSizes({})).toBeNull();
   });
 });
 

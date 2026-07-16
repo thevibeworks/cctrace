@@ -151,18 +151,29 @@ hash-routed:
   carry no timestamps, so it can't be derived from a saved body; the first
   body byte lands in `firstByteMs` as the fallback), count_tokens
   results, usage window percentages (5h / 7d / per-model), telemetry event
-  counts, error types. The detail panel adds prompt size, first token /
-  first byte delay with its share of wall-clock, output tok/s (computed
-  over post-first-token streaming time when ttft is known), and
-  a cost tooltip broken down by component; the Session view shows per-turn
-  and per-thread cost and ttft. Clicking a row opens a split detail
-  panel beside the list (no page jump); prev/next + `j`/`k` walk the
-  FILTERED list; `Esc` closes. The detail toolbar (close/prev/next/position)
-  is sticky, so it stays reachable inside megabyte conversations. Messages
-  render conversation-first (system prompt, tools, thinking, tool_use
-  collapsed; long texts clamp with a "show all" expander; streamed assistant
-  reply reconstructed from SSE). Usage requests render limit bars. Raw
-  payloads are lazy `<details>`. A quiet nav rail overlays the detail panel
+  counts, error types. Every row also has a DevTools-style size column
+  (`extractSizes` in src/summarize.ts: `bodyBytes` wire counts stamped by
+  the proxies at capture time — request as sent, so codex zstd shows the
+  compressed size; response as received (identity encoding). Pre-0.17
+  pairs fall back to an estimate from the decoded trace, tooltip says so;
+  tunnel rows keep their byte-count chip instead). The detail panel adds
+  prompt size, first token / first byte delay with its share of
+  wall-clock, output tok/s (computed over post-first-token streaming time
+  when ttft is known), and a cost tooltip broken down by component; the
+  Session view shows per-turn and per-thread cost and ttft. Clicking a
+  row opens a split detail panel beside the list (no page jump);
+  prev/next + `j`/`k` walk the FILTERED list; `Esc` closes. The detail
+  toolbar (close/prev/next/position) is sticky, so it stays reachable
+  inside megabyte conversations. Messages render conversation-first
+  (system prompt, tools, thinking, tool_use collapsed; long texts clamp
+  with a "show all" expander; streamed assistant reply reconstructed from
+  SSE). Usage requests render limit bars. Below the conversation a
+  DevTools-style Headers section: General (url/method/status/host/timing/
+  sizes) plus request/response headers as parsed k/v tables with a raw
+  toggle and one-click copy. Body payloads stay lazy `<details>` folds,
+  each with a mode toggle — pretty JSON vs as-logged raw text for bodies
+  ("raw" is the decoded trace body re-serialized, not original wire
+  bytes), raw SSE text vs parsed events for the stream. A quiet nav rail overlays the detail panel
   and the session convo (same targets both places): jump top/bottom, prev/
   next turn, prev/next user prompt, system prompt — in the session view
   also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.

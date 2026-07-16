@@ -107,6 +107,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         fwdBody = new Uint8Array(await req.arrayBuffer());
         reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
       }
+      const reqBytes = fwdBody && fwdBody.length ? { bodyBytes: fwdBody.length } : {};
 
       // fetch() recomputes the length of the body it actually sends; a stale
       // forwarded content-length can only disagree.
@@ -126,7 +127,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
           pairCount++;
           onPair({
             id: `${Date.now()}_${pairCount.toString(36)}`,
-            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
+            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
             response: null,
             duration: Date.now() - startTime,
             loggedAt: new Date().toISOString(),
@@ -146,7 +147,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
           fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
           onPair({
             id: `${Date.now()}_${pairCount.toString(36)}`,
-            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
+            request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
             response: { timestamp: Date.now() / 1000, status: upstream.status, headers: resHeaders },
             duration: Date.now() - startTime,
             loggedAt: new Date().toISOString(),
@@ -166,7 +167,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
       const ct = upstream.headers.get("content-type") || "";
 
-      const cap = captured.then(({ text, complete, firstByteAt, firstTokenAt }) => {
+      const cap = captured.then(({ text, complete, bytes, firstByteAt, firstTokenAt }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
         try {
@@ -176,13 +177,14 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
 
         onPair({
           id: captureId,
-          request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody },
+          request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
           response: {
             timestamp: Date.now() / 1000,
             status: resStatus,
             headers: resHeaders,
             ...(resBody !== undefined ? { body: resBody } : {}),
             ...(resBodyRaw !== undefined ? { bodyRaw: resBodyRaw } : {}),
+            ...(bytes > 0 ? { bodyBytes: bytes } : {}),
             ...(firstByteAt !== undefined ? { firstByteMs: firstByteAt - startTime } : {}),
             ...(firstTokenAt !== undefined ? { firstTokenMs: firstTokenAt - startTime } : {}),
             ...(complete ? {} : { truncated: true }),

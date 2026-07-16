@@ -7,6 +7,7 @@ import {
   fmtBytes,
   fmtMs,
   extractLatency,
+  extractSizes,
   shortModel,
   extractMessageInfo,
   extractCallInfo,
@@ -479,6 +480,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .sum > span { flex-shrink: 0; }
     .sum > span + span::before { content: '\\00B7'; margin: 0 7px; color: var(--text-faint); }
+    .size { color: var(--text-faint); font-size: 11px; min-width: 84px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
     .duration { color: var(--text-muted); min-width: 50px; text-align: right; flex-shrink: 0; }
     .time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
     .empty {
@@ -666,6 +668,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .fold-body { border-top: 1px solid var(--border); }
     .fold-body > .pre-wrap > pre { border-radius: 0 0 6px 6px; }
+    /* Small mode buttons living inside a fold summary (headers raw toggle,
+       body pretty/raw toggle, copy). Quiet until hovered, like the rail. */
+    .fold-btn {
+      font: inherit; font-size: 10px; line-height: 1; flex-shrink: 0;
+      background: none; border: 1px solid var(--border); border-radius: 4px;
+      color: var(--text-faint); cursor: pointer; padding: 2px 7px;
+    }
+    .fold-btn:hover { color: var(--text); border-color: var(--accent); }
+    .fold-btn.copied { color: var(--green); border-color: var(--green); }
+    /* Headers section: parsed k/v table by default, raw text when toggled. */
+    .hdr-table { padding: 4px 0; font-size: 11px; }
+    .hdr-row { display: flex; gap: 12px; padding: 2px 12px; }
+    .hdr-row:hover { background: var(--hover); }
+    .hdr-k { flex: 0 0 200px; min-width: 110px; color: var(--text-muted); overflow-wrap: anywhere; }
+    .hdr-v { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .hdr-fold .hdr-pre { display: none; }
+    .hdr-fold[data-alt="1"] .hdr-table { display: none; }
+    .hdr-fold[data-alt="1"] .hdr-pre { display: block; }
     .turn .fold { border-top: 1px solid var(--border); }
     .fold.box { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
     .fold.errline > summary .fold-title { color: var(--red); }
@@ -850,6 +870,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${fmtBytes.toString()}
     ${fmtMs.toString()}
     ${extractLatency.toString()}
+    ${extractSizes.toString()}
     ${shortModel.toString()}
     ${extractMessageInfo.toString()}
     ${extractCallInfo.toString()}
@@ -1227,6 +1248,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ).join('');
     }
 
+    // Sizes are memoized on the pair — estimating an un-stamped pair means
+    // stringifying a potentially-megabyte body, too heavy per re-render.
+    function sizesOf(p) {
+      if (!p._sizes) p._sizes = extractSizes(p);
+      return p._sizes;
+    }
+
+    function sizeTitle(s) {
+      return 'request body ' + s.up.toLocaleString() + ' B \\u00b7 response body ' + s.down.toLocaleString() + ' B' +
+        (s.exact ? '' : ' \\u2014 estimated from the decoded trace (captured before 0.17)');
+    }
+
+    function sizeCell(pair) {
+      const s = sizesOf(pair);
+      // Tunnel rows already carry their byte counts in the tunnel chip.
+      if (!s || s.tunneled) return '<span class="size"></span>';
+      const bits = [];
+      if (s.up > 0) bits.push('\\u2191' + fmtBytes(s.up));
+      if (s.down > 0) bits.push('\\u2193' + fmtBytes(s.down));
+      if (!bits.length) return '<span class="size"></span>';
+      return '<span class="size" title="' + escapeHtml(sizeTitle(s)) + '">' + bits.join(' ') + '</span>';
+    }
+
     function appendPair(pair, live) {
       const div = document.createElement('div');
       try {
@@ -1244,6 +1288,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
             '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
             '<span class="sum">' + chipsHtml(pair) + '</span>' +
+            sizeCell(pair) +
             '<span class="duration" title="' + escapeHtml(duration) + 'ms">' + formatDuration(duration) + '</span>' +
             '<span class="time" title="' + fmtDateTime(when) + '">' + (pair.prior ? fmtDateTime(when) : fmtTime(when)) + '</span>' +
           '</a>';
@@ -1507,6 +1552,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (pair._cat === 'messages') html += messagesChips(pair) + renderConversation(pair);
       else if (pair._cat === 'tokens') html += tokensChips(pair) + renderConversation(pair);
       else if (pair._cat === 'usage') html += renderUsagePanel(pair);
+      html += headersSection(pair);
       html += rawSections(pair);
       return html;
     }
@@ -1737,12 +1783,94 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="section"><h4>Usage limits</h4>' + rows + '</div>';
     }
 
+    // ---- Headers section (DevTools-style): General + parsed k/v tables ----
+
+    function hdrRawText(headers) {
+      const keys = Object.keys(headers || {}).sort();
+      return keys.map(k => k + ': ' + headers[k]).join('\\n');
+    }
+
+    function hdrRows(entries) {
+      let rows = '';
+      for (const [k, v] of entries) {
+        rows += '<div class="hdr-row"><span class="hdr-k">' + escapeHtml(k) + '</span><span class="hdr-v">' + escapeHtml(String(v)) + '</span></div>';
+      }
+      return rows || '<div class="block-note">none</div>';
+    }
+
+    // Both views render up front (headers are small); the raw toggle is pure
+    // CSS via data-alt. Copy always copies the raw "name: value" text.
+    function hdrFold(title, headers, open) {
+      const keys = Object.keys(headers || {}).sort();
+      return '<details class="fold box hdr-fold"' + (open ? ' open' : '') + '>' +
+        '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
+        '<span class="fold-hint">' + keys.length + '</span>' +
+        '<button class="fold-btn" onclick="copyFold(event, this)" title="Copy headers">copy</button>' +
+        '<button class="fold-btn" onclick="toggleHdrRaw(event, this)" title="Raw view">raw</button>' +
+        '</summary><div class="fold-body">' +
+        '<div class="hdr-table">' + hdrRows(keys.map(k => [k, headers[k]])) + '</div>' +
+        '<pre class="hdr-pre" data-copy>' + escapeHtml(hdrRawText(headers)) + '</pre>' +
+        '</div></details>';
+    }
+
+    window.toggleHdrRaw = function(ev, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      const det = btn.closest('details');
+      det.dataset.alt = det.dataset.alt === '1' ? '' : '1';
+      btn.textContent = det.dataset.alt === '1' ? 'parsed' : 'raw';
+      det.open = true;
+    };
+
+    window.copyFold = function(ev, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      const det = btn.closest('details');
+      const src = det.querySelector('[data-copy]');
+      navigator.clipboard.writeText(src ? src.textContent : '').then(function() {
+        btn.classList.add('copied');
+        const was = btn.textContent;
+        btn.textContent = 'copied';
+        setTimeout(function() { btn.classList.remove('copied'); btn.textContent = was; }, 1500);
+      });
+    };
+
+    function headersSection(pair) {
+      const r = pair.response;
+      const s = sizesOf(pair);
+      const general = [
+        ['request url', pair.request.url],
+        ['method', pair.request.method],
+        ['status', r ? r.status + '' : 'no response'],
+      ];
+      try { general.push(['remote host', new URL(pair.request.url).host]); } catch {}
+      general.push(['started', fmtDateTime(new Date(pair.request.timestamp * 1000))]);
+      general.push(['duration', formatDuration(pair.duration)]);
+      const lat = extractLatency(pair);
+      if (lat) general.push([lat.isToken ? 'first token' : 'first byte', fmtMs(lat.ms)]);
+      if (s && !s.tunneled && (s.up > 0 || s.down > 0)) {
+        const ex = s.exact ? '' : ' (estimated)';
+        if (s.up > 0) general.push(['request body', fmtBytes(s.up) + ex]);
+        if (s.down > 0) general.push(['response body', fmtBytes(s.down) + ex]);
+      }
+      if (r && r.truncated) general.push(['truncated', 'upstream stream ended early']);
+      let html = '<div class="section"><h4>Headers</h4>';
+      html += '<details class="fold box" open><summary><span class="fold-title">general</span></summary>' +
+        '<div class="fold-body"><div class="hdr-table">' + hdrRows(general) + '</div></div></details>';
+      if (r) html += hdrFold('response headers', r.headers, false);
+      html += hdrFold('request headers', pair.request.headers, false);
+      return html + '</div>';
+    }
+
     // Raw payloads render lazily on first expand — a full Claude Code request
-    // body can be megabytes of JSON, so we only stringify when asked.
-    function rawFold(title, kind, open) {
+    // body can be megabytes of JSON, so we only stringify when asked. Each
+    // fold has two modes (data-alt refills the body): pretty JSON vs the
+    // as-logged text for bodies, raw text vs parsed events for the SSE
+    // stream. "Raw" for a JSON body is the trace's decoded body re-serialized
+    // (single line), not the original wire bytes — those aren't stored.
+    function rawFold(title, kind, open, altLabel) {
       return '<details class="fold box" data-raw="' + kind + '"' + (open ? ' open' : '') + '>' +
-        '<summary><span class="fold-title">' + escapeHtml(title) + '</span></summary>' +
-        '<div class="fold-body"></div></details>';
+        '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
+        (altLabel ? '<span class="fold-hint"></span><button class="fold-btn" data-alt-label="' + escapeHtml(altLabel) + '" onclick="toggleRawMode(event, this)">' + escapeHtml(altLabel) + '</button>' : '') +
+        '</summary><div class="fold-body"></div></details>';
     }
 
     function rawSections(pair) {
@@ -1750,17 +1878,33 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // For categories with a rich view the raw payloads stay collapsed; for
       // everything else the bodies are the content, so open them.
       const rich = pair._cat === 'messages' || pair._cat === 'tokens' || pair._cat === 'usage';
-      let html = '<div class="section"><h4>Raw</h4>';
-      html += rawFold('request headers', 'req-headers', false);
-      if (pair.request.body != null) html += rawFold('request body', 'req-body', !rich);
+      let html = '<div class="section"><h4>Body</h4>';
+      let any = false;
+      if (pair.request.body != null) { html += rawFold('request body', 'req-body', !rich, 'raw'); any = true; }
       if (r) {
-        html += rawFold('response headers', 'resp-headers', false);
-        if (r.body != null) html += rawFold('response body', 'resp-body', !rich);
-        if (r.bodyRaw) html += rawFold('response stream (SSE)', 'resp-raw', false);
+        if (r.body != null) { html += rawFold('response body', 'resp-body', !rich, 'raw'); any = true; }
+        if (r.bodyRaw) { html += rawFold('response stream (SSE)', 'resp-raw', false, 'events'); any = true; }
       } else {
         html += '<div class="block-note err">request failed &mdash; no response received</div>';
+        any = true;
       }
+      if (!any) html += '<div class="block-note">no body</div>';
       return html + '</div>';
+    }
+
+    window.toggleRawMode = function(ev, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      const det = btn.closest('details');
+      det.dataset.alt = det.dataset.alt === '1' ? '' : '1';
+      btn.textContent = det.dataset.alt === '1' ? 'pretty' : btn.dataset.altLabel;
+      const body = det.querySelector(':scope > .fold-body');
+      if (body) { body.dataset.filled = ''; body.innerHTML = ''; }
+      det.open = true;
+      fillRaw(det);
+    };
+
+    function rawText(v) {
+      return typeof v === 'string' ? v : (JSON.stringify(v) || '');
     }
 
     function fillRaw(det) {
@@ -1770,14 +1914,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!pair) return;
       body.dataset.filled = '1';
       const kind = det.dataset.raw;
+      const alt = det.dataset.alt === '1';
       let out = '';
-      if (kind === 'req-headers') out = preBlock(formatJson(pair.request.headers));
-      else if (kind === 'req-body') out = preBlock(formatJson(pair.request.body));
-      else if (kind === 'resp-headers') out = preBlock(formatJson(pair.response.headers));
-      else if (kind === 'resp-body') out = preBlock(formatJson(pair.response.body));
+      if (kind === 'req-body') out = preBlock(alt ? escapeHtml(rawText(pair.request.body)) : formatJson(pair.request.body));
+      else if (kind === 'resp-body') out = preBlock(alt ? escapeHtml(rawText(pair.response.body)) : formatJson(pair.response.body));
       else if (kind === 'resp-raw') {
         const raw = String(pair.response.bodyRaw || '');
-        out = preBlock(escapeHtml(raw.slice(0, 200000)) + (raw.length > 200000 ? '\\n... (truncated)' : ''));
+        if (alt) {
+          // Parsed events preview: one pretty JSON object per SSE data line.
+          const events = parseSse(raw.slice(0, 400000));
+          out = preBlock(escapeHtml(events.map(e => JSON.stringify(e, null, 2)).join('\\n\\n')) +
+            (raw.length > 400000 ? '\\n... (truncated)' : ''));
+        } else {
+          out = preBlock(escapeHtml(raw.slice(0, 200000)) + (raw.length > 200000 ? '\\n... (truncated)' : ''));
+        }
       }
       body.innerHTML = out;
     }

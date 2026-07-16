@@ -208,7 +208,10 @@ Everything else -- package registries, `gh` calls, apt -- passes through as
 an **opaque tunnel** logged as one small row: host, bytes up/down, duration.
 No forged certs for those hosts, so cert-pinning tools and system-trust
 readers work through cctrace unchanged. `--capture-external` restores
-decrypt-everything.
+decrypt-everything -- with external *bodies* capped at 64KB (larger ones are
+summarized with exact byte counts; url/status/headers/timing always stay),
+so an npm tarball or a token-authed API response never lands in the trace.
+Enroll a host with `--intercept-host` when you want its full payloads.
 
 ## The web UI
 
@@ -333,7 +336,7 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `-s, --static` | Static mode (no live server; writes the `.jsonl` + a snapshot `.html`) |
 | `-p, --port PORT` | Live UI port (default: 9317; auto-falls back if busy) |
 | `--messages-only` | Capture only the model API calls (`/v1/messages` and friends) |
-| `--capture-external` | Decrypt every host (default: non-first-party hosts tunnel opaquely with byte counts) |
+| `--capture-external` | Decrypt every host (default: non-first-party hosts tunnel opaquely with byte counts); external bodies over 64KB are summarized, not stored |
 | `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers, unusual providers) |
 | `--no-open` | Don't auto-open the browser |
 | `--print-ca` | Print the MITM CA cert path and exit |

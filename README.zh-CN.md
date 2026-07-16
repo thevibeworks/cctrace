@@ -187,7 +187,10 @@ cctrace 会根据你的 Claude 安装自动选择；用 `--mode` 可强制指定
 补充的 host 才会真正拦截（按 host 动态签发证书）。其余一切 -- 包管理器、`gh`
 调用、apt -- 都以**不透明隧道**透传，只记一行小小的元数据：host、上下行字节数、
 时长。这些 host 不会收到伪造证书，所以证书固定（cert-pinning）的工具和读系统
-信任库的程序照常工作。`--capture-external` 恢复全部解密。
+信任库的程序照常工作。`--capture-external` 恢复全部解密 -- 但外部 host 的
+*报文体*超过 64KB 时只记录精确字节数和 content-type，不落盘（URL/状态码/
+头部/时延始终保留），npm tarball 或带 token 的 API 响应不会进 trace。想要
+某个 host 的完整报文，用 `--intercept-host` 单独纳入。
 
 ## Web 界面
 
@@ -275,7 +278,7 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `-s, --static` | 静态模式（不启动实时服务器，只写文件） |
 | `-p, --port PORT` | 实时界面端口（默认 9317；被占用时自动回退） |
 | `--messages-only` | 只捕获 `/v1/messages` |
-| `--capture-external` | 解密所有 host（默认：非第一方 host 走不透明的字节计数隧道） |
+| `--capture-external` | 解密所有 host（默认：非第一方 host 走不透明的字节计数隧道）；外部报文体超 64KB 只记字节数 |
 | `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器、少见的服务方） |
 | `--no-open` | 不自动打开浏览器 |
 | `--print-ca` | 打印 MITM CA 证书路径并退出 |

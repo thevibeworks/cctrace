@@ -689,9 +689,10 @@ ${C.yellow}OPTIONS:${C.reset}
   -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy)
   --messages-only    Only capture model API calls
   --capture-external MITM every host (default: non-first-party hosts pass
-                     through as opaque byte-counted tunnels)
-  --intercept-host H Also MITM host H (repeatable — remote MCP servers,
-                     unusual providers)
+                     through as opaque byte-counted tunnels). External
+                     bodies over 64KB are summarized, not stored
+  --intercept-host H Also MITM host H with FULL body capture (repeatable —
+                     remote MCP servers, unusual providers)
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name

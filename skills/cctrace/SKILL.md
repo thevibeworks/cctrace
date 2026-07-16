@@ -83,7 +83,9 @@ instances land on 9318, 9319, ...). Hash-routed views:
 - **Session** (`#/session[/<key>]`): reconstructed conversation (main chat,
   subagent runs linked to the Task call that spawned them, utility probes as
   separate threads) beside the wire requests, with per-turn
-  tokens/duration/cost linked back to each request. Tails like `tail -f`
+  tokens/duration/cost linked back to each request, and error metrics per
+  thread/session (failed requests, truncated streams, failed tool calls
+  with an error rate). Tails like `tail -f`
   while live. All tool calls fold to one line; subagent/skill/MCP calls stay
   visually marked, and a subagent fold links to its reconstructed thread.
   Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system

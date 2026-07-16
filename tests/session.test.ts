@@ -135,7 +135,10 @@ describe("buildSession", () => {
     expect(chat.turns[3].pairId).toBe(r2.id);
     expect(chat.turns[1].usage.output).toBe(20);
     const { cost, ...usage } = chat.usage;
-    expect(usage).toEqual({ input: 20, output: 40, cacheRead: 200, cacheWrite: 10, requests: 2 });
+    expect(usage).toEqual({
+      input: 20, output: 40, cacheRead: 200, cacheWrite: 10, requests: 2,
+      wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0,
+    });
     expect(cost).toBeGreaterThan(0); // per-request pairCost summed into the thread
 
     expect(threads.find((t: any) => t.label === "quota probe").kind).toBe("utility");
@@ -238,6 +241,58 @@ describe("buildSession", () => {
   test("empty / non-message input", () => {
     expect(buildSession([]).threads).toEqual([]);
     expect(mainThread([])).toBeNull();
+  });
+
+  // Idea 4: error metrics aggregate per thread, reported separately —
+  // wire failures, truncated streams, and failed tool calls (with the
+  // tool_use denominator for a rate).
+  test("error metrics: wire errors, truncated streams, tool errors with denominator", () => {
+    seq = 0;
+    const first = { role: "user", content: "run the tests" };
+    const hist = [
+      first,
+      {
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "tu_ok", name: "Bash", input: { command: "ls" } },
+          { type: "tool_use", id: "tu_bad", name: "Bash", input: { command: "false" } },
+        ],
+      },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "tu_ok", content: "file.txt" },
+          { type: "tool_result", tool_use_id: "tu_bad", content: "exit 1", is_error: true },
+        ],
+      },
+    ];
+    const ok = msgPair([first]);
+    const failed = msgPair([first, hist[1], hist[2]], {
+      response: { timestamp: 0, status: 529, headers: {}, body: { type: "error", error: { type: "overloaded_error" } } },
+    });
+    const truncated = msgPair([first, hist[1], hist[2]]);
+    (truncated.response as any).truncated = true;
+
+    const { threads } = buildSession([ok, failed, truncated]);
+    expect(threads.length).toBe(1);
+    const u = threads[0].usage;
+    expect(u.requests).toBe(3);
+    expect(u.wireErrors).toBe(1);
+    expect(u.truncated).toBe(1);
+    expect(u.toolUses).toBe(2);
+    expect(u.toolErrors).toBe(1);
+  });
+
+  test("in-stream SSE error events count as wire errors even on HTTP 200", () => {
+    seq = 0;
+    const p = msgPair([{ role: "user", content: "hi" }], {
+      response: {
+        timestamp: 0, status: 200, headers: { "content-type": "text/event-stream" },
+        bodyRaw: 'data: {"type":"error","error":{"type":"overloaded_error"}}',
+      },
+    });
+    const { threads } = buildSession([p]);
+    expect(threads[0].usage.wireErrors).toBe(1);
   });
 });
 

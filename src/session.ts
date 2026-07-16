@@ -193,7 +193,15 @@ export function buildSession(pairs: any[], wire?: any): any {
       }
     }
 
-    const agg = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, requests: t.reqs.length };
+    const agg = {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, requests: t.reqs.length,
+      // Error metrics, reported separately (they mean different things):
+      // wireErrors = the request itself failed (no response, HTTP 4xx/5xx,
+      // or an in-stream error event); truncated = upstream died mid-stream;
+      // toolErrors/toolUses = tool_result blocks flagged is_error, with the
+      // denominator for a rate.
+      wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0,
+    };
     for (const p of t.reqs) {
       const m = extractCallInfo(p);
       agg.input += m.input;
@@ -202,6 +210,16 @@ export function buildSession(pairs: any[], wire?: any): any {
       agg.cacheWrite += m.cacheWrite;
       const c = pairCost(m);
       if (c) agg.cost += c.total;
+      const r = p.response;
+      if (!r || r.status >= 400 || m.error) agg.wireErrors++;
+      if (r && r.truncated) agg.truncated++;
+    }
+    for (const turn of t.turns) {
+      for (const b of turn.blocks || []) {
+        if (!b) continue;
+        if (b.type === "tool_use" || b.type === "server_tool_use") agg.toolUses++;
+        else if (b.type === "tool_result" && b.is_error) agg.toolErrors++;
+      }
     }
     t.usage = agg;
 

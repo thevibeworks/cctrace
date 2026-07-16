@@ -160,7 +160,13 @@ hash-routed:
   prompt size, first token / first byte delay with its share of
   wall-clock, output tok/s (computed over post-first-token streaming time
   when ttft is known), and a cost tooltip broken down by component; the
-  Session view shows per-turn and per-thread cost and ttft. Clicking a
+  Session view shows per-turn and per-thread cost and ttft, plus error
+  metrics aggregated per thread and per session (buildSession's usage:
+  wireErrors = no response / 4xx-5xx / in-stream error events, truncated
+  streams, toolErrors over toolUses for a rate — reported separately
+  because they mean different failures; red chips in the convo pane, an
+  "N err" badge on thread cards, a rollup line atop the threads pane).
+  Clicking a
   row opens a split detail panel beside the list (no page jump);
   prev/next + `j`/`k` walk the FILTERED list; `Esc` closes. The detail
   toolbar (close/prev/next/position) is sticky, so it stays reachable

@@ -739,6 +739,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tkind-utility { background: var(--text-faint); }
     .thread-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .thread-meta { padding: 6px 10px; font-size: 11px; color: var(--text-muted); }
+    /* Session rollup line above the thread cards: counts across all threads,
+       error parts red and only present when nonzero. */
+    .threads-sum {
+      padding: 4px 10px 8px; font-size: 11px; color: var(--text-faint);
+      font-variant-numeric: tabular-nums;
+    }
     .thread-reqs { border-top: 1px solid var(--border); }
     .treq {
       display: flex; gap: 10px; padding: 5px 10px; font-size: 11px;
@@ -1979,9 +1985,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function threadCard(t, selected) {
       const u = t.usage;
+      const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
         (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
-        (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '');
+        (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '') +
+        (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '');
       let reqs = '';
       if (selected) {
         let rows = '';
@@ -2006,6 +2014,45 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<div class="thread-meta">' + meta + '</div>' + reqs + '</div>';
     }
 
+    // Spelled-out breakdown for an error count — the aggregate chip stays
+    // compact, the tooltip says which kind of failure it was.
+    function errTitle(u) {
+      const bits = [];
+      if (u.wireErrors) bits.push(u.wireErrors + ' failed request' + (u.wireErrors === 1 ? '' : 's') + ' (no response, HTTP 4xx/5xx, or an in-stream error event)');
+      if (u.truncated) bits.push(u.truncated + ' truncated stream' + (u.truncated === 1 ? '' : 's') + ' (upstream died mid-response)');
+      if (u.toolErrors) bits.push(u.toolErrors + ' failed tool call' + (u.toolErrors === 1 ? '' : 's') + (u.toolUses ? ' of ' + u.toolUses : ''));
+      return bits.join(' \\u00b7 ');
+    }
+
+    function pctOf(part, whole) {
+      return whole > 0 ? Math.round((part / whole) * 100) + '%' : '';
+    }
+
+    // Session rollup across all threads: one quiet line on top of the
+    // threads pane; error parts render only when nonzero (and in red).
+    function sessionSummary(threads) {
+      const s = { requests: 0, wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0 };
+      for (const t of threads) {
+        const u = t.usage || {};
+        s.requests += u.requests || 0;
+        s.wireErrors += u.wireErrors || 0;
+        s.truncated += u.truncated || 0;
+        s.toolErrors += u.toolErrors || 0;
+        s.toolUses += u.toolUses || 0;
+      }
+      const bits = [threads.length + ' thread' + (threads.length === 1 ? '' : 's'), s.requests + ' req'];
+      if (s.wireErrors) {
+        const r = pctOf(s.wireErrors, s.requests);
+        bits.push('<span class="err">' + s.wireErrors + ' req err' + (r ? ' (' + r + ')' : '') + '</span>');
+      }
+      if (s.truncated) bits.push('<span class="err">' + s.truncated + ' truncated</span>');
+      if (s.toolErrors) {
+        const r = pctOf(s.toolErrors, s.toolUses);
+        bits.push('<span class="err">' + s.toolErrors + ' tool err' + (r ? ' (' + r + ')' : '') + '</span>');
+      }
+      return '<div class="threads-sum" title="' + escapeHtml(errTitle(s)) + '">' + bits.join(' \\u00b7 ') + '</div>';
+    }
+
     function renderThreadsPane(threads, sel) {
       const convos = threads.filter(t => t.kind !== 'utility');
       const utils = threads.filter(t => t.kind === 'utility');
@@ -2013,7 +2060,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         try { return threadCard(t, t.key === sel.key); }
         catch (e) { return brokenItem('thread', t && t.key, e); }
       };
-      let html = '';
+      let html = sessionSummary(threads);
       for (const t of convos) html += card(t);
       if (utils.length) {
         let inner = '';
@@ -2145,6 +2192,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'prompt cache totals over this thread\\u2019s requests \\u2014 \\u2193 read, \\u2191 written');
       }
       if (t.usage.cost) chips += kv('cost', fmtCost(t.usage.cost), '', 'estimated from sticker pricing \\u2014 sum over this thread\\u2019s requests');
+      // Error metrics, reported separately — a failed wire request and a
+      // failed tool call are different problems (idea: error rate per thread).
+      const eu = t.usage;
+      if (eu.wireErrors) {
+        const r = pctOf(eu.wireErrors, eu.requests);
+        chips += kv('req errors', eu.wireErrors + ' of ' + eu.requests + (r ? ' (' + r + ')' : ''), 'err',
+          'requests that failed: no response, HTTP 4xx/5xx, or an in-stream error event');
+      }
+      if (eu.truncated) chips += kv('truncated', String(eu.truncated), 'err', 'streams the upstream dropped mid-response');
+      if (eu.toolErrors) {
+        const r = pctOf(eu.toolErrors, eu.toolUses);
+        chips += kv('tool errors', eu.toolErrors + ' of ' + eu.toolUses + (r ? ' (' + r + ')' : ''), 'err',
+          'tool_result blocks flagged is_error, over all tool calls in this thread');
+      }
       let html = '<div class="chips">' + chips + '</div>';
       if (t.agentOf) {
         html += '<div class="agent-note">subagent run' +

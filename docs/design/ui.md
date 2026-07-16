@@ -48,6 +48,12 @@ to protect that feeling.
   prompt, user prompts, subagent spawns, skills/MCP calls, and the final
   reply — a Read/Bash dump never earns default expansion. Notable folds keep
   a colored title, not an open body.
+- User-turn emphasis is spacing + a faint accent wash on the role bar,
+  never a hard colored border (edges read as chrome; accent is reserved
+  for interactive elements).
+- Assistant reply text renders a safe markdown subset (code, headings,
+  bold, http(s) links) — escape first, transform after; anything the
+  subset doesn't cover stays literal.
 - Floating chrome is limited to the tail pill and the nav rail; the rail is
   faint until hovered and every button names its keyboard shortcut.
 

@@ -11,7 +11,7 @@ import { parseCliArgs, CliUsageError } from "./args";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { extractSessionId } from "./summarize";
 import { writeView, resolveView, listTraceInfos, ViewError } from "./view";
-import { registerInstance, listLiveInstances, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
+import { registerInstance, listLiveInstances, listPastRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
@@ -229,18 +229,42 @@ async function runView(args: string[]): Promise<boolean> {
   // newest — the answer they almost always want.
   if (!target) {
     const infos = listTraceInfos(logDir);
-    if (!infos.length) {
+    // The run catalog (registry tombstones) knows about traces in OTHER
+    // projects — list recent ones after this dir's, resolvable by number.
+    // Re-stat before offering: a tombstone written in another container may
+    // name a path that doesn't resolve here (list nothing, never error).
+    const localDir = resolve(logDir);
+    const seen = new Set<string>();
+    const elsewhere = listPastRuns(DATA_DIR).filter((r) => {
+      if (!r.logFile || resolve(dirname(r.logFile)) === localDir) return false;
+      if (seen.has(r.logFile)) return false;
+      seen.add(r.logFile);
+      try { return statSync(r.logFile).isFile(); } catch { return false; }
+    }).slice(0, 8);
+    if (!infos.length && !elsewhere.length) {
       console.error(`[cctrace] view: no .jsonl traces in ${logDir}\n  ${usage}`);
       process.exit(1);
     }
     const shown = infos.slice(0, 15);
-    log(`traces in ${logDir} (newest first):`, C.cyan);
-    shown.forEach((t, i) => {
-      console.log(
-        `  ${String(i + 1).padStart(2)}  ${t.base.padEnd(44)} ${human(t.size).padStart(9)}   ${ago(t.mtimeMs)}`,
-      );
-    });
-    if (infos.length > shown.length) console.log(`      ... ${infos.length - shown.length} more`);
+    if (shown.length) {
+      log(`traces in ${logDir} (newest first):`, C.cyan);
+      shown.forEach((t, i) => {
+        console.log(
+          `  ${String(i + 1).padStart(2)}  ${t.base.padEnd(44)} ${human(t.size).padStart(9)}   ${ago(t.mtimeMs)}`,
+        );
+      });
+      if (infos.length > shown.length) console.log(`      ... ${infos.length - shown.length} more`);
+    }
+    if (elsewhere.length) {
+      log(`recent runs elsewhere:`, C.cyan);
+      elsewhere.forEach((r, i) => {
+        const when = r.endedAt ? ago(Date.parse(r.endedAt)) : "";
+        const label = `${r.project || "?"}${r.client ? ` (${r.client})` : ""}`;
+        console.log(
+          `  ${String(shown.length + i + 1).padStart(2)}  ${label.padEnd(28)} ${basename(r.logFile).padEnd(34)} ${when}`,
+        );
+      });
+    }
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
       log(`pick one: cctrace view <filename fragment | session-id | latest>`, C.dim);
       return false;
@@ -249,6 +273,7 @@ async function runView(args: string[]): Promise<boolean> {
     if (/^q(uit)?$/i.test(answer)) return false;
     const n = /^\d+$/.test(answer) ? parseInt(answer, 10) : answer === "" ? 1 : 0;
     if (n > 0 && n <= shown.length) target = shown[n - 1]!.path;
+    else if (n > shown.length && n <= shown.length + elsewhere.length) target = elsewhere[n - shown.length - 1]!.logFile;
     else if (n > 0) { console.error(`[cctrace] view: no trace #${n}`); process.exit(1); }
     else target = answer; // free-form: fragment / session id / path
   }
@@ -310,7 +335,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     port: server.port,
     project: traceName,
     projectPath: resolve(logDir),
-    logFile: join(logDir, result.sources[0] || ""),
+    logFile: resolve(logDir, result.sources[0] || ""),
     mode: "view",
     client,
     startedAt: new Date().toISOString(),
@@ -349,19 +374,22 @@ async function runPs(args: string[]) {
     log("No live cctrace instances", C.dim);
     return;
   }
+  // Pids are namespace-local: they identify/kill runs in YOUR namespace but
+  // mean nothing across containers — liveness stays heartbeat+probe.
   const rows = list.map((i) => ({
     url: `http://localhost:${i.port}`,
     pid: String(i.pid),
+    agent: i.agentPid ? String(i.agentPid) : "-",
     client: i.client || "-",
     project: i.project || "?",
     session: i.sessionId ? i.sessionId.slice(0, 8) : "-",
     started: i.startedAt ? new Date(i.startedAt).toLocaleTimeString() : "-",
   }));
   const w = (k: keyof (typeof rows)[0], h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
-  const widths = { url: w("url", "URL"), pid: w("pid", "PID"), client: w("client", "CLIENT"), project: w("project", "PROJECT"), session: w("session", "SESSION"), started: w("started", "STARTED") };
+  const widths = { url: w("url", "URL"), pid: w("pid", "PID"), agent: w("agent", "AGENT"), client: w("client", "CLIENT"), project: w("project", "PROJECT"), session: w("session", "SESSION"), started: w("started", "STARTED") };
   const line = (r: Record<string, string>) =>
-    `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
-  console.log(C.dim + line({ url: "URL", pid: "PID", client: "CLIENT", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
+    `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.agent.padEnd(widths.agent)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
+  console.log(C.dim + line({ url: "URL", pid: "PID", agent: "AGENT", client: "CLIENT", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
   for (const r of rows) console.log(line(r));
 }
 
@@ -856,7 +884,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
   };
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, onFinalize?: () => string) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, onFinalize?: () => string, onAgentPid?: (pid: number) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -877,6 +905,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     stdio: "inherit",
     cwd: process.cwd(),
   });
+  if (child.pid && onAgentPid) onAgentPid(child.pid);
 
   child.on("error", (err) => {
     capturer.stop();
@@ -914,6 +943,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs: string[], opts: RunOpts) {
   const { logFile, htmlFile } = logPaths(opts);
   let ingest: ((pair: TracePair) => void) | undefined;
+  let liveInstance: InstanceHandle | null = null;
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
@@ -941,12 +971,16 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       port: server.port,
       project: pageMeta().project || "",
       projectPath: pageMeta().projectPath || "",
-      logFile,
+      // Absolute: the tombstone catalog is read from other projects' cwds.
+      logFile: resolve(logFile),
       mode,
       client: CLIENT.name,
       startedAt: new Date().toISOString(),
     });
-    process.on("exit", () => instance?.unregister());
+    liveInstance = instance;
+    // Capture runs leave a tombstone, not a deletion: the finished run stays
+    // findable (view picker's "recent runs elsewhere", future trace library).
+    process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${server.port}`, C.green);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${server.port}`), 500);
@@ -993,7 +1027,11 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // from it anytime, so don't also write a snapshot .html at exit (on big
   // sessions it runs to hundreds of MB). Static mode's whole point is the
   // self-contained .html, so it keeps the finalize step.
-  spawnClaudeWithCapturer(claudePath, claudeArgs, capturer, opts, logFile, opts.liveMode ? undefined : sink.writeHtml);
+  spawnClaudeWithCapturer(
+    claudePath, claudeArgs, capturer, opts, logFile,
+    opts.liveMode ? undefined : sink.writeHtml,
+    (pid) => liveInstance?.update({ agentPid: pid }),
+  );
 }
 
 async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOpts) {
@@ -1032,7 +1070,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       client: CLIENT.name,
       startedAt: new Date().toISOString(),
     });
-    process.on("exit", () => instance?.unregister());
+    process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${livePort}`, C.green);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);

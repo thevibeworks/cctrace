@@ -31,7 +31,7 @@ Key commands:
   by default, `--yes` applies, never deletes data not fully held elsewhere
   (purge default drop: telemetry,tokens,external; compact folds superseded
   request bodies to stubs, -95%+ with an identical session view)
-- `cctrace ps` — live cctrace instances: URL, client, project, session
+- `cctrace ps` — live cctrace instances: URL, pids, client, project, session
 - `cctrace --print-ca` — path to the auto-generated MITM CA
 
 ## Docs

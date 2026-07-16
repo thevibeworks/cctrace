@@ -1090,8 +1090,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // location.hostname, not localhost: this page may itself be viewed
         // through a forward. The port is still the sibling's own bound port —
         // across container namespaces it may not be reachable as-is.
+        // Pids are informational and namespace-local — shown in the tooltip
+        // so you can find/kill the run in YOUR namespace, never for liveness.
         rows += '<a class="inst-row" href="http://' + location.hostname + ':' + Number(i.port) + '/"' +
-          ' title="' + escapeHtml((i.projectPath || i.project || '') + (i.sessionId ? ' \\u00b7 session ' + i.sessionId : '')) + '">' +
+          ' title="' + escapeHtml((i.projectPath || i.project || '') + (i.sessionId ? ' \\u00b7 session ' + i.sessionId : '') +
+            (i.pid ? ' \\u00b7 cctrace pid ' + i.pid : '') + (i.agentPid ? ' \\u00b7 agent pid ' + i.agentPid : '')) + '">' +
           '<span>' + escapeHtml((i.client ? i.client + ' \\u00b7 ' : '') + (i.project || '?')) + '</span>' +
           (i.sessionId ? '<span class="inst-sess">' + escapeHtml(String(i.sessionId).slice(0, 8)) + '</span>' : '') +
           '<span class="inst-port">:' + Number(i.port) + '</span></a>';

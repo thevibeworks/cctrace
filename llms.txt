@@ -17,7 +17,8 @@ word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`). Traces
 land in `.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair
 per line) — the .jsonl IS the trace; snapshots render on demand. Capture
 modes: `mitm` (default, full first-party picture via HTTPS_PROXY +
-NODE_EXTRA_CA_CERTS; `--capture-external` decrypts everything,
+NODE_EXTRA_CA_CERTS; `--capture-external` decrypts everything with
+external bodies capped at 64KB,
 `--intercept-host` enrolls extra hosts), `base-url` (messages only, no CA).
 
 Key commands:

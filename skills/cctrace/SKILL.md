@@ -136,7 +136,9 @@ Capture scope (0.16+): only first-party hosts (plus pinned telemetry sinks,
 base-url env hosts, and `--intercept-host` extras) are decrypted. Everything
 else — npm, github, apt, remote MCP servers — passes through as an opaque
 tunnel logged as one meta pair (host + byte counts, category External).
-`--capture-external` restores decrypt-everything for debugging.
+`--capture-external` restores decrypt-everything for debugging (external
+bodies over 64KB are summarized with byte counts, not stored — enroll a
+host with `--intercept-host` for its full payloads).
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers

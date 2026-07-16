@@ -30,6 +30,28 @@ export interface MitmServer {
 }
 
 /**
+ * Bodies of intercepted-but-external hosts are capped at capture time: an
+ * external host only gets MITM'd under --capture-external, and the point
+ * there is the audit trail (url/status/sizes/timing/headers), not payloads —
+ * a 52MB npm tarball or a token-authed gh API response body in the trace is
+ * a liability, not signal. Small bodies (the interesting JSON) survive
+ * intact; anything larger is summarized with exact byte counts. Explicitly
+ * enrolled hosts (--intercept-host) always capture in full — the user named
+ * them. Same stub shape `cctrace compact` uses, so the UI needs no new case.
+ */
+export const EXTERNAL_BODY_CAP = 64 * 1024;
+
+export function externalBodyStub(droppedBytes: number, contentType?: string): unknown {
+  return {
+    _cctrace_stub: 1,
+    kind: "meta",
+    droppedBytes,
+    ...(contentType ? { contentType } : {}),
+    cctrace: `external body over ${EXTERNAL_BODY_CAP / 1024}KB not stored — enroll the host with --intercept-host for full capture`,
+  };
+}
+
+/**
  * TLS-intercepting HTTP proxy with an SSL-proxying include-list (Charles'
  * model, devlog 2026-07-15).
  *
@@ -57,11 +79,17 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   let pairCount = 0;
   const pending = new Set<Promise<void>>();
 
+  const interceptSet = config.interceptHosts ?? [];
+
   // Shared fetch handler — used by both the static Anthropic TLS server
   // and dynamically created per-host TLS servers.
   function interceptFetch(req: Request): Response | Promise<Response> {
     const hostHeader = req.headers.get("host") || "unknown";
-    const targetHost = hostHeader.split(":")[0];
+    const targetHost = hostHeader.split(":")[0] || "unknown";
+    // On the include-list = the traced client's own infrastructure or a host
+    // the user explicitly enrolled: full-body capture. Anything else is only
+    // here because of --capture-external: bodies cap at EXTERNAL_BODY_CAP.
+    const enrolled = isInterceptHost(targetHost) || hostInSet(targetHost, interceptSet);
     const path = new URL(req.url).pathname + new URL(req.url).search;
     const targetUrl = `https://${targetHost}${path}`;
     // --messages-only means "just the model API calls" — match the same wire
@@ -105,7 +133,9 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         // Raw bytes for the upstream, decoded copy for the trace — codex
         // zstd-compresses request JSON; a text round trip would corrupt it.
         fwdBody = new Uint8Array(await req.arrayBuffer());
-        reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
+        reqBody = enrolled || fwdBody.length <= EXTERNAL_BODY_CAP
+          ? decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"])
+          : externalBodyStub(fwdBody.length, reqHeaders["content-type"]);
       }
       const reqBytes = fwdBody && fwdBody.length ? { bodyBytes: fwdBody.length } : {};
 
@@ -170,10 +200,14 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       const cap = captured.then(({ text, complete, bytes, firstByteAt, firstTokenAt }) => {
         let resBody: unknown = undefined;
         let resBodyRaw: string | undefined = undefined;
-        try {
-          if (ct.includes("application/json")) resBody = JSON.parse(text);
-          else resBodyRaw = text;
-        } catch { resBodyRaw = text; }
+        if (!enrolled && bytes > EXTERNAL_BODY_CAP) {
+          resBody = externalBodyStub(bytes, ct);
+        } else {
+          try {
+            if (ct.includes("application/json")) resBody = JSON.parse(text);
+            else resBodyRaw = text;
+          } catch { resBodyRaw = text; }
+        }
 
         onPair({
           id: captureId,
@@ -304,8 +338,6 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     upstream.on("error", () => { clientSocket.destroy(); finish(); });
     clientSocket.on("error", () => { upstream.destroy(); finish(); });
   }
-
-  const interceptSet = config.interceptHosts ?? [];
 
   proxy.on("connect", async (req, clientSocket: net.Socket, head: Buffer) => {
     const [reqHost, reqPortStr] = (req.url || "").split(":");

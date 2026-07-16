@@ -68,7 +68,13 @@ credits) independent of `ANTHROPIC_BASE_URL`.
    byte-counted tunnel: no forged cert (cert-pinning tools and system-store
    readers like apt keep working), one ~100-byte meta pair per connection
    (host, bytesUp/Down, duration — the "claude touched X" audit trail).
-   `--capture-external` restores MITM-everything; the tunnel is also the
+   `--capture-external` restores MITM-everything — with external BODIES
+   capped at 64KB (`EXTERNAL_BODY_CAP` in src/mitm.ts: larger request/
+   response bodies become meta stubs with exact byte counts + content type,
+   same shape as compact's; url/status/headers/timing/sizes stay — the
+   audit trail without the 52MB tarball or token-authed gh response in the
+   trace). Enrolled hosts (`--intercept-host`) always capture in full — the
+   user named them. The tunnel is also the
    last resort when cert generation fails
 3. The TLS terminator decrypts, forwards to the real host, tees the response
    (stream to Claude + capture in parallel), logs the pair

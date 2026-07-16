@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach, beforeAll, beforeEach } from "bun:test";
-import { startMitm } from "../src/mitm";
+import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP } from "../src/mitm";
 import { ensureCerts, isInterceptHost, migrateCaDir, buildCaBundle, systemCaBundle } from "../src/certs";
 import { createCapturer } from "../src/capture";
 import type { TracePair } from "../src/types";
@@ -149,6 +149,21 @@ describe("mitm proxy tunnel mechanics", () => {
 // Tunnel-by-default (devlog 2026-07-15): a CONNECT to a host outside the
 // include-list must pass through as an opaque pipe — no forged cert — and
 // log exactly one meta pair with byte counts once the connection closes.
+describe("external body cap", () => {
+  test("stub carries exact byte count, content type, and the escape hatch", () => {
+    const s: any = externalBodyStub(54_700_000, "application/octet-stream");
+    expect(s._cctrace_stub).toBe(1);
+    expect(s.kind).toBe("meta");
+    expect(s.droppedBytes).toBe(54_700_000);
+    expect(s.contentType).toBe("application/octet-stream");
+    expect(String(s.cctrace)).toContain("--intercept-host");
+  });
+
+  test("cap is 64KB — small external JSON survives, tarballs never enter the trace", () => {
+    expect(EXTERNAL_BODY_CAP).toBe(64 * 1024);
+  });
+});
+
 describe("opaque tunnel for non-listed hosts", () => {
   function echoUpstream(): Promise<{ port: number; stop: () => void }> {
     return new Promise((resolve) => {

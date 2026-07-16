@@ -28,7 +28,9 @@ src/
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
 ├── version.ts      # CCTRACE_VERSION + daily npm update check (cached in data dir, fail-soft)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
-├── storage.ts      # `cctrace clean|merge|compress`: log-dir housekeeping (plan + apply)
+├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply)
+├── compact.ts      # `cctrace compact`: supersede-stub messages bodies + exemplar
+│                   #   retention for noise categories (-95%+, body-level only)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Session view
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
@@ -307,6 +309,11 @@ cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly
 cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens,external)
+cctrace compact [--zstd] [--yes]          # fold redundant bodies: superseded messages request
+                                          # bodies -> stubs (longest per thread-epoch kept
+                                          # full; session view renders identically), noise
+                                          # cats -> meta-only except first/last/largest/
+                                          # slowest/errors; never deletes pairs
 cctrace ps [--json]                       # live instances (URL, client, project, session)
 cctrace --version                         # print version (+ newer version if known)
 ```
@@ -397,6 +404,21 @@ make test       # bun test
   an `.html` has a source trace before calling it regenerable; every unlink
   re-stats first so a live capture appending between plan and apply is skipped,
   not truncated (`src/storage.ts`, regression-tested).
+- **compact folds bodies, never deletes pairs** (`src/compact.ts`, measured
+  on 4.3GB of real traces): ~79% of trace bytes are messages request bodies
+  re-sending the whole conversation. Per thread-EPOCH (a history-length drop
+  = compaction/clear closed an epoch) the longest request stays full; the
+  rest become stubs carrying model/metadata/historyLen/firstUserText/
+  keptPairId, so grouping, per-turn attribution, and continuity all still
+  work (`session.ts` is stub-aware; regression: buildSession output is
+  identical pre/post compact). Noise categories (telemetry/external/
+  bootstrap) get exemplar retention per (host, path): first/last/largest/
+  slowest/every-error keep bodies, the rest go meta-only — deterministic,
+  unlike sampling. Responses are never touched (each exists once). Post-hoc
+  only: capture stays lossless, the longest request isn't known until the
+  session ends. Whole-pair deletion stays `purge` — a privacy tool, not a
+  size optimization. Known loss (stated in --help): exact wire bytes of
+  superseded requests. Same plan/apply + re-stat discipline as storage.ts.
 - **Guarded pump, not `tee()`**: responses stream to Claude chunk-by-chunk while
   the same chunks accumulate for capture (`captureTee` in `src/stream.ts`).
   `ReadableStream.tee()` was abandoned: its native cancel path can crash the

@@ -22,6 +22,7 @@ import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
   planPurge, applyPurge, human,
 } from "./storage";
+import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
@@ -59,7 +60,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "ps"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
@@ -561,6 +562,51 @@ function runPurge(args: string[]) {
   }
 }
 
+// `cctrace compact` — aggressive post-hoc shrinking, body-level only (never
+// deletes pairs; whole-pair deletion stays purge's job, privacy only).
+// Measured design (docs/design/ideas.md #9): ~79% of trace bytes are
+// messages request bodies re-sending the conversation; keeping one full
+// request per thread-epoch retains everything the session view renders.
+function runCompact(args: string[]) {
+  const usage = "cctrace compact [--dir DIR] [--zstd] [--yes]";
+  const { values: v } = parseStorageArgs("compact", args, { zstd: { type: "boolean" } }, usage);
+  const logDir = (v.dir as string) || ".cctrace";
+  const wire = wireTables();
+  const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
+  const plan = planCompact(logDir, categorize, wire);
+  if (!plan.files.length) {
+    log(`Nothing to compact in ${logDir} (no superseded request bodies, no collapsible noise)`, C.green);
+    return;
+  }
+  log(`Compacting ${plan.files.length} trace(s) in ${logDir}:`, C.cyan);
+  for (const f of plan.files) {
+    const bits = [];
+    if (f.stubbed) bits.push(`stub ${f.stubbed} superseded request bodies`);
+    if (f.collapsed) bits.push(`collapse ${f.collapsed} noise bodies to meta`);
+    console.log(`    ${f.name}  ${C.dim}${bits.join(", ")} — saves ~${human(f.savedBytes)} of ${human(f.size)}${C.reset}`);
+  }
+  log(`${plan.stubbed} request bodies stubbed (longest per thread-epoch kept full), ${plan.collapsed} noise bodies collapsed (first/last/largest/slowest/errors kept)`, C.cyan);
+  log(`known loss: exact wire bytes of superseded requests — mid-epoch system-prompt/tool changes keep only the kept request's version`, C.dim);
+  if (!v.yes) {
+    log(`Would save ~${human(plan.savedBytes)} of raw trace lines${v.zstd ? ", then zstd-archive" : " (add --zstd to also archive)"}. ${DRY}`, C.yellow);
+    return;
+  }
+  const res = applyCompact(plan, categorize, wire);
+  log(`Rewrote ${res.rewritten.length} trace(s), saved ${human(res.bytes)}`, C.green);
+  if (res.skipped.length) {
+    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+  }
+  if (v.zstd) {
+    const cplan = planCompress(logDir, Date.now(), undefined);
+    if (cplan.files.length || cplan.upgrades.length) {
+      const cres = applyCompress(cplan, { keepJsonl: false });
+      const ratio = cres.before > 0 ? (cres.before / Math.max(cres.after, 1)).toFixed(1) : "0";
+      log(`Archived ${cres.archived.length} trace(s): ${human(cres.before)} → ${human(cres.after)} (${ratio}x)`, C.green);
+      if (cres.skipped.length) log(`Skipped ${cres.skipped.length} live trace(s): ${cres.skipped.join(", ")}`, C.yellow);
+    }
+  }
+}
+
 // One stable data dir for every install method (source, bun link, compiled
 // binary) so the MITM CA is generated once and reused. The CA is identity
 // material — rotating it silently breaks any trust the user exported with
@@ -623,10 +669,19 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
   ${C.cyan}purge${C.reset} [--drop CATS | --keep CATS]
                           Drop categories from saved traces (default drop:
                           telemetry,tokens,external — trims rows/noise, not disk).
+  ${C.cyan}compact${C.reset} [--zstd]          Fold redundant bodies in saved traces (-95%+ on real
+                          sessions): superseded messages request bodies become
+                          stubs (the longest request per thread-epoch stays
+                          full — the session view renders identically);
+                          telemetry/external/bootstrap collapse to meta-only
+                          except first/last/largest/slowest/errors. Loses the
+                          exact wire bytes of superseded requests (per-turn
+                          "what exactly was sent" diffing). Never deletes
+                          pairs. --zstd archives afterwards.
   ${C.cyan}ps${C.reset} [--json]               List live cctrace instances (URL, client, project,
                           session).
-  ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge are${C.reset}
-  ${C.dim}dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
+  ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge/compact${C.reset}
+  ${C.dim}are dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
@@ -1050,6 +1105,7 @@ async function main() {
     else if (SUBCOMMAND === "merge") runMerge(rest);
     else if (SUBCOMMAND === "compress") runCompress(rest);
     else if (SUBCOMMAND === "purge") runPurge(rest);
+    else if (SUBCOMMAND === "compact") runCompact(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
     process.exit(0);
   }

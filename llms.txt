@@ -26,9 +26,10 @@ Key commands:
 - `cctrace view [target|latest]` — reopen a saved trace in the web UI; no
   target lists traces and prompts (Enter = newest); `--html` writes a
   self-contained snapshot instead (reads .jsonl, .jsonl.zst, .jsonl.gz)
-- `cctrace clean|merge|compress|purge` — log-dir housekeeping; dry-run by
-  default, `--yes` applies, never deletes data not fully held elsewhere
-  (purge default drop: telemetry,tokens,external)
+- `cctrace clean|merge|compress|purge|compact` — log-dir housekeeping; dry-run
+  by default, `--yes` applies, never deletes data not fully held elsewhere
+  (purge default drop: telemetry,tokens,external; compact folds superseded
+  request bodies to stubs, -95%+ with an identical session view)
 - `cctrace ps` — live cctrace instances: URL, client, project, session
 - `cctrace --print-ca` — path to the auto-generated MITM CA
 

@@ -1770,6 +1770,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderConversation(pair) {
       const req = pair.request.body || {};
       let html = '';
+      if (req._cctrace_stub) {
+        // cctrace compact folded this superseded request body; the thread's
+        // kept (longest) request holds the full history. The response below
+        // is untouched — compact never folds responses.
+        html += '<div class="block-note">request body compacted \\u2014 ' +
+          (req.historyLen || 0) + ' history turns, ' + fmtBytes(req.droppedBytes || 0) + ' dropped' +
+          (req.keptPairId ? ' \\u00b7 <a href="#/p/' + encodeURIComponent(req.keptPairId) + '">full history</a>' : '') +
+          '</div>';
+      }
       if (wireDialect(pair) === 'openai') {
         // OpenAI Responses (codex/grok): normalize input[] into the same
         // turn/block model, so the folds render identically.

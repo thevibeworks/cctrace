@@ -121,31 +121,39 @@ export function buildSession(pairs: any[], wire?: any): any {
   const byKey: Record<string, any> = {};
   // History length in normalized turns — the attribution index. Anthropic
   // messages map 1:1; OpenAI input[] folds (reasoning/tool items join turns).
-  const histLen = (p: any, dialect: string) =>
-    dialect === "openai"
-      ? normalizeOpenaiTurns(p.request.body.input).length
-      : (p.request.body.messages || []).length;
+  // Stubs (`cctrace compact` folded the superseded request body) remember
+  // theirs in historyLen, so attribution survives compaction.
+  const histLen = (p: any, dialect: string) => {
+    const b = p.request.body || {};
+    if (b._cctrace_stub) return typeof b.historyLen === "number" ? b.historyLen : 0;
+    return dialect === "openai" ? normalizeOpenaiTurns(b.input || []).length : (b.messages || []).length;
+  };
 
   for (const p of pairs || []) {
     if (!p || !p.request) continue;
     const dialect = wireDialect(p);
     const req = p.request.body || {};
+    const stub = !!req._cctrace_stub && req.kind === "superseded";
     let key = "";
     if (dialect === "anthropic") {
-      if (!Array.isArray(req.messages) || !req.messages.length) continue;
+      if (!stub && (!Array.isArray(req.messages) || !req.messages.length)) continue;
       // cc >= ~2.1.2xx stamps every sidechain request with a stable per-run
       // agent id — exact, collision-proof grouping. Older versions fall back
-      // to the first-user-text signature.
+      // to the first-user-text signature (a stub carries its firstUserText,
+      // pre-extracted, so it keys identically to the request it replaced).
       const agentId = (p.request.headers || {})["x-claude-code-agent-id"] || "";
-      key = agentId ? "agent:" + agentId : threadSig(req.messages[0]);
+      key = agentId ? "agent:" + agentId
+        : stub ? threadSig({ content: req.firstUserText || "" })
+        : threadSig(req.messages[0]);
     } else if (dialect === "openai") {
-      if (!Array.isArray(req.input) || !req.input.length) continue;
+      if (!stub && (!Array.isArray(req.input) || !req.input.length)) continue;
       // Thread identity is on the wire in a header (codex thread-id, grok
       // x-grok-conv-id — named by the client's wire table); a few calls
       // carry none and fall back to the first-user-text signature.
       const w = wire && p.client ? wire[p.client] : null;
       const convId = (w && w.threadHeader && (p.request.headers || {})[w.threadHeader]) || "";
-      key = convId ? "conv:" + convId : "osig:" + threadSig({ content: openaiFirstUserText(req.input) });
+      key = convId ? "conv:" + convId
+        : "osig:" + threadSig({ content: stub ? req.firstUserText || "" : openaiFirstUserText(req.input) });
     } else {
       continue;
     }
@@ -161,9 +169,12 @@ export function buildSession(pairs: any[], wire?: any): any {
 
   for (const t of threads) {
     // Spine: the request carrying the longest history (ties -> latest).
+    // Stubbed requests can't rebuild turns, so they never anchor the spine
+    // (compact keeps each epoch's longest request full for exactly this).
     let spine = t.reqs[0];
-    let spineLen = histLen(spine, t.dialect);
+    let spineLen = -1;
     for (const p of t.reqs) {
+      if ((p.request.body || {})._cctrace_stub) continue;
       const len = histLen(p, t.dialect);
       if (len >= spineLen) {
         spine = p;

@@ -240,6 +240,11 @@ cctrace compress --older-than 7 --yes      # 只压缩 7 天前的 trace
 # 从已保存的 trace 里丢掉噪音分类（遥测、count_tokens、外部隧道行）
 cctrace purge --yes                        # 删行不省盘 -- 省空间用 compress
 
+# 折叠冗余请求体（真实会话可省 95%+）
+cctrace compact --yes                      # 被后续请求覆盖的请求体折成 stub；
+                                           # Session 视图渲染结果完全一致
+cctrace compact --zstd --yes               # 折叠后顺带 zstd 归档
+
 # 现在哪些 cctrace 会话在跑、各在哪个端口？
 cctrace ps                                 # URL、PID、client、项目、session
 ```
@@ -250,6 +255,13 @@ cctrace ps                                 # URL、PID、client、项目、sessi
 只在源文件里**每一个** pair 都归属到某个 session 时才 prune 它，因此带有
 OAuth/用量/遥测（无 session id）的 trace 绝不会被误删。每次删除前还会复查
 文件在 plan 之后有没有变化，所以就算有 live 抓取正在追加写入，清理也是安全的。
+
+`compact` 是唯一一个刻意"减料"的命令，而且明说：每次 API 调用都会重发整段
+对话历史，所以 trace 的大部分字节是冗余请求体。它保留每个对话 epoch 里
+历史最长的那次请求的完整请求体，把被覆盖的折成小 stub（遥测/外部噪音则按
+端点保留首个/末个/最大/最慢/所有报错，其余折成只剩字节数的 meta 行）。
+不删除任何 pair、绝不动响应体，重建出的 Session 视图完全一致 -- 失去的
+只是被覆盖请求体的原始线上字节。默认 dry-run。
 
 ## 选项
 

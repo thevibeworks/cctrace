@@ -604,8 +604,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
     }
-    .turn-user .turn-role { color: var(--accent); }
-    .turn-user { border-left: 2px solid var(--accent); }
+    /* User turns anchor the reading rhythm: extra space above starts the
+       "paragraph", a faint accent wash on the header row guides a scanning
+       eye. No hard border — a colored edge reads as UI chrome, not emphasis,
+       and accent is reserved for interactive things. */
+    .turn-user .turn-role {
+      color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg-surface));
+    }
+    .turn-user { margin-top: 18px; }
+    .turn-user:first-child { margin-top: 0; }
     .turn-assistant .turn-role { color: var(--green); }
     .turn-tag { color: var(--text-faint); text-transform: none; letter-spacing: 0; }
     .turn-usage {
@@ -622,6 +630,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       line-height: 1.5;
     }
     .msg-text.think { color: var(--text-muted); font-style: italic; }
+    /* Markdown subset inside assistant text (renderMd). Same type scale,
+       no new colors: emphasis comes from weight and hairline boxes. */
+    .msg-text code {
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 3px; padding: 0 4px; font-size: 11px;
+    }
+    .msg-text .md-code { margin: 6px 0; font-size: 11px; }
+    .msg-text .md-h { font-weight: 600; color: var(--text); margin: 8px 0 2px; }
+    .msg-text a { color: var(--accent); }
     /* Long texts clamp with an explicit expander instead of an inner scrollbar,
        so the mouse wheel never gets trapped inside a turn. */
     .msg-clamp.clamped .msg-text {
@@ -1636,10 +1653,39 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return s.length > n ? s.slice(0, n) + '...' : s;
     }
 
+    // Best-effort markdown for assistant reply text — a safe subset only:
+    // fenced code, inline code, headings, bold, bare http(s) links. The text
+    // is HTML-escaped FIRST; the transform emits nothing but our own tags,
+    // so wire content can never smuggle markup in. Everything else renders
+    // as-is (the container is pre-wrap, lists already read fine).
+    function renderMd(text) {
+      const lines = escapeHtml(String(text == null ? '' : text)).split('\\n');
+      const inline = (s) => s
+        .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
+        .replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>')
+        .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+      let out = '';
+      let code = null; // non-null while inside a code fence
+      for (const ln of lines) {
+        if (/^\\s*\`\`\`/.test(ln)) {
+          if (code === null) code = [];
+          else { out += '<pre class="md-code">' + code.join('\\n') + '</pre>'; code = null; }
+          continue;
+        }
+        if (code !== null) { code.push(ln); continue; }
+        const h = ln.match(/^(#{1,4})\\s+(.*)$/);
+        if (h) { out += '<div class="md-h">' + inline(h[2]) + '</div>'; continue; }
+        out += inline(ln) + '\\n';
+      }
+      if (code !== null) out += '<pre class="md-code">' + code.join('\\n') + '</pre>'; // unclosed fence
+      return out;
+    }
+
     // Long texts render clamped with a "show all" expander; short ones inline.
-    function textBlock(text, cls) {
+    // md renders assistant reply text as markdown (safe subset, renderMd).
+    function textBlock(text, cls, md) {
       const t = String(text == null ? '' : text);
-      const inner = '<div class="msg-text' + (cls ? ' ' + cls : '') + '">' + escapeHtml(t) + '</div>';
+      const inner = '<div class="msg-text' + (cls ? ' ' + cls : '') + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
       if (t.length <= 2000) return inner;
       return '<div class="msg-clamp clamped">' + inner +
         '<button class="msg-more" onclick="toggleClamp(this)">show all \\u00b7 ' + fmtCompact(t.length) + ' chars</button></div>';
@@ -1655,11 +1701,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
     };
 
-    function renderBlock(b) {
+    function renderBlock(b, md) {
       if (b == null) return '';
-      if (typeof b === 'string') return textBlock(b);
+      if (typeof b === 'string') return textBlock(b, '', md);
       const type = b.type;
-      if (type === 'text') return textBlock(b.text);
+      if (type === 'text') return textBlock(b.text, '', md);
       if (type === 'thinking') {
         const t = b.thinking || '';
         if (!t) return '<div class="block-note">thinking (no visible content)</div>';
@@ -1687,7 +1733,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderTurn(role, content, tag) {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content : []);
       let inner = '';
-      for (const b of blocks) inner += renderBlock(b);
+      for (const b of blocks) inner += renderBlock(b, role === 'assistant');
       return '<div class="turn turn-' + escapeHtml(String(role)) + '">' +
         '<div class="turn-role">' + escapeHtml(String(role)) +
         (tag ? '<span class="turn-tag">' + escapeHtml(tag) + '</span>' : '') +
@@ -2082,7 +2128,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // tool_use id -> subagent thread key, rebuilt on each session render.
     let agentThreadIndex = {};
 
-    function renderBlockS(b, results) {
+    function renderBlockS(b, results, md) {
       if (b && (b.type === 'tool_use' || b.type === 'server_tool_use')) {
         const name = b.name || '?';
         let title = name;
@@ -2119,12 +2165,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (res && res.is_error) cls += ' errline';
         return fold(title, pv, body, cls, false, extra);
       }
-      return renderBlock(b);
+      return renderBlock(b, md);
     }
 
     function renderSessionTurn(turn, results) {
       let inner = '';
-      for (const b of turn.blocks) inner += renderBlockS(b, results);
+      for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {
         const u = turn.usage;

@@ -213,7 +213,11 @@ hash-routed:
   request that produced it (index = the request's history length; later
   same-length requests win). tool_results fold into their tool_use by id
   (ccx convention); result-only user turns are skipped. EVERY tool_use folds
-  to one line (focus hierarchy: user prompts get an accent border, subagent
+  to one line (focus hierarchy: user turns get extra space above + a faint
+  accent wash on the role bar (no hard border — accent edges read as
+  chrome), assistant reply text renders best-effort safe-subset markdown
+  (`renderMd`: fenced/inline code, headings, bold, http(s) links —
+  escaped first, so wire content can't smuggle markup), subagent
   spawns / Skill / MCP calls keep a purple title and a subagent fold links
   to its reconstructed thread; Read/Bash dumps stay quiet). Every assistant
   turn links back to its wire request. The conversation pane

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cctrace — HTTP tracer for Claude Code</title>
-  <meta name="description" content="TLS-intercepting HTTP tracer for Claude Code: see what the LLM sends and receives each turn, and audit what leaves your machine — hosts, telemetry, payloads.">
+  <title>cctrace — HTTP tracer for Claude Code, Codex, and Grok</title>
+  <meta name="description" content="TLS-intercepting HTTP tracer for the Claude Code, Codex, and Grok CLIs: see what the LLM sends and receives each turn, and audit what leaves your machine — hosts, telemetry, payloads.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cstyle%3E@media(prefers-color-scheme:dark){.s{stroke:%23e6edf3}.f{fill:%23e6edf3}}%3C/style%3E%3Cg fill='none' stroke='%230d1117' stroke-linecap='round'%3E%3Cpath class='s' stroke-width='26' d='M270.75 175.6A125 125 0 1 0 270.75 336.4'/%3E%3Cpath class='s' stroke-width='26' d='M395.75 175.6A125 125 0 1 0 395.75 336.4'/%3E%3Cline class='s' stroke-width='9' x1='250' y1='256' x2='452' y2='256'/%3E%3Ccircle class='s' stroke-width='9' cx='452' cy='256' r='17'/%3E%3Ccircle class='f' fill='%230d1117' stroke='none' cx='250' cy='256' r='12'/%3E%3C/g%3E%3C/svg%3E">
   <style>
     :root {
@@ -189,12 +189,13 @@
     <p class="subtitle en">
       <strong>LLM tracing</strong> &mdash; what Claude Code sends and receives
       each turn. <strong>Security &amp; privacy tracing</strong> &mdash; what
-      actually leaves your machine. One command.
+      actually leaves your machine. One command. Traces the Codex and Grok
+      CLIs too.
     </p>
     <p class="subtitle zh">
       <strong>LLM 追踪</strong>：Claude Code 每轮到底发送和接收了什么。
       <strong>安全/隐私审计</strong>：哪些请求出站、去了哪些 host、payload
-      里带了什么。一行命令。
+      里带了什么。一行命令。也支持追踪 Codex 和 Grok CLI。
     </p>
 
     <div class="install-box">
@@ -240,27 +241,34 @@
       </p>
     </div>
     <div class="feature">
-      <h3 class="en">Shareable snapshots</h3>
-      <h3 class="zh">可分享快照</h3>
+      <h3 class="en">Replayable sessions</h3>
+      <h3 class="zh">可回放的会话</h3>
       <p class="en">
-        Every run saves a self-contained HTML file that renders the same UI
-        offline. Send it to a colleague &mdash; no server needed.
+        Every run writes a <code>.jsonl</code> trace. Reopen it anytime with
+        <code>cctrace view</code>: the reconstructed conversation &mdash;
+        threads, subagents, per-turn cost and latency &mdash; plus time-travel
+        replay. <code>view --html</code> exports a self-contained snapshot.
       </p>
       <p class="zh">
-        每次运行都保存一份自包含 HTML，离线也能渲染同样的界面。发给同事就能看，
-        不需要服务器。
+        每次运行都写一份 <code>.jsonl</code> trace，随时用
+        <code>cctrace view</code> 重新打开：重建的对话 &mdash; 线程、子代理、
+        每轮成本与延迟 &mdash; 外加时间轴回放。<code>view --html</code>
+        可导出自包含快照分享。
       </p>
     </div>
     <div class="feature">
-      <h3 class="en">Full interception</h3>
-      <h3 class="zh">完整拦截</h3>
+      <h3 class="en">Scoped interception</h3>
+      <h3 class="zh">有边界的拦截</h3>
       <p class="en">
-        Dynamic cert generation intercepts ALL hosts &mdash; Anthropic,
-        Datadog telemetry, MCP servers. See every byte that leaves your machine.
+        First-party hosts are decrypted; everything else your session touches
+        &mdash; npm, GitHub, apt &mdash; passes through as an opaque
+        byte-counted tunnel. An audit trail without the payload copies;
+        <code>--capture-external</code> when you need every byte.
       </p>
       <p class="zh">
-        动态证书生成拦截所有主机 &mdash; Anthropic、Datadog 遥测、MCP 服务器。
-        看到离开你机器的每一个字节。
+        只解密第一方主机；会话触碰到的其他主机 &mdash; npm、GitHub、apt &mdash;
+        以不解密的字节计数隧道通过：留下审计线索，不复制 payload。需要全量时用
+        <code>--capture-external</code>。
       </p>
     </div>
     <div class="feature">

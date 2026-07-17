@@ -1,7 +1,7 @@
 {
   "name": "@thevibeworks/cctrace",
-  "version": "0.16.0",
-  "description": "TLS-intercepting HTTP tracer for Claude Code — captures every API call (messages, OAuth, usage/credits, MCP) with a live categorized web UI",
+  "version": "0.17.0",
+  "description": "TLS-intercepting HTTP tracer for the Claude Code, Codex, and Grok CLIs — captures every API call (messages, OAuth, usage/credits, MCP) with a live web UI: reconstructed sessions, replay, cost/cache/latency chips. External hosts pass through as byte-counted tunnels, never decrypted.",
   "type": "module",
   "bin": {
     "cctrace": "./src/cli.ts"

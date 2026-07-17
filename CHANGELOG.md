@@ -6,6 +6,55 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-17
+
+### Added
+
+- DevTools-style request inspection (#37): a size column on every row
+  (request/response body bytes stamped on the wire at capture time —
+  codex zstd shows the compressed size; older traces fall back to an
+  estimate and say so), a Headers section in the detail panel (General
+  block plus request/response headers as parsed key/value tables with a
+  raw toggle and one-click copy), and body view toggles — pretty JSON vs
+  as-logged raw for bodies, parsed events vs raw text for SSE streams.
+  The detail panel also shows prompt size, first-token/first-byte delay
+  with its share of wall-clock, and output tokens/sec.
+- Session error metrics (#38): wire errors (no response, 4xx/5xx,
+  in-stream error events), truncated streams, and tool-call failures
+  aggregated per thread and per session — red chips in the conversation
+  pane, an "N err" badge on thread cards, a rollup line above the
+  threads pane. Reported separately because they mean different
+  failures.
+- cctrace compact (#40): folds redundant bytes out of saved traces
+  without deleting pairs. Superseded messages request bodies (each API
+  turn re-sends the whole conversation) become small stubs — the longest
+  request per thread-epoch keeps its full body, so the Session view
+  renders identically (regression-tested). Noise categories (telemetry,
+  external, bootstrap) keep first/last/largest/slowest/error bodies per
+  endpoint, the rest go meta-only. Measured -95%+ on real multi-GB
+  traces. Dry-run by default, --yes applies, --zstd archives the result.
+  Known loss, stated in --help: exact wire bytes of superseded requests.
+- Run catalog (#42): capture runs no longer vanish from the instance
+  registry at exit — they tombstone (client, project, trace file,
+  session id, pruned after 30 days). cctrace view with no target now
+  also offers "recent runs elsewhere" across projects, re-stat'd before
+  listing so paths from other containers never error. ps/switcher
+  listings sort project-first, and registry entries carry the traced
+  agent's pid and cctrace's own pid (informational — liveness stays
+  heartbeat+probe).
+
+### Changed
+
+- Conversation design pass (#39): user turns get quieter emphasis (a
+  faint accent wash and breathing room instead of a hard colored
+  border), and assistant replies render a safe subset of markdown —
+  fenced/inline code, headings, bold, http(s) links — escaped first so
+  wire content cannot smuggle markup.
+- --capture-external now caps external response/request bodies at 64KB
+  (#41): larger bodies become meta stubs with exact byte counts and
+  content type; url, status, headers, timing and sizes stay. Hosts you
+  enroll with --intercept-host still capture in full — you named them.
+
 ## [0.16.0] - 2026-07-15
 
 ### Changed
@@ -696,6 +745,7 @@ Initial public release.
 - Automatic port fallback when the default UI port is busy.
 
 [Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...HEAD
+[0.17.0]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/thevibeworks/cctrace/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/thevibeworks/cctrace/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/thevibeworks/cctrace/compare/v0.13.0...v0.14.0

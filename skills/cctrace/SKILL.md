@@ -80,12 +80,18 @@ instances land on 9318, 9319, ...). Hash-routed views:
   Headers section (general + parsed request/response headers, raw toggle,
   copy), and body folds with pretty/raw and SSE events/raw toggles.
   `j`/`k` walk rows, `/` filters, `Esc` closes.
-- **Session** (`#/session[/<key>]`): reconstructed conversation (main chat,
-  subagent runs linked to the Task call that spawned them, utility probes as
-  separate threads) beside the wire requests, with per-turn
-  tokens/duration/cost linked back to each request, and error metrics per
-  thread/session (failed requests, truncated streams, failed tool calls
-  with an error rate). Tails like `tail -f`
+- **Session** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
+  conversation (main chat, subagent runs linked to the Task call that
+  spawned them, utility probes as separate threads) beside the wire
+  requests, with per-turn tokens/duration/cost linked back to each request,
+  and error metrics per thread/session (failed requests, truncated streams,
+  failed tool calls with an error rate). When a trace holds several wire
+  session ids (/clear mid-run, resumed sessions), threads group into
+  collapsible per-session sections, newest first (`[`/`]` switch sessions);
+  single-session traces render flat. A thread that switched models mid-way
+  labels "+N models" with the split in the model chip tooltip; the selected
+  thread's request list marks rewound/compact-folded/failed requests.
+  Tails like `tail -f`
   while live. All tool calls fold to one line; subagent/skill/MCP calls stay
   visually marked, and a subagent fold links to its reconstructed thread.
   Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system

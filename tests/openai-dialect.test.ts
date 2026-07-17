@@ -271,7 +271,8 @@ describe("buildSession — OpenAI dialect", () => {
     const { threads } = buildSession(pairs, WIRE);
     expect(threads).toHaveLength(2);
     const main = mainThread(threads);
-    expect(main.key).toBe("conv:thread-1");
+    // thread keys are session-scoped since the sessions layer: sid|conv:...
+    expect(main.key).toBe("sess-1|conv:thread-1");
     expect(main.usage.requests).toBe(2);
     expect(main.system).toContain("You are a coding agent");
     expect(main.tools.map((t: any) => t.name)).toEqual(["exec"]);

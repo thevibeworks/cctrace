@@ -780,6 +780,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cdot-hit { background: var(--green); }
     .cdot-cold, .cdot-miss { background: var(--amber); }
     .treq-io { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* request-level truth markers: rewound branch tips, compact-folded
+       bodies, failed requests — quiet bordered tags, no fill */
+    .treq-mark {
+      font-size: 10px; color: var(--text-faint); align-self: center;
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+      white-space: nowrap;
+    }
+    .treq-mark.amber { color: var(--amber); border-color: var(--amber); }
+    .treq-mark.err { color: var(--red); border-color: var(--red); }
+    .amber { color: var(--amber); }
+    /* the sessions layer: one details fold per session id, newest first;
+       invisible on single-session traces (zero new chrome) */
+    .sess { margin: 0 0 6px; }
+    .sess > summary {
+      display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
+      cursor: pointer; padding: 5px 8px; font-size: 12px;
+      color: var(--text-muted); list-style: none; user-select: none;
+    }
+    .sess > summary::-webkit-details-marker { display: none; }
+    .sess > summary::before { content: '\\25B8'; font-size: 10px; color: var(--text-faint); }
+    .sess[open] > summary::before { content: '\\25BE'; }
+    .sess > summary:hover { color: var(--text); }
+    .sess-sid { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
+    .sess-meta { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .sess > .thread, .sess > details.box { margin-left: 10px; }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
       border: 1px dashed var(--purple); border-radius: 6px;
@@ -875,6 +901,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let view = 'requests';      // 'requests' | 'session'
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session view
+    const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
 
     // Run identity injected by the server / snapshot writer ({} when unknown,
@@ -1171,6 +1198,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (msg.type === 'init') {
           pairs.length = 0;
           for (const p of msg.pairs) ingestPair(p);
+          for (const p of pairs) {
+            const s = extractSessionId(p, CLIENT_WIRE);
+            if (s) liveSids.add(s);
+          }
           render();
           route();
         } else if (msg.type === 'pair') {
@@ -1183,6 +1214,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
           }
           refreshDetailNav();
+          // A NEW session id mid-run (e.g. /clear): follow it only while
+          // tailing — reading history is never yanked (terminal semantics).
+          const nsid = extractSessionId(msg.pair, CLIENT_WIRE);
+          if (nsid && !liveSids.has(nsid)) {
+            const firstSid = liveSids.size === 0;
+            liveSids.add(nsid);
+            if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
+          }
           if (view === 'session') showSession(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
@@ -1190,6 +1229,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
             if (!known.has(p.id)) ingestPair(p);
+            const s = extractSessionId(p, CLIENT_WIRE);
+            if (s) liveSids.add(s);
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
@@ -1367,10 +1408,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         try { id = decodeURIComponent(id); } catch {}
         setView('requests');
         openDetail(id);
-      } else if ((m = h.match(/^#\\/session(?:\\/([^/@][^/]*))?(?:\\/@(.+))?$/))) {
+      } else if ((m = h.match(/^#\\/session(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?(?:\\/@(.+))?$/))) {
+        // #/session[/<sid8-or-thread-key>[/<thread-key>]][/@<pair>] — the
+        // first segment resolves as a thread key first (back-compat), then
+        // as a session-id prefix (the sessions layer).
         let key = m[1] || null;
         if (key) { try { key = decodeURIComponent(key); } catch {} }
-        let anchor = m[2] || null;
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        let anchor = m[3] || null;
         if (anchor) { try { anchor = decodeURIComponent(anchor); } catch {} }
         setView('session');
         if (anchor) {
@@ -1387,7 +1433,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             renderReplayBar();
           }
         }
-        showSession(key);
+        showSession(key, sub);
       } else {
         setView('requests');
         closeDetail();
@@ -1460,6 +1506,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (e.key === 'j') { railJump(convoEl, 'tnext'); return; }
         if (e.key === 'p') { railJump(convoEl, 'uprev'); return; }
         if (e.key === 'u') { railJump(convoEl, 'unext'); return; }
+        if (e.key === '[' || e.key === ']') {
+          // Previous/next session, newest-first (same order as the pane).
+          const threads = getThreads();
+          const at = {};
+          for (const t of threads) {
+            if (!t.sessionId) continue;
+            at[t.sessionId] = Math.max(at[t.sessionId] || 0, t.lastAt || t.firstAt || 0);
+          }
+          const sids = Object.keys(at).sort((a, b) => at[b] - at[a]);
+          if (sids.length > 1) {
+            let cur = null;
+            for (const t of threads) if (t.key === sessionSelKey) cur = t.sessionId;
+            let i = sids.indexOf(cur);
+            i = e.key === ']' ? Math.min(sids.length - 1, i + 1) : Math.max(0, i - 1);
+            location.hash = '#/session/' + encodeURIComponent(sids[i].slice(0, 8));
+          }
+          return;
+        }
         if (e.key === 'Escape') {
           if (replay.active) exitReplay();
           else location.hash = '';
@@ -2026,7 +2090,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return sessionCache.threads;
     }
 
-    function showSession(key) {
+    // Default focus is ALWAYS the most recent session (session-tab design):
+    // when several session ids exist, the main-thread pick scopes to the one
+    // with the newest wire activity.
+    function newestMainThread(threads) {
+      let sid = '';
+      let at = -1;
+      for (const t of threads) {
+        if (t.sessionId && (t.lastAt || t.firstAt || 0) >= at) { at = t.lastAt || t.firstAt || 0; sid = t.sessionId; }
+      }
+      const scoped = sid ? threads.filter(t => t.sessionId === sid) : threads;
+      return mainThread(scoped) || mainThread(threads);
+    }
+
+    function showSession(key, sub) {
       const threads = getThreads();
       if (!threads.length) {
         threadsEl.innerHTML = '';
@@ -2039,7 +2116,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       let sel = null;
       for (const t of threads) if (t.key === key) sel = t;
-      if (!sel) sel = mainThread(threads);
+      if (!sel && key) {
+        // Session-id prefix: #/session/<sid8>[/<thread-key>] selects that
+        // session's named thread, or its main thread.
+        const st = threads.filter(t => t.sessionId && t.sessionId.lastIndexOf(key, 0) === 0);
+        if (st.length) sel = (sub && st.find(t => t.key === sub)) || mainThread(st);
+      }
+      if (!sel) sel = newestMainThread(threads);
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       for (const t of threads) {
@@ -2055,19 +2138,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
         (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
         (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '') +
-        (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '');
+        (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '') +
+        (u.rewound ? ' \\u00b7 <span class="amber" title="exchanges erased from history by /rewind or an edit \\u2014 the wire pairs are kept">' + u.rewound + ' rewound</span>' : '');
       let reqs = '';
       if (selected) {
+        const rw = {};
+        for (const r of (t.rewound || [])) rw[r.pairId] = 1;
         let rows = '';
         for (const pid of t.pairIds) {
           const p = pairs.find(x => x.id === pid);
           if (!p) continue;
           const m = extractCallInfo(p);
           const cc = summarizeCache(m, p.request.body);
+          // Request-level truth markers: a rewound branch tip, a body folded
+          // by compact, a failed request — visible without leaving the pane.
+          let mark = '';
+          if (rw[pid]) mark += '<span class="treq-mark amber" title="this exchange was erased from history by /rewind or an edit">\\u21a9 rewound</span>';
+          else if (p.request.body && p.request.body._cctrace_stub) mark += '<span class="treq-mark" title="request body folded by cctrace compact \\u2014 the kept request holds the full history">folded</span>';
+          if (!p.response || p.response.status >= 400) mark += '<span class="treq-mark err" title="request failed: no response or HTTP error">err</span>';
           rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
             '<span class="cdot' + (cc ? ' cdot-' + cc.kind : '') + '" title="' + (cc ? escapeHtml(cc.title) : 'no prompt caching on this request') + '"></span>' +
             '<span>' + fmtTime(new Date(p.request.timestamp * 1000)) + '</span>' +
             '<span class="treq-io">in ' + fmtCompact(m.input + m.cacheRead + m.cacheWrite) + ' \\u00b7 out ' + fmtCompact(m.output) + '</span>' +
+            mark +
             '<span>' + formatDuration(p.duration) + '</span></a>';
         }
         reqs = '<div class="thread-reqs">' + rows + '</div>';
@@ -2096,7 +2189,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Session rollup across all threads: one quiet line on top of the
     // threads pane; error parts render only when nonzero (and in red).
-    function sessionSummary(threads) {
+    function sessionSummary(threads, sessionCount) {
       const s = { requests: 0, wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0 };
       for (const t of threads) {
         const u = t.usage || {};
@@ -2107,6 +2200,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         s.toolUses += u.toolUses || 0;
       }
       const bits = [threads.length + ' thread' + (threads.length === 1 ? '' : 's'), s.requests + ' req'];
+      if (sessionCount > 1) bits.unshift(sessionCount + ' sessions');
       if (s.wireErrors) {
         const r = pctOf(s.wireErrors, s.requests);
         bits.push('<span class="err">' + s.wireErrors + ' req err' + (r ? ' (' + r + ')' : '') + '</span>');
@@ -2119,23 +2213,80 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="threads-sum" title="' + escapeHtml(errTitle(s)) + '">' + bits.join(' \\u00b7 ') + '</div>';
     }
 
+    // Session-fold state must survive live re-renders — keyed by sid, not
+    // positionally (sections can appear mid-run). Unset = default (newest
+    // session and the selection's session open, the rest collapsed).
+    const sessOpen = {};
+
     function renderThreadsPane(threads, sel) {
-      const convos = threads.filter(t => t.kind !== 'utility');
-      const utils = threads.filter(t => t.kind === 'utility');
       const card = (t) => {
         try { return threadCard(t, t.key === sel.key); }
         catch (e) { return brokenItem('thread', t && t.key, e); }
       };
-      let html = sessionSummary(threads);
-      for (const t of convos) html += card(t);
-      if (utils.length) {
-        let inner = '';
-        for (const t of utils) inner += card(t);
-        html += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
+      const section = (list) => {
+        const convos = list.filter(t => t.kind !== 'utility');
+        const utils = list.filter(t => t.kind === 'utility');
+        let out = '';
+        for (const t of convos) out += card(t);
+        if (utils.length) {
+          let inner = '';
+          for (const t of utils) inner += card(t);
+          out += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
+        }
+        return out;
+      };
+      // The sessions layer: threads grouped by wire session id, newest
+      // activity first. A single-session trace renders with ZERO new chrome
+      // — exactly the flat pane (the common case pays nothing).
+      const sids = [];
+      const bySid = {};
+      for (const t of threads) {
+        const sid = t.sessionId || '';
+        if (!bySid[sid]) { bySid[sid] = []; sids.push(sid); }
+        bySid[sid].push(t);
+      }
+      let html = sessionSummary(threads, sids.length);
+      if (sids.length <= 1) {
+        html += section(threads);
+      } else {
+        const lastAt = (g) => Math.max.apply(null, g.map(t => t.lastAt || t.firstAt || 0));
+        sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]));
+        for (let i = 0; i < sids.length; i++) {
+          const sid = sids[i];
+          const g = bySid[sid];
+          const open = sid in sessOpen ? sessOpen[sid] : (i === 0 || g.some(t => t.key === sel.key));
+          html += '<details class="sess" data-sid="' + escapeHtml(sid) + '"' + (open ? ' open' : '') + '>' +
+            '<summary>' + sessHeader(sid, g) + '</summary>' + section(g) + '</details>';
+        }
       }
       const top = threadsEl.scrollTop; // live re-renders must not move the list
       threadsEl.innerHTML = html;
       threadsEl.scrollTop = top;
+      for (const d of threadsEl.querySelectorAll('details.sess')) {
+        d.addEventListener('toggle', () => { sessOpen[d.dataset.sid] = d.open; });
+      }
+    }
+
+    // Section header: short sid (click = copy full, the header-chip
+    // affordance) · wall-clock range · request count · error rollup.
+    function sessHeader(sid, g) {
+      let t0 = Infinity, t1 = 0, req = 0, errs = 0;
+      for (const t of g) {
+        if (t.firstAt) t0 = Math.min(t0, t.firstAt);
+        t1 = Math.max(t1, t.lastAt || t.firstAt || 0);
+        const u = t.usage || {};
+        req += u.requests || 0;
+        errs += (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
+      }
+      const range = t0 !== Infinity
+        ? fmtTime(new Date(t0 * 1000)) + '\\u2013' + fmtTime(new Date(t1 * 1000)) : '';
+      return '<span class="sess-sid"' +
+        (sid ? ' title="click to copy the full session id" data-sid="' + escapeHtml(sid) + '"' +
+          ' onclick="event.preventDefault();event.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sid)"' : '') +
+        '>' + (sid ? 'session ' + escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
+        (range ? '<span class="sess-meta">' + range + '</span>' : '') +
+        '<span class="sess-meta">' + req + ' req</span>' +
+        (errs ? '<span class="err sess-meta">' + errs + ' err</span>' : '');
     }
 
     // Focus hierarchy: EVERY tool_use folds to one line — on real sessions
@@ -2188,7 +2339,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return renderBlock(b, md);
     }
 
-    function renderSessionTurn(turn, results) {
+    function renderSessionTurn(turn, results, prevModel) {
       let inner = '';
       for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
@@ -2196,7 +2347,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const u = turn.usage;
         const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
         const bits = [];
-        if (u.model) bits.push(escapeHtml(shortModel(u.model)));
+        // A model switch scans without color: "→ sonnet-5" marks the turn
+        // where the model changed from the previous assistant reply.
+        if (u.model) bits.push((prevModel && u.model !== prevModel ? '\\u2192 ' : '') + escapeHtml(shortModel(u.model)));
         bits.push('in ' + fmtCompact(u.input));
         bits.push('out ' + fmtCompact(u.output));
         if (u.cacheRead) bits.push('cache ' + fmtCompact(u.cacheRead));
@@ -2302,6 +2455,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const rewoundAt = {};
       for (const r of (t.rewound || [])) (rewoundAt[r.at] = rewoundAt[r.at] || []).push(r.pairId);
       let ti = 0;
+      let prevModel = '';
       for (const turn of t.turns) {
         const marks = rewoundAt[ti];
         ti++;
@@ -2309,8 +2463,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           html += '<div class="rewound-mark" title="an exchange here was erased by /rewind or an edit — its wire pair is kept">\\u21a9 rewound exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>';
         }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
-        try { html += renderSessionTurn(turn, results); }
+        try { html += renderSessionTurn(turn, results, prevModel); }
         catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
+        if (turn.role === 'assistant' && turn.usage && turn.usage.model) prevModel = turn.usage.model;
       }
       convoEl.innerHTML = html;
       if (foldState) {

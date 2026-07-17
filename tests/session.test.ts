@@ -317,3 +317,25 @@ describe("toolPreview", () => {
     expect(toolPreview("Unknown", { a: 1 })).toBe("");
   });
 });
+
+describe("sessions layer", () => {
+  test("two sessions with identical first prompts never merge into one thread", () => {
+    seq = 0;
+    const first = { role: "user", content: "hi" };
+    const a = msgPair([first], { reply: "reply A" });
+    const b = msgPair([first], { reply: "reply B" });
+    (b.request.body as any).metadata = { user_id: JSON.stringify({ session_id: "bbbbbbbb-2222-3333-4444-555555555555" }) };
+    const { threads } = buildSession([a, b]);
+    expect(threads).toHaveLength(2);
+    expect(threads[0].sessionId).not.toBe(threads[1].sessionId);
+    expect(threads[0].key).not.toBe(threads[1].key);
+  });
+
+  test("pairs without a session id land in the honest empty bucket", () => {
+    seq = 0;
+    const p = msgPair([{ role: "user", content: "hi" }]);
+    delete (p.request.body as any).metadata;
+    const { threads } = buildSession([p]);
+    expect(threads[0].sessionId).toBe("");
+  });
+});

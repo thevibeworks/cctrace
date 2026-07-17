@@ -193,8 +193,17 @@ hash-routed:
   and the session convo (same targets both places): jump top/bottom, prev/
   next turn, prev/next user prompt, system prompt — in the session view
   also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
-- **Session** (`#/session[/<key>]`): wire view + reconstructed conversation
-  side by side. `session.ts` groups model-call pairs into threads, one
+- **Session** (`#/session[/<sid8-or-key>[/<key>]]`): wire view +
+  reconstructed conversation side by side. Threads are session-scoped
+  (thread key = `<sid>|<wire key>`): when a trace holds several wire
+  session ids (/clear mid-run, resumed sessions), the threads pane groups
+  them into collapsible per-session sections, newest activity first
+  (header: short sid click-to-copy, time range, req count, err rollup;
+  `[`/`]` switch sessions; fold state survives re-renders, keyed by sid).
+  Single-session traces render flat — zero new chrome. Default focus is
+  the newest session's main thread; a NEW sid appearing live follows only
+  while tailing. The selected thread's request list marks rewound /
+  compact-folded / failed requests inline. `session.ts` groups model-call pairs into threads, one
   `buildSession(pairs, wire)` entry for BOTH wire dialects (`wireDialect`
   dispatches per pair). Anthropic: by the `x-claude-code-agent-id` header
   when present (cc ≥ ~2.1.2xx stamps every sidechain request with it —

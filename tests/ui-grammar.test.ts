@@ -150,3 +150,42 @@ describe("verifySnapshot", () => {
     expect(verifySnapshot(html, HOSTILE.length)).toContain("not valid JSON");
   });
 });
+
+describe("sessions layer rendering", () => {
+  const SID_B = JSON.stringify({ session_id: "bbbb2222-cccc-dddd-eeee-ffff00002222" });
+
+  test("single-session traces render with zero new chrome", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    page.goto("#/session");
+    const threadsFrag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threadsFrag!.html).not.toContain('class="sess"');
+    expect(threadsFrag!.html).not.toContain("sess-sid");
+  });
+
+  test("two session ids render collapsible sections, newest first, grammar-clean", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(frag!.html).toContain('class="sess"');
+    expect(frag!.html).toContain("session bbbb2222"); // newest section
+    expect(frag!.html).toContain("session aaaabbbb"); // older section
+    expect(frag!.html.indexOf("bbbb2222")).toBeLessThan(frag!.html.indexOf("aaaabbbb"));
+    expect(frag!.html).toContain("2 sessions");
+    expect(fragmentErrors(page)).toEqual([]); // grammar-check the new markup
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a session-id-prefix route selects that session's thread", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session/aaaabbbb");
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("hello"); // the older session's reply renders
+    expect(page.errors).toEqual([]);
+  });
+});

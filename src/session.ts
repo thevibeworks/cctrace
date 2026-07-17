@@ -1,4 +1,4 @@
-import { parseSse, assembleAssistant, extractCallInfo, shortModel } from "./summarize";
+import { parseSse, assembleAssistant, extractCallInfo, shortModel, extractSessionId } from "./summarize";
 import { pairCost } from "./pricing";
 import {
   wireDialect,
@@ -185,9 +185,14 @@ export function buildSession(pairs: any[], wire?: any): any {
     } else {
       continue;
     }
+    // Threads are scoped WITHIN their session (session-tab design): two
+    // sessions whose first message is identical (e.g. after /clear) must
+    // never merge into one thread. "" = no session id — an honest bucket.
+    const sid = extractSessionId(p, wire) || "";
+    key = sid + "|" + key;
     let t = byKey[key];
     if (!t) {
-      t = { key, kind: "chat", label: "", model: "", dialect, reqs: [] };
+      t = { key, kind: "chat", label: "", model: "", dialect, sessionId: sid, reqs: [] };
       byKey[key] = t;
       threads.push(t);
     }
@@ -353,10 +358,12 @@ export function buildSession(pairs: any[], wire?: any): any {
       // in the x-codex-turn-metadata JSON header; grok recap utilities in
       // their conv id.
       const meta = (spine.request.headers || {})["x-codex-turn-metadata"] || "";
+      const w2 = wire && spine.client ? wire[spine.client] : null;
+      const conv = (w2 && w2.threadHeader && (spine.request.headers || {})[w2.threadHeader]) || "";
       if (String(meta).indexOf('"request_kind":"prewarm"') !== -1) {
         t.kind = "utility";
         t.label = "prewarm";
-      } else if (t.key.lastIndexOf("conv:recap-", 0) === 0) {
+      } else if (String(conv).lastIndexOf("recap-", 0) === 0) {
         t.kind = "utility";
         t.label = "recap";
       }
@@ -388,6 +395,7 @@ export function buildSession(pairs: any[], wire?: any): any {
 
     t.pairIds = t.reqs.map((p: any) => p.id);
     t.firstAt = t.reqs[0].request.timestamp || 0;
+    t.lastAt = t.reqs[t.reqs.length - 1].request.timestamp || 0;
   }
 
   // Agent linking: a thread whose first user text matches a Task-style

@@ -95,3 +95,14 @@ describe("multi-model session attribution (devlog 2026-07-17)", () => {
     expect(main.usage.requests).toBe(44);
   });
 });
+
+describe("sessions layer over the fixture", () => {
+  const { threads } = buildSession(pairs, wireTables());
+
+  test("every thread carries the sanitized session id", () => {
+    const main = mainThread(threads);
+    expect(main.sessionId).toMatch(/^[0-9a-f]{8}-/);
+    expect(main.key.lastIndexOf(main.sessionId + "|", 0)).toBe(0);
+    expect(main.lastAt).toBeGreaterThan(main.firstAt);
+  });
+});

@@ -263,3 +263,44 @@ describe("planCompact / applyCompact", () => {
     expect(res.skipped).toEqual(["trace-live.jsonl"]);
   });
 });
+
+describe("rewind guard (devlog 2026-07-17 decision 4)", () => {
+  const mk = (id: string, ts: number, messages: any[]) => ({
+    id,
+    request: {
+      timestamp: ts, method: "POST", url: "https://api.anthropic.com/v1/messages", headers: {},
+      body: { model: "claude-fable-5", messages, metadata: { user_id: JSON.stringify({ session_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" }) } },
+    },
+    response: { timestamp: ts + 1, status: 200, headers: {}, body: { content: [{ type: "text", text: "r" + id }] } },
+    duration: 10, loggedAt: "x",
+  }) as any;
+  const u = (t: string) => ({ role: "user", content: t });
+  const a = (t: string) => ({ role: "assistant", content: [{ type: "text", text: t }] });
+  const cat = () => "messages";
+
+  test("a rewound branch tip (same length, different final message) is never stubbed", () => {
+    const pairs = [
+      mk("p1", 100, [u("q1")]),
+      mk("p2", 200, [u("q1"), a("r1"), u("erased question")]),   // branch tip: /rewind victim
+      mk("p3", 300, [u("q1"), a("r1"), u("survivor question")]), // rewrite at the same length
+      mk("p4", 400, [u("q1"), a("r1"), u("survivor question"), a("r3"), u("q3")]), // keeper
+    ];
+    const { stub } = planDecisions(pairs, cat);
+    expect(stub.has(1)).toBe(false); // the erased exchange's only copy stays full
+    expect(stub.has(2)).toBe(true);  // survivor branch is inside the keeper
+    expect(stub.has(3)).toBe(false); // keeper
+    expect(stub.has(0)).toBe(true);  // plain superseded request still stubs
+  });
+
+  test("a pure retry (identical final message) still stubs", () => {
+    const pairs = [
+      mk("p1", 100, [u("q1"), a("r1"), u("q2")]),
+      mk("p2", 200, [u("q1"), a("r1"), u("q2")]), // retry, same packing
+      mk("p3", 300, [u("q1"), a("r1"), u("q2"), a("r2"), u("q3")]),
+    ];
+    const { stub } = planDecisions(pairs, cat);
+    expect(stub.has(0)).toBe(true);
+    expect(stub.has(1)).toBe(true);
+    expect(stub.has(2)).toBe(false);
+  });
+});

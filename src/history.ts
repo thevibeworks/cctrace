@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, existsSync } from "fs";
+import { readdirSync, readFileSync, existsSync, statSync } from "fs";
 import { join, basename, resolve } from "path";
 import { gunzipSync } from "zlib";
 import { extractSessionId } from "./summarize";
@@ -123,6 +123,56 @@ export function loadPriorPairs(logDir: string, excludeFile: string, sessionIds: 
   }
   out.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
   return out;
+}
+
+/**
+ * The most recent session id in logDir's newest prior trace — the best guess
+ * for what `claude --continue` is about to resume. Files are tried newest
+ * mtime first; within a file the LAST pair carrying a session id wins (a
+ * file can hold several sessions). Wrong guesses are cheap: the caller
+ * treats this as speculative and reconciles on the first live request.
+ */
+export function newestPriorSessionId(logDir: string, excludeFile: string): { sid: string; file: string } | null {
+  if (!existsSync(logDir)) return null;
+  const excludeAbs = resolve(excludeFile || "");
+  let files: { name: string; mtime: number }[];
+  try {
+    files = readdirSync(logDir)
+      .filter(isTraceFile)
+      .map((name) => {
+        try {
+          return { name, mtime: statSync(join(logDir, name)).mtimeMs };
+        } catch {
+          return null;
+        }
+      })
+      .filter((f): f is { name: string; mtime: number } => !!f)
+      .sort((a, b) => b.mtime - a.mtime);
+  } catch {
+    return null;
+  }
+  for (const f of files) {
+    const path = join(logDir, f.name);
+    if (resolve(path) === excludeAbs) continue;
+    let text: string;
+    try {
+      text = readTraceText(path);
+    } catch {
+      continue;
+    }
+    const lines = text.split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        const sid = extractSessionId(JSON.parse(line), WIRE);
+        if (sid) return { sid, file: f.name };
+      } catch {
+        // torn tail line of a live file — keep walking up
+      }
+    }
+  }
+  return null;
 }
 
 /** Load explicitly named trace files (--with), all pairs, marked prior. */

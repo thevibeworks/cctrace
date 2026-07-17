@@ -4,6 +4,7 @@ import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
+import { termWrite } from "./termlog";
 import { listLiveInstances, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 
 const WIRE = wireTables();
@@ -31,6 +32,12 @@ interface ServerConfig {
   self?: () => InstanceInfo | null;
   /** Called once per newly-seen Claude session id on the wire. */
   onSession?: (sid: string) => void;
+  /**
+   * Session id to preload as a GUESS at startup (`--continue` before the
+   * first request reveals the real one). Confirmed or evicted when the
+   * first live pair carries a session id.
+   */
+  speculate?: string;
 }
 
 const clients = new Set<ServerWebSocket<unknown>>();
@@ -71,21 +78,66 @@ export function createServer(config: ServerConfig) {
   if (config.initialPairs?.length) mergePairs(config.initialPairs);
   if (config.withFiles?.length) {
     const merged = mergePairs(loadTraceFiles(config.withFiles));
-    if (merged.length) console.log(`[cctrace] merged ${merged.length} pairs from --with`);
+    if (merged.length) termWrite(`[cctrace] merged ${merged.length} pairs from --with`);
   }
+
+  // Speculative continuity: --continue can't reveal its session until the
+  // first request, but the newest prior session is almost always the one
+  // being resumed. Preload it so the UI opens populated; the first live
+  // session id confirms the guess or evicts the preload.
+  let speculativeSid: string | null = null;
+  if (config.speculate && !config.noHistory) {
+    const prior = loadPriorPairs(config.logDir, config.logFile || "", new Set([config.speculate]));
+    if (prior.length) {
+      for (const p of prior) (p as TracePair & { speculative?: boolean }).speculative = true;
+      mergePairs(prior);
+      speculativeSid = config.speculate;
+      termWrite(`[cctrace] preloaded ${prior.length} pairs from session ${config.speculate.slice(0, 8)} — confirming on first request`);
+    }
+  }
+
+  const resolveSpeculation = (sid: string) => {
+    if (sid === speculativeSid) {
+      // Guess was right: the preload IS the continuity merge (loadPriorPairs
+      // already swept the whole dir for this sid), so skip the rescan.
+      for (const p of pairs) delete (p as TracePair & { speculative?: boolean }).speculative;
+      seenSessions.add(sid);
+      config.onSession?.(sid);
+      termWrite(`[cctrace] session ${sid.slice(0, 8)} continued — preloaded turns confirmed`);
+    } else {
+      // Wrong guess: drop the preload and make every client rebuild from the
+      // corrected list (init replaces wholesale). The real sid then flows
+      // through the normal continuity path below.
+      let evicted = 0;
+      for (let i = pairs.length - 1; i >= 0; i--) {
+        if ((pairs[i] as TracePair & { speculative?: boolean }).speculative) {
+          knownIds.delete(pairs[i].id);
+          pairs.splice(i, 1);
+          evicted++;
+        }
+      }
+      if (evicted) {
+        broadcast({ type: "init", pairs });
+        termWrite(`[cctrace] resumed a different session — dropped ${evicted} preloaded pairs`);
+      }
+    }
+    speculativeSid = null;
+  };
 
   const onLivePair = (pair: TracePair) => {
     mergePairs([pair]);
     broadcast({ type: "pair", pair });
     const sid = extractSessionId(pair, WIRE);
-    if (!sid || seenSessions.has(sid)) return;
+    if (!sid) return;
+    if (speculativeSid) resolveSpeculation(sid);
+    if (seenSessions.has(sid)) return;
     seenSessions.add(sid);
     config.onSession?.(sid);
     if (config.noHistory) return;
     const prior = mergePairs(loadPriorPairs(config.logDir, config.logFile || "", new Set([sid])));
     if (prior.length) {
       const files = [...new Set(prior.map((p) => p.prior))].join(", ");
-      console.log(`[cctrace] session ${sid.slice(0, 8)} continued — merged ${prior.length} prior pairs from ${files}`);
+      termWrite(`[cctrace] session ${sid.slice(0, 8)} continued — merged ${prior.length} prior pairs from ${files}`);
       broadcast({ type: "history", pairs: prior });
     }
   };

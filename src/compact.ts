@@ -76,6 +76,19 @@ export function histLenOf(pair: any): number {
   return Array.isArray(body?.messages) ? body.messages.length : 0;
 }
 
+/** Capped signature of a request's final history message — same final
+ * message = pure retry; different = a divergent (rewound/edited) branch. */
+export function lastMsgSig(pair: any): string {
+  const body = pair?.request?.body;
+  const hist = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : [];
+  if (!hist.length) return "";
+  try {
+    return (JSON.stringify(hist[hist.length - 1]) || "").slice(0, 400);
+  } catch {
+    return "";
+  }
+}
+
 /**
  * Thread grouping key, mirroring buildSession: session id + agent-id header
  * (Anthropic) / conv header (OpenAI) when present, else the first-user-text
@@ -151,8 +164,32 @@ export function planDecisions(pairs: (TracePair | null)[], categorize: Categoriz
         if (len >= keeperLen) { keeper = i; keeperLen = len; } // ties -> latest
       }
       if (keeper === -1) continue; // everything already stubbed
+      // Rewind guard (devlog 2026-07-17 decision 4): a request whose FINAL
+      // history message appears nowhere in the keeper's packing is a
+      // divergent branch tip — /rewind or an edited turn erased that
+      // exchange, and this body holds its ONLY copy. Keep it full. Presence
+      // is checked content-wise, not positionally: ephemeral notice turns
+      // shift indices between packings; erased content is gone from all of
+      // them. Pure retries and survivor branches live inside the keeper and
+      // stub as before. Branches whose only unique data is their RESPONSE
+      // (a rewind that regenerated the reply) also stub — responses are
+      // never touched, so nothing is lost; their Session-view class just
+      // softens from "rewound" to "unplaced" (a stub can't prove
+      // prefix-divergence).
+      const keeperSigs = new Set<string>();
+      {
+        const kb: any = pairs[keeper]!.request.body;
+        const hist = Array.isArray(kb?.messages) ? kb.messages : Array.isArray(kb?.input) ? kb.input : [];
+        for (const m of hist) {
+          try {
+            keeperSigs.add((JSON.stringify(m) || "").slice(0, 400));
+          } catch { /* unserializable message — nothing to match against */ }
+        }
+      }
       for (const i of ep) {
         if (i === keeper || isStubBody(pairs[i]!.request.body)) continue;
+        const sig = lastMsgSig(pairs[i]);
+        if (!sig || !keeperSigs.has(sig)) continue; // branch tip: keep full
         stub.set(i, pairs[keeper]!.id);
       }
     }

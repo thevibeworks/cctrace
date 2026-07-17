@@ -24,9 +24,11 @@ src/
 │   └── openai.ts   # OpenAI Responses adapters (codex/grok): SSE completed
 │                   #   parsing, input[]->turns, usage mapping (inlined into UI)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
-├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads
+├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads;
+│                   #   newest-prior-session guess for --continue preload
+├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
-├── version.ts      # CCTRACE_VERSION + daily npm update check (cached in data dir, fail-soft)
+├── version.ts      # CCTRACE_VERSION (+ commit hash: build --define, git fallback on source runs) + daily npm update check (cached in data dir, fail-soft)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
 ├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply)
 ├── compact.ts      # `cctrace compact`: supersede-stub messages bodies + exemplar
@@ -218,8 +220,17 @@ hash-routed:
   `cc_is_subagent=true` billing block, Agent-SDK system prompt) so they
   never compete with the main chat. Turns rebuild from each thread's longest
   request + its response; per-turn usage/duration attributes to the wire
-  request that produced it (index = the request's history length; later
-  same-length requests win). tool_results fold into their tool_use by id
+  request that produced it — index-first (index = the request's history
+  length), content-verified against the pair's assembled response
+  (turnContentSig, capped compare), content-scan on mismatch (Claude Code
+  repacks history with ephemeral notice turns, so indices drift). Pairs
+  matching nothing classify REWOUND (prefix-divergent — /rewind or an
+  edited turn erased the exchange; marked in the convo at the divergence
+  point, wire pair linked) or UNATTRIBUTED (assistant turns without a
+  pair say so quietly, never silently blank). A thread's model is a SET
+  (t.models: per-model requests/tokens/cost); the face model is the one
+  with the most output tokens, multi-model threads label "+N models" with
+  the split in the model chip tooltip. tool_results fold into their tool_use by id
   (ccx convention); result-only user turns are skipped. EVERY tool_use folds
   to one line (focus hierarchy: user turns get extra space above + a faint
   accent wash on the role bar (no hard border — accent edges read as

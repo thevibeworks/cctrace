@@ -33,6 +33,7 @@ import {
   firstUserText,
   threadSig,
   normalizeTurns,
+  turnContentSig,
   buildToolResultIndex,
   responseBlocks,
   buildSession,
@@ -784,6 +785,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border: 1px dashed var(--purple); border-radius: 6px;
       font-size: 12px; color: var(--text-muted);
     }
+    .rewound-mark {
+      padding: 4px 12px; margin: 6px 0;
+      font-size: 11px; color: var(--text-faint);
+      border-left: 2px dashed var(--warn, #d29922);
+    }
+    .rewound-mark a { color: var(--text-muted); }
     .agent-note a { color: var(--accent); }
   </style>
 </head>
@@ -937,6 +944,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${firstUserText.toString()}
     ${threadSig.toString()}
     ${normalizeTurns.toString()}
+    ${turnContentSig.toString()}
     ${buildToolResultIndex.toString()}
     ${responseBlocks.toString()}
     ${buildSession.toString()}
@@ -2199,6 +2207,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           bits.push('ttft ' + fmtMs(p.response.firstTokenMs));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
+      } else if (turn.role === 'assistant' && !turn.pairId) {
+        // Never silently blank (devlog 2026-07-17): an assistant turn we
+        // could not tie to a wire request says so, quietly.
+        meta = '<span class="turn-usage" title="no captured request matches this reply \\u2014 history was repacked or the reply was edited before it entered history">unattributed</span>';
       }
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
         '<div class="turn-role">' + escapeHtml(String(turn.role)) + meta + '</div>' + inner + '</div>';
@@ -2237,7 +2249,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ? Array.prototype.map.call(convoEl.querySelectorAll('details'), d => d.open)
         : null;
       let chips = '';
-      chips += kv('model', t.model || '?', 'model');
+      // The face model is the one with the most output tokens; a mid-session
+      // /model switch shows as "+N" with the per-model split in the tooltip.
+      const mkeys = Object.keys(t.models || {});
+      const mextra = Math.max(0, mkeys.length - 1);
+      const mtitle = mkeys.length > 1
+        ? mkeys.map(m => shortModel(m) + ': ' + t.models[m].requests + ' req \\u00b7 out ' + fmtCompact(t.models[m].output) + (t.models[m].cost ? ' \\u00b7 ' + fmtCost(t.models[m].cost) : '')).join('\\n')
+        : undefined;
+      chips += kv('model', (t.model || '?') + (mextra ? ' +' + mextra : ''), 'model', mtitle);
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());
@@ -2264,6 +2283,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         chips += kv('tool errors', eu.toolErrors + ' of ' + eu.toolUses + (r ? ' (' + r + ')' : ''), 'err',
           'tool_result blocks flagged is_error, over all tool calls in this thread');
       }
+      if (eu.rewound) chips += kv('rewound', String(eu.rewound), 'warn',
+        'requests whose exchange was erased from history (/rewind or an edited turn) \\u2014 the wire pairs are kept, never lost');
+      if (eu.unattributed) chips += kv('unplaced', String(eu.unattributed), '',
+        'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
       let html = '<div class="chips">' + chips + '</div>';
       if (t.agentOf) {
         html += '<div class="agent-note">subagent run' +
@@ -2273,7 +2296,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (t.system) html += renderSystem(t.system);
       if (t.tools && t.tools.length) html += renderTools(t.tools);
       const results = buildToolResultIndex(t.turns);
+      // Rewound exchanges mark their divergence point (devlog 2026-07-17
+      // decision 4: keep + mark, never lose) — the erased branch's wire
+      // pair stays one click away.
+      const rewoundAt = {};
+      for (const r of (t.rewound || [])) (rewoundAt[r.at] = rewoundAt[r.at] || []).push(r.pairId);
+      let ti = 0;
       for (const turn of t.turns) {
+        const marks = rewoundAt[ti];
+        ti++;
+        if (marks) for (const pid of marks) {
+          html += '<div class="rewound-mark" title="an exchange here was erased by /rewind or an edit — its wire pair is kept">\\u21a9 rewound exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>';
+        }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
         try { html += renderSessionTurn(turn, results); }
         catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }

@@ -138,6 +138,7 @@ describe("buildSession", () => {
     expect(usage).toEqual({
       input: 20, output: 40, cacheRead: 200, cacheWrite: 10, requests: 2,
       wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0,
+      rewound: 0, unattributed: 0,
     });
     expect(cost).toBeGreaterThan(0); // per-request pairCost summed into the thread
 

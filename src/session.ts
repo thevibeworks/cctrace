@@ -89,6 +89,34 @@ export function buildToolResultIndex(turns: any[]): Record<string, any> {
   return map;
 }
 
+/**
+ * Capped content signature of a turn's blocks, comparable between a pair's
+ * assembled response and a spine turn's packing (Claude Code packs replies
+ * back verbatim). First non-empty text block wins; tool-only replies fall
+ * back to the first tool_use name + input prefix. "" = nothing to compare
+ * (errored/empty responses, stub metadata) — callers treat that as
+ * unverifiable, never as a match.
+ */
+export function turnContentSig(blocks: any[]): string {
+  for (const b of blocks || []) {
+    if (b && b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+      return "t:" + b.text.trim().slice(0, 200);
+    }
+  }
+  for (const b of blocks || []) {
+    if (b && (b.type === "tool_use" || b.type === "server_tool_use")) {
+      let inp = "";
+      try {
+        inp = JSON.stringify(b.input) || "";
+      } catch {
+        inp = "";
+      }
+      return "u:" + (b.name || "") + ":" + inp.slice(0, 160);
+    }
+  }
+  return "";
+}
+
 /** Assistant content blocks from a pair's response (JSON body or SSE). */
 export function responseBlocks(pair: any): any[] {
   if (wireDialect(pair) === "openai") {
@@ -164,7 +192,10 @@ export function buildSession(pairs: any[], wire?: any): any {
       threads.push(t);
     }
     t.reqs.push(p);
-    if (req.model) t.model = req.model;
+    // t.model is finalized per-thread below (primary = most output tokens);
+    // this is just a seed so threads whose every request errors still name
+    // the model they asked for.
+    if (req.model && !t.model) t.model = req.model;
   }
 
   for (const t of threads) {
@@ -194,14 +225,73 @@ export function buildSession(pairs: any[], wire?: any): any {
     const rblocks = responseBlocks(spine);
     if (rblocks.length) t.turns.push({ role: "assistant", blocks: rblocks, toolResultsOnly: false, pairId: null, usage: null });
 
-    // A request with n history turns produced the assistant turn at index
-    // n; wire order means later (retried/injected) requests win the slot.
+    // Per-turn attribution (devlog 2026-07-17): index-first, content-
+    // verified. A request with n history turns produced the assistant turn
+    // at index n — but Claude Code repacks history between requests
+    // (ephemeral notice turns come and go), so the index can land on the
+    // wrong turn. Verify the landing turn against the pair's own response;
+    // scan for the true turn on mismatch; classify what matches nothing
+    // (rewound vs unattributed) instead of dropping it silently.
+    // claim strength: 1 = index-only (unverifiable pair), 2 = content-verified.
+    const claimed: Record<number, number> = {};
+    t.rewound = [];
+    t.unattributed = [];
     for (const p of t.reqs) {
-      const turn = t.turns[histLen(p, t.dialect)];
-      if (turn && turn.role === "assistant") {
-        turn.pairId = p.id;
-        turn.usage = extractCallInfo(p);
+      const idx = histLen(p, t.dialect);
+      const landing = t.turns[idx];
+      const attach = (i: number, strength: number) => {
+        t.turns[i].pairId = p.id;
+        t.turns[i].usage = extractCallInfo(p);
+        claimed[i] = strength;
+      };
+      const rsig = turnContentSig(responseBlocks(p));
+      if (!rsig) {
+        // Nothing to verify against (stubbed body's response was collapsed,
+        // errored/empty stream): index attribution stays primary, but never
+        // over a verified claim.
+        if (landing && landing.role === "assistant" && (claimed[idx] || 0) < 2) attach(idx, 1);
+        continue;
       }
+      if (landing && landing.role === "assistant" && turnContentSig(landing.blocks) === rsig) {
+        attach(idx, 2);
+        continue;
+      }
+      // Index landed wrong — find the reply in the spine, nearest turn
+      // first, preferring unclaimed slots (identical short replies exist).
+      let found = -1;
+      let foundCost = Infinity;
+      for (let i = 0; i < t.turns.length; i++) {
+        const tt = t.turns[i];
+        if (!tt || tt.role !== "assistant") continue;
+        if (turnContentSig(tt.blocks) !== rsig) continue;
+        const cost = Math.abs(i - idx) + (claimed[i] ? 1000 : 0);
+        if (cost < foundCost) {
+          found = i;
+          foundCost = cost;
+        }
+      }
+      if (found >= 0) {
+        if ((claimed[found] || 0) < 2 || !t.turns[found].pairId) attach(found, 2);
+        continue;
+      }
+      // The reply exists on the wire but nowhere in the spine's history: the
+      // exchange was erased. Prefix-divergence decides the class — if the
+      // pair's final history turn differs from the spine's packing at that
+      // index, /rewind rewrote history (keep + mark, never lose); otherwise
+      // we just can't place it.
+      let cls = "unattributed";
+      const body = p.request.body || {};
+      const hist = t.dialect === "openai"
+        ? (Array.isArray(body.input) ? normalizeOpenaiTurns(body.input) : [])
+        : (Array.isArray(body.messages) ? normalizeTurns(body.messages) : []);
+      if (hist.length) {
+        const lastSig = turnContentSig(hist[hist.length - 1].blocks);
+        const spineAt = t.turns[idx - 1];
+        const spineSig = spineAt ? turnContentSig(spineAt.blocks) : "";
+        if (lastSig && spineSig && lastSig !== spineSig) cls = "rewound";
+      }
+      if (cls === "rewound") t.rewound.push({ pairId: p.id, at: idx });
+      else t.unattributed.push(p.id);
     }
 
     const agg = {
@@ -212,7 +302,13 @@ export function buildSession(pairs: any[], wire?: any): any {
       // toolErrors/toolUses = tool_result blocks flagged is_error, with the
       // denominator for a rate.
       wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0,
+      rewound: t.rewound.length, unattributed: t.unattributed.length,
     };
+    // A thread is not one model: /model switches mid-session at will. Track
+    // the set (model -> requests/tokens/cost); the thread's face model is
+    // the one that did the most output work — last-used was the bug
+    // (devlog 2026-07-17), not a rule.
+    const models: Record<string, any> = {};
     for (const p of t.reqs) {
       const m = extractCallInfo(p);
       agg.input += m.input;
@@ -224,7 +320,25 @@ export function buildSession(pairs: any[], wire?: any): any {
       const r = p.response;
       if (!r || r.status >= 400 || m.error) agg.wireErrors++;
       if (r && r.truncated) agg.truncated++;
+      const mid = (p.request.body || {}).model || m.model || "";
+      if (mid) {
+        const mm = models[mid] || (models[mid] = { requests: 0, input: 0, output: 0, cost: 0 });
+        mm.requests++;
+        mm.input += m.input;
+        mm.output += m.output;
+        if (c) mm.cost += c.total;
+      }
     }
+    t.models = models;
+    let primary = t.model || "";
+    let primaryOut = -1;
+    for (const mid in models) {
+      if (models[mid].output > primaryOut) {
+        primary = mid;
+        primaryOut = models[mid].output;
+      }
+    }
+    t.model = primary;
     for (const turn of t.turns) {
       for (const b of turn.blocks || []) {
         if (!b) continue;
@@ -323,7 +437,10 @@ export function buildSession(pairs: any[], wire?: any): any {
   for (const t of threads) {
     if (!t.label) {
       const n = t.turns.filter((x: any) => !x.toolResultsOnly).length;
-      t.label = shortModel(t.model) + " · " + n + " turn" + (n === 1 ? "" : "s");
+      const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
+      t.label = shortModel(t.model)
+        + (extra ? " +" + extra + " model" + (extra === 1 ? "" : "s") : "")
+        + " · " + n + " turn" + (n === 1 ? "" : "s");
     }
     delete t.reqs;
   }

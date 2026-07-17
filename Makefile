@@ -23,7 +23,7 @@ help:
 	@echo "  make clean      remove dist/ and .cache/"
 
 build:
-	bun build --compile --outfile $(BIN) src/cli.ts
+	bun build --compile --define CCTRACE_GIT_SHA="\"$$(git rev-parse --short HEAD 2>/dev/null || true)\"" --outfile $(BIN) src/cli.ts
 	@echo "built $(BIN)"
 
 test:

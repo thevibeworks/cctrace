@@ -35,7 +35,10 @@ describe("multi-model session attribution (devlog 2026-07-17)", () => {
       "claude-opus-4-8", "claude-sonnet-5",
     ]);
     expect(main.model).toBe("claude-fable-5");
-    expect(main.label).toContain("+4 models");
+    // the label names the conversation; the model set is its own attribute
+    // (the UI renders it as a "+N" chip built from t.models)
+    expect(main.label).toMatch(/^\d+ turns$/);
+    expect(Object.keys(main.models).length).toBe(5);
     // per-model buckets carry their own request counts and output tokens
     expect(main.models["claude-haiku-4-5-20251001"].requests).toBe(2);
     expect(main.models["claude-opus-4-6"].output).toBe(33);

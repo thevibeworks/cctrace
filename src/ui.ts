@@ -741,7 +741,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .ubar-resets { color: var(--text-faint); font-size: 11px; }
     /* ---- Session view components ---- */
     .thread { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
-    .thread.selected { border-color: var(--accent); }
+    /* Selection is a wash, not an edge (accent edges read as chrome —
+       same rule as user-turn emphasis). The expanded request list below
+       the selected card is the louder signal anyway. */
+    .thread.selected .thread-head {
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg-surface));
+    }
     .thread-head {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 10px; background: var(--bg-surface);
@@ -756,6 +761,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tkind-agent { background: var(--purple); }
     .tkind-utility { background: var(--text-faint); }
     .thread-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tmodel {
+      margin-left: auto; flex-shrink: 0; font-size: 10px;
+      color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
     .thread-meta { padding: 6px 10px; font-size: 11px; color: var(--text-muted); }
     /* Session rollup line above the thread cards: counts across all threads,
        error parts red and only present when nonzero. */
@@ -802,6 +811,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sess > summary::before { content: '\\25B8'; font-size: 10px; color: var(--text-faint); }
     .sess[open] > summary::before { content: '\\25BE'; }
     .sess > summary:hover { color: var(--text); }
+    .sess.selected > summary {
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+      border-radius: 6px; color: var(--text);
+    }
     .sess-sid { font-weight: 600; font-variant-numeric: tabular-nums; }
     .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
     .sess-meta { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
@@ -2169,8 +2182,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<a class="thread-head" href="#/session/' + encodeURIComponent(t.key) + '">' +
           '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
           '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
+          modelChip(t) +
         '</a>' +
         '<div class="thread-meta">' + meta + '</div>' + reqs + '</div>';
+    }
+
+    // Per-model breakdown for a thread's tooltip — one line per model when
+    // /model switched mid-thread, undefined for the single-model case.
+    function modelTitle(t) {
+      const keys = Object.keys(t.models || {});
+      if (keys.length < 2) return undefined;
+      return keys.map(m => shortModel(m) + ': ' + t.models[m].requests + ' req \\u00b7 out ' + fmtCompact(t.models[m].output) +
+        (t.models[m].cost ? ' \\u00b7 ' + fmtCost(t.models[m].cost) : '')).join('\\n');
+    }
+
+    // The model as an attribute chip, right-aligned on the thread card —
+    // never part of the thread's identity (a thread is a conversation; it
+    // can span models). "+N" marks mid-thread switches.
+    function modelChip(t) {
+      if (!t.model) return '';
+      const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
+      const title = modelTitle(t);
+      return '<span class="tmodel"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' +
+        escapeHtml(shortModel(t.model)) + (extra ? ' +' + extra : '') + '</span>';
     }
 
     // Spelled-out breakdown for an error count — the aggregate chip stays
@@ -2254,8 +2288,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (let i = 0; i < sids.length; i++) {
           const sid = sids[i];
           const g = bySid[sid];
-          const open = sid in sessOpen ? sessOpen[sid] : (i === 0 || g.some(t => t.key === sel.key));
-          html += '<details class="sess" data-sid="' + escapeHtml(sid) + '"' + (open ? ' open' : '') + '>' +
+          const hasSel = g.some(t => t.key === sel.key);
+          const open = sid in sessOpen ? sessOpen[sid] : (i === 0 || hasSel);
+          // Selection emphasis lives on the SESSION container — the active
+          // conversation's home; the thread inside marks itself quietly.
+          html += '<details class="sess' + (hasSel ? ' selected' : '') + '" data-sid="' + escapeHtml(sid) + '"' + (open ? ' open' : '') + '>' +
             '<summary>' + sessHeader(sid, g) + '</summary>' + section(g) + '</details>';
         }
       }
@@ -2404,12 +2441,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let chips = '';
       // The face model is the one with the most output tokens; a mid-session
       // /model switch shows as "+N" with the per-model split in the tooltip.
-      const mkeys = Object.keys(t.models || {});
-      const mextra = Math.max(0, mkeys.length - 1);
-      const mtitle = mkeys.length > 1
-        ? mkeys.map(m => shortModel(m) + ': ' + t.models[m].requests + ' req \\u00b7 out ' + fmtCompact(t.models[m].output) + (t.models[m].cost ? ' \\u00b7 ' + fmtCost(t.models[m].cost) : '')).join('\\n')
-        : undefined;
-      chips += kv('model', (t.model || '?') + (mextra ? ' +' + mextra : ''), 'model', mtitle);
+      const mextra = Math.max(0, Object.keys(t.models || {}).length - 1);
+      chips += kv('model', (t.model || '?') + (mextra ? ' +' + mextra : ''), 'model', modelTitle(t));
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());

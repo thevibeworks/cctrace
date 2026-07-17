@@ -444,11 +444,11 @@ export function buildSession(pairs: any[], wire?: any): any {
 
   for (const t of threads) {
     if (!t.label) {
+      // The label names what the thread IS — a conversation of N turns.
+      // The model is an attribute, not the identity (a thread can span
+      // several via /model); it renders as its own chip in the UI.
       const n = t.turns.filter((x: any) => !x.toolResultsOnly).length;
-      const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
-      t.label = shortModel(t.model)
-        + (extra ? " +" + extra + " model" + (extra === 1 ? "" : "s") : "")
-        + " · " + n + " turn" + (n === 1 ? "" : "s");
+      t.label = n + " turn" + (n === 1 ? "" : "s");
     }
     delete t.reqs;
   }

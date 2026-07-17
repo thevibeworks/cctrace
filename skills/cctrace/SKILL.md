@@ -88,8 +88,9 @@ instances land on 9318, 9319, ...). Hash-routed views:
   failed tool calls with an error rate). When a trace holds several wire
   session ids (/clear mid-run, resumed sessions), threads group into
   collapsible per-session sections, newest first (`[`/`]` switch sessions);
-  single-session traces render flat. A thread that switched models mid-way
-  labels "+N models" with the split in the model chip tooltip; the selected
+  single-session traces render flat. Each thread card shows its
+  model as a right-aligned chip ("fable-5 +4" after mid-thread /model
+  switches, split in the tooltip); the selected
   thread's request list marks rewound/compact-folded/failed requests.
   Tails like `tail -f`
   while live. All tool calls fold to one line; subagent/skill/MCP calls stay

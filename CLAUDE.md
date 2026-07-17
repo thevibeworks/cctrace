@@ -238,8 +238,12 @@ hash-routed:
   point, wire pair linked) or UNATTRIBUTED (assistant turns without a
   pair say so quietly, never silently blank). A thread's model is a SET
   (t.models: per-model requests/tokens/cost); the face model is the one
-  with the most output tokens, multi-model threads label "+N models" with
-  the split in the model chip tooltip. tool_results fold into their tool_use by id
+  with the most output tokens. The label names the conversation ("N
+  turns" / "[type] description"); the model renders as its own
+  right-aligned chip on the thread card ("fable-5 +4", split in the
+  tooltip) — an attribute, never the identity. Selection emphasis is a
+  faint accent wash on the session section and the thread head (no accent
+  edges). tool_results fold into their tool_use by id
   (ccx convention); result-only user turns are skipped. EVERY tool_use folds
   to one line (focus hierarchy: user turns get extra space above + a faint
   accent wash on the role bar (no hard border — accent edges read as

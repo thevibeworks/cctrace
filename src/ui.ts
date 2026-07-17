@@ -799,26 +799,49 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .treq-mark.amber { color: var(--amber); border-color: var(--amber); }
     .treq-mark.err { color: var(--red); border-color: var(--red); }
     .amber { color: var(--amber); }
-    /* the sessions layer: one details fold per session id, newest first;
-       invisible on single-session traces (zero new chrome) */
-    .sess { margin: 0 0 6px; }
+    /* The sessions layer: the SESSION is the container — same card grammar
+       as a thread card, one level up. Threads flatten to divided rows
+       inside it; invisible on single-session traces (zero new chrome). */
+    .sess {
+      border: 1px solid var(--border); border-radius: 6px;
+      margin-bottom: 8px; overflow: hidden;
+    }
     .sess > summary {
-      display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap;
-      cursor: pointer; padding: 5px 8px; font-size: 12px;
-      color: var(--text-muted); list-style: none; user-select: none;
+      display: flex; gap: 10px; align-items: baseline;
+      cursor: pointer; padding: 7px 10px; font-size: 12px;
+      background: var(--bg-surface); color: var(--text-muted);
+      list-style: none; user-select: none;
     }
     .sess > summary::-webkit-details-marker { display: none; }
-    .sess > summary::before { content: '\\25B8'; font-size: 10px; color: var(--text-faint); }
-    .sess[open] > summary::before { content: '\\25BE'; }
-    .sess > summary:hover { color: var(--text); }
-    .sess.selected > summary {
-      background: color-mix(in srgb, var(--accent) 6%, transparent);
-      border-radius: 6px; color: var(--text);
+    .sess > summary::before {
+      content: '\\25B8'; font-size: 10px; color: var(--text-faint);
+      align-self: center; flex-shrink: 0;
     }
-    .sess-sid { font-weight: 600; font-variant-numeric: tabular-nums; }
+    .sess[open] > summary::before { content: '\\25BE'; }
+    .sess > summary:hover { background: var(--hover); }
+    .sess.selected > summary {
+      background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
+    }
+    .sess-sid { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
     .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
-    .sess-meta { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-    .sess > .thread, .sess > details.box { margin-left: 10px; }
+    .sess-turns { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+    .sess-attrs {
+      margin-left: auto; flex-shrink: 0; text-align: right;
+      color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* threads become rows of their session card, not cards-in-a-card */
+    .sess .thread {
+      border: none; border-radius: 0; margin: 0;
+      border-top: 1px solid var(--border);
+    }
+    .sess .fold.box { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 0; }
+    /* rows inside the card stay plain — the card header owns the surface */
+    .sess .thread-head { background: transparent; }
+    .sess .thread-head:hover { background: var(--hover); }
+    .sess .thread.selected .thread-head {
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+    }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
       border: 1px dashed var(--purple); border-radius: 6px;
@@ -2304,26 +2327,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
     }
 
-    // Section header: short sid (click = copy full, the header-chip
-    // affordance) · wall-clock range · request count · error rollup.
+    // Session card header — same visual grammar as a thread card, one level
+    // up: identity on the left (short sid, click = copy full, plus the
+    // conversation size), quiet attributes right-aligned (time range,
+    // request count, errors). No "session" word — the box IS the session.
     function sessHeader(sid, g) {
-      let t0 = Infinity, t1 = 0, req = 0, errs = 0;
+      let t0 = Infinity, t1 = 0, req = 0, errs = 0, turns = 0;
       for (const t of g) {
         if (t.firstAt) t0 = Math.min(t0, t.firstAt);
         t1 = Math.max(t1, t.lastAt || t.firstAt || 0);
         const u = t.usage || {};
         req += u.requests || 0;
         errs += (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
+        if (t.kind !== 'utility') turns += t.turns.filter(x => !x.toolResultsOnly).length;
       }
-      const range = t0 !== Infinity
-        ? fmtTime(new Date(t0 * 1000)) + '\\u2013' + fmtTime(new Date(t1 * 1000)) : '';
+      // HH:MM only — seconds are noise at the session level; a
+      // single-moment session shows one time, not a degenerate range.
+      const hm = (ts) => fmtTime(new Date(ts * 1000)).slice(0, 5);
+      const range = t0 === Infinity ? '' : (hm(t0) === hm(t1) ? hm(t0) : hm(t0) + '\\u2013' + hm(t1));
       return '<span class="sess-sid"' +
         (sid ? ' title="click to copy the full session id" data-sid="' + escapeHtml(sid) + '"' +
           ' onclick="event.preventDefault();event.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sid)"' : '') +
-        '>' + (sid ? 'session ' + escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
-        (range ? '<span class="sess-meta">' + range + '</span>' : '') +
-        '<span class="sess-meta">' + req + ' req</span>' +
-        (errs ? '<span class="err sess-meta">' + errs + ' err</span>' : '');
+        '>' + (sid ? escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
+        '<span class="sess-turns">' + turns + ' turn' + (turns === 1 ? '' : 's') + '</span>' +
+        '<span class="sess-attrs">' + (range ? range + ' \\u00b7 ' : '') + req + ' req' +
+          (errs ? ' \\u00b7 <span class="err">' + errs + ' err</span>' : '') + '</span>';
     }
 
     // Focus hierarchy: EVERY tool_use folds to one line — on real sessions

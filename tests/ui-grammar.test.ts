@@ -170,8 +170,8 @@ describe("sessions layer rendering", () => {
     page.goto("#/session");
     const frag = page.fragments.filter((f) => f.id === "threads").pop();
     expect(frag!.html).toContain('class="sess"');
-    expect(frag!.html).toContain("session bbbb2222"); // newest section
-    expect(frag!.html).toContain("session aaaabbbb"); // older section
+    expect(frag!.html).toContain(">bbbb2222</span>"); // newest section
+    expect(frag!.html).toContain(">aaaabbbb</span>"); // older section
     expect(frag!.html.indexOf("bbbb2222")).toBeLessThan(frag!.html.indexOf("aaaabbbb"));
     expect(frag!.html).toContain("2 sessions");
     expect(fragmentErrors(page)).toEqual([]); // grammar-check the new markup

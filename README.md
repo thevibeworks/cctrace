@@ -2,10 +2,10 @@
 
 # cctrace
 
-> **See what Claude really sends.**
+> **See what your coding agent really sends.**
 >
 > Every request Claude Code makes -- messages, OAuth, usage/credits, MCP --
-> captured live in your browser.
+> captured live in your browser. Codex, Grok, and Kimi Code too.
 
 English | [简体中文](README.zh-CN.md)
 
@@ -14,28 +14,33 @@ English | [简体中文](README.zh-CN.md)
 [![license](https://img.shields.io/github/license/thevibeworks/cctrace)](LICENSE)
 [![runtime](https://img.shields.io/badge/runtime-bun-f9f1e1)](https://bun.sh)
 
+[Docs](https://thevibeworks.github.io/cctrace/) · [Install](#quick-start) · [Web UI](docs/web-ui.md) · [Saved traces](docs/traces.md) · [Beyond Claude](docs/clients.md) · [llms.txt](llms.txt)
+
+<sub>AI agents / LLMs: read [/llms.txt](llms.txt); an agent skill ships in [skills/cctrace](skills/cctrace/SKILL.md).</sub>
+
 <p align="center">
   <img src="assets/cctrace-demo.gif" alt="cctrace live demo" width="100%">
 </p>
 
-cctrace sits between Claude Code and the Anthropic API, recording every HTTP
+cctrace sits between your coding agent and its API, recording every HTTP
 call to a live categorized web UI and a `.jsonl` trace you can reopen any
 time with `cctrace view`. No cloud, no account, nothing leaves your machine.
-It traces the OpenAI Codex, Grok, and Kimi Code CLIs too (`cctrace codex`,
-`cctrace grok`, `cctrace kimi`).
 
 ```bash
-cctrace
+cctrace                # trace Claude Code
+cctrace codex          # or the OpenAI Codex CLI
+cctrace grok           # or the Grok CLI
+cctrace kimi           # or the Kimi Code CLI (Moonshot AI)
 ```
 
-That's it. Claude launches normally. You get a browser tab showing everything
-it does.
+That's it. The agent launches normally. You get a browser tab showing
+everything it does.
 
 ## Why
 
 cctrace is built for exactly two jobs:
 
-1. **LLM tracing** -- see exactly what Claude Code sends and receives each
+1. **LLM tracing** -- see exactly what your agent sends and receives each
    turn: system prompt, context, tool definitions, streamed replies,
    token/cache usage.
 2. **Security & privacy tracing** -- audit what actually leaves your machine:
@@ -43,45 +48,36 @@ cctrace is built for exactly two jobs:
    payload.
 
 Both jobs need the full picture -- every request, not just the convenient
-ones -- and getting that is harder than it sounds:
-
-Claude Code ships as a Bun-compiled **native binary**. The classic trick of
-injecting a `fetch()` hook with `node --require` doesn't work on a native
-binary -- it's dead, Jim. cctrace captures traffic the way it actually works
-today: a local **TLS-intercepting proxy** (Charles/mitmproxy-style, but
-zero-config) that Claude routes through via `HTTPS_PROXY`, trusting an
-auto-generated CA.
-
-Because it intercepts at the transport layer -- below where URLs are built --
-it sees the **whole first-party picture**, including the OAuth and
-usage/credit endpoints that a base-URL proxy physically cannot reach (Claude
-hardcodes their host). Since 0.16 that scope is deliberate: first-party
-hosts are decrypted, everything else your session touches (npm, GitHub, apt)
-passes through as an opaque byte-counted tunnel -- an audit trail without
-the payload copies.
+ones. Claude Code ships as a Bun-compiled **native binary**, so the classic
+`node --require` fetch-hook is dead. cctrace captures at the transport
+layer instead: a zero-config **TLS-intercepting proxy** (Charles-style)
+that the agent routes through via `HTTPS_PROXY`, trusting an auto-generated
+CA. Intercepting below where URLs are built is what reaches the OAuth and
+usage/credit endpoints a base-URL proxy physically cannot see -- and since
+0.16 the scope is deliberate: first-party hosts are decrypted, everything
+else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
 
 ## What you get
 
 - **The full picture.** `/v1/messages`, OAuth, **usage/credits**, MCP registry,
   bootstrap, telemetry -- not just the chat endpoint.
-- **Live, categorized UI.** Filter chips with counts, colored badges, expandable
-  headers/bodies, decoded SSE streams. It looks good. You'll actually want to
-  keep it open.
-- **Replayable traces.** Every run writes a `.jsonl` trace; `cctrace view`
-  reopens it in the same UI anytime, and `cctrace view --html` renders a
-  self-contained snapshot you can send to a colleague (works offline).
-- **Zero config.** Auto-generates its CA, auto-detects your Claude install, and
-  captures the full first-party picture by default. No config files to edit,
-  no flags to memorize.
-- **Scoped by design.** Only first-party hosts are decrypted. External hosts
-  your agent's subprocesses contact -- npm, GitHub, apt -- pass through as
-  opaque tunnels logged as host + byte counts, so a `go install` never lands
-  53MB of tarball in your trace and `gh` API responses never hit disk.
-  `--capture-external` decrypts everything when you're debugging;
-  `--intercept-host` enrolls specific hosts (remote MCP servers).
-- **Safe by default.** Credentials are redacted from headers, bodies, *and* URLs
-  before anything hits disk (see [Security & privacy](#security--privacy)).
-  Your API keys stay your API keys.
+- **Live, categorized UI.** Filter chips with counts, decoded SSE streams,
+  prompt-cache verdicts, first-token latency, estimated cost per request.
+  The [full tour](docs/web-ui.md).
+- **Reconstructed sessions.** Threads, subagent branches, `/model` epochs,
+  compaction boundaries, superseded exchanges -- and **replay**: step or
+  play back any captured session, deep-link any moment.
+- **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
+  it anytime, `--html` renders an offline snapshot you can send around.
+- **Zero config.** Auto-generates its CA, auto-detects your install, full
+  first-party capture by default.
+- **Scoped by design.** External hosts your agent's subprocesses contact
+  pass through as opaque tunnels (host + byte counts) -- a `go install`
+  never lands 53MB of tarball in your trace. Details in
+  [capture modes](docs/capture-modes.md).
+- **Safe by default.** Credentials are redacted from headers, bodies, *and*
+  URLs before anything hits disk
+  (see [Security & privacy](#security--privacy)).
 
 ## How it compares
 
@@ -91,333 +87,78 @@ the payload copies.
 | Captures `/v1/messages` | yes | yes | yes | yes |
 | Captures **OAuth / usage / credits** | yes | **no** | **no** | manual |
 | Zero config (auto CA + trust) | yes | yes | yes | **no** |
-| Claude-aware UI (categories, SSE decode) | yes | -- | partial | **no** |
+| Agent-aware UI (categories, sessions, SSE decode) | yes | -- | partial | **no** |
 | Local-only, nothing leaves your machine | yes | yes | yes | yes |
 
 The `fetch()`-hook approach (claude-trace and friends) stopped working when
 Claude Code went native. A base-URL proxy still works but only sees
-`/v1/messages` -- you're flying blind on OAuth, usage, and credits. A general
-TLS proxy like Charles sees everything but needs manual CA setup and knows
-nothing about Claude's endpoints. cctrace is the middle path: zero-config,
-sees the whole first-party picture, and speaks Claude.
+`/v1/messages`. A general TLS proxy sees everything but needs manual CA
+setup and knows nothing about the endpoints. cctrace is the middle path:
+zero-config, whole first-party picture, and it speaks your agent's wire.
 
 ## Quick start
 
-Requires [Bun](https://bun.sh), `openssl`, and Claude Code (`claude` on PATH).
-
-### Install from npm
+Requires [Bun](https://bun.sh), `openssl`, and the CLI you want to trace.
 
 ```bash
-npm install -g @thevibeworks/cctrace
+npm install -g @thevibeworks/cctrace    # or: bunx @thevibeworks/cctrace
 ```
 
-### Or run without installing
+Or build the standalone binary (recommended -- no Bun at runtime, exact
+`--` pass-through):
 
 ```bash
-bunx @thevibeworks/cctrace
+git clone https://github.com/thevibeworks/cctrace && cd cctrace
+make install                            # compiles, installs to ~/.local/bin
 ```
 
-### Or clone the repo
-
-```bash
-git clone https://github.com/thevibeworks/cctrace
-cd cctrace
-bun install
-bun link            # optional: puts `cctrace` on your PATH
-```
-
-### Or build a standalone binary (recommended)
-
-```bash
-git clone https://github.com/thevibeworks/cctrace
-cd cctrace
-make install        # compiles dist/cctrace, installs to ~/.local/bin
-```
-
-`make install` (or `make build`) compiles cctrace into a single executable
-via `bun build --compile` -- Bun is needed to build, **not to run**. It's also
-the install that makes `cctrace -- <claude args>` work verbatim (see the
-pass-through note below). `make help` lists all targets; `PREFIX=/usr/local
-make install` changes the destination.
-
-Then just run it:
+Then:
 
 ```bash
 cctrace                                    # trace claude, open the live UI
-cctrace -- --continue                      # resume your last Claude session, traced
-cctrace -- -p "hello"                      # pass args straight through to Claude
-cctrace -- --dangerously-skip-permissions  # full auto, traced
+cctrace -- --continue                      # resume your last session, traced
+cctrace -- -p "hello"                      # args after -- go to the agent verbatim
 ```
-
-On start you'll see:
 
 ```
 [cctrace] Live UI: http://localhost:9317
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 
-Open the **Live UI** URL and watch requests stream in. When you're done, hit
-Ctrl-C -- the `.jsonl` trace stays in `.cctrace/`; reopen it anytime with
-`cctrace view` (Enter picks the newest).
+Open the Live UI and watch requests stream in. Ctrl-C when done -- the
+`.jsonl` stays in `.cctrace/`; reopen anytime with `cctrace view`.
+Install variants, runtime notes, and the bun `--` caveat:
+[docs/install.md](docs/install.md).
 
-## Running cctrace (Bun & `bin`)
-
-cctrace **runs on [Bun](https://bun.sh)** -- the CLI is `src/cli.ts` executed
-directly (shebang `#!/usr/bin/env bun`). There is no compiled JS and no Node
-fallback; everything uses `Bun.serve`/`Bun.spawn`.
-
-| Command | Works | Notes |
-|---|---|---|
-| `cctrace` (after `make install`) | yes | compiled binary, no Bun at runtime, `--` passes through intact |
-| `bun run src/cli.ts [args]` | yes | from a clone |
-| `bun start` | yes | alias of the above |
-| `./src/cli.ts` | yes | direct exec via the Bun shebang |
-| `cctrace` (after `bun link`) | yes | needs `~/.bun/bin` on your `PATH`; bun eats a leading `--` |
-| `node .../cli.ts` / `npm i -g` without Bun | **no** | fails loudly: `env: 'bun': No such file or directory` |
-
-**Prerequisites -- all three matter:**
-
-- **Bun** -- the runtime (or the build tool, if you `make install` the
-  compiled binary). If you don't have Bun, [install it](https://bun.sh).
-- **`openssl` on `PATH`** -- `mitm` mode shells out to it to generate the CA +
-  leaf cert. No openssl? Use `--mode base-url` (no CA needed, but you only
-  see messages).
-- **A real Claude Code install** -- auto mode reads the magic bytes of your
-  `claude` binary to pick the capture mode. No `claude` on PATH? cctrace
-  exits with `Claude not found` (or pass `--claude-path`).
-
-> **Standalone binary:** `make build` compiles one for your platform
-> (`bun build --compile`); `make install` puts it on your PATH. One caveat:
-> the compiled binary doesn't include the legacy `node` capture mode (it needs
-> the repo sources) -- native Claude installs use `mitm` (the default) anyway.
-
-## Capture modes
-
-cctrace auto-selects based on your Claude install; override with `--mode`.
-
-| Mode | Captures | Setup |
-|------|----------|-------|
-| **`mitm`** (default, native binaries) | **The full first-party picture** -- messages, OAuth, usage/credits, MCP registry, telemetry | Auto-generates a CA; Claude trusts it via `NODE_EXTRA_CA_CERTS` |
-| **`base-url`** | `/v1/messages` only | Zero -- just sets `ANTHROPIC_BASE_URL` |
-| **`node`** (auto for npm/JS installs) | First-party via `fetch()` hook | Legacy; only works on non-native (JS) Claude |
-
-Capture scope is an include-list, decided per connection before any TLS
-(Charles' SSL-proxying model): first-party hosts, the client's pinned
-telemetry sinks, any `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` host, and
-`--intercept-host` extras get real interception with per-host certs.
-Everything else -- package registries, `gh` calls, apt -- passes through as
-an **opaque tunnel** logged as one small row: host, bytes up/down, duration.
-No forged certs for those hosts, so cert-pinning tools and system-trust
-readers work through cctrace unchanged. `--capture-external` restores
-decrypt-everything -- with external *bodies* capped at 64KB (larger ones are
-summarized with exact byte counts; url/status/headers/timing always stay),
-so an npm tarball or a token-authed API response never lands in the trace.
-Enroll a host with `--intercept-host` when you want its full payloads.
-
-## The web UI
-
-- **Inline row summaries** -- every request row reads at a glance: model,
-  in/out tokens, a prompt-cache verdict (green hit with read/write arrows +
-  hit %, amber cold write or miss -- the session view's wire rows carry a
-  matching dot, so cache breaks stand out), count_tokens results, usage
-  window percentages (5h / 7d / per-model), telemetry event counts, error
-  types.
-- **First-token latency** -- every streamed model call shows a `ttft` chip
-  (measured live at the proxy pump; SSE events carry no timestamps, so a
-  saved trace can't reconstruct it) and tok/s computed over the
-  post-first-token stream -- slow-start vs slow-stream is one glance.
-- **Category filter chips** with live counts -- only the categories the
-  trace actually has (a Codex run shows no Count Tokens chip). Click to
-  filter; combine with text search.
-- **Split detail panel** -- click a row and the detail opens beside the list
-  (deep-linkable by request id). Messages render conversation-first with the
-  streamed reply decoded from SSE; usage requests render limit bars; raw
-  headers/bodies stay one fold away. `j`/`k` walk the filtered list.
-- **Sessions view** -- the reconstructed conversation on a rail: sessions
-  group their threads (main chat, subagent runs attached as branches at
-  the turn that spawned them, utility noise collapsed), a `/model` switch
-  marks an epoch, a compaction marks a break node with the context
-  collapse in turns and tokens, and superseded exchanges (rewinds, edits,
-  injected recaps) sit grey at the ordinal they occupied. Every turn
-  links back to its wire request; tokens, timing, and cost live in
-  instant hovers.
-- **Session replay** -- re-experience a captured session as it happened, right
-  inside the Sessions view: `←`/`→` step through turns (`shift` steps every
-  wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,
-  and the scrubber doubles as a session minimap (turns, errors, probes).
-  Pause anywhere and the URL (`#/session/<key>/@<pair-id>`) deep-links that
-  exact moment. Works on every trace ever captured -- live, snapshot, or
-  `cctrace view` rebuild -- because the wire is already a timeline.
-- **Estimated cost** -- every messages request shows an estimated USD cost
-  (live models.dev pricing with an embedded offline fallback, cache
-  read/write TTLs priced separately), with
-  per-turn and per-thread totals in the Sessions view. Estimates, not bills.
-- **Multi-instance aware** -- run cctrace in three repos at once and nothing
-  gets lost: ports allocate predictably (9317, 9318, ...), `cctrace ps`
-  lists every live instance with its URL and session, and the web UI header
-  grows a switcher to jump between them.
-- **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up
-  where a previous traced run left off: every Claude Code request carries its
-  session id on the wire, so cctrace finds the earlier runs' traces in the log
-  dir by exact match and merges them in. Old turns keep their tokens, timing,
-  and wire links instead of rendering as bare history; merged requests are
-  badged `prev` with a toggle to hide them. `--fresh` opts out; `--with FILE`
-  force-merges any trace file.
-- **Offline snapshots** -- the saved `.html` embeds the full trace and renders
-  the same UI with no server. Open it a year from now, it still works.
-- **Stays fresh** -- a daily background check against npm (never blocks
-  startup, fail-soft) offers new releases with an `upgrade now? [y/N]`
-  prompt on interactive runs; declining snoozes that version. The header
-  shows the running version, and an amber notice when a newer one exists.
-  Opt out with `--no-update-check` or `CCTRACE_NO_UPDATE_CHECK=1`.
-
-## Working with saved traces
-
-Subcommands operate on traces already on disk -- no proxy, no Claude spawn.
-The housekeeping commands (`clean`/`merge`/`compress`/`purge`) are **dry-run
-by default** (they print an itemized plan and touch nothing); add `--yes` to
-apply.
+## Everyday commands
 
 ```bash
-# Reopen a saved trace in the web UI -- no target needed
-cctrace view                               # lists traces newest-first, Enter = newest
-cctrace view latest                        # newest trace, no questions
-cctrace view 4f9a2c1e                      # a Claude Code session id (or prefix)
-cctrace view trace-2026-07-08              # or a filename fragment / path
-cctrace view <target> --html               # write a self-contained snapshot .html
-                                           # instead (shareable; huge traces choke
-                                           # browsers -- the default serve doesn't)
-
-# Reclaim space: drop regenerable .html snapshots + 0-byte aborted traces
-cctrace clean                              # dry run: lists what would go
-cctrace clean --yes
-
-# Consolidate a session's runs (--continue spans files) into one .jsonl
-cctrace merge                              # one session-<id>.jsonl per session
-cctrace merge --prune --yes                # also remove fully-merged sources
-
-# Archive for backup: zstd (view reads .jsonl.zst / legacy .gz directly)
-cctrace compress --older-than 7 --yes      # only traces older than 7 days
-
-# Drop noise categories (telemetry, count_tokens, external) from saved traces
-cctrace purge --yes                        # rows, not disk -- compress is for space
-
-# Fold redundant bodies in saved traces (-95%+ on real sessions)
-cctrace compact --yes                      # superseded request bodies -> stubs; the
-                                           # session view renders identically
-cctrace compact --zstd --yes               # and archive the result
-
-# Which cctrace sessions are live right now, and on which port?
-cctrace ps                                 # URL, PID, client, project, session
+cctrace view                     # reopen a saved trace (Enter = newest)
+cctrace view <target> --html     # render a shareable offline snapshot
+cctrace ps                       # live instances: URL, client, project, session
+cctrace clean|merge|compress     # housekeeping -- dry-run by default, --yes applies
+cctrace purge                    # drop noise categories from saved traces
+cctrace compact                  # fold redundant bodies (-95%+), view unchanged
 ```
 
-Housekeeping never shrinks your data. `clean` only deletes an `.html` whose
-source `.jsonl`/`.jsonl.gz` still exists (checked, not assumed — an orphan
-snapshot is kept). `merge` and `compress` union with existing outputs, so
-re-running them can only grow a merged file or archive. `merge` only prunes a
-source when *every* pair in it was attributed to a session, so a trace holding
-OAuth/usage/telemetry (no session id) is never deleted out from under you.
-And every deletion re-checks that the file didn't change since the plan, so
-housekeeping while a live capture is appending is safe.
+Housekeeping never shrinks your data (verified deletes, union merges,
+live-append safety); `compact` is the one stated exception. The full
+guarantees: [docs/traces.md](docs/traces.md).
 
-`compact` is the one deliberate exception, and it says so: each API turn
-re-sends the whole conversation, so most trace bytes are redundant request
-bodies. It keeps the longest request per conversation epoch in full and folds
-the superseded ones to small stubs (plus meta-only collapsing for repetitive
-telemetry/external noise, keeping first/last/largest/slowest and every error).
-No request/response pair is ever deleted, responses are never touched, and
-the reconstructed session view renders identically — what you lose is the
-exact wire bytes of the superseded request bodies. Dry-run by default.
-
-## Options
-
-```
-cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
-```
+## Common options
 
 | Option | Description |
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
-| `-s, --static` | Static mode (no live server; writes the `.jsonl` + a snapshot `.html`) |
-| `-p, --port PORT` | Live UI port (default: 9317; auto-falls back if busy) |
-| `--messages-only` | Capture only the model API calls (`/v1/messages` and friends) |
-| `--capture-external` | Decrypt every host (default: non-first-party hosts tunnel opaquely with byte counts); external bodies over 64KB are summarized, not stored |
-| `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers, unusual providers) |
-| `--no-open` | Don't auto-open the browser |
-| `--print-ca` | Print the MITM CA cert path and exit |
-| `--log NAME` | Custom log file base name |
+| `-p, --port PORT` | Live UI port (default: 9317, auto-falls back) |
+| `--messages-only` | Capture only the model API calls |
+| `--capture-external` | Decrypt every host (bodies over 64KB summarized) |
+| `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers) |
 | `--dir PATH` | Log directory (default: `.cctrace`) |
-| `--fresh` | Don't merge prior traces of a continued session |
-| `--with FILE` | Merge a specific trace file into the view (repeatable) |
-| `--claude-path PATH` | Custom Claude binary path |
-| `--client-path PATH` | Custom binary path for any client (codex/grok/kimi too) |
-| `--data-dir PATH` | MITM CA / data dir (default: `~/.local/share/cctrace`; or `CCTRACE_DATA_DIR`. Legacy `--cache-dir` / `CCTRACE_CACHE_DIR` still work; a pre-0.6 CA in `~/.cache/cctrace` migrates over automatically) |
+| `--client-path PATH` | Custom binary path for any client |
 
-### Passing args to Claude
-
-Everything after `--` goes to the Claude CLI verbatim; flags before it belong
-to cctrace:
-
-```bash
-cctrace -- --continue                       # claude --continue, traced
-cctrace -- -p "why is this failing?"        # claude print mode, traced
-cctrace --mode base-url -- --model opus     # cctrace flag + Claude flags
-```
-
-A flag cctrace doesn't recognize before `--` is an error with a hint -- a typo
-or misplaced Claude flag is never silently swallowed. The one collision to
-know: `-p` before `--` is cctrace's port, after `--` it's Claude's print mode.
-
-> **Bun-run caveat:** when cctrace runs through bun's CLI (`bunx`, `bun run`,
-> the `bun link` shim), bun itself eats a **leading** `--`, so
-> `cctrace -- --help` arrives as `cctrace --help`. The compiled binary
-> (`make install`) is immune -- that's the recommended install. On a bun-run
-> install, put any cctrace flag before the `--`
-> (e.g. `cctrace --no-open -- --continue`).
-
-## Beyond Claude
-
-The capture core is client-agnostic -- it's a TLS-intercepting proxy, and any
-CLI that honors `HTTPS_PROXY` plus the standard cert env vars gets traced.
-
-**Other clients** -- a leading client word picks who runs:
-
-```bash
-cctrace codex -- exec "fix the failing tests"   # OpenAI Codex CLI
-cctrace grok -- -p "explain this stack trace"   # Grok CLI
-cctrace kimi                                    # Kimi Code CLI (Moonshot AI)
-```
-
-Non-Claude clients always use mitm capture, and get the full treatment:
-their model calls (`.../responses`, `.../chat/completions`) land in
-Messages, and the Sessions view reconstructs their conversations too --
-threads keyed on each client's wire headers, tool calls and reasoning
-normalized into the same turn model, per-turn usage and cost, replay
-included. Codex's encrypted reasoning shows as a placeholder; Grok's
-summaries read in full. Kimi Code speaks OpenAI Chat Completions: threads
-reconstruct from the prompt signature (no thread header on the wire), the
-session id rides in the request body (`prompt_cache_key`, stable across
-compaction and `--resume`), auto-compactions render as boundary markers,
-and `reasoning_content` renders as thinking.
-
-**Third-party Anthropic-compatible providers** -- point `ANTHROPIC_BASE_URL`
-at a gateway or a compat endpoint and run `cctrace` as usual. mitm mode needs
-no extra setup: non-Anthropic hosts get a per-host certificate minted on
-first contact (requires `openssl`), and `/v1/messages` is classified by wire
-shape, not host, so provider traffic lands in Messages with the provider's
-hostname visible on each row. OAuth/usage/credits categories will simply be
-absent -- those endpoints are hardcoded to Anthropic hosts and bypass
-`ANTHROPIC_BASE_URL` by design (which is exactly why mitm mode exists).
-
-## Output
-
-Every run writes to `.cctrace/` (or `--dir`):
-
-- `trace-<timestamp>.jsonl` -- one request/response pair per line
-  (machine-readable). That file IS the trace: `cctrace view` reopens it in
-  the web UI anytime, `cctrace view <target> --html` renders a shareable
-  self-contained snapshot on demand (live runs stopped writing one at exit
-  in 0.13 -- a 2-hour session rendered 400MB of HTML).
+Full table incl. `--fresh`, `--with`, `--data-dir`, `--print-ca`:
+[docs/install.md](docs/install.md#all-options).
 
 ## How it works
 
@@ -455,69 +196,52 @@ flowchart LR
     class RD accent
 ```
 
-The proxy terminates TLS with an auto-generated leaf cert (Anthropic SANs),
-forwards to the real API, and `tee`s the response stream so Claude gets bytes
-immediately while cctrace captures a copy -- zero buffering of SSE responses.
-Every captured pair is redacted before it reaches any sink.
-
-We inject `HTTPS_PROXY` (to route traffic through us) and
-`NODE_EXTRA_CA_CERTS` (which *appends* our CA to Bun's trust store, so Claude
-trusts our leaf while public TLS still works).
-
-Claude's subprocesses inherit `HTTPS_PROXY` too -- the bash tool's
-`curl`/`gh`, python hooks, statusline scripts -- and `NODE_EXTRA_CA_CERTS`
-means nothing to them, so they'd die on TLS verification. For them we build a
-**combined bundle** (your system CAs + our CA -- the standard vars *replace*
-the trust store, so the mitm cert alone would break every non-proxied
-connection) and export it as `SSL_CERT_FILE`, `CURL_CA_BUNDLE`,
-`REQUESTS_CA_BUNDLE`, and `NIX_SSL_CERT_FILE`. Proxied requests verify via
-our cert, direct ones via the system CAs -- subprocesses never need to know
-which path a request took.
-
-We deliberately do **not** set `HTTP_PROXY` -- the front door only speaks
-CONNECT and would break subprocess plain-`http://` calls. That's the kind of
-bug that makes you question your life choices at 2 AM.
+The proxy terminates TLS with an auto-generated leaf cert, forwards to the
+real API, and `tee`s the response so the agent gets bytes immediately while
+cctrace captures a copy -- zero SSE buffering. Every captured pair is
+redacted before it reaches any sink. Subprocess trust (the combined CA
+bundle), why `HTTP_PROXY` stays unset, and the tunnel scope model:
+[docs/capture-modes.md](docs/capture-modes.md).
 
 ## Security & privacy
 
-cctrace is a local debugging tool, but it intercepts real credentialed traffic,
-so it redacts before writing anything:
+cctrace is a local debugging tool, but it intercepts real credentialed
+traffic, so it redacts before writing anything:
 
-- **Headers** -- `authorization`, `x-api-key`, `cookie`, etc. are masked to a
+- **Headers** -- `authorization`, `x-api-key`, `cookie`, etc. masked to a
   first-10/last-4 preview (enough to tell *which* key, not the key itself).
 - **Bodies** -- credential fields (`access_token`, `refresh_token`,
-  `client_secret`, `code`, `api_key`, ...) are masked in JSON and form-encoded
-  bodies. Your `/v1/messages` conversation content is left intact.
-- **URLs** -- credential-bearing query params (e.g. OAuth `?code=`) are masked.
+  `client_secret`, `api_key`, ...) masked in JSON and form bodies. Your
+  conversation content is left intact.
+- **URLs** -- credential-bearing query params (e.g. OAuth `?code=`) masked.
 
 Redaction happens at a single choke point, so it applies uniformly to the
-`.jsonl`, the shareable `.html`, and the live WebSocket. The `.cctrace/` output
-is gitignored by default.
+`.jsonl`, the `.html`, and the live WebSocket. `.cctrace/` output is
+gitignored by default.
 
-**Still:** a trace is a record of your real session. Review it before sharing.
-Never paste raw output into a public issue. Seriously.
+**Still:** a trace is a record of your real session. Review it before
+sharing. Never paste raw output into a public issue. Seriously.
+
+## Docs
+
+| Start here | Go deeper |
+|---|---|
+| [Install & options](docs/install.md) | [Capture modes & proxy internals](docs/capture-modes.md) |
+| [The web UI tour](docs/web-ui.md) | [Saved traces & housekeeping](docs/traces.md) |
+| [Codex / Grok / Kimi / providers](docs/clients.md) | [Agent skill](skills/cctrace/SKILL.md) · [CHANGELOG](CHANGELOG.md) |
 
 ## Roadmap
 
 - **Session replay P3/P4** -- opt-in `--record-timing` for chunk-timed
-  streaming replay (true typewriter pacing), replay-polished snapshots.
-  P1+P2 (stepper, transport bar, minimap, deep links) shipped. Design:
-  [docs/design/session-replay.md](docs/design/session-replay.md).
-- **WebSocket relay** -- the terminator refuses ws upgrades fast (clients
-  fall back to HTTP cleanly); an actual relay that captures frames is the
-  remaining tail of #20.
-- **Tunnel PID attribution** -- on Linux the proxy can map a connection's
-  source port to the owning process, so tunnel rows could say *which*
-  subprocess called npm. Investigated in the 2026-07-15 devlog, deferred.
-- **Conversation dump** -- export the reconstructed conversation as Markdown
-  or JSON, ready for sharing or post-mortem analysis.
-- **MCP server** -- query captured traffic programmatically from any agent
-  (an agent *skill* ships in [skills/cctrace](skills/cctrace/SKILL.md); the
-  MCP surface is the remaining half).
-- **`inference_geo` / deeper tier visibility** -- surface where inference ran
-  and per-tier breakdowns alongside the existing cost estimates.
-
-See [CHANGELOG.md](CHANGELOG.md) for released changes.
+  streaming replay ([design](docs/design/session-replay.md)).
+- **WebSocket relay** -- capture ws frames instead of the current fast
+  refusal + HTTP fallback.
+- **Conversation dump** -- export the reconstructed conversation as
+  Markdown or JSON.
+- **MCP server** -- query captured traffic from any agent (the agent
+  *skill* already ships; the MCP surface is the remaining half).
+- **Tunnel PID attribution** -- which subprocess called npm (Linux,
+  investigated, deferred).
 
 ## Development
 

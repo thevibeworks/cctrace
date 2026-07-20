@@ -80,7 +80,7 @@ instances land on 9318, 9319, ...). Hash-routed views:
   Headers section (general + parsed request/response headers, raw toggle,
   copy), and body folds with pretty/raw and SSE events/raw toggles.
   `j`/`k` walk rows, `/` filters, `Esc` closes.
-- **Session** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
+- **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
   conversation (main chat, subagent runs linked to the Task call that
   spawned them, utility probes as separate threads) beside the wire
   requests, with per-turn tokens/duration/cost linked back to each request,
@@ -97,7 +97,7 @@ instances land on 9318, 9319, ...). Hash-routed views:
   visually marked, and a subagent fold links to its reconstructed thread.
   Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system
   prompt (same jumps on the on-page rail).
-- **Replay** (inside Session view): "⏵ replay" or `←`/`→` steps through the
+- **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a
   shareable deep link: `#/session/<key>/@<pair-id>` opens paused at that

@@ -241,19 +241,21 @@
       </p>
     </div>
     <div class="feature">
-      <h3 class="en">Replayable sessions</h3>
-      <h3 class="zh">可回放的会话</h3>
+      <h3 class="en">Sessions, reconstructed</h3>
+      <h3 class="zh">重建的会话</h3>
       <p class="en">
-        Every run writes a <code>.jsonl</code> trace. Reopen it anytime with
-        <code>cctrace view</code>: the reconstructed conversation &mdash;
-        threads, subagents, per-turn cost and latency &mdash; plus time-travel
-        replay. <code>view --html</code> exports a self-contained snapshot.
+        The conversation on one rail: threads with per-turn cost and latency,
+        subagents attached at the turn that spawned them, model switches as
+        epochs, compactions as break nodes with the context collapse in turns
+        and tokens, superseded exchanges kept at their timeline position.
+        Plus time-travel replay; <code>view --html</code> exports a
+        self-contained snapshot.
       </p>
       <p class="zh">
-        每次运行都写一份 <code>.jsonl</code> trace，随时用
-        <code>cctrace view</code> 重新打开：重建的对话 &mdash; 线程、子代理、
-        每轮成本与延迟 &mdash; 外加时间轴回放。<code>view --html</code>
-        可导出自包含快照分享。
+        对话在一条轨道上重建：线程带每轮成本与延迟，子代理挂在派发它的回合下，
+        /model 切换成为 epoch，compact 压缩成为断点节点（上下文收缩了多少回合/
+        token 一目了然），被覆盖的交互保留在原本的位置。外加时间轴回放；
+        <code>view --html</code> 可导出自包含快照分享。
       </p>
     </div>
     <div class="feature">
@@ -331,19 +333,55 @@
       <li>
         <div class="status-dot done"></div>
         <div>
-          <strong class="en">Session view</strong>
+          <strong class="en">Sessions view</strong>
           <strong class="zh">会话视图</strong>
           <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
           <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
         </div>
       </li>
       <li>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Codex &amp; Grok support</strong>
+          <strong class="zh">Codex 与 Grok 支持</strong>
+          <span class="en"><code>cctrace codex</code> / <code>cctrace grok</code> — same MITM front door, OpenAI-dialect session reconstruction</span>
+          <span class="zh"><code>cctrace codex</code> / <code>cctrace grok</code> — 同一套 MITM 前门，OpenAI 方言的会话重建</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Token metrics</strong>
+          <strong class="zh">Token 指标</strong>
+          <span class="en">Per-request cost estimates, cache verdicts, usage-limit bars, first-token latency</span>
+          <span class="zh">每请求费用估算、缓存判定、用量限额进度条、首 token 延迟</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Agent skill</strong>
+          <strong class="zh">Agent Skill</strong>
+          <span class="en">skills/cctrace teaches coding agents to drive cctrace and read traces</span>
+          <span class="zh">skills/cctrace 让编码代理会用 cctrace、会读 trace</span>
+        </div>
+      </li>
+      <li>
+        <div class="status-dot done"></div>
+        <div>
+          <strong class="en">Sessions layer</strong>
+          <strong class="zh">Sessions 层</strong>
+          <span class="en">0.18: sessions &gt; threads &gt; turns on one rail — epochs, subagent branches, compaction boundaries, superseded exchanges</span>
+          <span class="zh">0.18：sessions &gt; threads &gt; turns 一条轨道 — epoch、子代理分支、compact 断点、被覆盖的交互</span>
+        </div>
+      </li>
+      <li>
         <div class="status-dot next"></div>
         <div>
-          <strong class="en">Codex support</strong>
-          <strong class="zh">Codex 支持</strong>
-          <span class="en">Trace OpenAI Codex CLI through the same MITM front door</span>
-          <span class="zh">用同一套 MITM 前门追踪 OpenAI Codex CLI</span>
+          <strong class="en">Showcase trace</strong>
+          <strong class="zh">示例 trace</strong>
+          <span class="en">A real (sanitized) session published here — browse the Sessions view without installing</span>
+          <span class="zh">在这里发布一份真实（已脱敏）的会话 — 无需安装即可体验 Sessions 视图</span>
         </div>
       </li>
       <li>
@@ -358,28 +396,10 @@
       <li>
         <div class="status-dot"></div>
         <div>
-          <strong class="en">Token metrics</strong>
-          <strong class="zh">Token 指标</strong>
-          <span class="en">Cumulative usage, cache hit rates, cost estimates</span>
-          <span class="zh">累计用量、缓存命中率、费用估算</span>
-        </div>
-      </li>
-      <li>
-        <div class="status-dot"></div>
-        <div>
-          <strong class="en">Agent skill</strong>
-          <strong class="zh">Agent Skill</strong>
-          <span class="en">Claude Code skill / MCP server for programmatic trace queries</span>
-          <span class="zh">Claude Code skill / MCP 服务器，编程式查询捕获的流量</span>
-        </div>
-      </li>
-      <li>
-        <div class="status-dot"></div>
-        <div>
-          <strong class="en">Multi-session</strong>
-          <strong class="zh">多会话</strong>
-          <span class="en">Path-based routing: <code>/:project/:session</code></span>
-          <span class="zh">基于路径的路由：<code>/:project/:session</code></span>
+          <strong class="en">Timed replay</strong>
+          <strong class="zh">计时回放</strong>
+          <span class="en"><code>--record-timing</code>: replay streams at their captured chunk cadence</span>
+          <span class="zh"><code>--record-timing</code>：按捕获时的分块节奏回放流式输出</span>
         </div>
       </li>
     </ul>

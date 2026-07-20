@@ -320,6 +320,10 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
+  // The header shows <project>/<trace-file>: the project is the traced
+  // repo, i.e. the log dir's parent when it's a standard ./.cctrace.
+  const viewDir = resolve(logDir);
+  const viewProject = basename(viewDir) === ".cctrace" ? basename(dirname(viewDir)) : basename(viewDir);
   // The rebuilt pairs know who produced them (0.13+ traces); older traces
   // carry no label and the header degrades to project-only.
   const client = result.pairs.findLast((p) => p.client)?.client;
@@ -328,7 +332,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   const server = createServer({
     port: opts.port,
     logDir,
-    meta: { ...pageMeta(client), project: traceName, projectPath: resolve(logDir) },
+    meta: { ...pageMeta(client), project: viewProject, projectPath: viewDir, traceFile: basename(result.sources[0] || target) },
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
@@ -880,7 +884,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
         }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
-      const snapHtml = renderSnapshot(all, pageMeta());
+      const snapHtml = renderSnapshot(all, { ...pageMeta(CLIENT.name), traceFile: basename(logFile) });
       const problem = verifySnapshot(snapHtml, all.length);
       if (problem) log(`warning: snapshot self-check failed: ${problem}`, C.yellow);
       writeFileSync(htmlFile, snapHtml);
@@ -982,7 +986,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
       speculate: speculateSid,
-      meta: pageMeta(CLIENT.name),
+      meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile) },
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,

@@ -188,7 +188,8 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
  */
 export function writeView(target: string, logDir: string, meta: PageMeta = {}): ViewResult {
   const result = resolveView(target, logDir);
-  const html = renderSnapshot(result.pairs, { ...meta, version: CCTRACE_VERSION });
+  const traceFile = basename(result.sources[0] || target);
+  const html = renderSnapshot(result.pairs, { ...meta, traceFile, version: CCTRACE_VERSION });
   const problem = verifySnapshot(html, result.pairs.length);
   if (problem) result.warnings.push(`snapshot self-check failed: ${problem}`);
   writeFileSync(result.htmlPath, html);

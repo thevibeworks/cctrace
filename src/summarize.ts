@@ -274,15 +274,24 @@ export function summarizeCache(m: any, body: any): any {
  * it in request.body.metadata.user_id — current builds send a JSON string
  * ({"device_id":...,"session_id":"<uuid>"}), older ones an underscored form
  * (..._session_<uuid>). Other clients carry it in a request header named by
- * their wire table (codex "session-id", grok "x-grok-session-id") — pass the
- * merged tables from src/clients as `wire` to read it; the pair's own
- * `client` label picks the row. Returns "" when absent.
+ * their wire table (codex "session-id", grok "x-grok-session-id") or a body
+ * field (kimi "prompt_cache_key": "session_<uuid>" — stable across
+ * compaction and --resume) — pass the merged tables from src/clients as
+ * `wire` to read it; the pair's own `client` label picks the row. Returns
+ * "" when absent.
  */
 export function extractSessionId(pair: any, wire?: any): string {
   const w = wire && pair && pair.client ? wire[pair.client] : null;
   if (w && w.sessionHeader) {
     const hid = ((pair.request && pair.request.headers) || {})[w.sessionHeader];
     if (typeof hid === "string" && hid) return hid;
+  }
+  if (w && w.sessionBodyField) {
+    const bid = ((pair.request && pair.request.body) || {})[w.sessionBodyField];
+    if (typeof bid === "string" && bid) {
+      const um = /session_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(bid);
+      return (um && um[1]) || bid;
+    }
   }
   const meta = pair && pair.request && pair.request.body && pair.request.body.metadata;
   const uid = meta && meta.user_id;

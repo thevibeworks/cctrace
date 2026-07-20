@@ -1,5 +1,6 @@
 import { describe, test, expect, afterEach, beforeAll, beforeEach } from "bun:test";
-import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP } from "../src/mitm";
+import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP, parseUpstreamProxy } from "../src/mitm";
+import * as http from "http";
 import { ensureCerts, isInterceptHost, migrateCaDir, buildCaBundle, systemCaBundle } from "../src/certs";
 import { createCapturer } from "../src/capture";
 import type { TracePair } from "../src/types";
@@ -18,6 +19,24 @@ beforeAll(async () => {
 let servers: Array<{ stop: () => void }> = [];
 function track<T extends { stop: () => void }>(s: T): T { servers.push(s); return s; }
 afterEach(() => { for (const s of servers) { try { s.stop(); } catch {} } servers = []; });
+
+// Proxy env hermeticity: startMitm/parseUpstreamProxy read the ambient
+// HTTPS_PROXY/https_proxy/HTTP_PROXY/http_proxy/NO_PROXY/no_proxy, so a
+// developer shell behind a real proxy (or a cctrace-traced shell, which
+// points these at cctrace itself) would leak into every test below. Scrub
+// all six per test, restore after; tests that need a proxy set it explicitly.
+const PROXY_VARS = ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy"];
+let savedProxyEnv: Record<string, string | undefined> = {};
+beforeEach(() => {
+  savedProxyEnv = {};
+  for (const v of PROXY_VARS) { savedProxyEnv[v] = process.env[v]; delete process.env[v]; }
+});
+afterEach(() => {
+  for (const v of PROXY_VARS) {
+    if (savedProxyEnv[v] === undefined) delete process.env[v];
+    else process.env[v] = savedProxyEnv[v];
+  }
+});
 
 describe("certs", () => {
   test("ensureCerts generates all four files", () => {
@@ -226,6 +245,116 @@ describe("opaque tunnel for non-listed hosts", () => {
     await Bun.sleep(80);
     upstream.stop();
     expect(pairs.length).toBe(0);
+  });
+});
+
+// Chaining (issue: Claude-in-Chrome bridge unreachable under cctrace inside a
+// no-direct-egress container). When the machine reaches the internet only
+// through an HTTP proxy, a raw net.connect to the origin goes nowhere. The
+// MITM path already chains via fetch(); the opaque tunnel must chain the same
+// way or every tunneled host silently breaks.
+describe("opaque tunnel chains through an upstream proxy", () => {
+  function echoUpstream(): Promise<{ port: number; stop: () => void }> {
+    return new Promise((resolve) => {
+      const srv = net.createServer((sock) => { sock.on("data", () => sock.end("pong-from-upstream")); });
+      srv.listen(0, "127.0.0.1", () => {
+        const a = srv.address();
+        resolve({ port: typeof a === "object" && a ? a.port : 0, stop: () => srv.close() });
+      });
+    });
+  }
+  // Minimal HTTP CONNECT proxy that records it was used and forwards to
+  // whatever host:port the CONNECT names.
+  function connectProxy(): Promise<{ port: number; used: () => boolean; stop: () => void }> {
+    return new Promise((resolve) => {
+      let used = false;
+      const srv = http.createServer((_q, r) => { r.writeHead(405); r.end(); });
+      srv.on("connect", (req, client, head) => {
+        used = true;
+        const [h, pStr] = (req.url || "").split(":");
+        const up = net.connect(parseInt(pStr, 10), h, () => {
+          client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          if (head?.length) up.write(head);
+          client.pipe(up); up.pipe(client);
+        });
+        up.on("error", () => client.destroy());
+        client.on("error", () => up.destroy());
+      });
+      srv.listen(0, "127.0.0.1", () => {
+        const a = srv.address();
+        resolve({ port: typeof a === "object" && a ? a.port : 0, used: () => used, stop: () => srv.close() });
+      });
+    });
+  }
+  async function tunnelThrough(proxyPort: number, target: string): Promise<string> {
+    return new Promise((resolve) => {
+      const sock = net.connect(proxyPort, "127.0.0.1", () => {
+        sock.write(`CONNECT ${target} HTTP/1.1\r\nHost: ${target}\r\n\r\n`);
+      });
+      let buf = "", established = false;
+      sock.on("data", (d) => {
+        buf += d.toString("latin1");
+        if (!established && buf.includes("\r\n\r\n")) { established = true; buf = ""; sock.write("ping-through-tunnel"); }
+        else if (established && buf.includes("pong")) { sock.end(); resolve(buf); }
+      });
+      sock.on("error", () => resolve("<error>"));
+      setTimeout(() => resolve("<timeout>"), 8000);
+    });
+  }
+
+  const saved = { p: process.env.HTTPS_PROXY, n: process.env.NO_PROXY };
+  afterEach(() => {
+    if (saved.p === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = saved.p;
+    if (saved.n === undefined) delete process.env.NO_PROXY; else process.env.NO_PROXY = saved.n;
+  });
+
+  test("tunnel reaches the origin through the proxy's CONNECT", async () => {
+    const upstream = await echoUpstream();
+    const proxy = await connectProxy();
+    process.env.HTTPS_PROXY = `http://127.0.0.1:${proxy.port}`;
+    delete process.env.NO_PROXY;
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p) }));
+    const reply = await tunnelThrough(mitm.port, `127.0.0.1:${upstream.port}`);
+    await Bun.sleep(80);
+    upstream.stop(); proxy.stop();
+    expect(reply).toContain("pong-from-upstream"); // bytes flowed both ways
+    expect(proxy.used()).toBe(true);                // via the upstream proxy, not direct
+    const body: any = pairs[0]?.response?.body;      // audit meta pair still logged
+    expect(body?.tunneled).toBe(true);
+    expect(body?.bytesUp).toBeGreaterThanOrEqual("ping-through-tunnel".length);
+    expect(body?.bytesDown).toBeGreaterThanOrEqual("pong-from-upstream".length);
+  });
+
+  test("NO_PROXY host connects directly, bypassing the proxy", async () => {
+    const upstream = await echoUpstream();
+    const proxy = await connectProxy();
+    process.env.HTTPS_PROXY = `http://127.0.0.1:${proxy.port}`;
+    process.env.NO_PROXY = "127.0.0.1";
+    const mitm = track(await startMitm({ caDir, onPair: () => {} }));
+    const reply = await tunnelThrough(mitm.port, `127.0.0.1:${upstream.port}`);
+    await Bun.sleep(80);
+    upstream.stop(); proxy.stop();
+    expect(reply).toContain("pong-from-upstream");
+    expect(proxy.used()).toBe(false); // direct, proxy untouched
+  });
+
+  test("parseUpstreamProxy: http scheme, creds, and non-http rejection", () => {
+    const orig = { p: process.env.HTTPS_PROXY, h: process.env.HTTP_PROXY };
+    try {
+      process.env.HTTPS_PROXY = "http://host.docker.internal:7890";
+      delete process.env.HTTP_PROXY;
+      expect(parseUpstreamProxy()).toEqual({ host: "host.docker.internal", port: 7890 });
+      process.env.HTTPS_PROXY = "http://user:p%40ss@10.0.0.1:3128";
+      expect(parseUpstreamProxy()).toEqual({ host: "10.0.0.1", port: 3128, auth: "Basic " + Buffer.from("user:p@ss").toString("base64") });
+      process.env.HTTPS_PROXY = "socks5://127.0.0.1:1080"; // not chained
+      expect(parseUpstreamProxy()).toBeNull();
+      delete process.env.HTTPS_PROXY;
+      expect(parseUpstreamProxy()).toBeNull();
+    } finally {
+      if (orig.p === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = orig.p;
+      if (orig.h === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = orig.h;
+    }
   });
 });
 

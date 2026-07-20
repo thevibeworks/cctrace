@@ -2,11 +2,12 @@ import { existsSync } from "fs";
 import { claude } from "./claude";
 import { codex } from "./codex";
 import { grok } from "./grok";
+import { kimi } from "./kimi";
 import type { ClientPlugin, ClientWire } from "./types";
 
 export type { ClientPlugin, ClientProfile, ClientWire } from "./types";
 
-export const CLIENTS: Record<string, ClientPlugin> = { claude, codex, grok };
+export const CLIENTS: Record<string, ClientPlugin> = { claude, codex, grok, kimi };
 
 /**
  * The merged per-client wire tables, JSON-safe: embedded into the web UI

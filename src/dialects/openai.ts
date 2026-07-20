@@ -1,13 +1,25 @@
 import { parseSse } from "../summarize";
 
-// OpenAI Responses dialect (codex, grok — #20): pure adapters that normalize
-// the wire shape into the same turn/block model session.ts builds for
-// Anthropic, so the session view, folds, replay, and usage chips work
-// unchanged. Wire facts from real traces, 2026-07-14 devlog entry:
-// full-history resend per call (input[] is the conversation), and the final
-// SSE `response.completed` event carries the COMPLETE response object —
-// output blocks and usage — so no delta assembly is needed (output_item.done
-// events remain as the truncated-stream fallback).
+// OpenAI dialect (codex, grok, kimi — #20): pure adapters that normalize the
+// wire shape into the same turn/block model session.ts builds for Anthropic,
+// so the session view, folds, replay, and usage chips work unchanged. Wire
+// facts from real traces, 2026-07-14 devlog entry: full-history resend per
+// call (input[] is the conversation), and the final SSE `response.completed`
+// event carries the COMPLETE response object — output blocks and usage — so no
+// delta assembly is needed (output_item.done events remain as the
+// truncated-stream fallback).
+//
+// TWO SUB-SHAPES share this dialect. Responses (codex/grok): request `input[]`,
+// response `response.completed` object. Chat Completions (kimi, 2026-07-20):
+// request `messages[]`, response `chat.completion.chunk` deltas + `usage`
+// {prompt_tokens,completion_tokens,prompt_tokens_details.cached_tokens}. Rather
+// than a third dialect, Chat Completions is ADAPTED INTO the Responses object
+// model at two seams — `openaiInput` (messages[] -> input[] items) and a chat
+// branch in `openaiCompleted` (chunk deltas -> {output,usage}) — so every
+// downstream consumer (openaiBlocks, normalizeOpenaiTurns, extractOpenaiInfo,
+// attribution, compaction, the UI) stays identical and wireDialect stays
+// two-valued. Callers read the conversation via openaiInput(req), never
+// req.input directly.
 //
 // Like summarize.ts/session.ts, every exported function is inlined into the
 // web UI via toString(): self-contained, cross-calls only to other inlined
@@ -27,6 +39,48 @@ export function wireDialect(pair: any): string | null {
 }
 
 /**
+ * The conversation as Responses `input[]` items. Responses pairs already carry
+ * `input`; Chat Completions pairs (kimi) carry `messages[]` — an OpenAI-chat
+ * message maps to the same item vocabulary openaiBlocks/normalizeOpenaiTurns
+ * already speak: system/user/assistant text -> `message`, `reasoning_content`
+ * -> `reasoning`, `tool_calls` -> `function_call`, a `tool` role message ->
+ * `function_call_output`. One seam; every other function is shape-agnostic.
+ */
+export function openaiInput(req: any): any[] {
+  if (!req) return [];
+  if (Array.isArray(req.input)) return req.input;
+  const msgs = req.messages;
+  if (!Array.isArray(msgs)) return [];
+  const items: any[] = [];
+  for (const m of msgs) {
+    if (!m || !m.role) continue;
+    if (m.role === "tool") {
+      let content = m.content;
+      // Parts arrays (kimi media tool results: text + image_url parts) pass
+      // through — openaiBlocks turns them into text/image blocks; flattening
+      // here would drop the images on the floor.
+      if (typeof content !== "string" && !Array.isArray(content)) content = content == null ? "" : JSON.stringify(content);
+      items.push({ type: "function_call_output", call_id: m.tool_call_id || "", output: content });
+      continue;
+    }
+    if (m.role === "assistant") {
+      if (typeof m.reasoning_content === "string" && m.reasoning_content) items.push({ type: "reasoning", summary: [{ type: "summary_text", text: m.reasoning_content }] });
+      const hasText = typeof m.content === "string" ? m.content.length > 0 : Array.isArray(m.content) && m.content.length > 0;
+      if (hasText) items.push({ type: "message", role: "assistant", content: m.content });
+      for (const tc of m.tool_calls || []) {
+        const fn = (tc && tc.function) || {};
+        items.push({ type: "function_call", call_id: (tc && tc.id) || "", id: (tc && tc.id) || "", name: fn.name || "tool", arguments: typeof fn.arguments === "string" ? fn.arguments : "" });
+      }
+      continue;
+    }
+    // system, developer, user — a plain message item (openaiBlocks reads
+    // string or parts[] content the same for both sub-shapes).
+    items.push({ type: "message", role: m.role, content: m.content });
+  }
+  return items;
+}
+
+/**
  * The final response object of an OpenAI Responses call: a non-streamed JSON
  * body, or the last response.completed/failed/incomplete SSE event. Falls
  * back to a synthetic { output } assembled from output_item.done events when
@@ -35,6 +89,81 @@ export function wireDialect(pair: any): string | null {
 export function openaiCompleted(pair: any): any {
   const r = pair && pair.response;
   if (!r) return null;
+  // Chat Completions (kimi): assemble the streamed chat.completion.chunk
+  // deltas (or a non-stream {choices:[{message}]} body) into a Responses-shape
+  // { output, usage, status } so openaiBlocks / extractOpenaiInfo see the same
+  // object model as codex/grok. Detect by the choices array / chunk marker;
+  // Responses never carries either.
+  const looksChat = (r.body && typeof r.body === "object" && Array.isArray(r.body.choices)) ||
+    (typeof r.bodyRaw === "string" && r.bodyRaw.indexOf("chat.completion") !== -1);
+  if (looksChat) {
+    let content = "";
+    let reasoning = "";
+    let finish: any = null;
+    let model: any = null;
+    const toolBuf: any[] = [];
+    const byIdx: Record<string, any> = {};
+    const usage: any = { input_tokens: 0, output_tokens: 0, input_tokens_details: {}, output_tokens_details: {} };
+    let sawUsage = false;
+    const applyUsage = (u: any) => {
+      if (!u || typeof u !== "object") return;
+      sawUsage = true;
+      if (typeof u.prompt_tokens === "number") usage.input_tokens = u.prompt_tokens;
+      if (typeof u.completion_tokens === "number") usage.output_tokens = u.completion_tokens;
+      const pd = u.prompt_tokens_details || {};
+      const cd = u.completion_tokens_details || {};
+      if (typeof pd.cached_tokens === "number") usage.input_tokens_details.cached_tokens = pd.cached_tokens;
+      if (typeof cd.reasoning_tokens === "number") usage.output_tokens_details.reasoning_tokens = cd.reasoning_tokens;
+    };
+    const addTool = (tc: any) => {
+      if (!tc) return;
+      const k = typeof tc.index === "number" ? String(tc.index) : String(Object.keys(byIdx).length);
+      let b = byIdx[k];
+      if (!b) { b = { id: "", name: "", args: "" }; byIdx[k] = b; toolBuf.push(b); }
+      if (tc.id) b.id = tc.id;
+      const fn = tc.function || {};
+      if (fn.name) b.name = fn.name;
+      if (typeof fn.arguments === "string") b.args += fn.arguments;
+    };
+    if (r.body && typeof r.body === "object" && Array.isArray(r.body.choices)) {
+      const ch = r.body.choices[0] || {};
+      const msg = ch.message || {};
+      content = typeof msg.content === "string" ? msg.content : "";
+      reasoning = typeof msg.reasoning_content === "string" ? msg.reasoning_content : "";
+      finish = ch.finish_reason || null;
+      model = r.body.model || null;
+      for (const tc of msg.tool_calls || []) addTool(tc);
+      applyUsage(r.body.usage);
+    } else {
+      for (const ev of parseSse(r.bodyRaw)) {
+        if (!ev || typeof ev !== "object") continue;
+        if (ev.model) model = ev.model;
+        if (ev.usage) applyUsage(ev.usage);
+        const choices = ev.choices;
+        if (!Array.isArray(choices) || !choices.length) continue;
+        const ch = choices[0];
+        if (!ch) continue;
+        if (ch.usage) applyUsage(ch.usage);
+        if (ch.finish_reason) finish = ch.finish_reason;
+        const d = ch.delta;
+        if (!d) continue;
+        if (typeof d.reasoning_content === "string") reasoning += d.reasoning_content;
+        if (typeof d.content === "string") content += d.content;
+        for (const tc of d.tool_calls || []) addTool(tc);
+      }
+    }
+    const output: any[] = [];
+    if (reasoning) output.push({ type: "reasoning", summary: [{ type: "summary_text", text: reasoning }] });
+    if (content) output.push({ type: "message", role: "assistant", content });
+    for (const b of toolBuf) output.push({ type: "function_call", call_id: b.id, id: b.id, name: b.name, arguments: b.args });
+    const res: any = { output, model };
+    if (sawUsage) res.usage = usage;
+    // finish_reason "length" = capped, null = stream cut off before its final
+    // chunk; "stop"/"tool_calls" are healthy completions.
+    if (finish === "length") res.status = "incomplete";
+    else if (finish == null && !sawUsage) res.status = "truncated";
+    return res;
+  }
   if (r.body && typeof r.body === "object" && Array.isArray(r.body.output)) return r.body;
   if (!r.bodyRaw) return null;
   let done: any = null;
@@ -51,6 +180,14 @@ export function openaiCompleted(pair: any): any {
 /** One OpenAI item (input or output) -> zero or more normalized content blocks. */
 export function openaiBlocks(item: any): any[] {
   if (!item || !item.type) return [];
+  // image_url parts (kimi media messages/tool results) become Anthropic-shape
+  // image blocks — the UI renders a media-type note. The base64 data itself
+  // stays on the wire copy; the block keeps only the mime from the data URL.
+  const imgBlock = (part: any) => {
+    const url = part && part.image_url && typeof part.image_url.url === "string" ? part.image_url.url : "";
+    const m = /^data:([^;,]+)/.exec(url);
+    return { type: "image", source: { media_type: m ? m[1] : "" } };
+  };
   if (item.type === "message") {
     const out: any[] = [];
     const c = item.content;
@@ -61,6 +198,7 @@ export function openaiBlocks(item: any): any[] {
         if (!b) continue;
         if (typeof b.text === "string" && b.text) out.push({ type: "text", text: b.text });
         else if (typeof b.refusal === "string") out.push({ type: "text", text: b.refusal });
+        else if (b.type === "image_url") out.push(imgBlock(b));
       }
     }
     return out;
@@ -81,8 +219,24 @@ export function openaiBlocks(item: any): any[] {
   }
   if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
     let content = item.output;
-    if (Array.isArray(content)) content = content.map((b: any) => (b && typeof b.text === "string" ? b.text : "")).join("");
-    if (typeof content !== "string") content = content == null ? "" : JSON.stringify(content);
+    if (Array.isArray(content)) {
+      if (content.some((b: any) => b && b.type === "image_url")) {
+        // Media tool results keep their parts: text parts -> text blocks,
+        // image_url parts -> image blocks (the tool_result renderer walks
+        // content arrays, Anthropic-style).
+        const parts: any[] = [];
+        for (const b of content) {
+          if (!b) continue;
+          if (typeof b.text === "string" && b.text) parts.push({ type: "text", text: b.text });
+          else if (b.type === "image_url") parts.push(imgBlock(b));
+        }
+        content = parts;
+      } else {
+        content = content.map((b: any) => (b && typeof b.text === "string" ? b.text : "")).join("");
+      }
+    } else if (typeof content !== "string") {
+      content = content == null ? "" : JSON.stringify(content);
+    }
     return [{ type: "tool_result", tool_use_id: item.call_id || "", content }];
   }
   if (item.type === "reasoning") {
@@ -202,14 +356,20 @@ export function extractOpenaiInfo(pair: any): any {
   if (done && done.status && done.status !== "completed") stopReason = done.status;
   if (done && done.incomplete_details && done.incomplete_details.reason) stopReason = done.incomplete_details.reason;
 
+  // Chat Completions caps completion via max_completion_tokens / the legacy
+  // max_tokens alias; Responses uses max_output_tokens.
+  const maxTokens = typeof req.max_output_tokens === "number" ? req.max_output_tokens
+    : typeof req.max_completion_tokens === "number" ? req.max_completion_tokens
+    : typeof req.max_tokens === "number" ? req.max_tokens : null;
+  const inputItems = openaiInput(req);
   return {
     model: req.model || (done && done.model) || null,
     stream: req.stream === true,
-    maxTokens: typeof req.max_output_tokens === "number" ? req.max_output_tokens : null,
+    maxTokens,
     temperature: typeof req.temperature === "number" ? req.temperature : null,
-    turns: Array.isArray(req.input) ? req.input.length : 0,
+    turns: inputItems.length,
     toolCount: openaiTools(req).length,
-    systemBlocks: openaiSystemText(req.input) ? 1 : 0,
+    systemBlocks: openaiSystemText(inputItems) ? 1 : 0,
     input,
     output: n(u.output_tokens),
     cacheRead,

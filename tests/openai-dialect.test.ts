@@ -1,6 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   wireDialect,
+  openaiInput,
   openaiCompleted,
   openaiBlocks,
   normalizeOpenaiTurns,
@@ -138,6 +139,59 @@ describe("openaiBlocks", () => {
     expect(b).toEqual({ type: "tool_result", tool_use_id: "c2", content: "xy" });
     const [s] = openaiBlocks({ type: "function_call_output", call_id: "c3", output: "plain" });
     expect(s.content).toBe("plain");
+  });
+
+  test("image_url parts become image blocks (kimi K3 media, 2026-07-20 wire)", () => {
+    // Real shape: a kimi tool-role message carries text parts wrapping an
+    // image_url part whose url is a base64 data URL. The block keeps only the
+    // mime — the base64 stays on the wire copy.
+    const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    const [t] = openaiBlocks({
+      type: "function_call_output",
+      call_id: "tool_1",
+      output: [
+        { type: "text", text: "<image path=/tmp/x.png>" },
+        { type: "image_url", image_url: { url: dataUrl } },
+        { type: "text", text: "</image>" },
+      ],
+    });
+    expect(t.type).toBe("tool_result");
+    expect(t.content).toEqual([
+      { type: "text", text: "<image path=/tmp/x.png>" },
+      { type: "image", source: { media_type: "image/png" } },
+      { type: "text", text: "</image>" },
+    ]);
+    // same mapping on message content (a user attaching an image directly)
+    const blocks = openaiBlocks({
+      type: "message",
+      role: "user",
+      content: [{ type: "text", text: "what is this?" }, { type: "image_url", image_url: { url: dataUrl } }],
+    });
+    expect(blocks[1]).toEqual({ type: "image", source: { media_type: "image/png" } });
+    // text-only part arrays still join to a plain string (codex shape unchanged)
+    const [plain] = openaiBlocks({ type: "function_call_output", call_id: "c9", output: [{ type: "text", text: "a" }, { type: "text", text: "b" }] });
+    expect(plain.content).toBe("ab");
+  });
+
+  test("kimi tool-role messages pass media parts through openaiInput", () => {
+    const items = openaiInput({
+      messages: [
+        { role: "user", content: "look at this" },
+        {
+          role: "tool",
+          tool_call_id: "tool_1",
+          content: [
+            { type: "text", text: "<image path=/tmp/x.png>" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } },
+          ],
+        },
+      ],
+    });
+    const out = items.find((i: any) => i.type === "function_call_output");
+    expect(Array.isArray(out.output)).toBe(true); // not flattened to text
+    const turns = normalizeOpenaiTurns(items);
+    const tr = turns.flatMap((x: any) => x.blocks).find((b: any) => b.type === "tool_result");
+    expect(tr.content.some((p: any) => p.type === "image")).toBe(true);
   });
 
   test("reasoning: readable summaries become thinking, encrypted a placeholder", () => {

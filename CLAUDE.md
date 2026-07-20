@@ -17,12 +17,15 @@ src/
 ├── loader.cjs      # CJS loader for --require (legacy)
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
 ├── clients/        # Client plugins: binary discovery + declarative wire tables
-│                   #   (claude/codex/grok — dialect, firstPartyHosts, category
+│                   #   (claude/codex/grok/kimi — dialect, firstPartyHosts, category
 │                   #   pins, session/thread headers; JSON-safe, embedded into
 │                   #   the page as CLIENT_WIRE; adding a client = one file)
 ├── dialects/
-│   └── openai.ts   # OpenAI Responses adapters (codex/grok): SSE completed
-│                   #   parsing, input[]->turns, usage mapping (inlined into UI)
+│   └── openai.ts   # OpenAI adapters. Responses (codex/grok): response.completed
+│                   #   parsing, input[]->turns. Chat Completions (kimi): messages[]
+│                   #   ->input[] via openaiInput + a chat branch in openaiCompleted
+│                   #   (chunk deltas + prompt_tokens), so both fold into the SAME
+│                   #   turn/usage model; usage mapping (inlined into UI)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
 ├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads;
 │                   #   newest-prior-session guess for --continue preload
@@ -248,7 +251,33 @@ hash-routed:
   output + usage (OpenAI input_tokens includes cache, peeled off to match
   the chips' convention; reasoning_tokens -> thinking), and codex
   `request_kind:"prewarm"` probes / grok `recap-*` convs classify as
-  utility. Subagent linking has no known OpenAI wire marker yet — those
+  utility. OpenAI Chat Completions (kimi,
+  `api.kimi.com/coding/v1/chat/completions`, 2026-07-20) is a THIRD wire
+  sub-shape adapted INTO the Responses model rather than a third dialect:
+  `openaiInput(req)` maps `messages[]` -> the same input items (system/user
+  message, `reasoning_content`->reasoning, `tool_calls`->function_call, a
+  `tool` role msg->function_call_output) and a branch in `openaiCompleted`
+  assembles the streamed `chat.completion.chunk` deltas (content, reasoning,
+  index-buffered tool_calls) + `usage` {prompt_tokens/completion_tokens/
+  prompt_tokens_details.cached_tokens} into the same {output,usage} object —
+  so openaiBlocks / normalizeOpenaiTurns / extractOpenaiInfo / attribution /
+  compaction stay identical and `wireDialect` stays two-valued (callers read
+  the conversation via `openaiInput`, never `req.input`). Chat Completions
+  has no conversation HEADER (x-trace-id is per-request) — kimi threads
+  always take the first-user-text sig fallback — but K3 sends the SESSION id
+  in the request BODY: `prompt_cache_key: "session_<uuid>"`, stable across
+  subagent threads, auto-compaction, and `--resume` across processes
+  (devlog 2026-07-20-kimi-k3-wire-facts). The wire table names it
+  (`sessionBodyField`), extractSessionId reads it (bare uuid), compact
+  stubs preserve it — session identity, never a thread key (subagents
+  share it). Kimi auto-compaction repacks at msgs=4: the original first
+  user message with LATER user text merged in (NOT verbatim — the sig
+  fallback splits here) + the working summary re-sent as a USER message
+  ("The conversation so far has been compacted..."). Reunification for
+  openai threads is marker-gated on that summary preamble (structural
+  signals alone could false-claim a tail subagent — same sid, same system
+  prompt); a marker-merged continuation appends without the 10-turn-drop
+  heuristic since the repack is known, not inferred. Subagent linking has no known OpenAI wire marker yet — those
   threads list as separate chats. Subagent threads link to the Task/Agent tool_use that spawned them
   by prompt (the dispatch prompt lands verbatim as the first user text) and
   are classified `agent` even unlinked via wire markers (agent-id header,
@@ -356,10 +385,11 @@ cctrace -- --continue         # everything after -- goes to Claude verbatim
 cctrace -- -p "explain this"  # (-p after -- is Claude's, before it cctrace's)
 cctrace codex -- exec "..."   # trace the OpenAI Codex CLI instead of Claude
 cctrace grok -- -p "..."      # trace the Grok CLI
+cctrace kimi                  # trace the Kimi Code CLI (Moonshot AI)
 ```
 
 **Client plugins** (`src/clients/`, #20): a leading client word
-(`claude`|`codex`|`grok`) picks who gets traced; the rest of the grammar is
+(`claude`|`codex`|`grok`|`kimi`) picks who gets traced; the rest of the grammar is
 unchanged. Non-Claude clients always run mitm — HTTPS_PROXY + the combined
 CA bundle (#17) cover their Rust/Go/native TLS stacks; `--client-path`
 overrides discovery for any client. Each plugin is one self-describing
@@ -383,8 +413,19 @@ stays Anthropic-only), and genuinely foreign hosts (github, npm, pypi) stay
 External. Unlabeled pre-0.13 pairs categorize exactly as before
 (regression-tested). Session reconstruction for the OpenAI dialect is in
 `src/dialects/openai.ts` (see the Sessions view above); wire session ids
-come from headers via `extractSessionId(pair, wire)`, so cross-run
-continuity works for codex/grok too.
+come from headers — or a body field the wire table names
+(`sessionBodyField`) — via `extractSessionId(pair, wire)`, so cross-run
+continuity works for codex/grok/kimi too. Kimi Code's coding-plan calls are
+OpenAI Chat Completions (`.../chat/completions`, matched by the same path
+tail) — categorized as Messages, reconstructed via the `openaiInput` adapter
+(above); its host pins (`api.kimi.com/coding/v1/{usages,models,feedback}`,
+`auth.kimi.com`, `telemetry-logs.kimi.com`) sort the rest. Its session id is
+the body's `prompt_cache_key` (K3+; K2.7-era traces have none and stay
+per-run). Kimi coding-plan models price as ESTIMATES at the equivalent
+pay-per-token rates (`CATALOG_ALIASES` in src/pricing-catalog.ts: wire
+`k3` -> models.dev `moonshotai/kimi-k3` — models.dev's own kimi-for-coding
+provider lists $0 subscription prices, and the cost chip estimates spend
+the same way it does for Claude Max OAuth traffic).
 
 Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 `cli.ts` before the strict parser). They read saved traces only — no proxy, no

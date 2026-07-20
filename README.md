@@ -21,7 +21,8 @@ English | [简体中文](README.zh-CN.md)
 cctrace sits between Claude Code and the Anthropic API, recording every HTTP
 call to a live categorized web UI and a `.jsonl` trace you can reopen any
 time with `cctrace view`. No cloud, no account, nothing leaves your machine.
-It traces the OpenAI Codex and Grok CLIs too (`cctrace codex`, `cctrace grok`).
+It traces the OpenAI Codex, Grok, and Kimi Code CLIs too (`cctrace codex`,
+`cctrace grok`, `cctrace kimi`).
 
 ```bash
 cctrace
@@ -349,7 +350,7 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `--fresh` | Don't merge prior traces of a continued session |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
-| `--client-path PATH` | Custom binary path for any client (codex/grok too) |
+| `--client-path PATH` | Custom binary path for any client (codex/grok/kimi too) |
 | `--data-dir PATH` | MITM CA / data dir (default: `~/.local/share/cctrace`; or `CCTRACE_DATA_DIR`. Legacy `--cache-dir` / `CCTRACE_CACHE_DIR` still work; a pre-0.6 CA in `~/.cache/cctrace` migrates over automatically) |
 
 ### Passing args to Claude
@@ -384,6 +385,7 @@ CLI that honors `HTTPS_PROXY` plus the standard cert env vars gets traced.
 ```bash
 cctrace codex -- exec "fix the failing tests"   # OpenAI Codex CLI
 cctrace grok -- -p "explain this stack trace"   # Grok CLI
+cctrace kimi                                    # Kimi Code CLI (Moonshot AI)
 ```
 
 Non-Claude clients always use mitm capture, and get the full treatment:
@@ -392,7 +394,11 @@ Messages, and the Sessions view reconstructs their conversations too --
 threads keyed on each client's wire headers, tool calls and reasoning
 normalized into the same turn model, per-turn usage and cost, replay
 included. Codex's encrypted reasoning shows as a placeholder; Grok's
-summaries read in full.
+summaries read in full. Kimi Code speaks OpenAI Chat Completions: threads
+reconstruct from the prompt signature (no thread header on the wire), the
+session id rides in the request body (`prompt_cache_key`, stable across
+compaction and `--resume`), auto-compactions render as boundary markers,
+and `reasoning_content` renders as thinking.
 
 **Third-party Anthropic-compatible providers** -- point `ANTHROPIC_BASE_URL`
 at a gateway or a compat endpoint and run `cctrace` as usual. mitm mode needs

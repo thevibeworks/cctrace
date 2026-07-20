@@ -683,7 +683,7 @@ ${C.yellow}USAGE:${C.reset}
   cctrace <SUBCOMMAND> [ARGS]
 
   Everything after ${C.cyan}--${C.reset} is passed to the traced CLI verbatim.
-  CLIENT picks who gets traced: ${C.cyan}claude${C.reset} (default), ${C.cyan}codex${C.reset}, ${C.cyan}grok${C.reset}.
+  CLIENT picks who gets traced: ${C.cyan}claude${C.reset} (default), ${C.cyan}codex${C.reset}, ${C.cyan}grok${C.reset}, ${C.cyan}kimi${C.reset}.
   Non-Claude clients always use mitm capture.
   Every run writes .cctrace/trace-<ts>.jsonl — that file IS the trace;
   reopen it anytime with ${C.cyan}cctrace view${C.reset}.
@@ -737,7 +737,7 @@ ${C.yellow}OPTIONS:${C.reset}
   --fresh            Don't merge prior traces of a continued session
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
-  --client-path PATH Custom binary path for any client (codex/grok too)
+  --client-path PATH Custom binary path for any client (codex/grok/kimi too)
   --data-dir PATH    MITM CA / data dir (default: ~/.local/share/cctrace;
                      or set CCTRACE_DATA_DIR. --cache-dir still works)
   --no-update-check  Skip the daily npm version check + upgrade prompt
@@ -749,7 +749,7 @@ ${C.yellow}CAPTURE MODES:${C.reset}
   ${C.cyan}mitm${C.reset}      TLS-intercepting proxy. Captures ALL traffic (messages, OAuth,
             usage/credits, MCP, telemetry). Auto-generates a CA trusted via
             NODE_EXTRA_CA_CERTS + a combined bundle for subprocesses.
-            ${C.dim}Default for native binaries; the only mode for codex/grok.${C.reset}
+            ${C.dim}Default for native binaries; the only mode for codex/grok/kimi.${C.reset}
   ${C.cyan}base-url${C.reset}  Reverse proxy via ANTHROPIC_BASE_URL. Zero setup, but only
             sees /v1/messages (OAuth/usage bypass it). Claude only.
   ${C.cyan}node${C.reset}      Legacy fetch() injection via node --require. Only works for
@@ -764,6 +764,7 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace --mode base-url -- --model opus --continue
   cctrace codex -- exec "fix tests" ${C.dim}# trace the OpenAI Codex CLI${C.reset}
   cctrace grok                      ${C.dim}# trace the Grok CLI${C.reset}
+  cctrace kimi                      ${C.dim}# trace the Kimi Code CLI (Moonshot)${C.reset}
   cctrace view                      ${C.dim}# list traces, pick one (Enter = newest)${C.reset}
   cctrace view latest               ${C.dim}# reopen the newest trace directly${C.reset}
   cctrace view trace-2026-07-08     ${C.dim}# reopen a saved trace (filename fragment)${C.reset}
@@ -1226,7 +1227,7 @@ async function main() {
   log(`${CLIENT.name === "claude" ? "Claude" : CLIENT.name}: ${clientPath}`, C.blue);
   if (claudeArgs.length) log(`${CLIENT.name} args: ${claudeArgs.join(" ")}`, C.blue);
 
-  // Non-Claude clients (codex, grok) always run mitm: base-url rides
+  // Non-Claude clients (codex, grok, kimi) always run mitm: base-url rides
   // ANTHROPIC_BASE_URL and node mode injects into Claude's fetch — both are
   // Claude-specific plumbing. The mitm side needs neither; HTTPS_PROXY plus
   // the combined CA bundle (#17) cover Rust/Go/Node clients alike.

@@ -52,6 +52,30 @@ export function externalBodyStub(droppedBytes: number, contentType?: string): un
 }
 
 /**
+ * The upstream HTTP proxy the opaque tunnel chains through, parsed from the
+ * standard env vars. Returns null when unset or non-http scheme (socks/https
+ * proxies aren't chained — the tunnel falls back to a direct connect, its
+ * historical behavior). `auth` is a ready-to-send Proxy-Authorization value
+ * when the URL carries credentials.
+ */
+export function parseUpstreamProxy(): { host: string; port: number; auth?: string } | null {
+  const raw = process.env.HTTPS_PROXY || process.env.https_proxy ||
+    process.env.HTTP_PROXY || process.env.http_proxy || "";
+  if (!raw) return null;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "http:") return null;
+    const port = u.port ? parseInt(u.port, 10) : 80;
+    const auth = u.username
+      ? "Basic " + Buffer.from(`${decodeURIComponent(u.username)}:${decodeURIComponent(u.password)}`).toString("base64")
+      : undefined;
+    return { host: u.hostname, port, ...(auth ? { auth } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * TLS-intercepting HTTP proxy with an SSL-proxying include-list (Charles'
  * model, devlog 2026-07-15).
  *
@@ -80,6 +104,28 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const pending = new Set<Promise<void>>();
 
   const interceptSet = config.interceptHosts ?? [];
+
+  // Upstream proxy chaining. In environments where the machine reaches the
+  // internet ONLY through an HTTP proxy (containers with no direct egress,
+  // corporate proxies), a raw net.connect to the origin goes nowhere — the
+  // opaque tunnel would silently break every tunneled host (remote MCP
+  // servers, external hosts, the Claude-in-Chrome bridge), sending the
+  // client's ClientHello into a black hole. The MITM path already chains
+  // transparently — Bun's fetch() honors HTTPS_PROXY in OUR own env — and the
+  // tunnel must chain the same way. We read the proxy from OUR process env:
+  // Claude's child env has HTTPS_PROXY rewritten to point at us, but this
+  // process still points at the real upstream (capture.ts sets the child env,
+  // never process.env). Only http-scheme proxies are chained; socks/https
+  // proxies fall through to a direct connect (unchanged pre-existing
+  // behavior). NO_PROXY hosts always connect directly.
+  const upstreamProxy = parseUpstreamProxy();
+  const noProxy = (process.env.NO_PROXY || process.env.no_proxy || "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const bypassProxy = (host: string) => {
+    if (!upstreamProxy) return true;
+    const h = host.toLowerCase();
+    return noProxy.some((e) => e === "*" || h === e || h === e.replace(/^\./, "") || h.endsWith("." + e.replace(/^\./, "")));
+  };
 
   // Shared fetch handler — used by both the static Anthropic TLS server
   // and dynamically created per-host TLS servers.
@@ -325,14 +371,54 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         loggedAt: new Date().toISOString(),
       });
     };
-    const upstream = net.connect(port, host, () => {
+    // Splice upstream <-> client once the upstream can carry bytes to the
+    // origin (directly, or through the chained proxy's established tunnel).
+    // `preface` is any origin bytes already read past the proxy's CONNECT
+    // reply — normally empty, since the client waits for our 200 before it
+    // sends anything. Byte counts stay payload-only: the proxy's CONNECT
+    // request/reply is transport overhead, not tunneled bytes.
+    const splice = (up: net.Socket, preface: Buffer | null) => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-      if (head?.length) upstream.write(head);
+      if (head?.length) up.write(head);
+      if (preface?.length) { bytesDown += preface.length; clientSocket.write(preface); }
       clientSocket.on("data", (c: Buffer) => { bytesUp += c.length; });
-      upstream.on("data", (c: Buffer) => { bytesDown += c.length; });
-      clientSocket.pipe(upstream);
-      upstream.pipe(clientSocket);
-    });
+      up.on("data", (c: Buffer) => { bytesDown += c.length; });
+      clientSocket.pipe(up);
+      up.pipe(clientSocket);
+    };
+
+    let upstream: net.Socket;
+    if (!upstreamProxy || bypassProxy(host)) {
+      upstream = net.connect(port, host, () => splice(upstream, null));
+    } else {
+      const p = upstreamProxy;
+      upstream = net.connect(p.port, p.host, () => {
+        upstream.write(
+          `CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n` +
+          (p.auth ? `Proxy-Authorization: ${p.auth}\r\n` : "") + "\r\n",
+        );
+      });
+      // Consume the proxy's CONNECT reply, then splice. Removing the sole data
+      // listener and attaching the splice listeners happen in one synchronous
+      // tick, so no origin byte slips through while the socket is unpaused.
+      let buf = Buffer.alloc(0);
+      const onReply = (c: Buffer) => {
+        buf = Buffer.concat([buf, c]);
+        const end = buf.indexOf("\r\n\r\n");
+        if (end < 0) return;
+        upstream.removeListener("data", onReply);
+        const status = parseInt(buf.slice(0, buf.indexOf("\r\n")).toString().split(" ")[1] || "0", 10);
+        if (status >= 200 && status < 300) {
+          splice(upstream, buf.slice(end + 4));
+        } else {
+          // Proxy refused (auth, blocklist) — drop like a failed direct connect.
+          upstream.destroy();
+          clientSocket.destroy();
+          finish();
+        }
+      };
+      upstream.on("data", onReply);
+    }
     upstream.on("close", finish);
     clientSocket.on("close", finish);
     upstream.on("error", () => { clientSocket.destroy(); finish(); });

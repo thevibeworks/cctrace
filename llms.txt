@@ -3,13 +3,18 @@
 > TLS-intercepting HTTP tracer for the Claude Code, OpenAI Codex, and Grok
 > CLIs. Spawns the client behind a local zero-config MITM proxy and captures
 > its first-party traffic (/v1/messages, OAuth, usage/credits, MCP registry,
-> telemetry) into a live categorized web UI with a reconstructed Session
-> view, replay, cost and first-token-latency chips. External hosts (npm,
-> github, apt) pass through as opaque byte-counted tunnels — logged, never
-> decrypted. Built for two jobs: LLM tracing (see exactly what the agent
-> sends and receives each turn) and security/privacy auditing (see what
-> actually leaves the machine). Local-only; credentials are redacted before
-> anything hits disk.
+> telemetry) into a live categorized web UI with a reconstructed Sessions
+> view — sessions > threads > turns on one rail, model epochs, subagent
+> spawns attached at their dispatching turn, compaction boundaries with the
+> context collapse in turns and tokens, superseded exchanges kept at their
+> timeline position — plus replay, cost, cache-verdict, and
+> first-token-latency chips. External hosts (npm, github, apt) pass through
+> as opaque byte-counted tunnels — logged, never decrypted. Built for two
+> jobs: LLM tracing (see exactly what the agent sends and receives each
+> turn, and what the harness rewrote — /model switches, /compact repacks,
+> injected exchanges) and security/privacy auditing (see what actually
+> leaves the machine). Local-only; credentials are redacted before anything
+> hits disk.
 
 Runs on Bun. `cctrace` wraps the client transparently: `cctrace -- --continue`
 passes everything after `--` to the Claude CLI verbatim; a leading client

@@ -43,7 +43,12 @@ Key commands:
 
 ## Docs
 
-- [README](https://raw.githubusercontent.com/thevibeworks/cctrace/main/README.md): install, capture modes, web UI, options, security model
+- [README](https://raw.githubusercontent.com/thevibeworks/cctrace/main/README.md): overview, quick start, comparison, security model
+- [Install & options](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/install.md): install methods, runtime, prerequisites, full options table, `--` pass-through
+- [Capture modes](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/capture-modes.md): mitm/base-url/node, tunnel scope model, proxy internals, output format
+- [Web UI](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/web-ui.md): row chips, sessions view, replay, cost, continuity, multi-instance
+- [Saved traces](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/traces.md): view/clean/merge/compress/purge/compact + housekeeping guarantees
+- [Clients](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/clients.md): codex/grok/kimi wire notes, third-party Anthropic-compatible providers
 - [CHANGELOG](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CHANGELOG.md): released changes
 - [CLAUDE.md](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CLAUDE.md): architecture and design decisions (agent-oriented)
 - [SECURITY](https://raw.githubusercontent.com/thevibeworks/cctrace/main/SECURITY.md): redaction guarantees, reporting
@@ -52,7 +57,8 @@ Key commands:
 ## Notes
 
 - The trace .jsonl is machine-readable: one JSON pair per line with request,
-  response, timing, and (for /v1/messages) the Claude session id inside
-  `request.body.metadata.user_id`.
+  response, timing, and the session id on the wire — Claude inside
+  `request.body.metadata.user_id`, codex/grok in request headers, kimi in
+  `request.body.prompt_cache_key`.
 - A trace records a real session — treat saved traces as sensitive; review
   before sharing.

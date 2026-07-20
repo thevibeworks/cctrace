@@ -6,6 +6,8 @@ import {
   buildToolResultIndex,
   responseBlocks,
   buildSession,
+  threadEpochs,
+  turnSnippet,
   mainThread,
   toolPreview,
 } from "../src/session";
@@ -337,5 +339,249 @@ describe("sessions layer", () => {
     delete (p.request.body as any).metadata;
     const { threads } = buildSession([p]);
     expect(threads[0].sessionId).toBe("");
+  });
+});
+
+describe("turnSnippet", () => {
+  const tb = (text: string) => ({ type: "text", text });
+
+  test("skips caveat/stdout wrappers and returns the user's words", () => {
+    expect(turnSnippet([
+      tb("<local-command-caveat>Caveat: The messages below were generated...</local-command-caveat>"),
+      tb("<command-name>/clear</command-name>\n<command-message>clear</command-message>"),
+      tb("<local-command-stdout></local-command-stdout>"),
+      tb("hihi testa again new chat"),
+    ])).toBe("hihi testa again new chat");
+  });
+
+  test("a command-only turn previews as the command itself", () => {
+    expect(turnSnippet([
+      tb("<local-command-caveat>Caveat: ...</local-command-caveat>"),
+      tb("<command-name>/model</command-name>\n<command-message>model</command-message>"),
+      tb("<local-command-stdout>Set model to Haiku 4.5</local-command-stdout>"),
+    ])).toBe("/model");
+  });
+
+  test("plain prompts pass through, reminders stripped", () => {
+    expect(turnSnippet([tb("<system-reminder>ctx</system-reminder>"), tb("do the thing")])).toBe("do the thing");
+    expect(turnSnippet([])).toBe("");
+  });
+
+  test("message-first command order and args extract too (wire has both orders)", () => {
+    // /codex:status style: <command-message> BEFORE <command-name>
+    expect(turnSnippet([
+      tb("<command-message>codex:status</command-message>\n<command-name>/codex:status</command-name>\n"),
+    ])).toBe("/codex:status");
+    // args join the preview
+    expect(turnSnippet([
+      tb("<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>claude-fable-5</command-args>"),
+    ])).toBe("/model claude-fable-5");
+    // skill invocation shape (message-first + skill-format marker) — the
+    // harness's "Base directory" expansion block never wins the preview
+    expect(turnSnippet([
+      tb("<command-message>ccx</command-message>\n<command-name>/ccx</command-name>\n<skill-format>true</skill-format>"),
+      tb("Base directory for this skill: /home/x/.claude/skills/ccx\n\n# ccx skill..."),
+    ])).toBe("/ccx");
+  });
+});
+
+// Model epochs: contiguous runs of one model over a thread's visible turns.
+// Sub-structure inside the conversation — a /model switch opens an epoch,
+// never a new thread.
+describe("threadEpochs", () => {
+  const u = (text: string) => ({ role: "user", blocks: [{ type: "text", text }], toolResultsOnly: false });
+  const a = (model: string) => ({ role: "assistant", blocks: [{ type: "text", text: "r" }], toolResultsOnly: false, usage: model ? { model } : null });
+
+  test("single-model thread is one epoch", () => {
+    const eps = threadEpochs([u("q1"), a("claude-sonnet-5"), u("q2"), a("claude-sonnet-5")]);
+    expect(eps).toEqual([{ model: "claude-sonnet-5", from: 0, to: 3 }]);
+  });
+
+  test("a /model switch opens an epoch AT the prompt the new model answered", () => {
+    const eps = threadEpochs([u("q1"), a("claude-fable-5"), u("q2"), a("claude-opus-4-8")]);
+    expect(eps).toEqual([
+      { model: "claude-fable-5", from: 0, to: 1 },
+      { model: "claude-opus-4-8", from: 2, to: 3 },
+    ]);
+  });
+
+  test("unattributed replies and tool-result turns never split an epoch", () => {
+    const toolRes = { role: "user", blocks: [{ type: "tool_result", tool_use_id: "t1" }], toolResultsOnly: true };
+    const eps = threadEpochs([u("q1"), a("claude-fable-5"), toolRes, a(""), u("q2"), a("claude-fable-5")]);
+    expect(eps).toEqual([{ model: "claude-fable-5", from: 0, to: 4 }]);
+  });
+
+  test("trailing prompt with no reply yet stays in the last epoch (live tail)", () => {
+    const eps = threadEpochs([u("q1"), a("claude-fable-5"), u("pending")]);
+    expect(eps).toEqual([{ model: "claude-fable-5", from: 0, to: 2 }]);
+  });
+
+  test("buildSession stamps t.epochs from attributed turns", () => {
+    seq = 0;
+    const first = { role: "user", content: "hello" };
+    const r1 = msgPair([first], { model: "claude-fable-5", reply: "hi" });
+    const hist = [first, { role: "assistant", content: [{ type: "text", text: "hi" }] }, { role: "user", content: "again" }];
+    const r2 = msgPair(hist, { model: "claude-opus-4-8", reply: "hello again" });
+    const { threads } = buildSession([r1, r2]);
+    expect(threads).toHaveLength(1);
+    expect(threads[0].epochs.map((e: any) => e.model)).toEqual(["claude-fable-5", "claude-opus-4-8"]);
+    expect(threads[0].epochs[1].from).toBe(2); // the "again" prompt starts opus's run
+  });
+});
+
+describe("packing epochs: /compact repacks history (2026-07-20)", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+
+  test("post-compact requests extend the spine and attribute — never flagged superseded", () => {
+    seq = 0;
+    const p1 = msgPair([u("q one")], { reply: "answer one" });
+    const p2 = msgPair([u("q one"), a("answer one"), u("q two")], { reply: "answer two" });
+    const p3 = msgPair([u("q one"), a("answer one"), u("q two"), a("answer two"), u("q three")], { reply: "answer three" });
+    const p4 = msgPair(
+      [u("q one"), a("answer one"), u("q two"), a("answer two"), u("q three"), a("answer three"), u("q four")],
+      { reply: "answer four" },
+    );
+    const p5 = msgPair(
+      [u("q one"), a("answer one"), u("q two"), a("answer two"), u("q three"), a("answer three"), u("q four"), a("answer four"), u("q five")],
+      { reply: "answer five" },
+    );
+    // /compact: early exchanges folded into one rewritten turn, a verbatim
+    // tail kept, then the post-compact prompt — SHORTER than the spine.
+    const p6 = msgPair(
+      [u("q one"), a("folded: worked on q1-q3"), u("q four"), a("answer four"), u("q five"), a("answer five"), u("q six")],
+      { reply: "answer six" },
+    );
+    const { threads } = buildSession([p1, p2, p3, p4, p5, p6]);
+    expect(threads.length).toBe(1);
+    const t = threads[0];
+    // spine (p5: 9 msgs + reply = 10 turns) + appended post-compact turns
+    expect(t.turns.length).toBe(12);
+    expect(t.turns[10].blocks[0].text).toBe("q six");
+    expect(t.turns[11].blocks[0].text).toBe("answer six");
+    expect(t.turns[11].pairId).toBe(p6.id);
+    expect(t.rewound.length).toBe(0);
+    expect(t.unattributed.length).toBe(0);
+    // The boundary is display data: where, from what, to what, which mode.
+    expect(t.compactions).toEqual([
+      { at: 10, pairId: p6.id, fromTurns: 9, toTurns: 7, mode: "fold" },
+    ]);
+  });
+
+  test("a pair predating the compaction classifies unattributed, not superseded, once the spine is post-compact", () => {
+    seq = 0;
+    // Pre-compact conversation u0..u7 (15 msgs at the deepest request).
+    const pre = (n: number) => {
+      const m: any[] = [];
+      for (let i = 0; i <= n; i++) {
+        m.push(u("question " + i));
+        if (i < n) m.push(a("reply " + i));
+      }
+      return m;
+    };
+    const pMid = msgPair(pre(3), { reply: "reply 3" });   // hist 7
+    const pPre = msgPair(pre(7), { reply: "reply 7" });   // hist 15
+    // /compact: 15 -> 5 (a 10-turn drop = a repack event). "reply 3" was
+    // folded away; the tail from u7 survives verbatim.
+    const folded = [u("question 0"), a("folded: earlier work"), u("question 7"), a("reply 7"), u("question 8")];
+    const pPost = msgPair(folded, { reply: "reply 8" });
+    // The conversation regrows past the old max — the spine is now a
+    // post-compact packing.
+    const grown = folded.concat([a("reply 8")]);
+    for (let i = 9; i <= 13; i++) grown.push(u("question " + i), a("reply " + i));
+    grown.push(u("question 14"));
+    const pPost2 = msgPair(grown, { reply: "reply 14" }); // hist 17 > 15
+    const { threads } = buildSession([pMid, pPre, pPost, pPost2]);
+    const t = threads[0];
+    // pMid's reply was rewritten by the fold — it can't be placed, but
+    // nothing was superseded: honest unattributed, never a grey row.
+    expect(t.unattributed).toEqual([pMid.id]);
+    expect(t.rewound.length).toBe(0);
+    // pPre's reply survived the fold verbatim — still attributes.
+    expect(t.turns.find((x: any) => x.pairId === pPre.id)).toBeTruthy();
+    expect(t.turns.find((x: any) => x.pairId === pPost2.id)).toBeTruthy();
+  });
+});
+
+describe("full /compact continuation (2026-07-20 round 9)", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+  const SUMMARY = "This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.";
+
+  test("the continuation thread reunifies and its turns append at the timeline tail", () => {
+    seq = 0;
+    const pre = (n: number) => {
+      const m: any[] = [];
+      for (let i = 0; i <= n; i++) {
+        m.push(u("question " + i));
+        if (i < n) m.push(a("reply " + i));
+      }
+      return m;
+    };
+    const p1 = msgPair(pre(3), { reply: "reply 3" });   // hist 7
+    const p2 = msgPair(pre(7), { reply: "reply 7" });   // hist 15
+    // Full /compact: message[0] IS the summary now — a new sig, nothing
+    // survives verbatim (no anchor possible), drop 15 -> 1.
+    const pc1 = msgPair([u(SUMMARY)], { reply: "welcome back" });
+    const pc2 = msgPair([u(SUMMARY), a("welcome back"), u("hi again")], { reply: "still here" });
+    const { threads } = buildSession([p1, p2, pc1, pc2]);
+    // One conversation — the continuation never mints a thread of its own.
+    expect(threads.length).toBe(1);
+    const t = threads[0];
+    expect(t.kind).toBe("chat");
+    expect(t.pairIds).toContain(pc1.id);
+    // spine (15 + reply = 16) + full post-compact packing (3) + reply
+    expect(t.turns.length).toBe(20);
+    expect(t.turns[19].blocks[0].text).toBe("still here");
+    expect(t.turns[19].pairId).toBe(pc2.id);
+    expect(t.turns.find((x: any) => x.pairId === pc1.id)).toBeTruthy();
+    expect(t.rewound.length).toBe(0);
+    expect(t.unattributed.length).toBe(0);
+    expect(t.compactions).toEqual([
+      { at: 16, pairId: pc1.id, fromTurns: 15, toTurns: 1, mode: "rewrite" },
+    ]);
+  });
+
+  test("a continuation with no prior conversation in the trace stays standalone", () => {
+    seq = 0;
+    const pc = msgPair([u(SUMMARY)], { reply: "welcome back" });
+    const { threads } = buildSession([pc]);
+    expect(threads.length).toBe(1);
+    expect(threads[0].turns.length).toBe(2);
+  });
+
+  test("structural reunification: no preamble needed when identity + quiet-parent + sid line up", () => {
+    seq = 0;
+    const sid = JSON.stringify({ session_id: "aaaabbbb-cccc-dddd-eeee-ffff00001111" });
+    const meta = { metadata: { user_id: sid } };
+    const pre = (n: number) => {
+      const m: any[] = [];
+      for (let i = 0; i <= n; i++) {
+        m.push(u("question " + i));
+        if (i < n) m.push(a("reply " + i));
+      }
+      return m;
+    };
+    const mk = (msgs: any[], reply: string, system?: any) => {
+      const p = msgPair(msgs, { reply, system });
+      Object.assign(p.request.body, meta);
+      return p;
+    };
+    const p1 = mk(pre(3), "reply 3");
+    const p2 = mk(pre(7), "reply 7"); // hist 15
+    // A CUSTOMIZED continuation: no harness preamble, but the same system
+    // identity block, a real sid, a smaller start, and a parent that
+    // never speaks again — the structural signals carry it.
+    const pc = mk([u("CUSTOM SUMMARY: seven questions answered, continue from q8")], "welcome back");
+    const { threads } = buildSession([p1, p2, pc]);
+    expect(threads.length).toBe(1);
+    expect(threads[0].turns.find((x: any) => x.pairId === pc.id)).toBeTruthy();
+    // Negative: a different system prompt (utility/agent shape) stays its
+    // own thread even with the same sid and a quiet parent.
+    seq = 0;
+    const q1 = mk(pre(7), "reply 7");
+    const q2 = mk([u("summarize the repo")], "done", [{ type: "text", text: "You are a title generator" }]);
+    const r = buildSession([q1, q2]);
+    expect(r.threads.length).toBe(2);
   });
 });

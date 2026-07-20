@@ -97,6 +97,21 @@ describe("multi-model session attribution (devlog 2026-07-17)", () => {
     expect(sum).toBe(main.usage.output);
     expect(main.usage.requests).toBe(44);
   });
+
+  test("model epochs: each /model switch opens one, contiguous over the visible turns", () => {
+    // Session-tab design: epochs are sub-structure INSIDE the conversation
+    // — five models, six runs (fable-5 returns at the end), one thread.
+    expect(main.epochs.map((e: any) => e.model)).toEqual([
+      "claude-fable-5", "claude-opus-4-8", "claude-opus-4-6",
+      "claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-fable-5",
+    ]);
+    const vis = main.turns.filter((t: any) => !t.toolResultsOnly).length;
+    expect(main.epochs[0].from).toBe(0);
+    expect(main.epochs[main.epochs.length - 1].to).toBe(vis - 1);
+    for (let i = 1; i < main.epochs.length; i++) {
+      expect(main.epochs[i].from).toBe(main.epochs[i - 1].to + 1); // no gaps, no overlap
+    }
+  });
 });
 
 describe("sessions layer over the fixture", () => {

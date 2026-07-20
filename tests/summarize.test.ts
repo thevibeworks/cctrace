@@ -234,6 +234,14 @@ describe("summarizeCache", () => {
     expect(c.title).toContain("read from cache");
   });
 
+  test("weak hit: under 90% of the prompt from cache is a warning", () => {
+    const c = summarizeCache(m({ cacheRead: 40000, cachePct: 62 }), cachedBody);
+    expect(c).toMatchObject({ kind: "hit", c: "warn" });
+    expect(c.title).toContain("low hit rate");
+    // 90 is the boundary: exactly 90% still counts as healthy
+    expect(summarizeCache(m({ cacheRead: 40000, cachePct: 90 }), cachedBody).c).toBe("ok");
+  });
+
   test("cold: write without read is amber and says why", () => {
     const c = summarizeCache(m({ cacheWrite: 50000, cacheWrite5m: 50000 }), cachedBody);
     expect(c).toMatchObject({ kind: "cold", c: "warn", v: "↑50.0k" });
@@ -348,7 +356,10 @@ describe("summarizePair", () => {
     expect(texts.slice(0, 5)).toEqual(["opus-4-6", "in 3", "out 76", "cache ↓19.6k 50% ↑19.6k (19.6k 1h)", "think 44"]);
     expect(texts[5]).toMatch(/^\$0\./);
     expect(chips[5].title).toContain("estimated");
-    expect(chips[3].c).toBe("ok"); // cacheRead > 0 -> hit
+    // a hit covering only 50% of the prompt is a WARNING, not a win —
+    // half the context was re-billed at full input price
+    expect(chips[3].c).toBe("warn");
+    expect(chips[3].title).toContain("low hit rate");
     expect(chips[3].title).toContain("read from cache");
     expect(chips[3].title).toContain("written to cache");
   });

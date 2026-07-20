@@ -254,13 +254,18 @@ export function summarizeCache(m: any, body: any): any {
     tip.push(write.toLocaleString() + " tokens written to cache" + (ttl.length ? " (" + ttl.join(" + ") + ")" : ""));
   }
   const kind = read > 0 ? "hit" : "cold";
+  // A hit that covers <90% of the prompt is a warning, not a win: most of
+  // the context was re-billed at full input price (prefix changed early).
+  const weak = kind === "hit" && typeof m.cachePct === "number" && m.cachePct < 90;
   return {
     kind,
     v: bits.join(" "),
-    c: kind === "hit" ? "ok" : "warn",
+    c: kind === "hit" && !weak ? "ok" : "warn",
     title:
       "prompt cache: " + tip.join(" · ") +
-      (read ? "" : " — cold: no prefix reuse (conversation start, or the cached prefix changed/expired)"),
+      (read
+        ? (weak ? " — low hit rate: under 90% of the prompt came from cache, the rest was re-billed at full input price" : "")
+        : " — cold: no prefix reuse (conversation start, or the cached prefix changed/expired)"),
   };
 }
 

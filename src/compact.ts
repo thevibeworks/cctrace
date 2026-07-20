@@ -4,7 +4,7 @@ import { gzipSync } from "zlib";
 import { readTraceText, isTraceFile } from "./history";
 import { extractSessionId } from "./summarize";
 import { threadSig, firstUserText } from "./session";
-import { wireDialect, normalizeOpenaiTurns, openaiFirstUserText } from "./dialects/openai";
+import { wireDialect, openaiInput, normalizeOpenaiTurns, openaiFirstUserText } from "./dialects/openai";
 import type { TracePair } from "./types";
 
 // `cctrace compact` — aggressive post-hoc trace shrinking. Measured on
@@ -71,7 +71,7 @@ export function histLenOf(pair: any): number {
   const body = pair?.request?.body;
   if (isStubBody(body)) return typeof body.historyLen === "number" ? body.historyLen : 0;
   if (wireDialect(pair) === "openai") {
-    return Array.isArray(body?.input) ? normalizeOpenaiTurns(body.input).length : 0;
+    return normalizeOpenaiTurns(openaiInput(body)).length;
   }
   return Array.isArray(body?.messages) ? body.messages.length : 0;
 }
@@ -102,7 +102,7 @@ export function threadKeyOf(pair: any, wire?: any): string {
     const w = wire && pair.client ? wire[pair.client] : null;
     const convId = (w && w.threadHeader && headers[w.threadHeader]) || "";
     if (convId) return sid + "|conv:" + convId;
-    const text = isStubBody(body) ? body.firstUserText || "" : openaiFirstUserText(body.input || []);
+    const text = isStubBody(body) ? body.firstUserText || "" : openaiFirstUserText(openaiInput(body));
     return sid + "|osig:" + threadSig({ content: text });
   }
   const agentId = headers["x-claude-code-agent-id"] || "";
@@ -246,7 +246,7 @@ export function stubPair(p: TracePair, keptPairId: string): TracePair {
   const body: any = p.request.body;
   const text =
     wireDialect(p) === "openai"
-      ? openaiFirstUserText(body?.input || [])
+      ? openaiFirstUserText(openaiInput(body))
       : firstUserText(Array.isArray(body?.messages) && body.messages[0] ? body.messages[0].content : "");
   const stub: any = {
     _cctrace_stub: 1,
@@ -257,7 +257,8 @@ export function stubPair(p: TracePair, keptPairId: string): TracePair {
     keptPairId,
     droppedBytes: jsonLen(body),
   };
-  if (body && body.metadata !== undefined) stub.metadata = body.metadata; // session id lives here
+  if (body && body.metadata !== undefined) stub.metadata = body.metadata; // anthropic session id lives here
+  if (body && body.prompt_cache_key !== undefined) stub.prompt_cache_key = body.prompt_cache_key; // kimi session id
   return { ...p, request: { ...p.request, body: stub } };
 }
 

@@ -1,7 +1,7 @@
 # cctrace
 
-> TLS-intercepting HTTP tracer for the Claude Code, OpenAI Codex, and Grok
-> CLIs. Spawns the client behind a local zero-config MITM proxy and captures
+> TLS-intercepting HTTP tracer for the Claude Code, OpenAI Codex, Grok, and
+> Kimi Code CLIs. Spawns the client behind a local zero-config MITM proxy and captures
 > its first-party traffic (/v1/messages, OAuth, usage/credits, MCP registry,
 > telemetry) into a live categorized web UI with a reconstructed Sessions
 > view — sessions > threads > turns on one rail, model epochs, subagent
@@ -18,7 +18,9 @@
 
 Runs on Bun. `cctrace` wraps the client transparently: `cctrace -- --continue`
 passes everything after `--` to the Claude CLI verbatim; a leading client
-word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`). Traces
+word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`,
+`cctrace kimi`). Codex/Grok speak OpenAI Responses; Kimi Code speaks OpenAI
+Chat Completions — both reconstruct into the same sessions view. Traces
 land in `.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair
 per line) — the .jsonl IS the trace; snapshots render on demand. Capture
 modes: `mitm` (default, full first-party picture via HTTPS_PROXY +

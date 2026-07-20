@@ -5,8 +5,8 @@ import { join } from "path";
 import { CLIENTS, findClientBinary, wireTables } from "../src/clients";
 
 describe("client profiles (#20)", () => {
-  test("claude, codex, and grok are registered", () => {
-    for (const name of ["claude", "codex", "grok"]) {
+  test("claude, codex, grok, and kimi are registered", () => {
+    for (const name of ["claude", "codex", "grok", "kimi"]) {
       const p = CLIENTS[name]!;
       expect(p.name).toBe(name);
       expect(p.candidates("/home/x").length).toBeGreaterThan(0);
@@ -18,8 +18,10 @@ describe("client profiles (#20)", () => {
     for (const p of Object.values(CLIENTS)) {
       expect(["anthropic", "openai"]).toContain(p.wire.dialect);
       expect(p.wire.firstPartyHosts.length).toBeGreaterThan(0);
+      // session/thread headers are strings; a stateless dialect (kimi's Chat
+      // Completions) legitimately carries neither, so "" is valid.
       expect(typeof p.wire.sessionHeader).toBe("string");
-      expect(p.wire.threadHeader).toBeTruthy();
+      expect(typeof p.wire.threadHeader).toBe("string");
     }
   });
 
@@ -28,7 +30,7 @@ describe("client profiles (#20)", () => {
   test("wireTables() is JSON-safe and drops discovery fields", () => {
     const w = wireTables();
     expect(JSON.parse(JSON.stringify(w))).toEqual(w);
-    expect(Object.keys(w).sort()).toEqual(["claude", "codex", "grok"]);
+    expect(Object.keys(w).sort()).toEqual(["claude", "codex", "grok", "kimi"]);
     expect((w.claude as any).candidates).toBeUndefined();
   });
 

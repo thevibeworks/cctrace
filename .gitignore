@@ -4,14 +4,21 @@
 .cctrace/
 .cctrace-*/
 .claude-trace/
-temp-example-*/
+# manual-test workspace: example traces, analyze logs, scratch projects
+temp/
+temp-*/
+# internal notes (raw backlog, not part of the published repo)
+docs/internal/
+# local agent tool checkouts
+agenttools/
 # MITM CA + leaf keys (private keys — never commit)
 .cache/mitm/
 # test run output (real captures + logs)
 test-output/
 
-# dependencies (bun install)
+# dependencies (bun install; bun.lock is the lockfile — no npm lockfile)
 node_modules
+package-lock.json
 
 # output
 out

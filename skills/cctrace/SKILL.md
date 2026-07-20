@@ -11,7 +11,7 @@ description: >
   traces (view, clean, merge, compress), or find which port a running cctrace
   instance is on. Also use it when the user mentions cctrace, trace files in
   a .cctrace/ directory, MITM-capturing Claude traffic, tracing a third-party
-  ANTHROPIC_BASE_URL provider, or tracing the codex / grok CLIs.
+  ANTHROPIC_BASE_URL provider, or tracing the codex / grok / kimi CLIs.
 ---
 
 # cctrace — trace Claude Code's HTTP traffic
@@ -36,7 +36,8 @@ cctrace --fresh                  # don't merge prior traces of a continued sessi
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
-cctrace grok -- -p "..."         # trace the Grok CLI (both always use mitm)
+cctrace grok -- -p "..."         # trace the Grok CLI
+cctrace kimi                     # trace the Kimi Code CLI (all non-Claude use mitm)
 ```
 
 Two gotchas worth knowing before suggesting commands:
@@ -168,7 +169,7 @@ One JSON object per line, schema (`src/types.ts`):
                 "truncated": true // present iff upstream died mid-stream
               },                  // null when no response arrived
   "duration": 1234,               // ms
-  "client": "claude",             // who produced it: claude|codex|grok (0.13+)
+  "client": "claude",             // who produced it: claude|codex|grok|kimi (0.13+)
   "prior": "trace-…jsonl"         // present iff merged from a previous run
 }
 ```
@@ -188,7 +189,14 @@ runs together. Codex and grok carry theirs in request headers instead
 `x-grok-conv-id`) — cctrace reads those too, so continuity, the Session
 view (threads/turns/tool folds), categories (oauth/usage/mcp/telemetry/
 bootstrap instead of one External blob), and models.dev-based cost chips
-all work for codex/grok traces the same as for Claude.
+all work for codex/grok traces the same as for Claude. Kimi Code
+(`api.kimi.com/coding/v1/chat/completions`, OpenAI Chat Completions) carries
+no thread id on the wire — its threads reconstruct from the first user
+prompt's signature — but K3 sends the session id in the request body
+(`prompt_cache_key: "session_<uuid>"`, stable across compaction and
+`--resume`), so cross-run continuity and the Session view work the same;
+its auto-compactions render as boundary markers, and coding-plan models
+price as estimates at the equivalent pay-per-token (moonshotai) rates.
 
 ## Privacy — treat traces as sensitive
 

@@ -12,7 +12,21 @@ import { join } from "path";
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
 /** Providers whose models cctrace can actually meet on the wire. */
-export const PRICING_PROVIDERS = ["anthropic", "openai", "xai"];
+export const PRICING_PROVIDERS = ["anthropic", "openai", "xai", "moonshotai"];
+
+/**
+ * Coding-plan wire ids -> the models.dev id carrying real per-token rates.
+ * Kimi's coding plan sends bare ids (`k3`, `kimi-for-coding`) that models.dev
+ * lists only under its `kimi-for-coding` provider — priced $0 (subscription).
+ * The cost chip is an ESTIMATE, not a bill (it already prices Claude Max
+ * OAuth traffic at API rates), so subscription traffic estimates at the
+ * pay-per-token rate of the same model under `moonshotai`.
+ */
+export const CATALOG_ALIASES: Record<string, string> = {
+  k3: "kimi-k3",
+  "kimi-for-coding": "kimi-k2.7-code",
+  "kimi-for-coding-highspeed": "kimi-k2.7-code-highspeed",
+};
 
 export const PRICING_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000; // the full api.json is ~3MB
@@ -71,6 +85,9 @@ export function filterCatalog(api: any): Record<string, CatalogEntry> {
       if (typeof c.cache_write === "number") entry.cacheWrite = c.cache_write;
       out[id] = entry;
     }
+  }
+  for (const [alias, target] of Object.entries(CATALOG_ALIASES)) {
+    if (!out[alias] && out[target]) out[alias] = out[target];
   }
   return out;
 }

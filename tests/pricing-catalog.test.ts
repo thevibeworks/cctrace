@@ -33,6 +33,17 @@ const API = {
       "grok-4.5": { cost: { input: 1.25, output: 2.5, cache_read: 0.2 } },
     },
   },
+  moonshotai: {
+    models: {
+      "kimi-k3": { cost: { input: 3, output: 15, cache_read: 0.3 } },
+      "kimi-k2.7-code": { cost: { input: 0.95, output: 4, cache_read: 0.19 } },
+    },
+  },
+  // models.dev's kimi-for-coding provider prices subscription models at $0 —
+  // untrusted here: the wire ids estimate via CATALOG_ALIASES instead.
+  "kimi-for-coding": {
+    models: { k3: { cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 } } },
+  },
   "some-reseller": {
     models: { "gpt-5.6": { cost: { input: 99, output: 99 } } },
   },
@@ -42,13 +53,30 @@ const CATALOG = filterCatalog(API);
 
 describe("filterCatalog", () => {
   test("keeps only priced models from the trusted providers", () => {
-    expect(Object.keys(CATALOG).sort()).toEqual(["claude-opus-4-5", "gpt-5.6", "grok-4.5"]);
+    expect(Object.keys(CATALOG).sort()).toEqual([
+      "claude-opus-4-5",
+      "gpt-5.6",
+      "grok-4.5",
+      "k3",
+      "kimi-for-coding",
+      "kimi-k2.7-code",
+      "kimi-k3",
+    ]);
     expect(CATALOG["gpt-5.6"]).toEqual({ input: 2, output: 8, cacheRead: 0.5 });
     expect(CATALOG["claude-opus-4-5"]).toEqual({ input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 });
   });
 
   test("reseller providers never override the trusted price", () => {
     expect(CATALOG["gpt-5.6"].input).toBe(2);
+  });
+
+  test("kimi coding-plan wire ids estimate at moonshotai per-token rates", () => {
+    // bare `k3` on the wire; models.dev's kimi-for-coding provider says $0
+    // (subscription) — the estimate uses the same model's moonshotai price
+    expect(CATALOG["k3"]).toEqual({ input: 3, output: 15, cacheRead: 0.3 });
+    expect(CATALOG["kimi-for-coding"]).toEqual({ input: 0.95, output: 4, cacheRead: 0.19 });
+    // alias absent when the target model isn't in the catalog: no stale price
+    expect(filterCatalog({ moonshotai: { models: {} } })["k3"]).toBeUndefined();
   });
 
   test("garbage input yields an empty catalog, never a throw", () => {

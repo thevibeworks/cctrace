@@ -2,6 +2,7 @@ import { parseSse, assembleAssistant, extractCallInfo, shortModel, extractSessio
 import { pairCost } from "./pricing";
 import {
   wireDialect,
+  openaiInput,
   openaiCompleted,
   openaiBlocks,
   normalizeOpenaiTurns,
@@ -154,7 +155,7 @@ export function buildSession(pairs: any[], wire?: any): any {
   const histLen = (p: any, dialect: string) => {
     const b = p.request.body || {};
     if (b._cctrace_stub) return typeof b.historyLen === "number" ? b.historyLen : 0;
-    return dialect === "openai" ? normalizeOpenaiTurns(b.input || []).length : (b.messages || []).length;
+    return dialect === "openai" ? normalizeOpenaiTurns(openaiInput(b)).length : (b.messages || []).length;
   };
 
   for (const p of pairs || []) {
@@ -174,14 +175,16 @@ export function buildSession(pairs: any[], wire?: any): any {
         : stub ? threadSig({ content: req.firstUserText || "" })
         : threadSig(req.messages[0]);
     } else if (dialect === "openai") {
-      if (!stub && (!Array.isArray(req.input) || !req.input.length)) continue;
+      const rinput = openaiInput(req);
+      if (!stub && !rinput.length) continue;
       // Thread identity is on the wire in a header (codex thread-id, grok
-      // x-grok-conv-id — named by the client's wire table); a few calls
-      // carry none and fall back to the first-user-text signature.
+      // x-grok-conv-id — named by the client's wire table); Chat Completions
+      // (kimi) carries none, so it always falls back to the first-user-text
+      // signature — same path as a header-less Responses call.
       const w = wire && p.client ? wire[p.client] : null;
       const convId = (w && w.threadHeader && (p.request.headers || {})[w.threadHeader]) || "";
       key = convId ? "conv:" + convId
-        : "osig:" + threadSig({ content: stub ? req.firstUserText || "" : openaiFirstUserText(req.input) });
+        : "osig:" + threadSig({ content: stub ? req.firstUserText || "" : openaiFirstUserText(rinput) });
     } else {
       continue;
     }
@@ -214,8 +217,30 @@ export function buildSession(pairs: any[], wire?: any): any {
   // deepest history (the packing the summary was made from). No parent
   // (trace began mid-session) = stays standalone, today's behavior.
   const contPreamble = "This session is being continued from a previous conversation";
+  // Kimi auto-compaction (devlog 2026-07-20, observed live): the packing
+  // restarts with the original first user message — with LATER user text
+  // merged in, so the sig fallback splits the thread — followed by the
+  // working summary as a USER message opening with this harness preamble.
+  // The summary is resent in every post-compaction request, so any full
+  // (non-stub) request of the packing witnesses it.
+  const kimiContPreamble = "The conversation so far has been compacted";
   const contOf = (t: any) => {
-    if (t.dialect !== "anthropic") return false;
+    if (t.dialect === "openai") {
+      // Marker-gated on purpose: kimi subagents share the session id (pck)
+      // and plausibly the system prompt, so structural signals alone could
+      // false-claim a tail subagent. One compaction shape observed so far —
+      // hold the stronger gate until codex/grok compactions are captured.
+      const full = t.reqs.find((r: any) => !(r.request.body || {})._cctrace_stub);
+      if (!full) return false;
+      const items = openaiInput(full.request.body || {}).slice(0, 6);
+      for (const it of items) {
+        if (!it || it.type !== "message" || it.role !== "user") continue;
+        for (const b of openaiBlocks(it)) {
+          if (b && typeof b.text === "string" && b.text.lastIndexOf(kimiContPreamble, 0) === 0) return true;
+        }
+      }
+      return false;
+    }
     const b = t.reqs[0].request.body || {};
     const ft = b._cctrace_stub ? b.firstUserText || ""
       : Array.isArray(b.messages) && b.messages.length ? firstUserText(b.messages[0].content) : "";
@@ -248,9 +273,12 @@ export function buildSession(pairs: any[], wire?: any): any {
     return sysText.indexOf("cc_is_subagent=true") !== -1 || /You are (a Claude agent|an agent for Claude Code)/.test(sysText);
   };
   for (const t of threads) {
-    if (t.dialect !== "anthropic" || (t as any)._merged) continue;
+    if ((t as any)._merged) continue;
     const pre = contOf(t);
-    if (!pre && sidechainish(t)) continue;
+    // openai threads reunify on the summary marker only (see contOf); the
+    // structural path below stays anthropic-only until more shapes exist.
+    if (t.dialect !== "anthropic" && !pre) continue;
+    if (t.dialect === "anthropic" && !pre && sidechainish(t)) continue;
     const t0 = t.reqs[0].request.timestamp || 0;
     let parent = null;
     let best = -1;
@@ -265,12 +293,23 @@ export function buildSession(pairs: any[], wire?: any): any {
     // Structural needs a REAL session id: in a no-sid trace (pre-0.13)
     // two sequential distinct conversations look exactly like parent +
     // continuation (same identity block, parent quiet, smaller start).
-    const structural = !pre && !!t.sessionId &&
+    const structural = !pre && t.dialect === "anthropic" && !!t.sessionId &&
       !!sysIdentity(t) && sysIdentity(t) === sysIdentity(parent) &&
       best > histLen(t.reqs[0], t.dialect) &&
       !parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0);
+    // The openai marker can be typed by a user verbatim; require the two
+    // dialect-neutral structural facts too — a compacted parent never
+    // speaks again, and the continuation starts smaller than its deepest
+    // packing. A mid-session false-fire fails the quiet check.
+    if (pre && t.dialect !== "anthropic" &&
+      (best <= histLen(t.reqs[0], t.dialect) || parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0)))
+      continue;
     if (pre || structural) {
       for (const r of t.reqs) parent.reqs.push(r);
+      // A marker-verified continuation is a KNOWN repack: the append fallback
+      // below may trust it without the 10-turn-drop heuristic (a small
+      // session's manual compact drops fewer).
+      if (pre) (parent as any)._contMerged = true;
       (t as any)._merged = true;
     }
   }
@@ -292,9 +331,10 @@ export function buildSession(pairs: any[], wire?: any): any {
     }
     const sreq = spine.request.body || {};
     if (t.dialect === "openai") {
-      t.system = openaiSystemText(sreq.input) || null;
+      const sinput = openaiInput(sreq);
+      t.system = openaiSystemText(sinput) || null;
       t.tools = openaiTools(sreq);
-      t.turns = normalizeOpenaiTurns(sreq.input);
+      t.turns = normalizeOpenaiTurns(sinput);
     } else {
       t.system = sreq.system || null;
       t.tools = Array.isArray(sreq.tools) ? sreq.tools : [];
@@ -323,7 +363,7 @@ export function buildSession(pairs: any[], wire?: any): any {
     if (lastReq) {
       const lb = lastReq.request.body || {};
       const lastHist = t.dialect === "openai"
-        ? normalizeOpenaiTurns(lb.input || [])
+        ? normalizeOpenaiTurns(openaiInput(lb))
         : normalizeTurns(lb.messages || []);
       const lsigs = lastHist.map((x: any) => turnContentSig(x.blocks));
       const ssigs = t.turns.map((x: any) => turnContentSig(x.blocks));
@@ -361,7 +401,7 @@ export function buildSession(pairs: any[], wire?: any): any {
       // position — the summary turn is a real event, and the exchanges
       // after it are the live conversation, not superseded ghosts.
       const appendFrom = anchor >= 0 ? anchor + 1
-        : lastHist.length && spineLen - lastHist.length >= 10 ? 0
+        : lastHist.length && (spineLen - lastHist.length >= 10 || (t as any)._contMerged) ? 0
         : lastHist.length;
       if (appendFrom < lastHist.length) {
         // The boundary is display data (session-tab round 10): the request
@@ -377,7 +417,7 @@ export function buildSession(pairs: any[], wire?: any): any {
           const r = t.reqs[i];
           if ((r.request.body || {})._cctrace_stub) continue;
           const len = histLen(r, t.dialect);
-          if (len <= lastHist.length && (anchor >= 0 || len < spineLen - 9)) { firstPost = r; break; }
+          if (len <= lastHist.length && (anchor >= 0 || len < spineLen - 9 || (t as any)._contMerged)) { firstPost = r; break; }
         }
         t.compactions.push({
           at: t.turns.length,
@@ -462,7 +502,7 @@ export function buildSession(pairs: any[], wire?: any): any {
       let cls = "unattributed";
       const body = p.request.body || {};
       const hist = t.dialect === "openai"
-        ? (Array.isArray(body.input) ? normalizeOpenaiTurns(body.input) : [])
+        ? normalizeOpenaiTurns(openaiInput(body))
         : (Array.isArray(body.messages) ? normalizeTurns(body.messages) : []);
       if (hist.length) {
         const lastSig = turnContentSig(hist[hist.length - 1].blocks);

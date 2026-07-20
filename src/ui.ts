@@ -21,6 +21,7 @@ import {
 } from "./summarize";
 import {
   wireDialect,
+  openaiInput,
   openaiCompleted,
   openaiBlocks,
   normalizeOpenaiTurns,
@@ -1154,8 +1155,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${extractCallInfo.toString()}
     ${extractSessionId.toString()}
 
-    // OpenAI Responses dialect (codex/grok), injected from src/dialects/openai.ts.
+    // OpenAI dialect (codex/grok Responses + kimi Chat Completions), injected from src/dialects/openai.ts.
     ${wireDialect.toString()}
+    ${openaiInput.toString()}
     ${openaiCompleted.toString()}
     ${openaiBlocks.toString()}
     ${normalizeOpenaiTurns.toString()}
@@ -1282,6 +1284,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       claude: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
       codex: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
       grok: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
+      kimi: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
     };
 
     let ctxKey = null;
@@ -2086,13 +2089,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '</div>';
       }
       if (wireDialect(pair) === 'openai') {
-        // OpenAI Responses (codex/grok): normalize input[] into the same
+        // OpenAI dialect: Responses (codex/grok) input[] and Chat Completions
+        // (kimi) messages[] both normalize through openaiInput into the same
         // turn/block model, so the folds render identically.
-        const sys = openaiSystemText(req.input);
+        const input = openaiInput(req);
+        const sys = openaiSystemText(input);
         if (sys) html += renderSystem(sys);
         const tools = openaiTools(req);
         if (tools.length) html += renderTools(tools);
-        for (const t of normalizeOpenaiTurns(req.input)) {
+        for (const t of normalizeOpenaiTurns(input)) {
           html += renderTurn(t.role, t.blocks, '');
         }
         const done = openaiCompleted(pair);

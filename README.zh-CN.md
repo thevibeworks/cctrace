@@ -290,7 +290,7 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `--fresh` | 续接会话时不合并之前的 trace |
 | `--with FILE` | 把指定 trace 文件合并进视图（可重复） |
 | `--claude-path PATH` | 自定义 Claude 二进制路径 |
-| `--client-path PATH` | 自定义任意 client 的二进制路径（codex/grok 也适用） |
+| `--client-path PATH` | 自定义任意 client 的二进制路径（codex/grok/kimi 也适用） |
 | `--data-dir PATH` | MITM CA / 数据目录（默认 `~/.local/share/cctrace`；或用 `CCTRACE_DATA_DIR`。旧的 `--cache-dir` / `CCTRACE_CACHE_DIR` 仍然可用；0.6 之前留在 `~/.cache/cctrace` 的 CA 会自动迁移） |
 
 ### 把参数传给 Claude
@@ -323,13 +323,17 @@ print 模式。
 ```bash
 cctrace codex -- exec "修掉这些失败的测试"   # OpenAI Codex CLI
 cctrace grok -- -p "解释这段堆栈"            # Grok CLI
+cctrace kimi                                # Kimi Code CLI（月之暗面）
 ```
 
 非 Claude client 一律走 mitm 抓包，并且享受完整待遇：模型调用
 （`.../responses`、`.../chat/completions`）归入 Messages，Sessions 视图同样
 重建它们的对话 -- 线程按各 client 的 wire header 分组，工具调用和推理归一到
 同一套 turn 模型，每轮的用量、费用、回放一应俱全。Codex 的加密推理显示为占位
-符；Grok 的推理摘要可以完整阅读。
+符；Grok 的推理摘要可以完整阅读；Kimi Code 走 OpenAI Chat Completions：线程按
+prompt 签名重建（wire 上没有线程 header），会话 id 随请求体传输
+（`prompt_cache_key`，跨压缩与 `--resume` 保持稳定），自动压缩渲染为分界标记，
+`reasoning_content` 渲染为 thinking。
 
 **第三方 Anthropic 兼容服务** -- 把 `ANTHROPIC_BASE_URL` 指向网关或兼容
 端点，照常运行 `cctrace` 即可。mitm 模式无需额外配置：非 Anthropic 域名

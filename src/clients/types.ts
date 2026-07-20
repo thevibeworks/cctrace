@@ -25,6 +25,12 @@ export interface ClientWire {
   hostCategories: Array<[string, string]>;
   /** Request header carrying the session id ("" = Anthropic body metadata). */
   sessionHeader: string;
+  /**
+   * Request BODY field carrying the session id, for clients that send it in
+   * the payload instead of a header (kimi: prompt_cache_key). Checked after
+   * sessionHeader. A "session_<uuid>" value yields the bare uuid.
+   */
+  sessionBodyField?: string;
   /** Request header carrying the thread/conversation id. */
   threadHeader: string;
 }

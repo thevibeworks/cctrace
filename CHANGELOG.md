@@ -6,6 +6,95 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-20
+
+The sessions release: the Sessions tab becomes a real reconstruction of
+what the harness did to your conversation — sessions, threads, model
+epochs, subagent spawns, and compaction, all on one rail.
+
+### Added
+
+- Sessions layer: messages -> threads -> sessions -> project. Threads
+  are session-scoped (/clear rotates the session id and never merges
+  conversations), sessions list newest-first as collapsible sections,
+  and a session holding exactly one conversation absorbs its card into
+  the session header. Routes: #/session/<sid8>[/<thread-key>] with
+  short thread keys in URLs (old full-key links still resolve);
+  [ and ] switch sessions.
+- The session rail: one continuous line down the session body, every
+  row a node on it. Turn dots carry the wire verdict (green healthy
+  cache hit, amber weak/cold/miss, red failed request; hollow ring for
+  the user), model epochs are ring marks (a /model switch opens an
+  epoch t0/t1 inside the thread, never a new thread), subagent threads
+  attach as branch rows at the turn that spawned them with the outcome
+  inline (turns, tokens, cost, errors), and superseded exchanges sit
+  grey at the ordinal they occupied. Rows show the message; every
+  metric lives in instant structured hovers.
+- Content-verified per-turn attribution: index-first, verified against
+  each pair's assembled response, content-scan on drift (Claude Code
+  repacks history with ephemeral notice turns, so raw indices lie). A
+  thread's model is a set; the face model is the one with the most
+  output tokens. Every assistant turn links back to its wire request,
+  and the outline's turn ordinals repeat on the conversation's role
+  bars — one numbering at two zoom levels.
+- Compaction, reconstructed and displayed. Post-compact packings merge
+  back into the conversation (a context-verified anchor for folds, a
+  full append for rewrites), pre-compact repack drift classifies as
+  unattributed instead of superseded, and a full /compact continuation
+  reunifies into its conversation structurally — same session id, same
+  system identity block, smaller start, a parent that never speaks
+  again; the harness preamble text is one vote, not the gate. Every
+  boundary renders: a break node + "compacted · 513 -> 440 turns" row
+  on the rail, a dashed divider in the conversation, a hover with the
+  context collapse in turns and tokens plus fold-vs-rewrite, click
+  opens the first post-compact request. A rendered continuation
+  summary is tagged as such, never displayed as something the user
+  typed.
+- Command and skill turns preview as what the user did: /model,
+  /ccx args, /codex:status — both wire block orders handled; skill
+  folds name the skill; subagent spawn folds show the spawned thread's
+  outcome and an open-thread link.
+- Every page names its trace: <project>/<trace-file.jsonl> in the
+  header for live runs, view serves, and snapshots.
+- Launch and continuity UX: cctrace is silent while the traced client
+  owns the terminal (output buffers and flushes at exit);
+  --continue/--resume preload the resumed session so the UI opens
+  populated; --version and the banner print the commit hash.
+- Compaction regression fixture cut from a real triple-packing session
+  by tests/sanitize-trace.ts (kept in-tree): equality-preserving hash
+  tokens, structural markers preserved, zero original text.
+
+### Changed
+
+- Thread identity is the conversation, not the model: labels name the
+  conversation ("63 turns", "[explore] search for..."), the model is a
+  quiet right-aligned chip ("fable-5 +4" after mid-thread switches,
+  per-model split in the tooltip).
+- A weak prompt-cache hit (under 90% of the prompt read from cache) is
+  an amber warning, not a green — most of the context was re-billed at
+  full input price.
+- Header: the version moved to the right with the page chrome (hover =
+  about), the live dot sits beside the instance switcher, and usage
+  reset countdowns tick live.
+
+### Fixed
+
+- Injected recap exchanges and compaction repacks were displayed as
+  "rewound" — a /rewind that never happened. Prefix-divergent pairs now
+  display as "superseded" with the possible causes listed, at their
+  timeline position, wire pair linked; post-compact requests attribute
+  instead of flagging; post-/compact conversations no longer split into
+  a second thread (or worse, get claimed as a subagent because the
+  continuation summary quotes old Task dispatch prompts).
+- Parallel Task spawns with identical prompts all matched the first
+  dispatch — threads now pair 1:1 with their tool_use in wire order,
+  fixing labels and branch links.
+- Jumping to a turn past the first model epoch scrolled to the wrong
+  place; jumps now compute against the pane's own scroll box and
+  animate (honoring prefers-reduced-motion).
+- Redacted traces put literal **** in session URLs; the hash now
+  carries short thread keys.
+
 ## [0.17.0] - 2026-07-17
 
 ### Added
@@ -744,7 +833,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/thevibeworks/cctrace/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/thevibeworks/cctrace/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/thevibeworks/cctrace/compare/v0.14.0...v0.15.0

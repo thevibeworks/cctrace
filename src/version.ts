@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import pkg from "../package.json";
 
@@ -10,6 +10,43 @@ import pkg from "../package.json";
 
 export const CCTRACE_VERSION: string = pkg.version;
 export const NPM_PACKAGE = "@thevibeworks/cctrace";
+
+// Build-time commit hash, injected by `make build` via bun's --define.
+// Source runs fall back to asking git — but only when the tree actually IS
+// the cctrace repo (an npm install's node_modules usually sits inside the
+// USER's git repo, whose HEAD would be a lie).
+declare const CCTRACE_GIT_SHA: string;
+let commitCache: string | null = null;
+
+export function cctraceCommit(): string {
+  if (commitCache !== null) return commitCache;
+  try {
+    if (typeof CCTRACE_GIT_SHA === "string" && CCTRACE_GIT_SHA) return (commitCache = CCTRACE_GIT_SHA);
+  } catch {
+    // not defined — source run
+  }
+  try {
+    const repoRoot = join(import.meta.dir, "..");
+    if (existsSync(join(repoRoot, ".git"))) {
+      const r = Bun.spawnSync(["git", "rev-parse", "--short", "HEAD"], {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const sha = r.exitCode === 0 ? r.stdout.toString().trim() : "";
+      if (/^[0-9a-f]{4,}$/i.test(sha)) return (commitCache = sha);
+    }
+  } catch {
+    // no git / compiled binary with a virtual path — version alone is fine
+  }
+  return (commitCache = "");
+}
+
+/** "0.17.0 (f68ed90)" when the commit is known, plain version otherwise. */
+export function versionWithCommit(): string {
+  const sha = cctraceCommit();
+  return sha ? `${CCTRACE_VERSION} (${sha})` : CCTRACE_VERSION;
+}
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`;
 
 export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;

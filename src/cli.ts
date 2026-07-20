@@ -8,13 +8,15 @@ import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
-import { loadPriorPairs, loadTraceFiles } from "./history";
+import { loadPriorPairs, loadTraceFiles, newestPriorSessionId } from "./history";
 import { extractSessionId } from "./summarize";
+import { termWrite, muteTerm, unmuteTerm } from "./termlog";
 import { writeView, resolveView, listTraceInfos, ViewError } from "./view";
 import { registerInstance, listLiveInstances, listPastRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
+  versionWithCommit,
 } from "./version";
 import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
@@ -78,8 +80,11 @@ const C = {
   cyan: "\x1b[36m",
 };
 
+// All cctrace terminal output funnels through termWrite: while a spawned TUI
+// client owns the screen the lines buffer and flush after it exits, so a
+// mid-session continuity merge or crash-guard note never corrupts the TUI.
 function log(msg: string, color = C.reset) {
-  console.log(`${color}[cctrace]${C.reset} ${msg}`);
+  termWrite(`${color}[cctrace]${C.reset} ${msg}`);
 }
 
 const CAPTURE_MODES = ["auto", "mitm", "base-url", "node"] as const;
@@ -315,6 +320,10 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
+  // The header shows <project>/<trace-file>: the project is the traced
+  // repo, i.e. the log dir's parent when it's a standard ./.cctrace.
+  const viewDir = resolve(logDir);
+  const viewProject = basename(viewDir) === ".cctrace" ? basename(dirname(viewDir)) : basename(viewDir);
   // The rebuilt pairs know who produced them (0.13+ traces); older traces
   // carry no label and the header degrades to project-only.
   const client = result.pairs.findLast((p) => p.client)?.client;
@@ -323,7 +332,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   const server = createServer({
     port: opts.port,
     logDir,
-    meta: { ...pageMeta(client), project: traceName, projectPath: resolve(logDir) },
+    meta: { ...pageMeta(client), project: viewProject, projectPath: viewDir, traceFile: basename(result.sources[0] || target) },
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
@@ -614,7 +623,7 @@ function runCompact(args: string[]) {
     console.log(`    ${f.name}  ${C.dim}${bits.join(", ")} — saves ~${human(f.savedBytes)} of ${human(f.size)}${C.reset}`);
   }
   log(`${plan.stubbed} request bodies stubbed (longest per thread-epoch kept full), ${plan.collapsed} noise bodies collapsed (first/last/largest/slowest/errors kept)`, C.cyan);
-  log(`known loss: exact wire bytes of superseded requests — mid-epoch system-prompt/tool changes keep only the kept request's version`, C.dim);
+  log(`known loss: exact wire bytes of superseded requests — mid-epoch system-prompt/tool changes keep only the kept request's version; rewound/edited branch tips are detected and kept full`, C.dim);
   if (!v.yes) {
     log(`Would save ~${human(plan.savedBytes)} of raw trace lines${v.zstd ? ", then zstd-archive" : " (add --zstd to also archive)"}. ${DRY}`, C.yellow);
     return;
@@ -875,7 +884,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
         }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
-      const snapHtml = renderSnapshot(all, pageMeta());
+      const snapHtml = renderSnapshot(all, { ...pageMeta(CLIENT.name), traceFile: basename(logFile) });
       const problem = verifySnapshot(snapHtml, all.length);
       if (problem) log(`warning: snapshot self-check failed: ${problem}`, C.yellow);
       writeFileSync(htmlFile, snapHtml);
@@ -905,9 +914,14 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     stdio: "inherit",
     cwd: process.cwd(),
   });
+  // The client owns the terminal from here to exit (TUI repaints the whole
+  // screen; -p writes the result to stdout) — cctrace stays silent, buffering
+  // anything it would have said and flushing once the screen is ours again.
+  muteTerm();
   if (child.pid && onAgentPid) onAgentPid(child.pid);
 
   child.on("error", (err) => {
+    for (const line of unmuteTerm()) console.log(line);
     capturer.stop();
     log(`Error: ${err.message}`, C.yellow);
     process.exit(1);
@@ -915,6 +929,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 
   child.on("exit", async (code, signal) => {
     await capturer.flush();
+    for (const line of unmuteTerm()) console.log(line);
     log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     capturer.stop();
     if (onFinalize) {
@@ -944,6 +959,18 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   const { logFile, htmlFile } = logPaths(opts);
   let ingest: ((pair: TracePair) => void) | undefined;
   let liveInstance: InstanceHandle | null = null;
+  // --continue/--resume: the resumed session id isn't on the wire until the
+  // first request, but we can GUESS it now — an explicit `--resume <id>`
+  // names it, and --continue almost always means the newest prior session in
+  // this log dir. The server preloads the guess so the UI opens populated,
+  // then confirms or evicts it on the first live pair.
+  let speculateSid: string | undefined;
+  if (opts.liveMode && CLIENT.name === "claude" && !opts.fresh && isContinuation(claudeArgs)) {
+    const ri = claudeArgs.findIndex((a) => a === "--resume" || a === "-r");
+    const resumeArg = ri >= 0 ? claudeArgs[ri + 1] : undefined;
+    if (resumeArg && /^[0-9a-f][0-9a-f-]{6,}$/i.test(resumeArg)) speculateSid = resumeArg;
+    else speculateSid = newestPriorSessionId(opts.logDir, logFile)?.sid;
+  }
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
@@ -958,7 +985,8 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       logFile,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
-      meta: pageMeta(CLIENT.name),
+      speculate: speculateSid,
+      meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile) },
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,
@@ -1017,9 +1045,9 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     onStatus: (msg) => log(msg, C.dim),
   });
 
-  // --continue/--resume can't reveal which session until Claude's first request
-  // hits the wire, so prior turns merge then, not now. Say so, or a user waits.
-  if (CLIENT.name === "claude" && !opts.fresh && isContinuation(claudeArgs)) {
+  // --continue/--resume: the preload above covers the likely session; when
+  // there was nothing to preload, say why the view starts empty.
+  if (CLIENT.name === "claude" && !opts.fresh && isContinuation(claudeArgs) && !speculateSid) {
     log("Continuing a session — prior turns merge into Session view on Claude's first request", C.dim);
   }
 
@@ -1094,12 +1122,15 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
 
   const spawnArgs = ["--require", loaderPath, claudePath, ...claudeArgs];
   const child: ChildProcess = spawn("node", spawnArgs, { env, stdio: "inherit", cwd: process.cwd() });
+  muteTerm();
 
   child.on("error", (err) => {
+    for (const line of unmuteTerm()) console.log(line);
     log(`Error: ${err.message}`, C.yellow);
     process.exit(1);
   });
   child.on("exit", (code, signal) => {
+    for (const line of unmuteTerm()) console.log(line);
     if (signal) log(`Terminated: ${signal}`, C.yellow);
     else if (code === 0) log("Session complete", C.green);
     process.exit(code ?? 0);
@@ -1150,7 +1181,7 @@ async function main() {
   }
 
   if (values.version) {
-    console.log(`cctrace v${CCTRACE_VERSION}`);
+    console.log(`cctrace v${versionWithCommit()}`);
     const latest = availableUpdate(readUpdateCache(DATA_DIR));
     if (latest) console.log(`latest: v${latest} (update available)`);
     process.exit(0);
@@ -1185,7 +1216,7 @@ async function main() {
     withFiles: values.with ? [...values.with] : [],
   };
 
-  log(`cctrace v${CCTRACE_VERSION}`, C.dim);
+  log(`cctrace v${versionWithCommit()}`, C.dim);
   await maybeOfferUpdate();
   // Refresh the update cache in the background — never blocks the session.
   if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});

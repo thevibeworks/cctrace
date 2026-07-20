@@ -232,12 +232,16 @@ Enroll a host with `--intercept-host` when you want its full payloads.
   (deep-linkable by request id). Messages render conversation-first with the
   streamed reply decoded from SSE; usage requests render limit bars; raw
   headers/bodies stay one fold away. `j`/`k` walk the filtered list.
-- **Session view** -- wire requests and the reconstructed conversation side by
-  side: threads for the main chat and subagent runs (matched to their Task
-  dispatch), utility noise collapsed, tool results folded into their tool
-  calls, and per-turn token/duration linked back to the wire request.
+- **Sessions view** -- the reconstructed conversation on a rail: sessions
+  group their threads (main chat, subagent runs attached as branches at
+  the turn that spawned them, utility noise collapsed), a `/model` switch
+  marks an epoch, a compaction marks a break node with the context
+  collapse in turns and tokens, and superseded exchanges (rewinds, edits,
+  injected recaps) sit grey at the ordinal they occupied. Every turn
+  links back to its wire request; tokens, timing, and cost live in
+  instant hovers.
 - **Session replay** -- re-experience a captured session as it happened, right
-  inside the Session view: `←`/`→` step through turns (`shift` steps every
+  inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,
   and the scrubber doubles as a session minimap (turns, errors, probes).
   Pause anywhere and the URL (`#/session/<key>/@<pair-id>`) deep-links that
@@ -246,7 +250,7 @@ Enroll a host with `--intercept-host` when you want its full payloads.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
   read/write TTLs priced separately), with
-  per-turn and per-thread totals in the Session view. Estimates, not bills.
+  per-turn and per-thread totals in the Sessions view. Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
   gets lost: ports allocate predictably (9317, 9318, ...), `cctrace ps`
   lists every live instance with its URL and session, and the web UI header
@@ -384,7 +388,7 @@ cctrace grok -- -p "explain this stack trace"   # Grok CLI
 
 Non-Claude clients always use mitm capture, and get the full treatment:
 their model calls (`.../responses`, `.../chat/completions`) land in
-Messages, and the Session view reconstructs their conversations too --
+Messages, and the Sessions view reconstructs their conversations too --
 threads keyed on each client's wire headers, tool calls and reasoning
 normalized into the same turn model, per-turn usage and cost, replay
 included. Codex's encrypted reasoning shows as a placeholder; Grok's

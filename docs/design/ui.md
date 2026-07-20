@@ -18,8 +18,10 @@ to protect that feeling.
    reading history — new activity is announced (pill), not imposed.
 4. **Keyboard is a first-class citizen.** j/k, Esc, / — every affordance is
    discoverable (title attrs, empty-state hints) but never required.
-5. **Motion budget: ~zero.** One heartbeat pulse on the live dot, one smooth
-   scroll on "jump to latest", one 160ms opacity fade on a live-arrived row
+5. **Motion budget: ~zero.** One heartbeat pulse on the live dot, smooth
+   scrolling on USER-INITIATED jumps only (jump-to-latest, outline/turn
+   jumps — never on render-time tail sticking, which would be constant
+   motion), one 160ms opacity fade on a live-arrived row
    (feedback that a row just landed — never on bulk renders or filter
    re-renders). Everything else is instant. Respect `prefers-reduced-motion`.
 6. **Both themes are real.** Dark is the native habitat; light must not be an

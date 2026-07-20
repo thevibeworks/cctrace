@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { scanTraceText, parseTraceText, loadPriorPairs, loadTraceFiles } from "../src/history";
+import { scanTraceText, parseTraceText, loadPriorPairs, loadTraceFiles, newestPriorSessionId } from "../src/history";
 
 const SID_A = "70683b4f-e779-414c-bcdb-9b22361a0232";
 const SID_B = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -103,5 +103,43 @@ describe("loadPriorPairs / loadTraceFiles", () => {
     const got = loadTraceFiles([f, join(dir, "missing.jsonl")]);
     expect(got.map((p) => p.id)).toEqual(["4_d", "5_e"]);
     expect(got.every((p) => p.prior === "manual.jsonl")).toBe(true);
+  });
+});
+
+describe("newestPriorSessionId", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "cctrace-newest-sid-"));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test("picks the last session id in the newest trace file", () => {
+    const oldF = join(dir, "trace-old.jsonl");
+    const newF = join(dir, "trace-new.jsonl");
+    writeFileSync(oldF, toJsonl([messagesPair("1_a", SID_A, 100)]));
+    writeFileSync(newF, toJsonl([messagesPair("2_b", SID_A, 200), messagesPair("3_c", SID_B, 300)]));
+    utimesSync(oldF, new Date(1000000), new Date(1000000));
+    utimesSync(newF, new Date(2000000), new Date(2000000));
+    expect(newestPriorSessionId(dir, join(dir, "trace-current.jsonl"))).toEqual({ sid: SID_B, file: "trace-new.jsonl" });
+  });
+
+  test("skips the current run's own file and sid-less files", () => {
+    const cur = join(dir, "trace-current.jsonl");
+    writeFileSync(cur, toJsonl([messagesPair("9_z", SID_B, 900)]));
+    writeFileSync(join(dir, "trace-noise.jsonl"), toJsonl([oauthPair("5_e", 500)]));
+    writeFileSync(join(dir, "trace-old.jsonl"), toJsonl([messagesPair("1_a", SID_A, 100)]));
+    utimesSync(join(dir, "trace-old.jsonl"), new Date(1000000), new Date(1000000));
+    expect(newestPriorSessionId(dir, cur)?.sid).toBe(SID_A);
+  });
+
+  test("survives a torn tail line on a live file", () => {
+    const f = join(dir, "trace-live.jsonl");
+    writeFileSync(f, toJsonl([messagesPair("1_a", SID_A, 100)]) + '{"id":"torn","request":{"url":"htt');
+    expect(newestPriorSessionId(dir, "")?.sid).toBe(SID_A);
+  });
+
+  test("empty or missing dir returns null", () => {
+    expect(newestPriorSessionId(dir, "")).toBeNull();
+    expect(newestPriorSessionId(join(dir, "nope"), "")).toBeNull();
   });
 });

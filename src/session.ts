@@ -1,4 +1,4 @@
-import { parseSse, assembleAssistant, extractCallInfo, shortModel } from "./summarize";
+import { parseSse, assembleAssistant, extractCallInfo, shortModel, extractSessionId } from "./summarize";
 import { pairCost } from "./pricing";
 import {
   wireDialect,
@@ -89,6 +89,34 @@ export function buildToolResultIndex(turns: any[]): Record<string, any> {
   return map;
 }
 
+/**
+ * Capped content signature of a turn's blocks, comparable between a pair's
+ * assembled response and a spine turn's packing (Claude Code packs replies
+ * back verbatim). First non-empty text block wins; tool-only replies fall
+ * back to the first tool_use name + input prefix. "" = nothing to compare
+ * (errored/empty responses, stub metadata) — callers treat that as
+ * unverifiable, never as a match.
+ */
+export function turnContentSig(blocks: any[]): string {
+  for (const b of blocks || []) {
+    if (b && b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+      return "t:" + b.text.trim().slice(0, 200);
+    }
+  }
+  for (const b of blocks || []) {
+    if (b && (b.type === "tool_use" || b.type === "server_tool_use")) {
+      let inp = "";
+      try {
+        inp = JSON.stringify(b.input) || "";
+      } catch {
+        inp = "";
+      }
+      return "u:" + (b.name || "") + ":" + inp.slice(0, 160);
+    }
+  }
+  return "";
+}
+
 /** Assistant content blocks from a pair's response (JSON body or SSE). */
 export function responseBlocks(pair: any): any[] {
   if (wireDialect(pair) === "openai") {
@@ -157,15 +185,96 @@ export function buildSession(pairs: any[], wire?: any): any {
     } else {
       continue;
     }
+    // Threads are scoped WITHIN their session (session-tab design): two
+    // sessions whose first message is identical (e.g. after /clear) must
+    // never merge into one thread. "" = no session id — an honest bucket.
+    const sid = extractSessionId(p, wire) || "";
+    key = sid + "|" + key;
     let t = byKey[key];
     if (!t) {
-      t = { key, kind: "chat", label: "", model: "", dialect, reqs: [] };
+      t = { key, kind: "chat", label: "", model: "", dialect, sessionId: sid, reqs: [] };
       byKey[key] = t;
       threads.push(t);
     }
     t.reqs.push(p);
-    if (req.model) t.model = req.model;
+    // t.model is finalized per-thread below (primary = most output tokens);
+    // this is just a seed so threads whose every request errors still name
+    // the model they asked for.
+    if (req.model && !t.model) t.model = req.model;
   }
+
+  // /compact continuation reunification (2026-07-20 round 9): a full
+  // /compact rewrites message[0] into the continuation summary ("This
+  // session is being continued from a previous conversation..."), so the
+  // continuation groups under a NEW sig — a separate thread for what the
+  // user experiences as one conversation. Worse, the summary QUOTES old
+  // Task dispatch prompts verbatim, so the agent-linker can false-claim
+  // it as a subagent. Reunify: merge such a thread into the same
+  // session's conversation that started before it and carries the
+  // deepest history (the packing the summary was made from). No parent
+  // (trace began mid-session) = stays standalone, today's behavior.
+  const contPreamble = "This session is being continued from a previous conversation";
+  const contOf = (t: any) => {
+    if (t.dialect !== "anthropic") return false;
+    const b = t.reqs[0].request.body || {};
+    const ft = b._cctrace_stub ? b.firstUserText || ""
+      : Array.isArray(b.messages) && b.messages.length ? firstUserText(b.messages[0].content) : "";
+    return ft.lastIndexOf(contPreamble, 0) === 0;
+  };
+  // Structural continuation signals (round 11): the preamble is harness
+  // text that can change or be user-customized, so it is one vote, not
+  // the gate. The stable structural facts: a continuation carries the
+  // SAME system identity block as its parent (subagents and utilities
+  // carry different system prompts — compare the first NON-billing
+  // block, the leading x-anthropic-billing-header block mutates per
+  // request), it starts smaller than the parent's deepest packing, and
+  // the parent goes quiet FOREVER (a compacted conversation never
+  // speaks again; a parent that spawned a subagent always resumes).
+  const sysIdentity = (t: any) => {
+    const sys = (t.reqs[0].request.body || {}).system;
+    if (typeof sys === "string") return sys.slice(0, 200);
+    if (!Array.isArray(sys)) return "";
+    for (const blk of sys) {
+      const s = (blk && blk.text) || "";
+      if (typeof s === "string" && s && s.lastIndexOf("x-anthropic-billing-header", 0) !== 0) return s.slice(0, 200);
+    }
+    return "";
+  };
+  const sidechainish = (t: any) => {
+    if ((t.reqs[0].request.headers || {})["x-claude-code-agent-id"]) return true;
+    const sys = (t.reqs[0].request.body || {}).system;
+    const sysText = typeof sys === "string" ? sys
+      : Array.isArray(sys) ? sys.map((x: any) => (x && x.text) || "").join("\n") : "";
+    return sysText.indexOf("cc_is_subagent=true") !== -1 || /You are (a Claude agent|an agent for Claude Code)/.test(sysText);
+  };
+  for (const t of threads) {
+    if (t.dialect !== "anthropic" || (t as any)._merged) continue;
+    const pre = contOf(t);
+    if (!pre && sidechainish(t)) continue;
+    const t0 = t.reqs[0].request.timestamp || 0;
+    let parent = null;
+    let best = -1;
+    for (const p of threads) {
+      if (p === t || (p as any)._merged || p.sessionId !== t.sessionId || p.dialect !== t.dialect) continue;
+      if ((p.reqs[0].request.timestamp || 0) >= t0 || contOf(p)) continue;
+      let maxH = 0;
+      for (const r of p.reqs) maxH = Math.max(maxH, histLen(r, p.dialect));
+      if (maxH > best) { best = maxH; parent = p; }
+    }
+    if (!parent) continue;
+    // Structural needs a REAL session id: in a no-sid trace (pre-0.13)
+    // two sequential distinct conversations look exactly like parent +
+    // continuation (same identity block, parent quiet, smaller start).
+    const structural = !pre && !!t.sessionId &&
+      !!sysIdentity(t) && sysIdentity(t) === sysIdentity(parent) &&
+      best > histLen(t.reqs[0], t.dialect) &&
+      !parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0);
+    if (pre || structural) {
+      for (const r of t.reqs) parent.reqs.push(r);
+      (t as any)._merged = true;
+    }
+  }
+  for (let i = threads.length - 1; i >= 0; i--) if ((threads[i] as any)._merged) threads.splice(i, 1);
 
   for (const t of threads) {
     // Spine: the request carrying the longest history (ties -> latest).
@@ -193,15 +302,182 @@ export function buildSession(pairs: any[], wire?: any): any {
     }
     const rblocks = responseBlocks(spine);
     if (rblocks.length) t.turns.push({ role: "assistant", blocks: rblocks, toolResultsOnly: false, pairId: null, usage: null });
+    t.compactions = [];
 
-    // A request with n history turns produced the assistant turn at index
-    // n; wire order means later (retried/injected) requests win the slot.
-    for (const p of t.reqs) {
-      const turn = t.turns[histLen(p, t.dialect)];
-      if (turn && turn.role === "assistant") {
-        turn.pairId = p.id;
-        turn.usage = extractCallInfo(p);
+    // Packing epochs (auto-compact, 2026-07-20): /compact REPACKS history —
+    // shorter, and REWRITTEN (old tool_use turns become text; only a recent
+    // tail survives verbatim). The longest request (the spine) then predates
+    // the newest turns: every post-compact exchange existed only in later,
+    // shorter requests — invisible in the outline and falsely flagged as
+    // superseded. If requests FOLLOW the spine in wire order, align the last
+    // one's history against the spine's tail and append what comes after.
+    // The anchor must be context-verified: boilerplate turns (system
+    // notifications, recap prompts) have colliding sigs, so a candidate only
+    // counts when its preceding turns match too. Append-only: no verified
+    // anchor = no merge (a /rewind branch keeps its superseded class).
+    const spineIdx = t.reqs.indexOf(spine);
+    let lastReq = null;
+    for (let i = t.reqs.length - 1; i > spineIdx; i--) {
+      if (!(t.reqs[i].request.body || {})._cctrace_stub) { lastReq = t.reqs[i]; break; }
+    }
+    if (lastReq) {
+      const lb = lastReq.request.body || {};
+      const lastHist = t.dialect === "openai"
+        ? normalizeOpenaiTurns(lb.input || [])
+        : normalizeTurns(lb.messages || []);
+      const lsigs = lastHist.map((x: any) => turnContentSig(x.blocks));
+      const ssigs = t.turns.map((x: any) => turnContentSig(x.blocks));
+      // Frontier: the DEEPEST post-compact turn still present in the spine —
+      // everything after it is genuinely new. Walk lastHist backwards; a
+      // candidate must context-verify (2 comparable preceding turns aligned
+      // 1:1 — empty sigs are wildcards: tool results, empty streams)
+      // because boilerplate turns (system notifications, recap prompts)
+      // collide on sig alone.
+      let anchor = -1;
+      outer:
+      for (let j = lastHist.length - 1; j >= 0; j--) {
+        if (!lsigs[j]) continue;
+        for (let i = ssigs.length - 1; i >= 0; i--) {
+          if (ssigs[i] !== lsigs[j]) continue;
+          let ok = true;
+          let checked = 0;
+          for (let k = 1; k <= 6 && checked < 2; k++) {
+            if (i - k < 0 || j - k < 0) break;
+            const a = ssigs[i - k];
+            const b = lsigs[j - k];
+            if (!a || !b) continue;
+            if (a !== b) { ok = false; break; }
+            checked++;
+          }
+          if (ok) {
+            anchor = j;
+            break outer;
+          }
+        }
       }
+      // No anchor + a compaction-sized drop = a FULL rewrite (a manual
+      // /compact replaces everything with the summary; nothing survives
+      // verbatim). The whole post-compact packing appends at its timeline
+      // position — the summary turn is a real event, and the exchanges
+      // after it are the live conversation, not superseded ghosts.
+      const appendFrom = anchor >= 0 ? anchor + 1
+        : lastHist.length && spineLen - lastHist.length >= 10 ? 0
+        : lastHist.length;
+      if (appendFrom < lastHist.length) {
+        // The boundary is display data (session-tab round 10): the request
+        // body sent to the API changed completely here. `at` = the first
+        // post-compact turn's index. The wire witness is the first request
+        // of the NEW packing — NOT merely the first request after the
+        // spine: pre-compact stragglers (shorter ephemeral requests) can
+        // sit between the spine and the real drop. Same-packing test:
+        // no longer than lastReq's history, and for a full rewrite also
+        // below the compaction-sized drop.
+        let firstPost = lastReq;
+        for (let i = spineIdx + 1; i < t.reqs.length; i++) {
+          const r = t.reqs[i];
+          if ((r.request.body || {})._cctrace_stub) continue;
+          const len = histLen(r, t.dialect);
+          if (len <= lastHist.length && (anchor >= 0 || len < spineLen - 9)) { firstPost = r; break; }
+        }
+        t.compactions.push({
+          at: t.turns.length,
+          pairId: firstPost.id,
+          fromTurns: spineLen,
+          toTurns: histLen(firstPost, t.dialect),
+          mode: anchor >= 0 ? "fold" : "rewrite",
+        });
+        for (let i = appendFrom; i < lastHist.length; i++) t.turns.push(lastHist[i]);
+        const lr = responseBlocks(lastReq);
+        if (lr.length) t.turns.push({ role: "assistant", blocks: lr, toolResultsOnly: false, pairId: null, usage: null });
+      }
+    }
+
+    // Per-turn attribution (devlog 2026-07-17): index-first, content-
+    // verified. A request with n history turns produced the assistant turn
+    // at index n — but Claude Code repacks history between requests
+    // (ephemeral notice turns come and go), so the index can land on the
+    // wrong turn. Verify the landing turn against the pair's own response;
+    // scan for the true turn on mismatch; classify what matches nothing
+    // (rewound vs unattributed) instead of dropping it silently.
+    // claim strength: 1 = index-only (unverifiable pair), 2 = content-verified.
+    // Compaction events: a history drop of 10+ turns below the running max
+    // marks a repack (/compact rewrote history); ephemeral notice turns
+    // wobble lengths by 1-3, and a /rewind steps back a few — never this
+    // much. lastCompactIdx = the first request of the newest packing.
+    let maxLen = 0;
+    let lastCompactIdx = -1;
+    for (let i = 0; i < t.reqs.length; i++) {
+      const len = histLen(t.reqs[i], t.dialect);
+      if (maxLen - len >= 10) lastCompactIdx = i;
+      if (len > maxLen) maxLen = len;
+    }
+    const compactGate = lastCompactIdx >= 0 && spineIdx >= lastCompactIdx;
+    const claimed: Record<number, number> = {};
+    t.rewound = [];
+    t.unattributed = [];
+    for (let reqIdx = 0; reqIdx < t.reqs.length; reqIdx++) {
+      const p = t.reqs[reqIdx];
+      const idx = histLen(p, t.dialect);
+      const landing = t.turns[idx];
+      const attach = (i: number, strength: number) => {
+        t.turns[i].pairId = p.id;
+        t.turns[i].usage = extractCallInfo(p);
+        claimed[i] = strength;
+      };
+      const rsig = turnContentSig(responseBlocks(p));
+      if (!rsig) {
+        // Nothing to verify against (stubbed body's response was collapsed,
+        // errored/empty stream): index attribution stays primary, but never
+        // over a verified claim.
+        if (landing && landing.role === "assistant" && (claimed[idx] || 0) < 2) attach(idx, 1);
+        continue;
+      }
+      if (landing && landing.role === "assistant" && turnContentSig(landing.blocks) === rsig) {
+        attach(idx, 2);
+        continue;
+      }
+      // Index landed wrong — find the reply in the spine, nearest turn
+      // first, preferring unclaimed slots (identical short replies exist).
+      let found = -1;
+      let foundCost = Infinity;
+      for (let i = 0; i < t.turns.length; i++) {
+        const tt = t.turns[i];
+        if (!tt || tt.role !== "assistant") continue;
+        if (turnContentSig(tt.blocks) !== rsig) continue;
+        const cost = Math.abs(i - idx) + (claimed[i] ? 1000 : 0);
+        if (cost < foundCost) {
+          found = i;
+          foundCost = cost;
+        }
+      }
+      if (found >= 0) {
+        if ((claimed[found] || 0) < 2 || !t.turns[found].pairId) attach(found, 2);
+        continue;
+      }
+      // The reply exists on the wire but nowhere in the spine's history: the
+      // exchange was erased. Prefix-divergence decides the class — if the
+      // pair's final history turn differs from the spine's packing at that
+      // index, /rewind rewrote history (keep + mark, never lose); otherwise
+      // we just can't place it.
+      let cls = "unattributed";
+      const body = p.request.body || {};
+      const hist = t.dialect === "openai"
+        ? (Array.isArray(body.input) ? normalizeOpenaiTurns(body.input) : [])
+        : (Array.isArray(body.messages) ? normalizeTurns(body.messages) : []);
+      if (hist.length) {
+        const lastSig = turnContentSig(hist[hist.length - 1].blocks);
+        const spineAt = t.turns[idx - 1];
+        const spineSig = spineAt ? turnContentSig(spineAt.blocks) : "";
+        // A pair from BEFORE a compaction can fail attribution merely
+        // because the fold rewrote its exchange (indices shift, tool_use
+        // turns become text) — that's repacking drift, not supersession.
+        // The gate only matters when the spine itself is a post-compact
+        // packing; against a contemporary spine the comparison is sound.
+        const preCompact = compactGate && reqIdx < lastCompactIdx;
+        if (!preCompact && lastSig && spineSig && lastSig !== spineSig) cls = "rewound";
+      }
+      if (cls === "rewound") t.rewound.push({ pairId: p.id, at: idx });
+      else t.unattributed.push(p.id);
     }
 
     const agg = {
@@ -212,7 +488,13 @@ export function buildSession(pairs: any[], wire?: any): any {
       // toolErrors/toolUses = tool_result blocks flagged is_error, with the
       // denominator for a rate.
       wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0,
+      rewound: t.rewound.length, unattributed: t.unattributed.length,
     };
+    // A thread is not one model: /model switches mid-session at will. Track
+    // the set (model -> requests/tokens/cost); the thread's face model is
+    // the one that did the most output work — last-used was the bug
+    // (devlog 2026-07-17), not a rule.
+    const models: Record<string, any> = {};
     for (const p of t.reqs) {
       const m = extractCallInfo(p);
       agg.input += m.input;
@@ -224,7 +506,26 @@ export function buildSession(pairs: any[], wire?: any): any {
       const r = p.response;
       if (!r || r.status >= 400 || m.error) agg.wireErrors++;
       if (r && r.truncated) agg.truncated++;
+      const mid = (p.request.body || {}).model || m.model || "";
+      if (mid) {
+        const mm = models[mid] || (models[mid] = { requests: 0, input: 0, output: 0, cost: 0 });
+        mm.requests++;
+        mm.input += m.input;
+        mm.output += m.output;
+        if (c) mm.cost += c.total;
+      }
     }
+    t.models = models;
+    let primary = t.model || "";
+    let primaryOut = -1;
+    for (const mid in models) {
+      if (models[mid].output > primaryOut) {
+        primary = mid;
+        primaryOut = models[mid].output;
+      }
+    }
+    t.model = primary;
+    t.epochs = threadEpochs(t.turns);
     for (const turn of t.turns) {
       for (const b of turn.blocks || []) {
         if (!b) continue;
@@ -239,10 +540,12 @@ export function buildSession(pairs: any[], wire?: any): any {
       // in the x-codex-turn-metadata JSON header; grok recap utilities in
       // their conv id.
       const meta = (spine.request.headers || {})["x-codex-turn-metadata"] || "";
+      const w2 = wire && spine.client ? wire[spine.client] : null;
+      const conv = (w2 && w2.threadHeader && (spine.request.headers || {})[w2.threadHeader]) || "";
       if (String(meta).indexOf('"request_kind":"prewarm"') !== -1) {
         t.kind = "utility";
         t.label = "prewarm";
-      } else if (t.key.lastIndexOf("conv:recap-", 0) === 0) {
+      } else if (String(conv).lastIndexOf("recap-", 0) === 0) {
         t.kind = "utility";
         t.label = "recap";
       }
@@ -274,6 +577,7 @@ export function buildSession(pairs: any[], wire?: any): any {
 
     t.pairIds = t.reqs.map((p: any) => p.id);
     t.firstAt = t.reqs[0].request.timestamp || 0;
+    t.lastAt = t.reqs[t.reqs.length - 1].request.timestamp || 0;
   }
 
   // Agent linking: a thread whose first user text matches a Task-style
@@ -308,8 +612,14 @@ export function buildSession(pairs: any[], wire?: any): any {
     if (!firstText) continue;
     for (const d of dispatches) {
       if (d.from === t.key) continue;
+      // One dispatch, one thread: parallel Tasks with IDENTICAL prompts
+      // (fan-out on several models) would all match the first tool_use,
+      // collapsing three spawns onto one id. Threads and dispatches both
+      // walk in wire order, so first-unclaimed pairs them 1:1.
+      if (d.claimed) continue;
       const head = d.prompt.slice(0, 300);
       if (firstText === d.prompt || firstText.indexOf(head) !== -1 || d.prompt.indexOf(firstText.slice(0, 300)) !== -1) {
+        d.claimed = true;
         t.kind = "agent";
         t.agentOf = { thread: d.from, toolUseId: d.toolUseId, agentType: d.agentType, description: d.description };
         if (d.agentType || d.description) {
@@ -322,13 +632,95 @@ export function buildSession(pairs: any[], wire?: any): any {
 
   for (const t of threads) {
     if (!t.label) {
+      // The label names what the thread IS — a conversation of N turns.
+      // The model is an attribute, not the identity (a thread can span
+      // several via /model); it renders as its own chip in the UI.
       const n = t.turns.filter((x: any) => !x.toolResultsOnly).length;
-      t.label = shortModel(t.model) + " · " + n + " turn" + (n === 1 ? "" : "s");
+      t.label = n + " turn" + (n === 1 ? "" : "s");
     }
     delete t.reqs;
   }
 
   return { threads };
+}
+
+/**
+ * One-line preview of a user turn for the conversation outline: the first
+ * text that is actually the user's — injected reminder blocks stripped,
+ * local-command caveat/stdout wrappers skipped. A turn that is only a slash
+ * command previews as the command itself ("/model"): that IS what the user
+ * did. "" = nothing human to show.
+ */
+export function turnSnippet(blocks: any[]): string {
+  let cmd = "";
+  for (const b of blocks || []) {
+    if (!b || b.type !== "text" || typeof b.text !== "string") continue;
+    const s = b.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
+    if (!s) continue;
+    if (s.lastIndexOf("<local-command-caveat>", 0) === 0 || s.lastIndexOf("<local-command-stdout>", 0) === 0) continue;
+    // Skill invocations expand to a harness block ("Base directory for
+    // this skill: ..."); the human-meaningful preview is the command.
+    if (s.lastIndexOf("Base directory for this skill", 0) === 0) continue;
+    // Command/skill invocations arrive in BOTH orders on the wire:
+    // /model puts <command-name> first, /codex:status and skill blocks
+    // put <command-message> first — extract the name wherever it sits,
+    // plus args when present ("/model claude-fable-5").
+    if (s.lastIndexOf("<command-name>", 0) === 0 || s.lastIndexOf("<command-message>", 0) === 0) {
+      const m = s.match(/<command-name>([^<]*)<\/command-name>/);
+      if (m) {
+        if (!cmd) {
+          const a = s.match(/<command-args>([^<]*)<\/command-args>/);
+          cmd = (m[1].trim() + " " + ((a && a[1]) || "").trim()).trim();
+        }
+        continue;
+      }
+    }
+    return s;
+  }
+  return cmd;
+}
+
+/**
+ * Model epochs: contiguous runs of a thread's visible turns answered by one
+ * model, folded from attributed assistant turns. Presentation-level
+ * sub-structure — thread identity stays the conversation (session-tab
+ * design): a /model switch opens a new epoch, never a new thread. User
+ * turns belong to the epoch of the assistant reply that answered them (the
+ * prompt sent after a switch lands in the NEW epoch); unattributed
+ * assistant turns extend the current epoch rather than guess a model.
+ * from/to are visible-turn ordinals (toolResultsOnly rows fold away) — the
+ * exact ordering the convo pane renders, so an epoch maps straight to the
+ * Nth rendered turn.
+ */
+export function threadEpochs(turns: any[]): any[] {
+  const eps: any[] = [];
+  let cur: any = null;
+  let pending = -1; // first visible non-assistant turn not yet claimed by a reply
+  let vis = -1;
+  for (const t of turns || []) {
+    if (!t || t.toolResultsOnly) continue;
+    vis++;
+    if (t.role !== "assistant") {
+      if (pending < 0) pending = vis;
+      continue;
+    }
+    const m = (t.usage && t.usage.model) || "";
+    const from = pending < 0 ? vis : pending;
+    pending = -1;
+    if (!cur) {
+      cur = { model: m, from, to: vis };
+      eps.push(cur);
+    } else if (m && cur.model && m !== cur.model) {
+      cur = { model: m, from, to: vis };
+      eps.push(cur);
+    } else {
+      if (m && !cur.model) cur.model = m;
+      cur.to = vis;
+    }
+  }
+  // Trailing prompts with no reply yet (live tail) stay in the last epoch.
+  if (cur && pending >= 0) cur.to = vis;
+  return eps;
 }
 
 /** The thread to select by default: the chat thread with the most turns. */

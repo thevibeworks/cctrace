@@ -33,9 +33,12 @@ import {
   firstUserText,
   threadSig,
   normalizeTurns,
+  turnContentSig,
   buildToolResultIndex,
   responseBlocks,
   buildSession,
+  threadEpochs,
+  turnSnippet,
   mainThread,
   toolPreview,
 } from "./session";
@@ -74,6 +77,8 @@ export interface PageMeta {
   project?: string;
   /** Full path of that directory (tooltip). */
   projectPath?: string;
+  /** Basename of the trace file behind this page (live log or view source). */
+  traceFile?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
   /** cctrace version that produced this page/snapshot. */
@@ -172,10 +177,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .ctx-sess:hover { color: var(--text); }
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
-    /* Version badge: sits with the brand — what produced the page is a
-       brand fact, separate from the run identity in .ctx. */
-    .ver { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; margin-left: 2px; }
-    .ver-badge { color: var(--text-faint); font-size: 11px; }
+    /* Version badge: right side with the page chrome — what produced the
+       page is a brand fact, separate from the run identity in .ctx. The
+       hover tooltip carries the short about text. */
+    .ver { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
+    .ver-badge { color: var(--text-faint); font-size: 11px; cursor: default; }
+    .ver-badge:hover { color: var(--text-muted); }
     .ver-upd {
       color: var(--amber); font-size: 11px;
       text-decoration: none; border-bottom: 1px dashed var(--amber);
@@ -189,7 +196,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .inst-btn:hover { color: var(--text); border-color: var(--accent); }
     .inst-menu {
-      display: none; position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
+      display: none; position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
       min-width: 260px; padding: 4px;
       background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
@@ -616,6 +623,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .turn-user:first-child { margin-top: 0; }
     .turn-assistant .turn-role { color: var(--green); }
     .turn-tag { color: var(--text-faint); text-transform: none; letter-spacing: 0; }
+    /* the outline's numbering, repeated on the turn itself — turn03 in the
+       pane is turn03 here; stays faint whatever the role bar's color */
+    .turn-ord {
+      color: var(--text-faint); text-transform: none; letter-spacing: 0;
+      font-variant-numeric: tabular-nums;
+    }
     .turn-usage {
       margin-left: auto; color: var(--text-faint); font-size: 10px;
       text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums;
@@ -712,7 +725,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .fold.fold-skill > summary .fold-title,
     .fold.fold-mcp > summary .fold-title { color: var(--purple); }
     .fold.fold-agent > summary .fold-hint { color: var(--text-muted); }
+    .fold-ico { display: inline-flex; flex: none; }
+    .fold.fold-agent > summary .fold-ico,
+    .fold.fold-skill > summary .fold-ico,
+    .fold.fold-mcp > summary .fold-ico { color: var(--purple); }
+    /* the spawned thread's outcome, on the spawn itself */
+    .fold-stat {
+      flex: none; margin-left: auto; color: var(--text-faint);
+      font-size: 11px; font-variant-numeric: tabular-nums;
+    }
     .fold-link { color: var(--accent); font-size: 11px; text-decoration: none; flex: none; margin-left: auto; }
+    .fold-stat ~ .fold-link { margin-left: 10px; }
     .fold-link:hover { text-decoration: underline; }
     .sys-block { border-bottom: 1px dashed var(--border); }
     .sys-block:last-child { border-bottom: none; }
@@ -740,60 +763,291 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .ubar-resets { color: var(--text-faint); font-size: 11px; }
     /* ---- Session view components ---- */
     .thread { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
-    .thread.selected { border-color: var(--accent); }
+    /* Selection is a wash, not an edge (accent edges read as chrome —
+       same rule as user-turn emphasis). The expanded request list below
+       the selected card is the louder signal anyway. */
+    .thread.selected { border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+    .thread.selected .thread-head {
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg-surface));
+    }
     .thread-head {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 10px; background: var(--bg-surface);
       color: inherit; text-decoration: none; cursor: pointer;
     }
     .thread-head:hover { background: var(--hover); }
+    /* One accent (ui.md rule 2): kind chips are neutral outlines — the
+       word carries the meaning; red/amber stay reserved for state. */
     .tkind {
       padding: 1px 7px; border-radius: 999px; font-size: 10px;
-      text-transform: uppercase; color: #fff; flex-shrink: 0;
+      text-transform: uppercase; color: var(--text-muted);
+      border: 1px solid var(--border); flex-shrink: 0;
     }
-    .tkind-chat { background: var(--status-ok); }
-    .tkind-agent { background: var(--purple); }
-    .tkind-utility { background: var(--text-faint); }
     .thread-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .thread-meta { padding: 6px 10px; font-size: 11px; color: var(--text-muted); }
+    .tmodel {
+      margin-left: auto; flex-shrink: 0; font-size: 10px;
+      color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
+    /* the container's key, small caps: SESSION <sid> — accent-tinted so
+       the eye finds the identity without the value itself shouting */
+    .klabel {
+      color: color-mix(in srgb, var(--accent) 55%, var(--text-faint));
+      font-size: 9px; margin-right: 4px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .thread-meta {
+      padding: 6px 10px; font-size: 11px; color: var(--text-muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* The conversation outline as a RAIL (session-tab round 9): one
+       continuous line down the session body, every row a node on it.
+       .rgut is the shared gutter column — the line lives in its ::before,
+       the node (dot/ring) sits on top and punches through with a bg halo.
+       One grammar for epoch heads, turns, superseded rows, and subagent
+       branches; the rail itself carries the git-branch metaphor. */
+    .thread-turns { border-top: 1px solid var(--border); }
+    .rgut {
+      position: relative; align-self: stretch; flex: none;
+      width: 14px; display: flex; align-items: center; justify-content: center;
+    }
+    .rgut::before {
+      content: ''; position: absolute; left: 50%; top: 0; bottom: 0;
+      width: 1px; margin-left: -0.5px;
+      background: color-mix(in srgb, var(--accent) 22%, var(--border));
+    }
+    /* branch elbow: the rail continues, an arm curves off to the row */
+    .rgut-br::after {
+      content: ''; position: absolute; left: 50%; top: -2px;
+      width: 9px; height: 58%; margin-left: -0.5px;
+      border-left: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+      border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+      border-bottom-left-radius: 7px;
+    }
+    /* epoch node: a hollow accent ring on the rail — structure, not a
+       message; bigger than turn dots, same family as the klabel tint */
+    .enode {
+      position: relative; width: 8px; height: 8px; border-radius: 50%;
+      flex: none; background: var(--bg); box-shadow: 0 0 0 2px var(--bg);
+      border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--text-faint));
+    }
+    .tepoch {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 10px; font-size: 11px;
+      color: var(--text); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .tepoch .rgut { margin: -4px 0; }
+    .tepoch:hover { background: var(--hover); }
+    .tepoch-ord { color: var(--text-faint); flex-shrink: 0; }
+    .tepoch-turns { margin-left: auto; color: var(--text-faint); }
+    /* subagent branch row: attached at its spawn turn, elbow off the rail,
+       outcome stats inline — the thread is one click away */
+    .tbranch {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 10px; font-size: 11px;
+      color: var(--text-faint); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .tbranch .rgut { margin: -3px 0; }
+    .tbranch:hover { background: var(--hover); }
+    /* content indents one outline level under its spawn turn — the rail
+       column itself never moves, only the arm reaches further */
+    .tbranch-label {
+      margin-left: 12px; color: var(--purple); overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tbranch-stat { margin-left: auto; flex-shrink: 0; }
+    /* compact boundary: the request body sent to the API changed
+       completely here — a break mark on the rail (two slanted hairlines,
+       the axis-break glyph), grey like superseded: a timeline fact. */
+    .cnode {
+      position: relative; width: 9px; height: 7px; flex: none;
+      background: var(--bg); box-shadow: 0 0 0 2px var(--bg);
+    }
+    .cnode::before, .cnode::after {
+      content: ''; position: absolute; left: 0; right: 0; height: 1px;
+      background: var(--text-muted); transform: rotate(-14deg);
+    }
+    .cnode::before { top: 1px; }
+    .cnode::after { bottom: 1px; }
+    .tcompact {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 10px; font-size: 11px;
+      color: var(--text-muted); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .tcompact .rgut { margin: -3px 0; }
+    .tcompact:hover { background: var(--hover); }
+    .tcompact-label {
+      text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px;
+    }
+    .tcompact-note { margin-left: auto; color: var(--text-faint); }
+    /* sessions-layer glyphs: stroke-only, inherit the row's color */
+    .sico { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-faint); }
+    .sess > summary .sico { color: color-mix(in srgb, var(--accent) 55%, var(--text-faint)); }
+    /* Instant hover panel (session pane): filled from data-tip, first
+       line = heading, blank lines = section gaps. */
+    .tip {
+      position: fixed; z-index: 100; display: none;
+      max-width: 380px; padding: 7px 10px;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      font-size: 11px; line-height: 1.55; color: var(--text-muted);
+      pointer-events: none; font-variant-numeric: tabular-nums;
+      overflow-wrap: break-word;
+    }
+    .tip.show { display: block; }
+    .tip-head { color: var(--text); }
+    .tip-gap { height: 6px; }
+    .tturn {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 10px; font-size: 11px;
+      color: var(--text-faint); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .tturn .rgut { margin: -3px 0; }
+    /* Every turn is a node on the rail. User turns are a hollow ring (the
+       human's side has no wire verdict); assistant dots carry the request's:
+       green = healthy cache hit, amber = weak hit (<90%) / cold / miss,
+       red = failed request, neutral = no cache in play / unattributed. */
+    .cdot {
+      position: relative; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--border); flex: none;
+      box-shadow: 0 0 0 2px var(--bg);
+    }
+    .cdot-hit { background: var(--green); }
+    .cdot-warn { background: var(--amber); }
+    .cdot-err { background: var(--red); }
+    .cdot-user { background: var(--bg); box-shadow: 0 0 0 2px var(--bg), inset 0 0 0 1.5px var(--text-faint); }
+    .tturn:hover { background: var(--hover); color: var(--text); }
+    .tturn-ord { color: var(--text-faint); flex-shrink: 0; }
+    .tturn-user .tturn-text { color: var(--text-muted); }
+    .tturn:hover .tturn-text { color: var(--text); }
+    .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tturn-tools { color: var(--text-faint); }
+    /* a superseded exchange at its timeline position: grey, half-present —
+       it happened here, then left history */
+    .tturn-sup { opacity: 0.6; }
+    .tturn-sup:hover { opacity: 1; }
     /* Session rollup line above the thread cards: counts across all threads,
        error parts red and only present when nonzero. */
     .threads-sum {
       padding: 4px 10px 8px; font-size: 11px; color: var(--text-faint);
       font-variant-numeric: tabular-nums;
     }
-    .thread-reqs { border-top: 1px solid var(--border); }
-    .treq {
-      display: flex; gap: 10px; padding: 5px 10px; font-size: 11px;
-      color: var(--text-muted); text-decoration: none;
-      border-top: 1px dashed var(--border);
-      font-variant-numeric: tabular-nums;
+    /* turn-level truth markers: rewound branch tips, compact-folded
+       bodies, failed requests — quiet bordered tags, no fill */
+    .treq-mark {
+      font-size: 10px; color: var(--text-faint); align-self: center;
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+      white-space: nowrap;
     }
-    .treq:first-child { border-top: none; }
-    .treq:hover { background: var(--hover); color: var(--text); }
-    /* prompt-cache verdict per wire request: green hit, amber cold/miss */
-    .cdot {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: var(--border); flex: none; align-self: center;
+    .treq-mark.amber { color: var(--amber); border-color: var(--amber); }
+    .treq-mark.err { color: var(--red); border-color: var(--red); }
+    .amber { color: var(--amber); }
+    /* The sessions layer: the SESSION is the container — same card grammar
+       as a thread card, one level up. Threads flatten to divided rows
+       inside it; invisible on single-session traces (zero new chrome). */
+    .sess {
+      border: 1px solid var(--border); border-radius: 6px;
+      margin-bottom: 8px; overflow: hidden;
     }
-    .cdot-hit { background: var(--green); }
-    .cdot-cold, .cdot-miss { background: var(--amber); }
-    .treq-io { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sess > summary {
+      display: flex; gap: 10px; align-items: baseline;
+      cursor: pointer; padding: 7px 10px; font-size: 12px;
+      background: var(--bg-surface); color: var(--text-muted);
+      list-style: none; user-select: none;
+    }
+    .sess > summary::-webkit-details-marker { display: none; }
+    .sess > summary::before {
+      content: '\\25B8'; font-size: 10px; color: var(--text-faint);
+      align-self: center; flex-shrink: 0;
+    }
+    .sess[open] > summary::before { content: '\\25BE'; }
+    .sess > summary:hover { background: var(--hover); }
+    .sess.selected {
+      border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+    }
+    .sess.selected > summary {
+      background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
+    }
+    .sess-sid { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+    .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
+    .sess-turns { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
+    .sess-attrs {
+      margin-left: auto; flex-shrink: 0; text-align: right;
+      color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* an absorbed chat's model chip sits with the identity, not the attrs
+       (which own the right edge via their auto margin) */
+    .sess > summary .tmodel { margin-left: 0; }
+    /* threads become rows of their session card, not cards-in-a-card */
+    .sess .thread {
+      border: none; border-radius: 0; margin: 0;
+      border-top: 1px solid var(--border);
+    }
+    .sess .fold.box { border: none; border-top: 1px solid var(--border); border-radius: 0; margin: 0; }
+    /* rows inside the card stay plain — the card header owns the surface */
+    .sess .thread-head { background: transparent; }
+    .sess .thread-head:hover { background: var(--hover); }
+    .sess .thread.selected .thread-head {
+      background: color-mix(in srgb, var(--accent) 9%, var(--bg));
+    }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
       border: 1px dashed var(--purple); border-radius: 6px;
       font-size: 12px; color: var(--text-muted);
+    }
+    /* an exchange that left history — grey, not amber: it's a timeline
+       fact, not a warning (we can't know if it was /rewind, an edit, or
+       an ephemeral injected exchange) */
+    .rewound-mark {
+      padding: 4px 12px; margin: 6px 0;
+      font-size: 11px; color: var(--text-faint);
+      border-left: 2px dashed var(--border);
+    }
+    .rewound-mark a { color: var(--text-muted); }
+    /* compact divider (convo pane): dashed — the context above it was
+       rewritten; the conversation continues but the model's memory of it
+       is the summary/folded form only */
+    .cmark {
+      display: flex; align-items: center; gap: 10px;
+      margin: 16px 0 8px; font-size: 11px; color: var(--text-faint);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .cmark::before, .cmark::after {
+      content: ''; flex: 1; border-top: 1px dashed var(--border);
+    }
+    .cmark a { color: var(--text-muted); text-decoration: none; }
+    .cmark a:hover { text-decoration: underline; }
+    /* the continuation summary is not a normal prompt — tag it */
+    .sum-tag {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--text-muted); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0 4px; margin-left: 8px; flex: none;
+    }
+    /* epoch divider: a hairline where a /model switch takes over — the
+       conversation flows through it, so a rule, not a box */
+    .epoch-mark {
+      display: flex; align-items: center; gap: 10px;
+      margin: 16px 0 8px; font-size: 11px; color: var(--text-faint);
+      font-variant-numeric: tabular-nums; white-space: nowrap;
+    }
+    .epoch-mark::before, .epoch-mark::after {
+      content: ''; flex: 1; border-top: 1px solid var(--border);
     }
     .agent-note a { color: var(--accent); }
   </style>
 </head>
 <body>
   <header>
-    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1><span class="ver" id="ver"></span></span>
+    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="ctx" id="ctx"></span>
-    <span class="inst" id="inst"></span>
     <span class="count"><span id="count">0</span> requests</span>
+    <span class="inst" id="inst"></span>
     <span class="status disconnected" id="status">offline</span>
+    <span class="ver" id="ver"></span>
     <span class="header-actions">
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -802,7 +1056,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   <div class="toolbar" id="toolbar">
     <span class="tabs">
       <button class="tab active" id="tab-requests">Requests</button>
-      <button class="tab" id="tab-session">Session</button>
+      <button class="tab" id="tab-session">Sessions</button>
     </span>
     <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
     <button id="replay-toggle" title="Replay this session — ←/→ step turns, Space plays">⏵ replay</button>
@@ -868,6 +1122,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let view = 'requests';      // 'requests' | 'session'
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session view
+    const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
 
     // Run identity injected by the server / snapshot writer ({} when unknown,
@@ -937,8 +1192,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${firstUserText.toString()}
     ${threadSig.toString()}
     ${normalizeTurns.toString()}
+    ${turnContentSig.toString()}
     ${buildToolResultIndex.toString()}
     ${responseBlocks.toString()}
+    ${threadEpochs.toString()}
+    ${turnSnippet.toString()}
     ${buildSession.toString()}
     ${mainThread.toString()}
     ${toolPreview.toString()}
@@ -1045,7 +1303,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (META.project) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<span class="ctx-proj" title="' + escapeHtml(META.projectPath || META.project) + '">' + escapeHtml(META.project) + '</span>';
+        // The trace title: <project>/<trace-file> — names the artifact
+        // behind this page, live log and view rebuild alike.
+        const label = META.project + (META.traceFile ? '/' + META.traceFile : '');
+        const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '');
+        html += '<span class="ctx-proj" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
       }
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
@@ -1067,7 +1329,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // version produced the page has nothing to do with which run it shows.
     (function renderVer() {
       if (!META.version) return;
-      let html = '<span class="ver-badge" title="cctrace v' + escapeHtml(META.version) + '">v' + escapeHtml(META.version) + '</span>';
+      const about = 'cctrace v' + META.version + ' \\u2014 HTTP traffic tracer for coding-agent CLIs (Claude Code, Codex, Grok).\\n' +
+        'Captures every API request on the wire and rebuilds sessions, turns, costs, and cache behavior \\u2014 see what your agent really does.\\n' +
+        'github.com/thevibeworks/cctrace';
+      let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
       if (META.latestVersion) {
         html += '<a class="ver-upd" href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md"' +
           ' target="_blank" rel="noopener"' +
@@ -1163,6 +1428,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (msg.type === 'init') {
           pairs.length = 0;
           for (const p of msg.pairs) ingestPair(p);
+          for (const p of pairs) {
+            const s = extractSessionId(p, CLIENT_WIRE);
+            if (s) liveSids.add(s);
+          }
           render();
           route();
         } else if (msg.type === 'pair') {
@@ -1175,6 +1444,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
           }
           refreshDetailNav();
+          // A NEW session id mid-run (e.g. /clear): follow it only while
+          // tailing — reading history is never yanked (terminal semantics).
+          const nsid = extractSessionId(msg.pair, CLIENT_WIRE);
+          if (nsid && !liveSids.has(nsid)) {
+            const firstSid = liveSids.size === 0;
+            liveSids.add(nsid);
+            if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
+          }
           if (view === 'session') showSession(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
@@ -1182,6 +1459,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
             if (!known.has(p.id)) ingestPair(p);
+            const s = extractSessionId(p, CLIENT_WIRE);
+            if (s) liveSids.add(s);
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
@@ -1359,10 +1638,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         try { id = decodeURIComponent(id); } catch {}
         setView('requests');
         openDetail(id);
-      } else if ((m = h.match(/^#\\/session(?:\\/([^/@][^/]*))?(?:\\/@(.+))?$/))) {
+      } else if ((m = h.match(/^#\\/session(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?(?:\\/@(.+))?$/))) {
+        // #/session[/<sid8-or-thread-key>[/<thread-key>]][/@<pair>] — the
+        // first segment resolves as a thread key first (back-compat), then
+        // as a session-id prefix (the sessions layer).
         let key = m[1] || null;
         if (key) { try { key = decodeURIComponent(key); } catch {} }
-        let anchor = m[2] || null;
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        let anchor = m[3] || null;
         if (anchor) { try { anchor = decodeURIComponent(anchor); } catch {} }
         setView('session');
         if (anchor) {
@@ -1379,7 +1663,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             renderReplayBar();
           }
         }
-        showSession(key);
+        showSession(key, sub);
       } else {
         setView('requests');
         closeDetail();
@@ -1452,6 +1736,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (e.key === 'j') { railJump(convoEl, 'tnext'); return; }
         if (e.key === 'p') { railJump(convoEl, 'uprev'); return; }
         if (e.key === 'u') { railJump(convoEl, 'unext'); return; }
+        if (e.key === '[' || e.key === ']') {
+          // Previous/next session, newest-first (same order as the pane).
+          const threads = getThreads();
+          const at = {};
+          for (const t of threads) {
+            if (!t.sessionId) continue;
+            at[t.sessionId] = Math.max(at[t.sessionId] || 0, t.lastAt || t.firstAt || 0);
+          }
+          const sids = Object.keys(at).sort((a, b) => at[b] - at[a]);
+          if (sids.length > 1) {
+            let cur = null;
+            for (const t of threads) if (t.key === sessionSelKey) cur = t.sessionId;
+            let i = sids.indexOf(cur);
+            i = e.key === ']' ? Math.min(sids.length - 1, i + 1) : Math.max(0, i - 1);
+            location.hash = '#/session/' + encodeURIComponent(sids[i].slice(0, 8));
+          }
+          return;
+        }
         if (e.key === 'Escape') {
           if (replay.active) exitReplay();
           else location.hash = '';
@@ -1642,9 +1944,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // extraHtml is raw (not escaped) — only trusted, renderer-built markup
     // like the subagent thread link goes there, never wire-derived strings.
-    function fold(title, hint, body, cls, open, extraHtml) {
+    function fold(title, hint, body, cls, open, extraHtml, icon) {
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
-        '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
+        '<summary>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
+        '<span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
         (extraHtml || '') +
         '</summary><div class="fold-body">' + body + '</div></details>';
@@ -1824,6 +2127,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return d >= 0 ? 'in ' + s : s + ' ago';
     }
 
+    // The usage-limit "resets in Xh Ym" is a countdown against wall-clock,
+    // not against the capture: tick every rendered instance so a page left
+    // open stays truthful (a lapsed window flips to "Nm ago").
+    setInterval(() => {
+      for (const el of document.querySelectorAll('[data-resets]')) {
+        const r = relTime(el.dataset.resets);
+        if (r) el.textContent = 'resets ' + r;
+      }
+    }, 30000);
+
     function renderUsagePanel(pair) {
       const u = extractUsageInfo(pair);
       if (!u || !u.limits.length) return '';
@@ -1835,7 +2148,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="ubar-label">' + escapeHtml(l.label) + '</span>' +
           '<span class="ubar"><span class="ubar-fill ' + cls + '" style="width:' + Math.min(100, pct) + '%"></span></span>' +
           '<span class="ubar-pct">' + pct + '%</span>' +
-          '<span class="ubar-resets"' + (l.resetsAt ? ' title="' + escapeHtml(l.resetsAt) + '"' : '') + '>' +
+          '<span class="ubar-resets"' + (l.resetsAt ? ' title="' + escapeHtml(l.resetsAt) + '" data-resets="' + escapeHtml(l.resetsAt) + '"' : '') + '>' +
           (l.resetsAt ? 'resets ' + relTime(l.resetsAt) : '') + '</span>' +
         '</div>';
       }
@@ -2018,7 +2331,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return sessionCache.threads;
     }
 
-    function showSession(key) {
+    // Default focus is ALWAYS the most recent session (session-tab design):
+    // when several session ids exist, the main-thread pick scopes to the one
+    // with the newest wire activity.
+    function newestMainThread(threads) {
+      let sid = '';
+      let at = -1;
+      for (const t of threads) {
+        if (t.sessionId && (t.lastAt || t.firstAt || 0) >= at) { at = t.lastAt || t.firstAt || 0; sid = t.sessionId; }
+      }
+      const scoped = sid ? threads.filter(t => t.sessionId === sid) : threads;
+      return mainThread(scoped) || mainThread(threads);
+    }
+
+    function showSession(key, sub) {
       const threads = getThreads();
       if (!threads.length) {
         threadsEl.innerHTML = '';
@@ -2031,45 +2357,402 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       let sel = null;
       for (const t of threads) if (t.key === key) sel = t;
-      if (!sel) sel = mainThread(threads);
+      if (!sel && key) {
+        // Short thread key: '<sid8>|<grouping>' — what the URLs carry
+        // (the full wire uuid in the hash was noise, and redacted traces
+        // put literal **** in the URL bar). Full-key links stay valid via
+        // the exact match above.
+        const cut = key.indexOf('|');
+        if (cut >= 0) {
+          const sp = key.slice(0, cut), rest = key.slice(cut);
+          for (const t of threads) {
+            const tc = t.key.indexOf('|');
+            if (tc >= 0 && t.key.slice(tc) === rest && t.key.slice(0, tc).lastIndexOf(sp, 0) === 0) { sel = t; break; }
+          }
+        }
+      }
+      if (!sel && key) {
+        // Session-id prefix: #/session/<sid8>[/<thread-key>] selects that
+        // session's named thread, or its main thread.
+        const st = threads.filter(t => t.sessionId && t.sessionId.lastIndexOf(key, 0) === 0);
+        if (st.length) sel = (sub && st.find(t => t.key === sub || shortKeyStr(t.key) === sub)) || mainThread(st);
+      }
+      if (!sel) sel = newestMainThread(threads);
       sessionSelKey = sel.key;
       agentThreadIndex = {};
+      agentThreadStats = {};
+      agentThreadMeta = {};
       for (const t of threads) {
-        if (t.agentOf && t.agentOf.toolUseId) agentThreadIndex[t.agentOf.toolUseId] = t.key;
+        if (t.agentOf && t.agentOf.toolUseId) {
+          agentThreadIndex[t.agentOf.toolUseId] = t.key;
+          const u = t.usage || {};
+          const n = t.turns.filter(x => !x.toolResultsOnly).length;
+          let s = n + ' turn' + (n === 1 ? '' : 's') + ' \\u00b7 out ' + fmtCompact(u.output || 0);
+          if (u.cost) s += ' \\u00b7 ' + fmtCost(u.cost);
+          const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
+          if (errs) s += ' \\u00b7 ' + errs + ' err';
+          agentThreadStats[t.agentOf.toolUseId] = s;
+          agentThreadMeta[t.agentOf.toolUseId] = { t: t, stats: s };
+        }
       }
       renderThreadsPane(threads, sel);
       renderConvoPane(sel);
     }
 
-    function threadCard(t, selected) {
+    // ---- Instant tooltip (session pane) ----
+    // Native title waits ~1s and renders unstyled; the session pane's
+    // hover details deserve better. One fixed singleton, filled from
+    // data-tip on mouseover: first line renders as the heading, blank
+    // lines as section gaps. Pointer-events off so it never traps the
+    // mouse; guarded so headless boots (tests) skip it.
+    if (document.createElement && document.body) {
+      const tipEl = document.createElement('div');
+      tipEl.className = 'tip';
+      document.body.appendChild(tipEl);
+      let tipFor = null;
+      const hideTip = () => { tipFor = null; tipEl.classList.remove('show'); };
+      document.addEventListener('mouseover', (e) => {
+        const t = e.target && e.target.closest ? e.target.closest('[data-tip]') : null;
+        if (t === tipFor) return;
+        if (!t) { hideTip(); return; }
+        tipFor = t;
+        const lines = String(t.dataset.tip || '').split('\\n');
+        let h = '';
+        for (let i = 0; i < lines.length; i++) {
+          if (!lines[i].trim()) { h += '<div class="tip-gap"></div>'; continue; }
+          h += '<div class="' + (i === 0 ? 'tip-head' : 'tip-line') + '">' + escapeHtml(lines[i]) + '</div>';
+        }
+        tipEl.innerHTML = h;
+        tipEl.classList.add('show');
+        tipEl.style.left = '0px';
+        tipEl.style.top = '0px';
+        const r = t.getBoundingClientRect();
+        const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+        let y = r.bottom + 6;
+        if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
+        tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
+        tipEl.style.top = y + 'px';
+      });
+      document.addEventListener('scroll', hideTip, true);
+      document.addEventListener('mouseleave', hideTip);
+    }
+
+    // Quiet stroke glyphs for the sessions layer (currentColor, no fills):
+    // a prompt-in-a-frame for the session, a branch for a model run.
+    const ICON_SESSION = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.3 6.2l2.3 1.8-2.3 1.8M8.6 10h3"/></svg>';
+    // branch-off-a-rail shape: matches the session rail's own vocabulary
+    // (one line, one arm, one node) — used on subagent spawn folds.
+    const ICON_EPOCH = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2v12M4.5 6.5c0 3 2.6 3.3 5.1 3.5"/><circle cx="11.6" cy="10.2" r="1.8"/></svg>';
+    // Notable-event glyphs for conversation folds: a bolt for skills, a
+    // plug for MCP; subagent spawns reuse the branch (they ARE a thread).
+    const ICON_SKILL = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H7l-1 5.5L11.5 7H8z"/></svg>';
+    const ICON_MCP = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 01-9 0zM8 12v2.5"/></svg>';
+
+    // URL form of a thread key: '<sid8>|<grouping>'. Internal state keeps
+    // full keys; only what lands in the location hash is shortened.
+    function shortKeyStr(key) {
+      const cut = (key || '').indexOf('|');
+      if (cut <= 0) return key || '';
+      return key.slice(0, Math.min(8, cut)) + key.slice(cut);
+    }
+    function threadHash(key) {
+      return '#/session/' + encodeURIComponent(shortKeyStr(key));
+    }
+
+    function threadMeta(t) {
       const u = t.usage;
       const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
         (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
         (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '') +
-        (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '');
-      let reqs = '';
-      if (selected) {
-        let rows = '';
-        for (const pid of t.pairIds) {
-          const p = pairs.find(x => x.id === pid);
-          if (!p) continue;
-          const m = extractCallInfo(p);
-          const cc = summarizeCache(m, p.request.body);
-          rows += '<a class="treq" href="#/p/' + encodeURIComponent(pid) + '" title="open wire request' + (p.prior ? ' (prev run: ' + escapeHtml(p.prior) + ')' : '') + '">' +
-            '<span class="cdot' + (cc ? ' cdot-' + cc.kind : '') + '" title="' + (cc ? escapeHtml(cc.title) : 'no prompt caching on this request') + '"></span>' +
-            '<span>' + fmtTime(new Date(p.request.timestamp * 1000)) + '</span>' +
-            '<span class="treq-io">in ' + fmtCompact(m.input + m.cacheRead + m.cacheWrite) + ' \\u00b7 out ' + fmtCompact(m.output) + '</span>' +
-            '<span>' + formatDuration(p.duration) + '</span></a>';
-        }
-        reqs = '<div class="thread-reqs">' + rows + '</div>';
+        (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '') +
+        (u.rewound ? ' \\u00b7 <span title="exchanges that left the conversation history (/rewind, an edited message, or an ephemeral injected exchange) \\u2014 the wire pairs are kept">' + u.rewound + ' superseded</span>' : '');
+      return '<div class="thread-meta">' + meta + '</div>';
+    }
+
+    // One epoch section head: branch icon + T<n> ordinal + model + turn
+    // count. Click = jump to where that model takes over.
+    function epochHead(t, e, i) {
+      const n = e.to - e.from + 1;
+      const pad = (x) => (x < 10 ? '0' + x : '' + x);
+      // Per-epoch rollup for the hover: what this model run produced.
+      const vis = [];
+      for (const turn of t.turns) if (!turn.toolResultsOnly) vis.push(turn);
+      let out = 0, cost = 0, t0 = 0, t1 = 0;
+      for (let vi = e.from; vi <= e.to && vi < vis.length; vi++) {
+        const u = vis[vi].usage;
+        if (!u) continue;
+        out += u.output || 0;
+        const c = pairCost(u);
+        if (c) cost += c.total;
+        const p = vis[vi].pairId ? pairs.find(x => x.id === vis[vi].pairId) : null;
+        if (p) { if (!t0) t0 = p.request.timestamp; t1 = p.request.timestamp; }
       }
+      const tip = 'T' + i + ' \\u00b7 ' + (shortModel(e.model) || 'unknown model') + ' run\\n' +
+        'turns ' + pad(e.from) + '\\u2013' + pad(e.to) + ' (' + n + ' turn' + (n === 1 ? '' : 's') + ')' +
+        (t0 ? '\\n' + fmtDateTime(new Date(t0 * 1000)) + (t1 && t1 !== t0 ? ' \\u2013 ' + fmtTime(new Date(t1 * 1000)) : '') : '') +
+        '\\nout ' + fmtCompact(out) + (cost ? ' \\u00b7 est. ' + fmtCost(cost) : '') +
+        (i > 0 ? '\\nopened by a /model switch \\u2014 same conversation, different model' : '') +
+        '\\n\\nclick to jump to where this run starts';
+      return '<a class="tepoch" href="' + threadHash(t.key) + '" data-key="' + escapeHtml(t.key) + '" data-turn="' + e.from + '"' +
+        ' data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="rgut"><span class="enode"></span></span>' +
+        '<span class="tepoch-ord">T' + i + '</span>' +
+        '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + '</span>' +
+        '<span class="tepoch-turns">' + n + ' turn' + (n === 1 ? '' : 's') + '</span></a>';
+    }
+
+    // Model epochs as visible rows under a conversation: t0/t1/t2 mark each
+    // /model switch (session-tab design — epochs are sub-structure INSIDE
+    // the chat, never new threads; identity stays the conversation). Only
+    // multi-epoch threads render rows; the single-model case pays nothing.
+    function epochRows(t) {
+      const eps = t.epochs || [];
+      if (eps.length < 2) return '';
+      let rows = '';
+      for (let i = 0; i < eps.length; i++) rows += epochHead(t, eps[i], i);
+      return '<div class="thread-turns">' + rows + '</div>';
+    }
+
+    // The SELECTED conversation's outline (session-tab 2026-07-20): epoch
+    // section heads with their turns nested under —
+    //     t0 fable-5
+    //       turn00  <the prompt>
+    //       turn01  out 28 · 3.7s
+    //     t1 opus-4.8
+    //       turn02  ...
+    // — so the pane reads top-to-bottom like the transcript. Turn rows jump
+    // to the turn in the convo pane (wire detail is one click further, on
+    // the turn's wire link). Wire pairs that produced no visible turn stay
+    // out UNLESS they carry a story (rewound tip, failed request) — those
+    // append as wire rows, because captured data never silently disappears.
+    function epochTurnList(t) {
+      const vis = [];
+      // superseded exchanges (t.rewound: prefix-divergent pairs) belong AT
+      // their timeline position, greyed with the ordinal they occupied —
+      // strictly session order, never a trailing appendix. visAt maps the
+      // full-turn divergence index to the visible ordinal.
+      const supAt = {};
+      const compAt = {};
+      {
+        let vi2 = 0;
+        const fullToVis = [];
+        for (const turn of t.turns) { fullToVis.push(vi2); if (!turn.toolResultsOnly) { vis.push(turn); vi2++; } }
+        fullToVis.push(vi2);
+        for (const r of (t.rewound || [])) {
+          const at = Math.min(Math.max(0, r.at), fullToVis.length - 1);
+          (supAt[fullToVis[at]] = supAt[fullToVis[at]] || []).push(r.pairId);
+        }
+        for (const c of (t.compactions || [])) {
+          const at = Math.min(Math.max(0, c.at), fullToVis.length - 1);
+          (compAt[fullToVis[at]] = compAt[fullToVis[at]] || []).push(c);
+        }
+      }
+      const eps = (t.epochs && t.epochs.length) ? t.epochs : [{ model: t.model, from: 0, to: vis.length - 1 }];
+      const multi = eps.length > 1;
+      const used = {};
+      for (const turn of t.turns) if (turn.pairId) used[turn.pairId] = 1;
+      const supRow = (pid, vi) => {
+        const p = pairs.find(x => x.id === pid);
+        if (!p) return '';
+        const b = p.request.body || {};
+        const hist = Array.isArray(b.messages) ? b.messages : [];
+        let prompt = '';
+        for (let i = hist.length - 1; i >= 0 && !prompt; i--) {
+          if (hist[i] && hist[i].role === 'user') prompt = turnSnippet(normalizeTurns([hist[i]])[0].blocks);
+        }
+        const ord = 'turn' + (vi < 10 ? '0' + vi : vi);
+        const tip = ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
+          (prompt ? '\\n' + prompt.slice(0, 400) : '') +
+          '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
+        return '<a class="tturn tturn-sup" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' + escapeHtml(tip) + '">' +
+          '<span class="rgut"><span class="cdot"></span></span>' +
+          '<span class="tturn-ord">' + ord + '</span>' +
+          '<span class="tturn-text">' + (prompt ? escapeHtml(prompt.slice(0, 120)) : 'superseded exchange') + '</span>' +
+          '<span class="treq-mark">superseded</span></a>';
+      };
+      // The compact boundary: the request body sent to the API changed
+      // completely at this point — everything above lives on only in the
+      // summary/folded form. Break mark on the rail, wire pair linked;
+      // the hover spells out the context collapse in turns AND tokens.
+      const compRow = (c) => {
+        const p = pairs.find(x => x.id === c.pairId);
+        const info = p ? extractCallInfo(p) : null;
+        const postTok = info ? (info.input || 0) + (info.cacheRead || 0) + (info.cacheWrite || 0) : 0;
+        let preTok = 0;
+        const pt = p ? p.request.timestamp : Infinity;
+        for (const pid of t.pairIds) {
+          const pp = pairs.find(x => x.id === pid);
+          if (!pp || pp.request.timestamp >= pt) continue;
+          const u = extractCallInfo(pp);
+          const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+          if (tot > preTok) preTok = tot;
+        }
+        const tip = 'compacted \\u00b7 context rewritten' +
+          (p ? '\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) : '') +
+          '\\nthe request body sent to the API changed completely: ' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns' +
+          (preTok && postTok ? '\\ncontext \\u2248' + fmtCompact(preTok) + ' \\u2192 \\u2248' + fmtCompact(postTok) + ' tok' : '') +
+          '\\n' + (c.mode === 'rewrite'
+            ? 'full rewrite \\u2014 history replaced by a continuation summary'
+            : 'fold \\u2014 older turns rewritten/folded, recent tail kept verbatim') +
+          '\\n\\neverything above this line survives only in the summary/folded form\\nclick to open the first post-compact wire request';
+        return '<a class="tcompact" href="#/p/' + encodeURIComponent(c.pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          '<span class="rgut"><span class="cnode"></span></span>' +
+          '<span class="tcompact-label">compacted</span>' +
+          '<span class="tcompact-note">' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns</span></a>';
+      };
+      // A subagent spawned by this turn attaches HERE, as a branch off the
+      // rail — label + outcome inline, the thread one click away (its
+      // detached card disappears while this thread is the selected one).
+      const branchRows = (turn) => {
+        let out = '';
+        for (const b of turn.blocks || []) {
+          if (!b || b.type !== 'tool_use' || !SPAWN_TOOLS[b.name] || !b.id) continue;
+          const m = agentThreadMeta[b.id];
+          if (!m) continue;
+          out += '<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
+            ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n\\nclick to open this subagent thread') + '">' +
+            '<span class="rgut rgut-br"></span>' +
+            '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
+            '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>';
+        }
+        return out;
+      };
+      let html = '';
+      for (let ei = 0; ei < eps.length; ei++) {
+        const e = eps[ei];
+        if (multi) html += epochHead(t, e, ei);
+        for (let vi = e.from; vi <= e.to && vi < vis.length; vi++) {
+          if (compAt[vi]) for (const c of compAt[vi]) html += compRow(c);
+          if (supAt[vi]) for (const pid of supAt[vi]) html += supRow(pid, vi);
+          const turn = vis[vi];
+          const ord = 'turn' + (vi < 10 ? '0' + vi : vi);
+          let text = '';
+          let dot = '';
+          let tip = '';
+          if (turn.role === 'assistant') {
+            for (const b of turn.blocks || []) {
+              if (b && b.type === 'text' && b.text) { text = escapeHtml(b.text.slice(0, 120)); break; }
+            }
+            if (!text) text = '<span class="tturn-tools">tools\\u2026</span>';
+            const u = turn.usage;
+            const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
+            // The dot leads the row — a status gutter. Assistant dots carry
+            // the wire verdict: red = failed request, green = healthy cache
+            // hit, amber = weak hit / cold / miss, neutral = no cache in
+            // play or unattributed. The row shows the MESSAGE; every metric
+            // (tokens, cost, ttft, duration, folded) lives in the hover —
+            // inline numbers were fighting the text for the same pixels.
+            const failed = p && (!p.response || p.response.status >= 400);
+            const cc = u && p ? summarizeCache(u, p.request.body) : null;
+            dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
+            const tbits = [ord + ' \\u00b7 assistant' + (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : '')];
+            if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
+            if (u) {
+              let l = 'in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output);
+              const c = pairCost(u);
+              if (c && c.total > 0) l += ' \\u00b7 ' + fmtCost(c.total);
+              tbits.push(l);
+            }
+            if (p) {
+              let l = formatDuration(p.duration);
+              if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
+              tbits.push(l);
+            }
+            if (failed) tbits.push('request FAILED: no response or HTTP error \\u2014 see the wire pair');
+            if (cc) tbits.push(cc.title);
+            if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
+            if (!p) tbits.push('unattributed \\u2014 no captured request matches this reply');
+            tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn';
+          } else {
+            const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
+            text = escapeHtml(s.slice(0, 120));
+            dot = '<span class="cdot cdot-user"></span>'; // hollow: the human's turn
+            tip = ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
+          }
+          html += '<a class="tturn' + (turn.role === 'user' ? ' tturn-user' : '') + '" href="' + threadHash(t.key) + '"' +
+            ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '" data-tip="' + escapeHtml(tip) + '">' +
+            '<span class="rgut">' + dot + '</span><span class="tturn-ord">' + ord + '</span>' +
+            '<span class="tturn-text">' + text + '</span></a>';
+          if (turn.role === 'assistant') html += branchRows(turn);
+        }
+      }
+      // superseded exchanges whose position lands past the last turn
+      // (clamped) render at the tail — still in timeline order.
+      const lastVi = vis.length;
+      if (compAt[lastVi]) for (const c of compAt[lastVi]) html += compRow(c);
+      if (supAt[lastVi]) for (const pid of supAt[lastVi]) html += supRow(pid, lastVi - 1 >= 0 ? lastVi - 1 : 0);
+      // Failed requests that back no turn: real wire events, shown last.
+      const sup = {};
+      for (const r of (t.rewound || [])) sup[r.pairId] = 1;
+      for (const pid of t.pairIds) {
+        if (used[pid] || sup[pid]) continue;
+        const p = pairs.find(x => x.id === pid);
+        if (!p) continue;
+        const failed = !p.response || p.response.status >= 400;
+        if (!failed) continue; // routine superseded retries add nothing to the outline
+        html += '<a class="tturn" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' +
+          escapeHtml('wire request \\u00b7 ' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
+            '\\nrequest failed: no response or HTTP error\\n\\nclick to open the wire pair') + '">' +
+          '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
+          '<span class="tturn-ord">wire</span>' +
+          '<span class="tturn-text">' + fmtTime(new Date(p.request.timestamp * 1000)) + '</span>' +
+          '<span class="treq-mark err">err</span></a>';
+      }
+      return '<div class="thread-turns">' + html + '</div>';
+    }
+
+    // Spelled-out hover summary for a thread: what it is, when it ran,
+    // what it used, what went wrong.
+    function threadTitle(t) {
+      const u = t.usage || {};
+      const bits = [t.kind + (t.label ? ' \\u00b7 ' + t.label : '')];
+      if (t.firstAt) {
+        bits.push(fmtDateTime(new Date(t.firstAt * 1000)) +
+          (t.lastAt && t.lastAt !== t.firstAt ? ' \\u2013 ' + fmtTime(new Date(t.lastAt * 1000)) : ''));
+      }
+      bits.push(u.requests + ' req \\u00b7 in ' + fmtCompact(u.input || 0) + ' \\u00b7 out ' + fmtCompact(u.output || 0) +
+        (u.cacheRead ? ' \\u00b7 cache \\u2193' + fmtCompact(u.cacheRead) : ''));
+      if (u.cost) bits.push('est. cost ' + fmtCost(u.cost));
+      const mt = modelTitle(t);
+      if (mt) bits.push('models:\\n' + mt);
+      else if (t.model) bits.push('model ' + shortModel(t.model));
+      const et = errTitle(u);
+      if (et) bits.push(et);
+      return bits.join('\\n');
+    }
+
+    function threadCard(t, selected) {
       return '<div class="thread' + (selected ? ' selected' : '') + '">' +
-        '<a class="thread-head" href="#/session/' + encodeURIComponent(t.key) + '">' +
+        '<a class="thread-head" href="' + threadHash(t.key) + '" data-tip="' + escapeHtml(threadTitle(t)) + '">' +
           '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
           '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
+          modelChip(t) +
         '</a>' +
-        '<div class="thread-meta">' + meta + '</div>' + reqs + '</div>';
+        (selected ? epochTurnList(t) : epochRows(t)) + threadMeta(t) + '</div>';
+    }
+
+    // Per-model breakdown for a thread's tooltip — one line per model when
+    // /model switched mid-thread, undefined for the single-model case.
+    function modelTitle(t) {
+      const keys = Object.keys(t.models || {});
+      if (keys.length < 2) return undefined;
+      return keys.map(m => shortModel(m) + ': ' + t.models[m].requests + ' req \\u00b7 out ' + fmtCompact(t.models[m].output) +
+        (t.models[m].cost ? ' \\u00b7 ' + fmtCost(t.models[m].cost) : '')).join('\\n');
+    }
+
+    // The model as an attribute chip, right-aligned on the thread card —
+    // never part of the thread's identity (a thread is a conversation; it
+    // can span models). "+N" marks mid-thread switches.
+    function modelChip(t) {
+      if (!t.model) return '';
+      const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
+      const mt = modelTitle(t);
+      const tip = 'model ' + shortModel(t.model) + (extra ? ' (+' + extra + ' via /model)' : '') +
+        '\\nprimary = most output tokens, never last-used' +
+        (mt ? '\\n\\n' + mt : '');
+      return '<span class="tmodel" data-tip="' + escapeHtml(tip) + '">' +
+        escapeHtml(shortModel(t.model)) + (extra ? ' +' + extra : '') + '</span>';
     }
 
     // Spelled-out breakdown for an error count — the aggregate chip stays
@@ -2088,7 +2771,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Session rollup across all threads: one quiet line on top of the
     // threads pane; error parts render only when nonzero (and in red).
-    function sessionSummary(threads) {
+    function sessionSummary(threads, sessionCount) {
       const s = { requests: 0, wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0 };
       for (const t of threads) {
         const u = t.usage || {};
@@ -2099,6 +2782,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         s.toolUses += u.toolUses || 0;
       }
       const bits = [threads.length + ' thread' + (threads.length === 1 ? '' : 's'), s.requests + ' req'];
+      if (sessionCount > 1) bits.unshift(sessionCount + ' sessions');
       if (s.wireErrors) {
         const r = pctOf(s.wireErrors, s.requests);
         bits.push('<span class="err">' + s.wireErrors + ' req err' + (r ? ' (' + r + ')' : '') + '</span>');
@@ -2111,23 +2795,183 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="threads-sum" title="' + escapeHtml(errTitle(s)) + '">' + bits.join(' \\u00b7 ') + '</div>';
     }
 
+    // Session-fold state must survive live re-renders — keyed by sid, not
+    // positionally (sections can appear mid-run). Unset = default (newest
+    // session and the selection's session open, the rest collapsed).
+    const sessOpen = {};
+
     function renderThreadsPane(threads, sel) {
-      const convos = threads.filter(t => t.kind !== 'utility');
-      const utils = threads.filter(t => t.kind === 'utility');
       const card = (t) => {
         try { return threadCard(t, t.key === sel.key); }
         catch (e) { return brokenItem('thread', t && t.key, e); }
       };
-      let html = sessionSummary(threads);
-      for (const t of convos) html += card(t);
-      if (utils.length) {
-        let inner = '';
-        for (const t of utils) inner += card(t);
-        html += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
+      const section = (list) => {
+        // A subagent linked to the SELECTED thread renders as a branch row
+        // inside that thread's outline (session rail) — its detached card
+        // would say the same thing twice. It comes back the moment its
+        // parent isn't the outlined thread (or it is selected itself), so
+        // nothing is ever unreachable.
+        const asBranch = (t) => t.agentOf && t.agentOf.thread === sel.key && t.key !== sel.key &&
+          t.agentOf.toolUseId && agentThreadIndex[t.agentOf.toolUseId] === t.key;
+        const convos = list.filter(t => t.kind !== 'utility' && !asBranch(t));
+        const utils = list.filter(t => t.kind === 'utility');
+        let out = '';
+        for (const t of convos) out += card(t);
+        if (utils.length) {
+          let inner = '';
+          for (const t of utils) inner += card(t);
+          out += fold('utility \\u00b7 ' + utils.length, 'probes, title generation', inner, 'box', utils.some(t => t.key === sel.key));
+        }
+        return out;
+      };
+      // The sessions layer: threads grouped by wire session id, newest
+      // activity first. A single-session trace renders with ZERO new chrome
+      // — exactly the flat pane (the common case pays nothing).
+      const sids = [];
+      const bySid = {};
+      for (const t of threads) {
+        const sid = t.sessionId || '';
+        if (!bySid[sid]) { bySid[sid] = []; sids.push(sid); }
+        bySid[sid].push(t);
+      }
+      let html = sessionSummary(threads, sids.length);
+      {
+        // EVERY trace renders the sessions layer — a single-session trace
+        // is one open container (2026-07-20 round 5: the old flat mode
+        // showed a redundant "[chat] N turns" card where the session
+        // header says it better; the absorbed container IS the compact
+        // view).
+        const lastAt = (g) => Math.max.apply(null, g.map(t => t.lastAt || t.firstAt || 0));
+        sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]));
+        for (let i = 0; i < sids.length; i++) {
+          const sid = sids[i];
+          const g = bySid[sid];
+          const hasSel = g.some(t => t.key === sel.key);
+          const open = sid in sessOpen ? sessOpen[sid] : (i === 0 || hasSel);
+          // A container with exactly one chat collapses into its parent
+          // (session-tab design): the session header absorbs the chat card
+          // — "session → chat" said the same thing twice, and /clear
+          // rotates the sid, so one-chat sessions ARE the common case.
+          // Epochs, the request list, and agent/utility threads hang
+          // directly under the header; clicking the header selects the
+          // chat (clicking again folds).
+          const chats = g.filter(t => t.kind === 'chat');
+          const face = chats.length === 1 ? chats[0] : null;
+          const body = face
+            ? (face.key === sel.key ? epochTurnList(face) : epochRows(face)) + section(g.filter(t => t !== face))
+            : section(g);
+          // Selection emphasis lives on the SESSION container — the active
+          // conversation's home; the thread inside marks itself quietly.
+          html += '<details class="sess' + (hasSel ? ' selected' : '') + '" data-sid="' + escapeHtml(sid) + '"' + (open ? ' open' : '') + '>' +
+            '<summary' + (face ? ' data-goto="' + escapeHtml(face.key) + '"' : '') + ' data-tip="' + escapeHtml(sessTitle(sid, g)) + '">' +
+            sessHeader(sid, g, face) + '</summary>' + body + '</details>';
+        }
       }
       const top = threadsEl.scrollTop; // live re-renders must not move the list
       threadsEl.innerHTML = html;
       threadsEl.scrollTop = top;
+      for (const d of threadsEl.querySelectorAll('details.sess')) {
+        d.addEventListener('toggle', () => { sessOpen[d.dataset.sid] = d.open; });
+        const sum = d.querySelector(':scope > summary');
+        if (sum && sum.dataset.goto) sum.addEventListener('click', (e) => {
+          // First click on an absorbed session selects its chat (and opens
+          // the fold); once selected, clicks toggle the fold as usual.
+          if (sum.dataset.goto !== sel.key) {
+            e.preventDefault();
+            sessOpen[d.dataset.sid] = true;
+            location.hash = threadHash(sum.dataset.goto);
+          }
+        });
+      }
+      for (const a of threadsEl.querySelectorAll('a.tepoch[data-key], a.tturn[data-key]')) {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          jumpToTurn(a.dataset.key, +a.dataset.turn);
+        });
+      }
+    }
+
+    // Epoch/turn row click: select the thread (if needed) and scroll the
+    // convo pane to that visible turn. Scroll math is done against the
+    // pane's own scrollTop — scrollIntoView proved unreliable for targets
+    // deep in the pane (it consults offset parents this layout doesn't
+    // guarantee), which broke jumps beyond the first epoch.
+    function jumpToTurn(key, vis) {
+      if (sessionSelKey !== key) {
+        history.replaceState(null, '', threadHash(key));
+        showSession(key);
+      }
+      const el = convoEl.querySelectorAll('.turn')[vis];
+      if (el) {
+        convoScrollTo(convoEl.scrollTop + el.getBoundingClientRect().top - convoEl.getBoundingClientRect().top - 8);
+        tailPill.classList.remove('show');
+      }
+    }
+
+    // Spelled-out hover summary for a session section: full id, when it
+    // ran, and totals across its threads.
+    function sessTitle(sid, g) {
+      let t0 = Infinity, t1 = 0, req = 0, inTok = 0, outTok = 0, cost = 0, turns = 0;
+      const errs = { wireErrors: 0, truncated: 0, toolErrors: 0, toolUses: 0 };
+      const models = {};
+      for (const t of g) {
+        if (t.firstAt) t0 = Math.min(t0, t.firstAt);
+        t1 = Math.max(t1, t.lastAt || t.firstAt || 0);
+        const u = t.usage || {};
+        req += u.requests || 0;
+        inTok += u.input || 0;
+        outTok += u.output || 0;
+        cost += u.cost || 0;
+        errs.wireErrors += u.wireErrors || 0;
+        errs.truncated += u.truncated || 0;
+        errs.toolErrors += u.toolErrors || 0;
+        errs.toolUses += u.toolUses || 0;
+        if (t.kind !== 'utility') turns += t.turns.filter(x => !x.toolResultsOnly).length;
+        for (const m in (t.models || {})) models[m] = 1;
+      }
+      const bits = ['session ' + (sid || '(no id on the wire)')];
+      if (t0 !== Infinity) {
+        bits.push(fmtDateTime(new Date(t0 * 1000)) + (t1 && t1 !== t0 ? ' \\u2013 ' + fmtTime(new Date(t1 * 1000)) : ''));
+      }
+      bits.push(g.length + ' thread' + (g.length === 1 ? '' : 's') + ' \\u00b7 ' + turns + ' turns \\u00b7 ' + req + ' req');
+      bits.push('in ' + fmtCompact(inTok) + ' \\u00b7 out ' + fmtCompact(outTok) + (cost ? ' \\u00b7 est. ' + fmtCost(cost) : ''));
+      const mk = Object.keys(models);
+      if (mk.length) bits.push('models: ' + mk.map(shortModel).join(', '));
+      const et = errTitle(errs);
+      if (et) bits.push(et);
+      return bits.join('\\n') + (sid ? '\\n\\nclick the id to copy it' : '');
+    }
+
+    // Session card header — same visual grammar as a thread card, one level
+    // up: identity on the left (short sid, click = copy full, plus the
+    // conversation size), quiet attributes right-aligned (time range,
+    // request count, errors). No "session" word — the box IS the session.
+    // face = the absorbed chat when the session holds exactly one: its
+    // model chip joins the header, since the header now IS the chat's card.
+    function sessHeader(sid, g, face) {
+      let t0 = Infinity, t1 = 0, req = 0, errs = 0, turns = 0;
+      for (const t of g) {
+        if (t.firstAt) t0 = Math.min(t0, t.firstAt);
+        t1 = Math.max(t1, t.lastAt || t.firstAt || 0);
+        const u = t.usage || {};
+        req += u.requests || 0;
+        errs += (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
+        if (t.kind !== 'utility') turns += t.turns.filter(x => !x.toolResultsOnly).length;
+      }
+      // HH:MM only — seconds are noise at the session level; a
+      // single-moment session shows one time, not a degenerate range.
+      const hm = (ts) => fmtTime(new Date(ts * 1000)).slice(0, 5);
+      const range = t0 === Infinity ? '' : (hm(t0) === hm(t1) ? hm(t0) : hm(t0) + '\\u2013' + hm(t1));
+      return ICON_SESSION + '<span class="klabel">session</span>' +
+        '<span class="sess-sid"' +
+        (sid ? ' data-sid="' + escapeHtml(sid) + '"' +
+          ' onclick="event.preventDefault();event.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sid)"' : '') +
+        '>' + (sid ? escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
+        '<span class="sess-turns">' + turns + ' turn' + (turns === 1 ? '' : 's') + '</span>' +
+        (face ? modelChip(face) : '') +
+        '<span class="sess-attrs">' + (range ? range + ' \\u00b7 ' : '') + req + ' req' +
+          (errs ? ' \\u00b7 <span class="err">' + errs + ' err</span>' : '') + '</span>';
     }
 
     // Focus hierarchy: EVERY tool_use folds to one line — on real sessions
@@ -2137,8 +2981,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // link to the reconstructed thread), skill invocations, and MCP calls.
     const SPAWN_TOOLS = { Task: 1, Agent: 1, TaskCreate: 1 };
 
-    // tool_use id -> subagent thread key, rebuilt on each session render.
+    // tool_use id -> subagent thread key / one-line stats, rebuilt on each
+    // session render (the stats line puts the spawned thread's outcome on
+    // the fold itself — what it cost is visible without opening anything).
     let agentThreadIndex = {};
+    let agentThreadStats = {};
+    let agentThreadMeta = {};
 
     function renderBlockS(b, results, md) {
       if (b && (b.type === 'tool_use' || b.type === 'server_tool_use')) {
@@ -2147,20 +2995,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         let pv = toolPreview(name, b.input) || snippet(b.input, 110);
         let cls = '';
         let extra = '';
+        let icon = '';
         if (SPAWN_TOOLS[name]) {
           title = 'subagent';
           cls = 'fold-agent';
+          icon = ICON_EPOCH;
           const dest = b.id && agentThreadIndex[b.id];
+          const stat = b.id && agentThreadStats[b.id];
+          if (stat) extra += '<span class="fold-stat">' + escapeHtml(stat) + '</span>';
           if (dest) {
-            extra = '<a class="fold-link" href="#/session/' + encodeURIComponent(dest) + '"' +
+            extra += '<a class="fold-link" href="' + threadHash(dest) + '"' +
               ' onclick="event.stopPropagation()" title="open the reconstructed subagent thread">open thread \\u2192</a>';
           }
         } else if (name === 'Skill') {
-          title = 'skill';
+          const i = b.input || {};
+          title = 'skill' + (i.skill || i.command ? ' \\u00b7 ' + (i.skill || i.command) : '');
+          pv = typeof i.args === 'string' && i.args ? i.args : '';
           cls = 'fold-skill';
+          icon = ICON_SKILL;
         } else if (name.lastIndexOf('mcp__', 0) === 0) {
           title = 'mcp \\u00b7 ' + name.slice(5).split('__').join(' \\u00b7 ');
           cls = 'fold-mcp';
+          icon = ICON_MCP;
         }
         let body = preBlock(formatJson(b.input));
         const res = results[b.id];
@@ -2175,12 +3031,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           body += '<div class="block-note">no result captured</div>';
         }
         if (res && res.is_error) cls += ' errline';
-        return fold(title, pv, body, cls, false, extra);
+        return fold(title, pv, body, cls, false, extra, icon);
       }
       return renderBlock(b, md);
     }
 
-    function renderSessionTurn(turn, results) {
+    function renderSessionTurn(turn, results, ord, isSummary) {
       let inner = '';
       for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
@@ -2188,6 +3044,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const u = turn.usage;
         const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
         const bits = [];
+        // Every attributed reply names its model — with /model switches the
+        // set is the story, and the epoch divider marks where it changes.
         if (u.model) bits.push(escapeHtml(shortModel(u.model)));
         bits.push('in ' + fmtCompact(u.input));
         bits.push('out ' + fmtCompact(u.output));
@@ -2199,9 +3057,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           bits.push('ttft ' + fmtMs(p.response.firstTokenMs));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
+      } else if (turn.role === 'assistant' && !turn.pairId) {
+        // Never silently blank (devlog 2026-07-17): an assistant turn we
+        // could not tie to a wire request says so, quietly.
+        meta = '<span class="turn-usage" title="no captured request matches this reply \\u2014 history was repacked or the reply was edited before it entered history">unattributed</span>';
+      }
+      // The ordinal ties the turn to the outline in the threads pane —
+      // turn03 there is turn03 here, one shared numbering.
+      const ordHtml = ord != null ? '<span class="turn-ord">turn' + (ord < 10 ? '0' + ord : ord) + '</span>' : '';
+      // The continuation summary is not a normal prompt — it's the text
+      // /compact injected as the model's entire memory of the conversation
+      // above. Tag it so nobody reads it as something the user typed.
+      let tag = '';
+      // Position-first (isSummary: the turn AT a rewrite-mode compact
+      // boundary IS the injected summary — no string coupling); the
+      // preamble check stays as a fallback for packings where the
+      // boundary wasn't computable (e.g. a post-compact spine). Via
+      // turnSnippet, not firstUserText: the continuation message often
+      // opens with a <local-command-caveat> wrapper only it skips.
+      if (turn.role === 'user' && (isSummary ||
+          turnSnippet(turn.blocks).lastIndexOf('This session is being continued from a previous conversation', 0) === 0)) {
+        tag = '<span class="sum-tag" title="injected by /compact \\u2014 this text replaced the full history in the model\\u2019s context; it is not something the user typed">continuation summary</span>';
       }
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
-        '<div class="turn-role">' + escapeHtml(String(turn.role)) + meta + '</div>' + inner + '</div>';
+        '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + '</div>' + inner + '</div>';
     }
 
     // ---- Live tail ----
@@ -2216,11 +3095,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function convoAtBottom() {
       return convoEl.scrollHeight - convoEl.scrollTop - convoEl.clientHeight < TAIL_SLACK;
     }
+    // User-initiated jumps animate (the one scroll the motion budget
+    // allows); render-time tail sticking stays instant — animating every
+    // live append would be constant motion.
+    const REDUCED_MOTION = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    function convoScrollTo(top) {
+      if (convoEl.scrollTo && !REDUCED_MOTION) convoEl.scrollTo({ top, behavior: 'smooth' });
+      else convoEl.scrollTop = top;
+    }
     function convoToBottom() {
       convoEl.scrollTop = convoEl.scrollHeight;
       tailPill.classList.remove('show');
     }
-    tailPill.onclick = convoToBottom;
+    tailPill.onclick = () => {
+      convoScrollTo(convoEl.scrollHeight);
+      tailPill.classList.remove('show');
+    };
     convoEl.addEventListener('scroll', () => {
       if (convoAtBottom()) tailPill.classList.remove('show');
     });
@@ -2237,7 +3127,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ? Array.prototype.map.call(convoEl.querySelectorAll('details'), d => d.open)
         : null;
       let chips = '';
-      chips += kv('model', t.model || '?', 'model');
+      // The face model is the one with the most output tokens; a mid-session
+      // /model switch shows as "+N" with the per-model split in the tooltip.
+      const mextra = Math.max(0, Object.keys(t.models || {}).length - 1);
+      chips += kv('model', (t.model || '?') + (mextra ? ' +' + mextra : ''), 'model', modelTitle(t));
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());
@@ -2264,19 +3157,67 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         chips += kv('tool errors', eu.toolErrors + ' of ' + eu.toolUses + (r ? ' (' + r + ')' : ''), 'err',
           'tool_result blocks flagged is_error, over all tool calls in this thread');
       }
+      if (eu.rewound) chips += kv('superseded', String(eu.rewound), '',
+        'exchanges that left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices); the wire pairs are kept, never lost');
+      if (eu.unattributed) chips += kv('unplaced', String(eu.unattributed), '',
+        'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
       let html = '<div class="chips">' + chips + '</div>';
       if (t.agentOf) {
         html += '<div class="agent-note">subagent run' +
           (t.agentOf.agentType ? ' \\u00b7 [' + escapeHtml(t.agentOf.agentType) + '] ' + escapeHtml(t.agentOf.description || '') : '') +
-          ' \\u2014 dispatched by <a href="#/session/' + encodeURIComponent(t.agentOf.thread) + '">parent thread</a></div>';
+          ' \\u2014 dispatched by <a href="' + threadHash(t.agentOf.thread) + '">parent thread</a></div>';
       }
       if (t.system) html += renderSystem(t.system);
       if (t.tools && t.tools.length) html += renderTools(t.tools);
       const results = buildToolResultIndex(t.turns);
+      // Rewound exchanges mark their divergence point (devlog 2026-07-17
+      // decision 4: keep + mark, never lose) — the erased branch's wire
+      // pair stays one click away.
+      const rewoundAt = {};
+      for (const r of (t.rewound || [])) (rewoundAt[r.at] = rewoundAt[r.at] || []).push(r.pairId);
+      // Compact boundaries mark where the request body sent to the API
+      // changed completely — keyed by FULL turn index (same clock as
+      // rewoundAt), rendered as a dashed divider the conversation flows
+      // through.
+      const compactAt = {};
+      for (const c of (t.compactions || [])) (compactAt[c.at] = compactAt[c.at] || []).push(c);
+      // Epoch dividers: a quiet rule where a /model switch takes over —
+      // placed BEFORE the prompt that the new model answered (everything
+      // below the line is that model's run). Keyed by visible-turn ordinal,
+      // the same indexing threadEpochs emits and the epoch rows jump to.
+      const epochAt = {};
+      const eps = t.epochs || [];
+      for (let i = 1; i < eps.length; i++) epochAt[eps[i].from] = eps[i].model;
+      let ti = 0;
+      let vi = 0;
+      // The turn sitting AT a rewrite-mode boundary is the injected
+      // continuation summary — tagged by position, not by matching
+      // harness strings that can change under us.
+      const sumTurnAt = {};
+      for (const c of (t.compactions || [])) if (c.mode === 'rewrite') sumTurnAt[c.at] = 1;
       for (const turn of t.turns) {
+        const marks = rewoundAt[ti];
+        const cms = compactAt[ti];
+        const isSummary = !!sumTurnAt[ti];
+        ti++;
+        if (cms) for (const c of cms) {
+          html += '<div class="cmark" title="' +
+            escapeHtml('the request body sent to the API changed completely here \\u2014 ' +
+              (c.mode === 'rewrite' ? 'history replaced by a continuation summary' : 'older turns folded, recent tail kept') +
+              '; everything above survives only in that form') + '">' +
+            '<a href="#/p/' + encodeURIComponent(c.pairId) + '">compacted \\u00b7 context rewritten \\u00b7 ' +
+            c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns \\u00b7 wire</a></div>';
+        }
+        if (marks) for (const pid of marks) {
+          html += '<div class="rewound-mark" title="an exchange here left the conversation history — /rewind, an edited message, or an ephemeral injected exchange (recap, notices); its wire pair is kept">superseded exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>';
+        }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
-        try { html += renderSessionTurn(turn, results); }
+        if (epochAt[vi] !== undefined) {
+          html += '<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>';
+        }
+        try { html += renderSessionTurn(turn, results, vi, isSummary); }
         catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
+        vi++;
       }
       convoEl.innerHTML = html;
       if (foldState) {
@@ -2326,7 +3267,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (view === 'session') {
         showSession(sessionSelKey);
         if (!IS_SNAPSHOT) convoToBottom();
-        if (sessionSelKey) history.replaceState(null, '', '#/session/' + encodeURIComponent(sessionSelKey));
+        if (sessionSelKey) history.replaceState(null, '', threadHash(sessionSelKey));
       }
     }
 
@@ -2422,7 +3363,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function updateReplayHash() {
       if (!replay.active || replay.playing || view !== 'session' || !sessionSelKey) return;
       const a = anchorAt(replayEvents(pairs), replay.cursor);
-      const base = '#/session/' + encodeURIComponent(sessionSelKey);
+      const base = threadHash(sessionSelKey);
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 

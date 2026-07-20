@@ -150,3 +150,167 @@ describe("verifySnapshot", () => {
     expect(verifySnapshot(html, HOSTILE.length)).toContain("not valid JSON");
   });
 });
+
+describe("sessions layer rendering", () => {
+  const SID_B = JSON.stringify({ session_id: "bbbb2222-cccc-dddd-eeee-ffff00002222" });
+
+  test("single-session traces render as one open absorbed container (no chat card)", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    page.goto("#/session");
+    const threadsFrag = page.fragments.filter((f) => f.id === "threads").pop();
+    // 2026-07-20 round 5: the flat "[chat] N turns" card said less than the
+    // session header does — every trace renders the sessions layer, a
+    // single session as one container, open by default.
+    expect(threadsFrag!.html).toContain("sess-sid");
+    expect(threadsFrag!.html).toMatch(/<details class="sess[^"]*"[^>]* open>/);
+    expect(threadsFrag!.html).not.toContain("tkind-chat");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("two session ids render collapsible sections, newest first, grammar-clean", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(frag!.html).toContain('class="sess"');
+    expect(frag!.html).toContain(">bbbb2222</span>"); // newest section
+    expect(frag!.html).toContain(">aaaabbbb</span>"); // older section
+    expect(frag!.html.indexOf("bbbb2222")).toBeLessThan(frag!.html.indexOf("aaaabbbb"));
+    expect(frag!.html).toContain("2 sessions");
+    expect(fragmentErrors(page)).toEqual([]); // grammar-check the new markup
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a session-id-prefix route selects that session's thread", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session/aaaabbbb");
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("hello"); // the older session's reply renders
+    expect(page.errors).toEqual([]);
+  });
+
+  test("thread links carry the short sid8 key — no full (maskable) uuid in the URL", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    const m = frag!.html.match(/href="#\/session\/([^"]+)"/);
+    expect(m).not.toBeNull();
+    const key = decodeURIComponent(m![1]);
+    expect(key).toMatch(/^[0-9a-f]{8}\|/); // sid8|grouping, not the full uuid
+    expect(key).not.toContain("-");
+    page.goto("#/session/" + m![1]); // and the short link resolves
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("hello");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a session with exactly one chat absorbs it into the header (no chat card)", () => {
+    const older = msgPair("p1");
+    const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (newer.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([older, newer]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    // session -> chat said the same thing twice: the header IS the chat now
+    expect(frag!.html).toContain("data-goto=");
+    expect(frag!.html).not.toContain("tkind-chat");
+    expect(frag!.html).toContain('class="tmodel"'); // the chat's model chip moved up
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe("model epochs rendering", () => {
+  test("a /model switch renders epoch rows in the pane and a divider in the convo", () => {
+    const first = { role: "user", content: "hi" };
+    const r1 = msgPair("p1", { reqBody: { model: "claude-fable-5" }, resBody: { model: "claude-fable-5" } });
+    const r2 = msgPair("p2", {
+      reqBody: {
+        model: "claude-opus-4-8",
+        messages: [first, { role: "assistant", content: [{ type: "text", text: "hello" }] }, { role: "user", content: "again" }],
+      },
+      resBody: { model: "claude-opus-4-8", content: [{ type: "text", text: "hello again" }] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([r1, r2]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toContain('class="tepoch"');       // T0 / T1 section heads
+    expect(threads!.html).toContain(">T0</span>");
+    expect(threads!.html).toContain(">fable-5</span>");
+    expect(threads!.html).toContain(">opus-4-8</span>");
+    // turns nest under their epoch head, ordinals global across epochs
+    expect(threads!.html).toContain(">turn00</span>");
+    expect(threads!.html).toContain(">turn02</span>");
+    expect(threads!.html.indexOf(">T0</span>")).toBeLessThan(threads!.html.indexOf(">turn00</span>"));
+    expect(threads!.html.indexOf(">turn01</span>")).toBeLessThan(threads!.html.indexOf(">T1</span>"));
+    // every turn row carries a dot: user = hollow ring, assistant = verdict
+    expect(threads!.html).toContain('cdot-user');
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain('class="epoch-mark"');     // divider at the switch
+    expect(convo!.html).toContain("opus-4-8");
+    // the outline's numbering repeats on the reconstructed turns
+    expect(convo!.html).toContain('<span class="turn-ord">turn00</span>');
+    expect(convo!.html).toContain('<span class="turn-ord">turn03</span>');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("session headers carry the icon + label; model chips stay bare", () => {
+    const SID_B = JSON.stringify({ session_id: "bbbb2222-cccc-dddd-eeee-ffff00002222" });
+    const a = msgPair("p1");
+    const b = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });
+    (b.request as any).timestamp = 99999;
+    const page = bootSnapshotPage(renderSnapshot([a, b]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(frag!.html).toContain('<span class="klabel">session</span>');
+    expect(frag!.html).toContain('class="sico"');            // session glyph
+    expect(frag!.html).not.toContain('>model</span>');       // no "model" label — the id speaks
+    expect(frag!.html).toContain('data-tip=');               // instant hover details
+    expect(page.errors).toEqual([]);
+  });
+
+  test("single-model threads render no epoch rows and no dividers", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(threads!.html).not.toContain("tepoch");
+    expect(convo!.html).not.toContain("epoch-mark");
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe("compact boundary rendering (session-tab round 10)", () => {
+  test("a /compact renders a rail cut row, a convo divider, and tags the summary turn", () => {
+    const SUM = "This session is being continued from a previous conversation that ran out of context. The summary covers </script> earlier [1m work.";
+    const pre: Record<string, unknown>[] = [];
+    for (let i = 0; i <= 7; i++) {
+      pre.push({ role: "user", content: "question " + i });
+      if (i < 7) pre.push({ role: "assistant", content: [{ type: "text", text: "reply " + i }] });
+    }
+    const p1 = msgPair("c1", { reqBody: { messages: pre }, resBody: { content: [{ type: "text", text: "reply 7" }] } });
+    const p2 = msgPair("c2", { reqBody: { messages: [{ role: "user", content: SUM }] }, resBody: { content: [{ type: "text", text: "welcome back" }] } });
+    const page = bootSnapshotPage(renderSnapshot([p1, p2]));
+    page.goto("#/session");
+    const th = page.els["threads"].innerHTML;
+    const cv = page.els["convo"].innerHTML;
+    // outline: the cut row on the rail, spelling out the context collapse
+    expect(th).toContain('class="tcompact"');
+    expect(th).toContain("15 → 1 turns");
+    // convo: the dashed divider + the tagged continuation summary turn
+    expect(cv).toContain('class="cmark"');
+    expect(cv).toContain('class="sum-tag"');
+    // hostile summary content stays escaped through the new markup
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});

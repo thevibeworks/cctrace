@@ -6,6 +6,59 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-20
+
+The kimi release: Kimi Code CLI (Moonshot AI) joins claude/codex/grok
+as a traced client, hardened against the real K3 wire — durable
+session identity, compaction reconstruction, and honest cost
+estimates for the coding plan.
+
+### Added
+
+- cctrace kimi: traces the Kimi Code CLI through the same mitm path
+  as codex/grok. Kimi speaks OpenAI Chat Completions — a third wire
+  sub-shape adapted into the Responses object model at two seams
+  (openaiInput maps messages[] -> input items, a chat branch in
+  openaiCompleted assembles chunk deltas + usage), so sessions,
+  attribution, compact, and the UI stay on one code path. Host pins
+  route auth/usage/models/telemetry into their categories.
+- Kimi session identity: K3 sends prompt_cache_key ("session_<uuid>")
+  in every request body — stable across subagent threads,
+  auto-compaction, and --resume across processes. New wire-table
+  field sessionBodyField; extractSessionId reads it, compact stubs
+  preserve it. The session chip and cross-run --continue stitching
+  work for kimi traces (K2.7-era traces carry no key and stay
+  per-run).
+- Kimi auto-compaction, reconstructed and displayed: the restart
+  packing (the original first user message with later user text
+  merged in, the working summary re-sent as a user message)
+  reunifies into its parent thread and renders a compaction
+  boundary. OpenAI-dialect reunification is gated on the summary
+  marker — structural signals alone could false-claim a subagent,
+  which shares the session key — and a marker-verified continuation
+  appends without the 10-turn-drop heuristic (the repack is known,
+  not inferred).
+- Media tool results: image_url parts in kimi tool messages become
+  image blocks in the session view instead of being flattened away.
+- Synthetic K3 fixture (thinking config, prompt_cache_key, dynamic
+  max_completion_tokens, the mct=131072 compaction call and the
+  msgs=4 restart) with rebuild regression tests; the K2.7 fixture
+  stays as the adapter tripwire.
+
+### Changed
+
+- Kimi coding-plan models price as estimates at the equivalent
+  pay-per-token rates (k3 -> moonshotai/kimi-k3, kimi-for-coding ->
+  kimi-k2.7-code via catalog aliases). The cost chip is an estimate,
+  not a bill — the same convention that prices Claude Max OAuth
+  traffic; models.dev's kimi-for-coding provider lists $0
+  subscription entries, which said less than nothing.
+
+### Fixed
+
+- mitm tests scrub all six proxy env vars per test — a proxied dev
+  shell (including a cctrace-traced one) leaked into the suite.
+
 ## [0.18.0] - 2026-07-20
 
 The sessions release: the Sessions tab becomes a real reconstruction of

@@ -92,10 +92,18 @@ export function openaiCompleted(pair: any): any {
   // Chat Completions (kimi): assemble the streamed chat.completion.chunk
   // deltas (or a non-stream {choices:[{message}]} body) into a Responses-shape
   // { output, usage, status } so openaiBlocks / extractOpenaiInfo see the same
-  // object model as codex/grok. Detect by the choices array / chunk marker;
-  // Responses never carries either.
-  const looksChat = (r.body && typeof r.body === "object" && Array.isArray(r.body.choices)) ||
-    (typeof r.bodyRaw === "string" && r.bodyRaw.indexOf("chat.completion") !== -1);
+  // object model as codex/grok. Detect by REQUEST shape first (messages[]
+  // without input[] — a Responses request never has that), then the response
+  // choices array / the quote-anchored chunk marker. The marker keeps its
+  // quotes on purpose: assistant CONTENT discussing "chat.completion" sits
+  // inside an SSE JSON string with escaped quotes, so it can never match —
+  // a bare indexOf() misrouted codex streams that merely talked about the
+  // Chat Completions API.
+  const reqBody = pair.request && pair.request.body;
+  const looksChat = (reqBody && typeof reqBody === "object" &&
+      Array.isArray((reqBody as any).messages) && !Array.isArray((reqBody as any).input)) ||
+    (r.body && typeof r.body === "object" && Array.isArray(r.body.choices)) ||
+    (typeof r.bodyRaw === "string" && r.bodyRaw.indexOf('"object":"chat.completion') !== -1);
   if (looksChat) {
     let content = "";
     let reasoning = "";

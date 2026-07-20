@@ -297,6 +297,13 @@ export function buildSession(pairs: any[], wire?: any): any {
       !!sysIdentity(t) && sysIdentity(t) === sysIdentity(parent) &&
       best > histLen(t.reqs[0], t.dialect) &&
       !parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0);
+    // The openai marker can be typed by a user verbatim; require the two
+    // dialect-neutral structural facts too — a compacted parent never
+    // speaks again, and the continuation starts smaller than its deepest
+    // packing. A mid-session false-fire fails the quiet check.
+    if (pre && t.dialect !== "anthropic" &&
+      (best <= histLen(t.reqs[0], t.dialect) || parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0)))
+      continue;
     if (pre || structural) {
       for (const r of t.reqs) parent.reqs.push(r);
       // A marker-verified continuation is a KNOWN repack: the append fallback

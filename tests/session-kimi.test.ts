@@ -4,7 +4,7 @@ import { buildSession, mainThread } from "../src/session";
 import { readTraceText } from "../src/history";
 import { wireTables } from "../src/clients";
 import { extractCallInfo, extractSessionId } from "../src/summarize";
-import { stubPair } from "../src/compact";
+import { stubPair, planDecisions } from "../src/compact";
 import { wireDialect, openaiInput, openaiCompleted } from "../src/dialects/openai";
 import { categorizeUrl } from "../src/categorize";
 
@@ -157,5 +157,26 @@ describe("kimi K3 session: prompt_cache_key + auto-compaction", () => {
     const stub = stubPair(k3pairs[0], k3pairs[5].id);
     expect((stub.request.body as any)._cctrace_stub).toBeTruthy();
     expect(extractSessionId(stub, WIRE)).toBe("00000000-1111-2222-3333-444444444444");
+  });
+
+  test("rebuild is identical pre/post compact — the devlog's open question", () => {
+    // cctrace compact stubs superseded bodies per thread-epoch; the
+    // compaction restart must still reunify and keep its boundary (contOf
+    // reads the first NON-stub request, and compact keeps each epoch's
+    // longest request full).
+    const categorize = (url: string, client?: string) => categorizeUrl(url, client, WIRE);
+    const dec = planDecisions(k3pairs, categorize, WIRE);
+    const compacted = k3pairs.map((p: any, i: number) => (dec.stub.has(i) ? stubPair(p, dec.stub.get(i)!) : p));
+    const after = buildSession(compacted, WIRE);
+    const ta = mainThread(after.threads);
+    expect(after.threads.length).toBe(1);
+    expect(ta.key).toBe(main.key);
+    expect(ta.sessionId).toBe(main.sessionId);
+    expect(ta.turns.length).toBe(main.turns.length);
+    expect(ta.compactions.length).toBe(1);
+    expect(ta.compactions[0].at).toBe(main.compactions[0].at);
+    for (let i = 0; i < main.turns.length; i++) {
+      expect(ta.turns[i].pairId).toBe(main.turns[i].pairId);
+    }
   });
 });

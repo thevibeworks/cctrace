@@ -228,6 +228,43 @@ describe("sessions layer rendering", () => {
   });
 });
 
+describe("outline tool labels", () => {
+  test("a tool-only assistant turn names its tools instead of a dead 'tools…'", () => {
+    const p = msgPair("p1", {
+      resBody: {
+        content: [{ type: "tool_use", name: "Bash", id: "tu1", input: { command: "ls -la" } }],
+        stop_reason: "tool_use",
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toMatch(/class="tturn-tools">Bash</); // named the tool
+    expect(threads!.html).not.toContain("tools…"); // the old dead fallback is gone
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("multiple distinct tools are listed, capped with +N", () => {
+    const p = msgPair("p1", {
+      resBody: {
+        content: [
+          { type: "tool_use", name: "Read", id: "t1", input: { file_path: "a" } },
+          { type: "tool_use", name: "Edit", id: "t2", input: { file_path: "a" } },
+          { type: "tool_use", name: "Bash", id: "t3", input: { command: "x" } },
+          { type: "tool_use", name: "Grep", id: "t4", input: { pattern: "y" } },
+        ],
+        stop_reason: "tool_use",
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toContain("Read, Edit, Bash, +1"); // 3 shown, remainder counted
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+});
+
 describe("model epochs rendering", () => {
   test("a /model switch renders epoch rows in the pane and a divider in the convo", () => {
     const first = { role: "user", content: "hi" };

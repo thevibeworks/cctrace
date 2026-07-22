@@ -6,6 +6,25 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-07-22
+
+Sessions outline legibility: the rail names what the agent did on
+tool-only turns.
+
+### Changed
+
+- Sessions outline: a pure tool-call assistant turn now names its tools
+  (Bash, Read, skill ccx, mcp github, Task) instead of a content-free
+  "tools...". Same vocabulary as the conversation folds, deduped and capped
+  at three with a +N remainder. A turn carrying only thinking reads
+  "thinking...", a genuinely empty one "(no text)". The rail narrates the
+  agent's actions, which is the whole point of the trace.
+- ui.md reconciled with the shipped UI: the type-scale rule documents its
+  real closed set (11/12/13px text, a 9-10px micro-tier for badges, labels,
+  and tags, a 16px wordmark) and the one-accent rule names purple as the
+  notable-event marker for subagent, skill, and mcp folds. Added TASTE.md, a
+  repo-root scar ledger of past design rejections with their reasoning.
+
 ## [0.19.0] - 2026-07-20
 
 The kimi release: Kimi Code CLI (Moonshot AI) joins claude/codex/grok
@@ -886,7 +905,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/thevibeworks/cctrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/thevibeworks/cctrace/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/thevibeworks/cctrace/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/thevibeworks/cctrace/compare/v0.16.0...v0.17.0

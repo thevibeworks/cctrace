@@ -2519,6 +2519,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="thread-turns">' + rows + '</div>';
     }
 
+    // An assistant turn with no text block is a pure tool-call turn — the
+    // agent acted without narrating. Name what it did instead of a dead
+    // "tools\\u2026": same vocabulary as the convo folds (Task/skill/mcp/plain
+    // tool name), deduped, capped. The rail should narrate the agent's
+    // actions, which is cctrace's whole job.
+    function turnToolLabel(turn) {
+      const names = [];
+      const seen = {};
+      for (const b of turn.blocks || []) {
+        if (!b || (b.type !== 'tool_use' && b.type !== 'server_tool_use')) continue;
+        const n = b.name || '?';
+        let label;
+        if (SPAWN_TOOLS[n]) label = 'Task';
+        else if (n === 'Skill') { const i = b.input || {}; label = 'skill' + (i.skill || i.command ? ' \\u00b7 ' + (i.skill || i.command) : ''); }
+        else if (n.lastIndexOf('mcp__', 0) === 0) label = 'mcp \\u00b7 ' + n.slice(5).split('__')[0];
+        else label = n;
+        if (seen[label]) continue;
+        seen[label] = 1;
+        names.push(label);
+      }
+      if (!names.length) return '';
+      return names.slice(0, 3).join(', ') + (names.length > 3 ? ', +' + (names.length - 3) : '');
+    }
+
     // The SELECTED conversation's outline (session-tab 2026-07-20): epoch
     // section heads with their turns nested under —
     //     t0 fable-5
@@ -2639,7 +2663,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             for (const b of turn.blocks || []) {
               if (b && b.type === 'text' && b.text) { text = escapeHtml(b.text.slice(0, 120)); break; }
             }
-            if (!text) text = '<span class="tturn-tools">tools\\u2026</span>';
+            if (!text) {
+              const tl = turnToolLabel(turn);
+              text = '<span class="tturn-tools">' + (tl ? escapeHtml(tl)
+                : (turn.blocks || []).some(b => b && b.type === 'thinking' && b.thinking) ? 'thinking\\u2026'
+                : '(no text)') + '</span>';
+            }
             const u = turn.usage;
             const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
             // The dot leads the row — a status gutter. Assistant dots carry

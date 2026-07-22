@@ -11,8 +11,9 @@ to protect that feeling.
    Density is a feature; whitespace earns its place by grouping, not by
    decorating. If a designer's instinct says "add a card", add a column.
 2. **One accent.** Blue (`--accent`) means interactive. Category colors mark
-   data, status colors (green/red/amber) mark state. Nothing else gets color.
-   If everything glows, nothing does.
+   data, status colors (green/red/amber) mark state, and purple (`--purple`)
+   marks notable-event folds — subagent spawns, skills, MCP calls. Nothing
+   else gets color. If everything glows, nothing does.
 3. **Terminal semantics.** The live views behave like tail -f: newest at the
    bottom, stick when you're there, never yank the scroll while you're
    reading history — new activity is announced (pill), not imposed.
@@ -34,7 +35,11 @@ to protect that feeling.
 
 ## Standing decisions
 
-- Type scale is 11/12/13px only. New UI picks from those three.
+- Type scale is 11/12/13px for text and rows — new row UI picks from those
+  three. Badges, small-caps labels, and tags drop to a 9-10px micro-tier
+  (`.cat-badge`, `.klabel`, `.tcompact-label`, `.sum-tag`); the header
+  wordmark (16px) is the one exception above 13px. That is the whole closed
+  set — a fourth text size is drift, not a decision.
 - System monospace stack; no webfonts ever (self-contained pages).
 - GitHub-dark derived palette, defined once in `:root` variables.
 - Scrollbars are thin and quiet (styled once, globally).

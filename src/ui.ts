@@ -1009,6 +1009,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-left: 2px dashed var(--border);
     }
     .rewound-mark a { color: var(--text-muted); }
+    /* a failed-request run IS a warning — red edge, state color */
+    .errrun-mark { border-left-color: var(--red); }
     /* compact divider (convo pane): dashed — the context above it was
        rewritten; the conversation continues but the model's memory of it
        is the summary/folded form only */
@@ -2563,6 +2565,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // full-turn divergence index to the visible ordinal.
       const supAt = {};
       const compAt = {};
+      const errAt = {};
       {
         let vi2 = 0;
         const fullToVis = [];
@@ -2576,11 +2579,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const at = Math.min(Math.max(0, c.at), fullToVis.length - 1);
           (compAt[fullToVis[at]] = compAt[fullToVis[at]] || []).push(c);
         }
+        // Failed requests (t.failed: no response / HTTP error) collapse into
+        // one run per timeline position — a 429 retry storm is one row
+        // ("21 failed · 429"), ordered where it happened, not 21 rows
+        // dumped at the tail.
+        for (const e of (t.failed || [])) {
+          const at = Math.min(Math.max(0, e.at), fullToVis.length - 1);
+          (errAt[fullToVis[at]] = errAt[fullToVis[at]] || []).push(e);
+        }
       }
       const eps = (t.epochs && t.epochs.length) ? t.epochs : [{ model: t.model, from: 0, to: vis.length - 1 }];
       const multi = eps.length > 1;
-      const used = {};
-      for (const turn of t.turns) if (turn.pairId) used[turn.pairId] = 1;
       const supRow = (pid, vi) => {
         const p = pairs.find(x => x.id === pid);
         if (!p) return '';
@@ -2617,18 +2626,59 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
           if (tot > preTok) preTok = tot;
         }
-        const tip = 'compacted \\u00b7 context rewritten' +
+        // A rewind is the same axis-break grammar with the honest word:
+        // history was TRUNCATED back to an earlier point (/rewind or an
+        // edited message) and regrew on a new branch — nothing above the
+        // line was summarized, it just left the conversation history.
+        const rw = c.mode === 'rewind';
+        const tip = (rw ? 'rewound \\u00b7 history stepped back' : 'compacted \\u00b7 context rewritten') +
           (p ? '\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) : '') +
           '\\nthe request body sent to the API changed completely: ' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns' +
           (preTok && postTok ? '\\ncontext \\u2248' + fmtCompact(preTok) + ' \\u2192 \\u2248' + fmtCompact(postTok) + ' tok' : '') +
-          '\\n' + (c.mode === 'rewrite'
+          '\\n' + (rw
+            ? '/rewind or an edited message \\u2014 the conversation resumed from an earlier point on a new branch'
+            : c.mode === 'rewrite'
             ? 'full rewrite \\u2014 history replaced by a continuation summary'
             : 'fold \\u2014 older turns rewritten/folded, recent tail kept verbatim') +
-          '\\n\\neverything above this line survives only in the summary/folded form\\nclick to open the first post-compact wire request';
+          '\\n\\n' + (rw
+            ? 'the turns above this line left the conversation history; their wire pairs are kept\\nclick to open the first post-rewind wire request'
+            : 'everything above this line survives only in the summary/folded form\\nclick to open the first post-compact wire request');
         return '<a class="tcompact" href="#/p/' + encodeURIComponent(c.pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
           '<span class="rgut"><span class="cnode"></span></span>' +
-          '<span class="tcompact-label">compacted</span>' +
+          '<span class="tcompact-label">' + (rw ? 'rewound' : 'compacted') + '</span>' +
           '<span class="tcompact-note">' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns</span></a>';
+      };
+      // A run of failed requests at one timeline position: one collapsed
+      // row ("21 failed requests · 429"), ordered where the storm
+      // happened. The wire pairs are one click away; the retry that finally
+      // landed renders as the normal turn right below.
+      const errRow = (list) => {
+        const n = list.length;
+        const stat = {};
+        let etype = '';
+        let etypeOk = true;
+        const times = [];
+        for (const e of list) {
+          stat[e.status ? String(e.status) : 'no response'] = 1;
+          const p = pairs.find(x => x.id === e.pairId);
+          if (!p) continue;
+          times.push(p.request.timestamp);
+          const ty = (p.response && p.response.body && p.response.body.error && p.response.body.error.type) || '';
+          if (ty && !etype) etype = ty;
+          else if (ty && ty !== etype) etypeOk = false;
+        }
+        if (!etypeOk) etype = '';
+        const stats = Object.keys(stat).join('/');
+        const label = (n > 1 ? n + ' failed requests' : 'failed request') + ' \\u00b7 ' + stats + (etype ? ' ' + etype : '');
+        const span = times.length ? fmtTime(new Date(times[0] * 1000)) + (times.length > 1 ? ' \\u2192 ' + fmtTime(new Date(times[times.length - 1] * 1000)) : '') : '';
+        const tip = label + (span ? '\\n' + span : '') +
+          '\\nno reply from these requests entered the conversation \\u2014 retries at the same history position' +
+          '\\nclick to open the first failed wire pair';
+        return '<a class="tturn terr-run" href="#/p/' + encodeURIComponent(list[0].pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
+          '<span class="tturn-ord">wire</span>' +
+          '<span class="tturn-text">' + escapeHtml(label) + '</span>' +
+          '<span class="treq-mark err">err</span></a>';
       };
       // A subagent spawned by this turn attaches HERE, as a branch off the
       // rail — label + outcome inline, the thread one click away (its
@@ -2654,6 +2704,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (let vi = e.from; vi <= e.to && vi < vis.length; vi++) {
           if (compAt[vi]) for (const c of compAt[vi]) html += compRow(c);
           if (supAt[vi]) for (const pid of supAt[vi]) html += supRow(pid, vi);
+          if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
           const ord = 'turn' + (vi < 10 ? '0' + vi : vi);
           let text = '';
@@ -2711,28 +2762,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (turn.role === 'assistant') html += branchRows(turn);
         }
       }
-      // superseded exchanges whose position lands past the last turn
-      // (clamped) render at the tail — still in timeline order.
+      // boundary rows / superseded exchanges / error runs whose position
+      // lands past the last turn (clamped) render at the tail — still in
+      // timeline order.
       const lastVi = vis.length;
       if (compAt[lastVi]) for (const c of compAt[lastVi]) html += compRow(c);
       if (supAt[lastVi]) for (const pid of supAt[lastVi]) html += supRow(pid, lastVi - 1 >= 0 ? lastVi - 1 : 0);
-      // Failed requests that back no turn: real wire events, shown last.
-      const sup = {};
-      for (const r of (t.rewound || [])) sup[r.pairId] = 1;
-      for (const pid of t.pairIds) {
-        if (used[pid] || sup[pid]) continue;
-        const p = pairs.find(x => x.id === pid);
-        if (!p) continue;
-        const failed = !p.response || p.response.status >= 400;
-        if (!failed) continue; // routine superseded retries add nothing to the outline
-        html += '<a class="tturn" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' +
-          escapeHtml('wire request \\u00b7 ' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
-            '\\nrequest failed: no response or HTTP error\\n\\nclick to open the wire pair') + '">' +
-          '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
-          '<span class="tturn-ord">wire</span>' +
-          '<span class="tturn-text">' + fmtTime(new Date(p.request.timestamp * 1000)) + '</span>' +
-          '<span class="treq-mark err">err</span></a>';
-      }
+      if (errAt[lastVi]) html += errRow(errAt[lastVi]);
       return '<div class="thread-turns">' + html + '</div>';
     }
 
@@ -3215,6 +3251,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // through.
       const compactAt = {};
       for (const c of (t.compactions || [])) (compactAt[c.at] = compactAt[c.at] || []).push(c);
+      // Failed-request runs at their timeline position (same clock as
+      // rewoundAt): one quiet line per run, wire pair linked. Positions
+      // past the last turn (a trailing failure) clamp to just after it.
+      const failedAt = {};
+      for (const e of (t.failed || [])) {
+        const at = Math.max(0, Math.min(e.at, t.turns.length));
+        (failedAt[at] = failedAt[at] || []).push(e);
+      }
       // Epoch dividers: a quiet rule where a /model switch takes over —
       // placed BEFORE the prompt that the new model answered (everything
       // below the line is that model's run). Keyed by visible-turn ordinal,
@@ -3232,18 +3276,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const turn of t.turns) {
         const marks = rewoundAt[ti];
         const cms = compactAt[ti];
+        const fails = failedAt[ti];
         const isSummary = !!sumTurnAt[ti];
         ti++;
         if (cms) for (const c of cms) {
+          const rw = c.mode === 'rewind';
           html += '<div class="cmark" title="' +
             escapeHtml('the request body sent to the API changed completely here \\u2014 ' +
-              (c.mode === 'rewrite' ? 'history replaced by a continuation summary' : 'older turns folded, recent tail kept') +
-              '; everything above survives only in that form') + '">' +
-            '<a href="#/p/' + encodeURIComponent(c.pairId) + '">compacted \\u00b7 context rewritten \\u00b7 ' +
+              (rw ? 'history was truncated back to an earlier point (/rewind or an edited message); the turns above left the conversation history, their wire pairs are kept'
+                : (c.mode === 'rewrite' ? 'history replaced by a continuation summary' : 'older turns folded, recent tail kept') +
+                  '; everything above survives only in that form')) + '">' +
+            '<a href="#/p/' + encodeURIComponent(c.pairId) + '">' +
+            (rw ? 'rewound \\u00b7 history stepped back' : 'compacted \\u00b7 context rewritten') + ' \\u00b7 ' +
             c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns \\u00b7 wire</a></div>';
         }
         if (marks) for (const pid of marks) {
           html += '<div class="rewound-mark" title="an exchange here left the conversation history — /rewind, an edited message, or an ephemeral injected exchange (recap, notices); its wire pair is kept">superseded exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>';
+        }
+        if (fails) {
+          html += '<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
+            (fails.length > 1 ? fails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(fails[0].pairId) + '">wire</a></div>';
         }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
         if (epochAt[vi] !== undefined) {
@@ -3252,6 +3304,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         try { html += renderSessionTurn(turn, results, vi, isSummary); }
         catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
         vi++;
+      }
+      // Trailing failures: the storm after the last completed turn.
+      const tailFails = failedAt[t.turns.length];
+      if (tailFails) {
+        html += '<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
+          (tailFails.length > 1 ? tailFails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(tailFails[0].pairId) + '">wire</a></div>';
       }
       convoEl.innerHTML = html;
       if (foldState) {

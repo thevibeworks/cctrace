@@ -308,11 +308,23 @@ hash-routed:
   non-billing system block — subagents/utilities differ) + smaller
   start + a parent quiet forever; the harness preamble text ("This
   session is being continued...") is one extra vote, so a reworded or
-  customized harness degrades gracefully. Every boundary is DISPLAYED (t.compactions): a break node +
-  "compacted · N → M turns" row on the rail, a dashed divider in the
-  convo, hover = the context collapse in turns and tokens + fold vs
-  rewrite, click = the first post-compact request; a rendered
-  continuation-summary turn is tagged, never shown as user text. Pairs
+  customized harness degrades gracefully. A history drop is NOT always a
+  compaction (2026-07-22): a /rewind truncates and regrows on a new
+  branch. The discriminator is index geometry — a fold's surviving tail
+  aligns at SHIFTED indices (the history above it shrank into a
+  summary), a rewind's shared content is a same-index PREFIX; and with
+  no anchor at all, a same-sig thread that was never reunified can't be
+  a real compact (every observed compact shape rewrites msg[0] and
+  splits the sig — merged continuation requests are stamped `_cont`).
+  The degenerate msg[0]-to-msg[0] anchor with zero verified context is
+  rejected outright: msg[0]'s sig is the injected <system-reminder>
+  prefix, identical for every request, and it once claimed a
+  rewind-to-start as a fold. Every boundary is DISPLAYED (t.compactions,
+  modes fold/rewrite/rewind): a break node + "compacted · N → M turns"
+  (or "rewound") row on the rail, a dashed divider in the convo, hover =
+  the context collapse in turns and tokens + what happened, click = the
+  first post-boundary request; a rendered continuation-summary turn is
+  tagged, never shown as user text. Pairs
   matching nothing classify prefix-divergent (internal field t.rewound)
   or UNATTRIBUTED (assistant turns without a
   pair say so quietly, never silently blank). Prefix-divergent pairs
@@ -321,7 +333,13 @@ hash-routed:
   auto recap prompt is injected, answered, then dropped from history —
   a real false-"rewound" bug, 2026-07-20); they render grey at their
   timeline position in the outline (same ordinal as the turn that
-  replaced them) and as a grey marker in the convo, wire pair linked. A thread's model is a SET
+  replaced them) and as a grey marker in the convo, wire pair linked.
+  Failed requests (no response / HTTP 4xx-5xx, t.failed) never claim
+  turns; they collapse into ONE row per timeline position — "21 failed
+  requests · 429 engine_overloaded_error" at the exact spot the retry
+  storm hit, red dot on the rail, first wire pair linked, a matching
+  red-edged line in the convo — instead of 21 orphan rows dumped at the
+  thread tail (a real kimi 429 storm, 2026-07-22). A thread's model is a SET
   (t.models: per-model requests/tokens/cost); the face model is the one
   with the most output tokens. The label names the conversation ("N
   turns" / "[type] description"); the model renders as its own

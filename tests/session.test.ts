@@ -585,3 +585,117 @@ describe("full /compact continuation (2026-07-20 round 9)", () => {
     expect(r.threads.length).toBe(2);
   });
 });
+
+describe("rewind vs compaction (2026-07-22)", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+  // Claude Code injects the SAME <system-reminder> context block at the head
+  // of msg[0] on every request — its first 200 chars dominate turnContentSig,
+  // so msg[0]'s sig matches trivially across ANY two requests of a thread.
+  // The observed bug (temp/20260722_wrong-session-trace): that unverified
+  // match anchored a rewind-to-start as a "fold" compaction.
+  const REM = "<system-reminder>\nAs you answer, use this context: " + "x".repeat(300) + "\n</system-reminder>";
+  const u0 = { role: "user", content: [{ type: "text", text: REM }, { type: "text", text: "the real prompt" }] };
+  const grow = (n: number) => {
+    const m: any[] = [u0];
+    for (let i = 0; i < n; i++) m.push(a("reply " + i), u("question " + (i + 1)));
+    return m;
+  };
+
+  test("a rewind-to-start classifies rewind, never fold — the reminder sig is no anchor", () => {
+    seq = 0;
+    const pPre = msgPair(grow(7), { reply: "old tip" }); // hist 15
+    // /rewind back to msg[0]: history truncated, a new branch grows — only
+    // msg[0] (with its identical reminder head) is shared.
+    const pNew = msgPair([u0, a("fresh start"), u("a different question")], { reply: "a different answer" });
+    const { threads } = buildSession([pPre, pNew]);
+    expect(threads.length).toBe(1);
+    const t = threads[0];
+    expect(t.compactions.length).toBe(1);
+    expect(t.compactions[0].mode).toBe("rewind");
+    expect(t.compactions[0].fromTurns).toBe(15);
+    expect(t.compactions[0].toTurns).toBe(3);
+    // The shared msg[0] is NOT duplicated below the boundary; the new
+    // branch appends and attributes.
+    expect(t.turns.length).toBe(16 + 3); // spine turns + [fresh start, question, answer]
+    expect(t.turns[18].blocks[0].text).toBe("a different answer");
+    expect(t.turns[18].pairId).toBe(pNew.id);
+    expect(t.rewound.length).toBe(0);
+  });
+
+  test("a mid-conversation rewind (same-index shared prefix) classifies rewind, not fold", () => {
+    seq = 0;
+    const pPre = msgPair(grow(7), { reply: "old tip" }); // hist 15
+    // Rewind to turn 4, then a new direction: the shared content is a
+    // same-index verbatim PREFIX (anchor i === j), not a folded tail.
+    const branch = grow(2).slice(0, 5); // [u0, r0, q1, r1, q2] verbatim
+    branch[4] = u("a new direction");
+    const pNew = msgPair(branch, { reply: "down the new path" });
+    const { threads } = buildSession([pPre, pNew]);
+    const t = threads[0];
+    expect(t.compactions.length).toBe(1);
+    expect(t.compactions[0].mode).toBe("rewind");
+    // append starts after the shared prefix: new direction + reply only
+    expect(t.turns.length).toBe(16 + 2);
+    expect(t.turns[17].pairId).toBe(pNew.id);
+  });
+
+  test("a genuine fold (shifted-index tail) still classifies fold", () => {
+    seq = 0;
+    const pPre = msgPair(grow(7), { reply: "old tip" }); // hist 15
+    // compaction fold: early turns collapse into one rewritten turn, the
+    // recent tail survives verbatim at SHIFTED indices, then a new prompt.
+    const folded = [u0, a("folded: earlier work"), a("reply 5"), u("question 6"), a("reply 6"), u("question 7"), a("old tip"), u("question 8")];
+    const pPost = msgPair(folded, { reply: "reply 8" });
+    const { threads } = buildSession([pPre, pPost]);
+    const t = threads[0];
+    expect(t.compactions.length).toBe(1);
+    expect(t.compactions[0].mode).toBe("fold");
+  });
+});
+
+describe("failed requests land in t.failed at their timeline position", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+
+  test("a retry storm collects in order and never claims the retry's turn", () => {
+    seq = 0;
+    const first = u("q one");
+    const ok1 = msgPair([first], { reply: "r1" });
+    const hist2 = [first, a("r1"), u("q two")];
+    const mk429 = () => msgPair(hist2, {
+      response: { timestamp: 0, status: 429, headers: {}, body: { error: { type: "engine_overloaded_error", message: "overloaded" } } },
+    });
+    const fail1 = mk429();
+    const fail2 = mk429();
+    const ok2 = msgPair(hist2, { reply: "r2" });
+    const { threads } = buildSession([ok1, fail1, fail2, ok2]);
+    expect(threads.length).toBe(1);
+    const t = threads[0];
+    expect(t.failed).toEqual([
+      { pairId: fail1.id, at: 3, status: 429 },
+      { pairId: fail2.id, at: 3, status: 429 },
+    ]);
+    // the successful retry owns the turn; the failures never even
+    // transiently claim it, and none leak into unattributed
+    expect(t.turns[3].pairId).toBe(ok2.id);
+    expect(t.unattributed.length).toBe(0);
+    expect(t.rewound.length).toBe(0);
+    expect(t.usage.wireErrors).toBe(2);
+  });
+
+  test("a trailing failure (no successful retry) sits past the last turn", () => {
+    seq = 0;
+    const first = u("q one");
+    const ok1 = msgPair([first], { reply: "r1" });
+    const fail = msgPair([first, a("r1"), u("q two")], {
+      response: { timestamp: 0, status: 529, headers: {}, body: { error: { type: "overloaded_error" } } },
+    });
+    const { threads } = buildSession([ok1, fail]);
+    const t = threads[0];
+    // spine is the FAILED request (longest history): its 3 history turns
+    // render, its position is the would-be reply slot at the tail
+    expect(t.failed).toEqual([{ pairId: fail.id, at: 3, status: 529 }]);
+    expect(t.turns.length).toBe(3);
+  });
+});

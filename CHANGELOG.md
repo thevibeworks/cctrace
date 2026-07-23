@@ -6,6 +6,37 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-22
+
+Timeline honesty: a /rewind is no longer mislabeled as a compaction,
+and failed-request storms render where they happened. Both fixes come
+from a real trace pair reported the same day.
+
+### Fixed
+
+- A /rewind was displayed as "compacted": the history-drop boundary
+  detector anchored on the first message's injected system-reminder
+  prefix (identical for every request in a session) with zero verified
+  context, so a rewind-to-start classified as a fold. The anchor now
+  rejects that degenerate msg[0]-to-msg[0] hit, and the boundary
+  classifier reads index geometry — a fold's surviving tail aligns at
+  shifted indices, a rewind's shared content is a same-index prefix.
+  With no surviving tail at all, a same-sig thread that was never
+  reunified classifies as a rewind too: every observed compact shape
+  rewrites message[0] and splits the thread signature. The boundary
+  row now says "rewound · N -> M turns" with an honest hover; fold and
+  rewrite boundaries are unchanged, and the real-wire compaction
+  fixture pins all three modes.
+- Failed requests (no response / HTTP 4xx-5xx) used to transiently
+  claim the successful retry's turn and then pile up as orphan "err"
+  rows at the thread tail — an 82-request 429 storm rendered as 82
+  unordered rows. They now collect per timeline position (t.failed)
+  and render as one collapsed run at the exact spot the storm hit:
+  "21 failed requests · 429 engine_overloaded_error", red dot on the
+  rail, first wire pair linked, plus a matching red-edged line in the
+  conversation pane. Failed pairs never claim turns anymore; the retry
+  that landed owns the turn.
+
 ## [0.20.0] - 2026-07-22
 
 Sessions outline legibility: the rail names what the agent did on
@@ -905,7 +936,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/thevibeworks/cctrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/thevibeworks/cctrace/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/thevibeworks/cctrace/compare/v0.17.0...v0.18.0

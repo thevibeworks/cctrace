@@ -351,3 +351,60 @@ describe("compact boundary rendering (session-tab round 10)", () => {
     expect(page.errors).toEqual([]);
   });
 });
+
+describe("rewind boundaries and failed-request runs", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+
+  test("a rewind renders a 'rewound' boundary row, not 'compacted'", () => {
+    const grown: any[] = [u("start here")];
+    for (let i = 0; i < 7; i++) grown.push(a("reply " + i), u("question " + (i + 1)));
+    const pPre = msgPair("p1", { reqBody: { messages: grown }, resBody: { content: [{ type: "text", text: "old tip" }] } });
+    const pNew = msgPair("p2", {
+      reqBody: { messages: [u("start here"), a("fresh start"), u("a new question")] },
+      resBody: { content: [{ type: "text", text: "a new answer" }] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([pPre, pNew]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toMatch(/class="tcompact-label">rewound</);
+    expect(threads!.html).not.toMatch(/class="tcompact-label">compacted</);
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("rewound · history stepped back");
+    expect(convo!.html).toContain("a new answer"); // the live branch renders
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a 429 retry storm collapses into one ordered error run row", () => {
+    const hist2 = [u("q one"), a("r1"), u("q two")];
+    const ok1 = msgPair("p1");
+    const mk429 = (id: string) =>
+      msgPair(id, {
+        reqBody: { messages: hist2 },
+        resBody: undefined as any,
+      });
+    const f1 = mk429("p2");
+    const f2 = mk429("p3");
+    const f3 = mk429("p4");
+    for (const f of [f1, f2, f3]) {
+      (f.response as any).status = 429;
+      (f.response as any).body = { error: { type: "engine_overloaded_error", message: "overloaded" } };
+    }
+    const ok2 = msgPair("p5", { reqBody: { messages: hist2 }, resBody: { content: [{ type: "text", text: "r2" }] } });
+    const page = bootSnapshotPage(renderSnapshot([ok1, f1, f2, f3, ok2]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    // one collapsed run, not three tail rows
+    expect(threads!.html.match(/terr-run/g)!.length).toBe(1);
+    expect(threads!.html).toContain("3 failed requests");
+    expect(threads!.html).toContain("429 engine_overloaded_error");
+    // ordered: the run sits before the retry's turn, not dumped at the tail
+    expect(threads!.html.indexOf("terr-run")).toBeLessThan(threads!.html.indexOf(">r2<"));
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("errrun-mark");
+    expect(convo!.html).toContain("3 failed requests");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});

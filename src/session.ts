@@ -143,7 +143,9 @@ export function responseBlocks(pair: any): any[] {
  * table from src/clients (embedded as CLIENT_WIRE in the page); it names the
  * thread-id header for labeled OpenAI pairs. Returns { threads } in wire
  * order; each thread: { key, kind, label, model, system, tools, pairIds,
- * turns, usage, agentOf? }.
+ * turns, usage, agentOf?, compactions, rewound, unattributed, failed }
+ * (failed: transport/HTTP-failed requests with the turn index where their
+ * reply would have landed — the outline renders them as collapsed runs).
  */
 export function buildSession(pairs: any[], wire?: any): any {
   const threads: any[] = [];
@@ -305,7 +307,11 @@ export function buildSession(pairs: any[], wire?: any): any {
       (best <= histLen(t.reqs[0], t.dialect) || parent.reqs.some((r: any) => (r.request.timestamp || 0) > t0)))
       continue;
     if (pre || structural) {
-      for (const r of t.reqs) parent.reqs.push(r);
+      // Stamp the merged requests: a continuation's packing is a REWRITE of
+      // the parent's history (summary as msg[0] / merged first message), so
+      // when one of these ends up as the post-spine tail, the boundary is a
+      // compaction — unlike a same-sig truncation, which is a rewind.
+      for (const r of t.reqs) { (r as any)._cont = true; parent.reqs.push(r); }
       // A marker-verified continuation is a KNOWN repack: the append fallback
       // below may trust it without the 10-turn-drop heuristic (a small
       // session's manual compact drops fewer).
@@ -374,6 +380,7 @@ export function buildSession(pairs: any[], wire?: any): any {
       // because boilerplate turns (system notifications, recap prompts)
       // collide on sig alone.
       let anchor = -1;
+      let anchorSpine = -1;
       outer:
       for (let j = lastHist.length - 1; j >= 0; j--) {
         if (!lsigs[j]) continue;
@@ -389,20 +396,45 @@ export function buildSession(pairs: any[], wire?: any): any {
             if (a !== b) { ok = false; break; }
             checked++;
           }
-          if (ok) {
+          // A msg[0]-to-msg[0] match with zero verified context is no
+          // match at all: msg[0]'s content sig is the injected
+          // <system-reminder> prefix — identical for EVERY request in the
+          // session — and that degenerate hit once claimed a rewind-to-
+          // start as a fold (temp/20260722_wrong-session-trace). Anchors
+          // elsewhere may legitimately verify zero neighbors (wildcard
+          // tool results, start-of-packing) — the real compaction fixture
+          // has one — so only the (0,0) unverified hit is rejected.
+          if (ok && !(i === 0 && j === 0 && checked === 0)) {
             anchor = j;
+            anchorSpine = i;
             break outer;
           }
         }
       }
-      // No anchor + a compaction-sized drop = a FULL rewrite (a manual
-      // /compact replaces everything with the summary; nothing survives
-      // verbatim). The whole post-compact packing appends at its timeline
-      // position — the summary turn is a real event, and the exchanges
-      // after it are the live conversation, not superseded ghosts.
-      const appendFrom = anchor >= 0 ? anchor + 1
-        : lastHist.length && (spineLen - lastHist.length >= 10 || (t as any)._contMerged) ? 0
-        : lastHist.length;
+      // Fold vs rewind (2026-07-22): a fold's surviving tail sits at
+      // SHIFTED indices (anchorSpine > anchor — the history above it shrank
+      // into a summary); a /rewind's shared content is a same-index PREFIX
+      // (anchorSpine === anchor — nothing above it was rewritten). With no
+      // anchor at all, a compaction-sized drop still splits two ways: a
+      // merged continuation tail (_cont: msg[0] became the summary / a
+      // merged first message — a KNOWN rewrite) is a full compact, while a
+      // same-sig truncation can't be one — every observed compact shape
+      // rewrites msg[0] and splits the sig. Same sig + no surviving tail =
+      // the user rewound; the packing is a truncation, not a rewrite.
+      const contTail = !!(lastReq as any)._cont || (t as any)._contMerged;
+      let bmode = "";
+      if (anchor >= 0) bmode = anchorSpine === anchor && !contTail ? "rewind" : "fold";
+      else if (lastHist.length && (contTail || spineLen - lastHist.length >= 10)) bmode = contTail ? "rewrite" : "rewind";
+      // A rewrite appends the whole packing (msg[0] is the new summary — a
+      // real event); a no-anchor rewind skips its verbatim shared prefix
+      // (at minimum msg[0], the thread sig) so the restart point isn't
+      // duplicated below the boundary. Strict same-index walk: the first
+      // non-matching or unverifiable turn stops it.
+      let prefixDepth = 0;
+      if (bmode === "rewind" && anchor < 0) {
+        while (prefixDepth < lastHist.length && lsigs[prefixDepth] && ssigs[prefixDepth] && lsigs[prefixDepth] === ssigs[prefixDepth]) prefixDepth++;
+      }
+      const appendFrom = anchor >= 0 ? anchor + 1 : bmode === "rewind" ? prefixDepth : bmode ? 0 : lastHist.length;
       if (appendFrom < lastHist.length) {
         // The boundary is display data (session-tab round 10): the request
         // body sent to the API changed completely here. `at` = the first
@@ -417,14 +449,14 @@ export function buildSession(pairs: any[], wire?: any): any {
           const r = t.reqs[i];
           if ((r.request.body || {})._cctrace_stub) continue;
           const len = histLen(r, t.dialect);
-          if (len <= lastHist.length && (anchor >= 0 || len < spineLen - 9 || (t as any)._contMerged)) { firstPost = r; break; }
+          if (len <= lastHist.length && (anchor >= 0 || len < spineLen - 9 || contTail)) { firstPost = r; break; }
         }
         t.compactions.push({
           at: t.turns.length,
           pairId: firstPost.id,
           fromTurns: spineLen,
           toTurns: histLen(firstPost, t.dialect),
-          mode: anchor >= 0 ? "fold" : "rewrite",
+          mode: bmode || "fold",
         });
         for (let i = appendFrom; i < lastHist.length; i++) t.turns.push(lastHist[i]);
         const lr = responseBlocks(lastReq);
@@ -455,9 +487,19 @@ export function buildSession(pairs: any[], wire?: any): any {
     const claimed: Record<number, number> = {};
     t.rewound = [];
     t.unattributed = [];
+    t.failed = [];
     for (let reqIdx = 0; reqIdx < t.reqs.length; reqIdx++) {
       const p = t.reqs[reqIdx];
       const idx = histLen(p, t.dialect);
+      // Transport/HTTP failures produced no reply and therefore no turn.
+      // Collect them WITH their timeline position (idx = where the reply
+      // would have landed) so the outline can show them as collapsed error
+      // runs in order — a 429 retry storm used to claim the successful
+      // retry's turn at strength 1 and dump 80+ orphan rows at the tail.
+      if (!p.response || p.response.status >= 400) {
+        t.failed.push({ pairId: p.id, at: idx, status: p.response ? p.response.status : 0 });
+        continue;
+      }
       const landing = t.turns[idx];
       const attach = (i: number, strength: number) => {
         t.turns[i].pairId = p.id;

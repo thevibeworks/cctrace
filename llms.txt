@@ -4,10 +4,13 @@
 > Kimi Code CLIs. Spawns the client behind a local zero-config MITM proxy and captures
 > its first-party traffic (/v1/messages, OAuth, usage/credits, MCP registry,
 > telemetry) into a live categorized web UI with a reconstructed Sessions
-> view — sessions > threads > turns on one rail, model epochs, subagent
-> spawns attached at their dispatching turn, compaction boundaries with the
+> view — sessions > threads > turns on one rail, where a turn is the human
+> unit (user request > agent work > final response) and tool rows name what
+> they touched (Edit(src/ui.ts), workspace-relative); model epochs, subagent
+> spawns attached at their dispatching turn, harness-injected messages
+> (recaps, reminders) tagged SYS, compaction boundaries with the
 > context collapse in turns and tokens, superseded exchanges kept at their
-> timeline position — plus replay, cost, cache-verdict, and
+> timeline position — plus replay, cost, reasoning-effort, cache-verdict, and
 > first-token-latency chips. External hosts (npm, github, apt) pass through
 > as opaque byte-counted tunnels — logged, never decrypted. Built for two
 > jobs: LLM tracing (see exactly what the agent sends and receives each

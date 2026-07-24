@@ -62,11 +62,14 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
 - **The full picture.** `/v1/messages`, OAuth, **usage/credits**, MCP registry,
   bootstrap, telemetry -- not just the chat endpoint.
 - **Live, categorized UI.** Filter chips with counts, decoded SSE streams,
-  prompt-cache verdicts, first-token latency, estimated cost per request.
-  The [full tour](docs/web-ui.md).
-- **Reconstructed sessions.** Threads, subagent branches, `/model` epochs,
-  compaction boundaries, superseded exchanges -- and **replay**: step or
-  play back any captured session, deep-link any moment.
+  reasoning-effort and prompt-cache verdicts, first-token latency,
+  estimated cost per request. The [full tour](docs/web-ui.md).
+- **Reconstructed sessions.** Turns the way a human counts them (user
+  request -> agent work -> final response; a 213-message trace reads as
+  3 turns), tool rows naming the files they touched, subagent branches,
+  `/model` epochs, compaction boundaries, superseded exchanges -- and
+  **replay**: step or play back any captured session, deep-link any
+  moment.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **Zero config.** Auto-generates its CA, auto-detects your install, full

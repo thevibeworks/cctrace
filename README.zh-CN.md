@@ -56,9 +56,12 @@ Claude Code 以 Bun 编译的**原生二进制**分发，`node --require` 注入
 
 - **完整全貌。** `/v1/messages`、OAuth、**用量/额度**、MCP registry、bootstrap、
   遥测 -- 不只是聊天端点。
-- **实时分类界面。** 带计数的筛选标签、解码后的 SSE 流、prompt 缓存判定、
-  首 token 延迟、每请求的估算费用。完整导览见 [docs/web-ui.md](docs/web-ui.md)。
-- **会话重建。** 线程、子代理分支、`/model` epoch、compact 分界、被覆盖的交互 --
+- **实时分类界面。** 带计数的筛选标签、解码后的 SSE 流、推理 effort 与
+  prompt 缓存判定、首 token 延迟、每请求的估算费用。完整导览见
+  [docs/web-ui.md](docs/web-ui.md)。
+- **会话重建。** 按人类的方式数轮次（用户请求 -> agent 工作 -> 最终回复；
+  213 条 wire 消息读起来就是 3 轮）、工具行直接写明改了哪个文件、
+  子代理分支、`/model` epoch、compact 分界、被覆盖的交互 --
   外加**回放**：任何已捕获的会话都能逐轮播放，任意时刻可深链。
 - **可重开的 trace。** 每次运行写一份 `.jsonl`；`cctrace view` 随时重开，
   `--html` 按需渲染离线快照发给同事。

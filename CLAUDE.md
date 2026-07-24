@@ -264,7 +264,9 @@ hash-routed:
   message is the final response row (↳ marker, reply snippet). Harness-
   authored user-ROLE messages (`harnessPrompt`, precise prefixes only)
   never read as the human: the away-recap prompt and "Tool loaded."
-  absorb into the open turn as grey "cli · recap/tool-load" rows;
+  absorb into the open turn wearing a small-caps SYS tag (.sys-tag in the
+  outline, the sum-tag style on the convo role bar — one system-scope
+  marker family with the continuation-summary tag);
   "[SYSTEM NOTIFICATION" wakeups DO head their turn (they start real
   agent work) but render as CLI-authored, not a hollow user ring. Loop
   counts feed every "N turns" label (thread cards, session headers,
@@ -414,8 +416,10 @@ hash-routed:
   plug); tool fold previews name what the tool touched in workspace terms
   (`toolPreview`/`wsPath` in src/session.ts: file paths relativize to the
   workspace root — "src/ui.ts", "~/.claude/settings.json", full path only
-  when outside both; Read shows its line window, Write its size, Edit
-  flags replace-all, TodoWrite counts done. The root comes from
+  when outside both; `wsRelText` relativizes paths INSIDE Bash command
+  text too, so the sidebar reads "$ cd .cctrace && ls" — display-layer
+  only, fold bodies keep the wire text; Read shows its line window, Write
+  its size, Edit flags replace-all, TodoWrite counts done. The root comes from
   META.projectPath, else `cwdFromText` reads the cwd the traced CLI stated
   on the wire — codex's <cwd> tag or Claude Code's bulleted
   " - Primary working directory:" env line, precise shapes only, scanned

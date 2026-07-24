@@ -11,6 +11,7 @@ import {
   mainThread,
   toolPreview,
   wsPath,
+  wsRelText,
   cwdFromText,
   harnessPrompt,
   loopTurns,
@@ -416,6 +417,17 @@ describe("wsPath / cwdFromText", () => {
     expect(wsPath("/tmp/f", "/w/root")).toBe("/tmp/f");
     expect(wsPath("", "/w/root")).toBe("");
     expect(wsPath("/w/root/a.ts")).toBe("/w/root/a.ts"); // no ws, not a home path: untouched
+  });
+
+  test("wsRelText: paths inside command text relativize", () => {
+    const ws = "/Users/eric/proj";
+    expect(wsRelText("cd /Users/eric/proj/.cctrace && ls -t", ws)).toBe("cd .cctrace && ls -t");
+    expect(wsRelText("ls /Users/eric/proj && cat /Users/eric/proj/a.ts", ws)).toBe("ls . && cat a.ts");
+    // /path must never eat /path-other
+    expect(wsRelText("ls /Users/eric/proj-two", ws)).toBe("ls ~/proj-two");
+    // home paths outside the workspace go ~-relative
+    expect(wsRelText("cat /home/deva/.claude/settings.json", ws)).toBe("cat ~/.claude/settings.json");
+    expect(wsRelText("", ws)).toBe("");
   });
 
   test("cwdFromText: precise shapes only, prose never matches", () => {

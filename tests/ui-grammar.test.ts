@@ -270,6 +270,31 @@ describe("outline tool labels", () => {
   });
 });
 
+describe("harness-authored messages", () => {
+  test("a recap prompt wears the sys tag in outline and convo, never the human ring", () => {
+    const recap = "The user stepped away and is coming back. Recap in under 40 words.";
+    const p1 = msgPair("p1");
+    const p2 = msgPair("p2", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: [{ type: "text", text: "hello" }] },
+          { role: "user", content: recap },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "recap answer" }] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p1, p2]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toContain('sys-tag">sys · recap</span>');
+    const convo = page.fragments.filter((f) => f.id === "convo").pop();
+    expect(convo!.html).toContain("sys · recap");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("model epochs rendering", () => {
   test("a /model switch renders epoch rows in the pane and a divider in the convo", () => {
     const first = { role: "user", content: "hi" };

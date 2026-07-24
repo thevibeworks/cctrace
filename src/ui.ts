@@ -45,6 +45,8 @@ import {
   toolPreview,
   wsPath,
   cwdFromText,
+  harnessPrompt,
+  loopTurns,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
 import {
@@ -953,6 +955,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tturn:hover .tturn-text { color: var(--text); }
     .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tturn-tools { color: var(--text-faint); }
+    /* Working-loop nesting: agent work + final response indent under their
+       user head; intermediate rows read quieter than the final response. */
+    .tturn-sub { padding-left: 20px; }
+    .tturn-mid .tturn-text { color: var(--text-faint); }
     /* a superseded exchange at its timeline position: grey, half-present —
        it happened here, then left history */
     .tturn-sup { opacity: 0.6; }
@@ -1235,6 +1241,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${toolPreview.toString()}
     ${wsPath.toString()}
     ${cwdFromText.toString()}
+    ${harnessPrompt.toString()}
+    ${loopTurns.toString()}
 
     const statusEl = document.getElementById('status');
     const countEl = document.getElementById('count');
@@ -2546,7 +2554,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (t.agentOf && t.agentOf.toolUseId) {
           agentThreadIndex[t.agentOf.toolUseId] = t.key;
           const u = t.usage || {};
-          const n = t.turns.filter(x => !x.toolResultsOnly).length;
+          const n = loopCountOf(t);
           let s = n + ' turn' + (n === 1 ? '' : 's') + ' \\u00b7 out ' + fmtCompact(u.output || 0);
           if (u.cost) s += ' \\u00b7 ' + fmtCost(u.cost);
           const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
@@ -2633,6 +2641,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '#/session/' + encodeURIComponent(shortKeyStr(key));
     }
 
+    // A thread's turn count in working-loop units (user request → agent
+    // work → final response) — what a human means by "12 turns", and the
+    // same numbering the outline's ordinals use.
+    function loopCountOf(t) {
+      return loopTurns((t.turns || []).filter(x => !x.toolResultsOnly)).length;
+    }
+
     function threadMeta(t) {
       const u = t.usage;
       const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
@@ -2647,11 +2662,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // One epoch section head: branch icon + T<n> ordinal + model + turn
     // count. Click = jump to where that model takes over.
     function epochHead(t, e, i) {
-      const n = e.to - e.from + 1;
       const pad = (x) => (x < 10 ? '0' + x : '' + x);
       // Per-epoch rollup for the hover: what this model run produced.
       const vis = [];
       for (const turn of t.turns) if (!turn.toolResultsOnly) vis.push(turn);
+      // Turn count in working-loop units (loopTurns): the loops whose head
+      // starts inside this epoch's range — matches the outline's ordinals.
+      const loops = loopTurns(vis);
+      const ords = [];
+      for (let li = 0; li < loops.length; li++) {
+        const start = loops[li].head != null ? loops[li].head : (loops[li].members.length ? loops[li].members[0] : 0);
+        if (start >= e.from && start <= e.to) ords.push(li);
+      }
+      const n = ords.length;
       let out = 0, cost = 0, t0 = 0, t1 = 0;
       for (let vi = e.from; vi <= e.to && vi < vis.length; vi++) {
         const u = vis[vi].usage;
@@ -2663,7 +2686,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (p) { if (!t0) t0 = p.request.timestamp; t1 = p.request.timestamp; }
       }
       const tip = 'T' + i + ' \\u00b7 ' + (shortModel(e.model) || 'unknown model') + ' run\\n' +
-        'turns ' + pad(e.from) + '\\u2013' + pad(e.to) + ' (' + n + ' turn' + (n === 1 ? '' : 's') + ')' +
+        (n ? 'turns ' + pad(ords[0]) + '\\u2013' + pad(ords[n - 1]) + ' (' + n + ' turn' + (n === 1 ? '' : 's') + ')'
+           : 'takes over mid-turn') +
         (t0 ? '\\n' + fmtDateTime(new Date(t0 * 1000)) + (t1 && t1 !== t0 ? ' \\u2013 ' + fmtTime(new Date(t1 * 1000)) : '') : '') +
         '\\nout ' + fmtCompact(out) + (cost ? ' \\u00b7 est. ' + fmtCost(cost) : '') +
         (i > 0 ? '\\nopened by a /model switch \\u2014 same conversation, different model' : '') +
@@ -2673,7 +2697,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<span class="rgut"><span class="enode"></span></span>' +
         '<span class="tepoch-ord">T' + i + '</span>' +
         '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + '</span>' +
-        '<span class="tepoch-turns">' + n + ' turn' + (n === 1 ? '' : 's') + '</span></a>';
+        '<span class="tepoch-turns">' + (n ? n + ' turn' + (n === 1 ? '' : 's') : 'mid-turn') + '</span></a>';
     }
 
     // Model epochs as visible rows under a conversation: t0/t1/t2 mark each
@@ -2696,13 +2720,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function turnToolLabel(turn) {
       const names = [];
       const seen = {};
+      const ws = wsRoot();
       for (const b of turn.blocks || []) {
         if (!b || (b.type !== 'tool_use' && b.type !== 'server_tool_use')) continue;
         const n = b.name || '?';
+        const i = b.input || {};
         let label;
         if (SPAWN_TOOLS[n]) label = 'Task';
-        else if (n === 'Skill') { const i = b.input || {}; label = 'skill' + (i.skill || i.command ? ' \\u00b7 ' + (i.skill || i.command) : ''); }
+        else if (n === 'Skill') label = 'skill' + (i.skill || i.command ? ' \\u00b7 ' + (i.skill || i.command) : '');
         else if (n.lastIndexOf('mcp__', 0) === 0) label = 'mcp \\u00b7 ' + n.slice(5).split('__')[0];
+        else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'NotebookEdit') {
+          // Name WHAT was touched, workspace-relative — "Edit src/ui.ts"
+          // says more than "Edit". Dedupe is per tool+file.
+          const fp = wsPath(i.file_path || i.notebook_path, ws);
+          label = n + (fp ? ' ' + fp : '');
+        }
         else label = n;
         if (seen[label]) continue;
         seen[label] = 1;
@@ -2766,7 +2798,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (let i = hist.length - 1; i >= 0 && !prompt; i--) {
           if (hist[i] && hist[i].role === 'user') prompt = turnSnippet(normalizeTurns([hist[i]])[0].blocks);
         }
-        const ord = 'turn' + (vi < 10 ? '0' + vi : vi);
+        const near = linfo[Math.min(vi, vis.length - 1)];
+        const ord = near && near.ord != null ? ordFmt(near.ord) : 'turn?';
         const tip = ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
           (prompt ? '\\n' + prompt.slice(0, 400) : '') +
           '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
@@ -2864,6 +2897,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         return out;
       };
+      // Working-loop grouping (loopTurns): the outline's TURN is the human
+      // unit — user request, agent work nested under it, final response —
+      // not one wire message. Ordinals number loops; member rows indent.
+      const loops = loopTurns(vis);
+      const linfo = {};
+      for (let li = 0; li < loops.length; li++) {
+        const L = loops[li];
+        if (L.head != null) linfo[L.head] = { ord: li, kind: 'head', injected: L.headInjected || '' };
+        for (let mi = 0; mi < L.members.length; mi++) {
+          const v = L.members[mi];
+          linfo[v] = {
+            ord: li,
+            kind: v === L.final ? 'final' : 'mid',
+            injected: L.injected[v] || '',
+            // a headless loop (thread cut mid-history) shows its ordinal on
+            // its first row so the numbering never skips silently
+            lead: L.head == null && mi === 0,
+          };
+        }
+      }
+      const ordFmt = (n) => 'turn' + (n < 10 ? '0' + n : n);
       let html = '';
       for (let ei = 0; ei < eps.length; ei++) {
         const e = eps[ei];
@@ -2873,7 +2927,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (supAt[vi]) for (const pid of supAt[vi]) html += supRow(pid, vi);
           if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
-          const ord = 'turn' + (vi < 10 ? '0' + vi : vi);
+          const li = linfo[vi] || { ord: null, kind: 'mid' };
+          const ord = li.ord != null ? ordFmt(li.ord) : 'turn?';
+          const ordLabel = li.kind === 'head' || li.lead ? ord : li.kind === 'final' ? '\\u21b3' : '';
+          const rowCls = li.kind === 'head' ? ' tturn-user'
+            : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin');
           let text = '';
           let dot = '';
           let tip = '';
@@ -2898,7 +2956,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             const failed = p && (!p.response || p.response.status >= 400);
             const cc = u && p ? summarizeCache(u, p.request.body) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
-            const tbits = [ord + ' \\u00b7 assistant' + (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : '')];
+            const tbits = [ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
+              (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : '')];
             if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
               let l = 'in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output);
@@ -2916,15 +2975,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
             if (!p) tbits.push('unattributed \\u2014 no captured request matches this reply');
             tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn';
+          } else if (li.injected) {
+            // A user-ROLE wire message the harness generated (recap, tool
+            // load, automated notification) — it must never read as the
+            // human speaking. Notifications still head their turn (they
+            // start real agent work), but as a CLI-authored one.
+            const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
+            text = '<span class="tturn-tools">cli \\u00b7 ' + escapeHtml(li.injected) + ' \\u2014 ' + escapeHtml(s.slice(0, 90)) + '</span>';
+            dot = '<span class="cdot"></span>';
+            tip = ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
+              'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human\\n' +
+              s.slice(0, 400) + '\\n\\nclick to jump to this turn';
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
             dot = '<span class="cdot cdot-user"></span>'; // hollow: the human's turn
             tip = ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
           }
-          html += '<a class="tturn' + (turn.role === 'user' ? ' tturn-user' : '') + '" href="' + threadHash(t.key) + '"' +
+          html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '" data-tip="' + escapeHtml(tip) + '">' +
-            '<span class="rgut">' + dot + '</span><span class="tturn-ord">' + ord + '</span>' +
+            '<span class="rgut">' + dot + '</span><span class="tturn-ord">' + ordLabel + '</span>' +
             '<span class="tturn-text">' + text + '</span></a>';
           if (turn.role === 'assistant') html += branchRows(turn);
         }
@@ -3164,7 +3234,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         errs.truncated += u.truncated || 0;
         errs.toolErrors += u.toolErrors || 0;
         errs.toolUses += u.toolUses || 0;
-        if (t.kind !== 'utility') turns += t.turns.filter(x => !x.toolResultsOnly).length;
+        if (t.kind !== 'utility') turns += loopCountOf(t);
         for (const m in (t.models || {})) models[m] = 1;
       }
       const bits = ['session ' + (sid || '(no id on the wire)')];
@@ -3194,7 +3264,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const u = t.usage || {};
         req += u.requests || 0;
         errs += (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
-        if (t.kind !== 'utility') turns += t.turns.filter(x => !x.toolResultsOnly).length;
+        if (t.kind !== 'utility') turns += loopCountOf(t);
       }
       // HH:MM only — seconds are noise at the session level; a
       // single-moment session shows one time, not a degenerate range.
@@ -3435,6 +3505,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (let i = 1; i < eps.length; i++) epochAt[eps[i].from] = eps[i].model;
       let ti = 0;
       let vi = 0;
+      // Working-loop ordinals, same numbering as the outline: the user head
+      // and the final response of each loop carry turnNN; intermediate
+      // agent-work messages carry none — they are inside the turn.
+      const cloops = loopTurns(t.turns.filter(x => !x.toolResultsOnly));
+      const viOrd = {};
+      for (let li = 0; li < cloops.length; li++) {
+        const L = cloops[li];
+        if (L.head != null) viOrd[L.head] = li;
+        if (L.final != null) viOrd[L.final] = li;
+        if (L.head == null && L.members.length) viOrd[L.members[0]] = li;
+      }
       // The turn sitting AT a rewrite-mode boundary is the injected
       // continuation summary — tagged by position, not by matching
       // harness strings that can change under us.
@@ -3468,7 +3549,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (epochAt[vi] !== undefined) {
           html += '<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>';
         }
-        try { html += renderSessionTurn(turn, results, vi, isSummary); }
+        try { html += renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary); }
         catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
         vi++;
       }

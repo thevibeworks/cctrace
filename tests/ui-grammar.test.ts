@@ -260,7 +260,8 @@ describe("outline tool labels", () => {
     const page = bootSnapshotPage(renderSnapshot([p]));
     page.goto("#/session");
     const threads = page.fragments.filter((f) => f.id === "threads").pop();
-    expect(threads!.html).toContain("Read, Edit, Bash, +1"); // 3 shown, remainder counted
+    // file tools name what they touched; 3 shown, remainder counted
+    expect(threads!.html).toContain("Read a, Edit a, Bash, +1");
     expect(fragmentErrors(page)).toEqual([]);
   });
 });
@@ -283,19 +284,25 @@ describe("model epochs rendering", () => {
     expect(threads!.html).toContain(">T0</span>");
     expect(threads!.html).toContain(">fable-5</span>");
     expect(threads!.html).toContain(">opus-4-8</span>");
-    // turns nest under their epoch head, ordinals global across epochs
+    // ordinals count working-loop turns (user → work → final), global
+    // across epochs: two user exchanges = turn00, turn01
     expect(threads!.html).toContain(">turn00</span>");
-    expect(threads!.html).toContain(">turn02</span>");
+    expect(threads!.html).toContain(">turn01</span>");
+    // the final response nests under its head with the ↳ marker
+    expect(threads!.html).toContain('tturn-sub tturn-fin');
+    expect(threads!.html).toContain(">↳</span>");
     expect(threads!.html.indexOf(">T0</span>")).toBeLessThan(threads!.html.indexOf(">turn00</span>"));
-    expect(threads!.html.indexOf(">turn01</span>")).toBeLessThan(threads!.html.indexOf(">T1</span>"));
+    expect(threads!.html.indexOf(">turn00</span>")).toBeLessThan(threads!.html.indexOf(">T1</span>"));
     // every turn row carries a dot: user = hollow ring, assistant = verdict
     expect(threads!.html).toContain('cdot-user');
     const convo = page.fragments.filter((f) => f.id === "convo").pop();
     expect(convo!.html).toContain('class="epoch-mark"');     // divider at the switch
     expect(convo!.html).toContain("opus-4-8");
-    // the outline's numbering repeats on the reconstructed turns
+    // the outline's numbering repeats on the reconstructed turns: the user
+    // head and the final response both carry the loop ordinal
     expect(convo!.html).toContain('<span class="turn-ord">turn00</span>');
-    expect(convo!.html).toContain('<span class="turn-ord">turn03</span>');
+    expect(convo!.html).toContain('<span class="turn-ord">turn01</span>');
+    expect(convo!.html).not.toContain('<span class="turn-ord">turn03</span>');
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });

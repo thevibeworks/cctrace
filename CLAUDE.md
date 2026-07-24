@@ -251,12 +251,26 @@ hash-routed:
   "[chat] N turns" card said less than the session header does).
   Default focus is
   the newest session's main thread; a NEW sid appearing live follows only
-  while tailing. The SELECTED conversation renders as an outline: epoch
-  section heads (t0/t1, only when >1) with turns nested under — user rows
-  show the prompt (`turnSnippet`: caveat/stdout wrappers skipped, a
-  command-only turn previews as "/model"), assistant rows a reply snippet
-  + out/duration with rewound / compact-folded / failed marks; row click
-  jumps to the turn in the convo. EVERY turn row LEADS with a dot — a
+  while tailing. The SELECTED conversation renders as an outline whose
+  TURN is the working-loop unit — user request → agent work → final
+  response — NOT one wire message (`loopTurns` in src/session.ts groups
+  visible message-turns; a real trace's 213 wire messages read as 3
+  turns). Ordinals number loops; a genuine user message heads turnNN
+  (prompt via `turnSnippet`: caveat/stdout wrappers skipped, a
+  command-only turn previews as "/model"); the agent's intermediate
+  messages indent under it (.tturn-sub/.tturn-mid — narration snippet, or
+  the enriched tool label: `turnToolLabel` names files workspace-relative,
+  "Edit src/ui.ts, Read src/session.ts, +2"); the loop's last assistant
+  message is the final response row (↳ marker, reply snippet). Harness-
+  authored user-ROLE messages (`harnessPrompt`, precise prefixes only)
+  never read as the human: the away-recap prompt and "Tool loaded."
+  absorb into the open turn as grey "cli · recap/tool-load" rows;
+  "[SYSTEM NOTIFICATION" wakeups DO head their turn (they start real
+  agent work) but render as CLI-authored, not a hollow user ring. Loop
+  counts feed every "N turns" label (thread cards, session headers,
+  spawn-fold stats) and the convo pane's role-bar ordinals (user head +
+  final response carry turnNN, intermediates none). Row click still jumps
+  by message index. EVERY row LEADS with a dot — a
   status gutter (user = hollow ring; assistant = wire verdict: green
   healthy cache hit, amber weak <90%/cold/miss, red failed) — then
   ordinal + message text, nothing else inline: all metrics live in the

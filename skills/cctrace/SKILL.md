@@ -90,7 +90,12 @@ instances land on 9318, 9319, ...). Hash-routed views:
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
   conversation (main chat, subagent runs linked to the Task call that
   spawned them, utility probes as separate threads) beside the wire
-  requests, with per-turn tokens/duration/cost linked back to each request,
+  requests. A TURN is the working-loop unit — user request, agent work
+  (indented: tool rows name the files touched, workspace-relative),
+  final response (↳) — so "3 turns" can span hundreds of wire messages;
+  CLI-injected user-role prompts (recap, "Tool loaded.", SYSTEM
+  NOTIFICATION wakeups) are marked "cli", never shown as the human.
+  Per-turn tokens/duration/cost link back to each wire request,
   and error metrics per thread/session (failed requests, truncated streams,
   failed tool calls with an error rate). When a trace holds several wire
   session ids (/clear mid-run, resumed sessions), threads group into

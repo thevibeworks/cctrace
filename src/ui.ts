@@ -44,6 +44,7 @@ import {
   mainThread,
   toolPreview,
   wsPath,
+  wsRelText,
   cwdFromText,
   harnessPrompt,
   loopTurns,
@@ -963,6 +964,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        user head; intermediate rows read quieter than the final response. */
     .tturn-sub { padding-left: 20px; }
     .tturn-mid .tturn-text { color: var(--text-faint); }
+    /* Harness-authored messages wear one small-caps SYS tag (same family
+       as the convo's continuation-summary tag) — recap, tool loads,
+       automated notifications: system scope, never the human speaking. */
+    .sys-tag {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      color: var(--text-muted); border: 1px solid var(--border);
+      border-radius: 4px; padding: 0 4px; margin-right: 6px; flex: none;
+    }
     /* a superseded exchange at its timeline position: grey, half-present —
        it happened here, then left history */
     .tturn-sup { opacity: 0.6; }
@@ -1244,6 +1253,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${mainThread.toString()}
     ${toolPreview.toString()}
     ${wsPath.toString()}
+    ${wsRelText.toString()}
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
     ${loopTurns.toString()}
@@ -2743,8 +2753,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           args = wsPath(i.file_path || i.notebook_path, ws) || '';
         }
         // Bash: the model's own intent line beats the raw command; the
-        // command itself stays in the convo fold.
-        else if (n === 'Bash') args = typeof i.description === 'string' && i.description ? i.description : String(i.command || '').slice(0, 60);
+        // command itself stays in the convo fold. Paths relativize.
+        else if (n === 'Bash') args = typeof i.description === 'string' && i.description ? i.description : wsRelText(String(i.command || ''), ws).slice(0, 60);
         else if (n === 'Grep') args = i.pattern || '';
         const key = name + '(' + args + ')';
         if (seen[key]) continue;
@@ -2990,9 +3000,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             // A user-ROLE wire message the harness generated (recap, tool
             // load, automated notification) — it must never read as the
             // human speaking. Notifications still head their turn (they
-            // start real agent work), but as a CLI-authored one.
+            // start real agent work), but as a CLI-authored one. The SYS
+            // tag is the one system-scope marker, shared with the convo.
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
-            text = '<span class="tturn-tools">cli \\u00b7 ' + escapeHtml(li.injected) + ' \\u2014 ' + escapeHtml(s.slice(0, 90)) + '</span>';
+            text = '<span class="sys-tag">sys \\u00b7 ' + escapeHtml(li.injected) + '</span>' +
+              '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
             tip = ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
               'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human\\n' +
@@ -3401,6 +3413,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (turn.role === 'user' && (isSummary ||
           turnSnippet(turn.blocks).lastIndexOf('This session is being continued from a previous conversation', 0) === 0)) {
         tag = '<span class="sum-tag" title="injected by /compact \\u2014 this text replaced the full history in the model\\u2019s context; it is not something the user typed">continuation summary</span>';
+      } else if (turn.role === 'user') {
+        // Same system scope as the continuation tag: harness-authored
+        // user-role messages (recap, tool loads, notifications) carry a
+        // sys tag so they never read as the human speaking.
+        const hk = harnessPrompt(turnSnippet(turn.blocks));
+        if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">sys \\u00b7 ' + escapeHtml(hk) + '</span>';
       }
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
         '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + '</div>' + inner + '</div>';

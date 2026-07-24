@@ -30,7 +30,12 @@ All notable changes to cctrace are documented here. Format follows
   after: "Install package dependencies · $ npm i". Tool rows and fold
   titles read ToolName(args) with the name colorized in the request-
   method color -- Edit(src/ui.ts), Bash(Install deps), skill(ccx) --
-  in the outline and both conversation panes. The workspace root comes from page
+  in the outline and both conversation panes. Paths inside Bash command
+  text relativize too (display-only; fold bodies keep the wire text), so
+  the sidebar reads "$ cd .cctrace && ls". Harness-authored user-role
+  messages wear one small-caps SYS tag (sys · recap / tool-load /
+  notification) in the outline and on the convo role bar -- the same
+  system-scope family as the continuation-summary tag. The workspace root comes from page
   metadata, else from the cwd the CLI itself stated on the wire (codex
   <cwd> tag, Claude Code env block); unknown roots keep full paths. The
   requests-view detail panel uses the same previews for tool_use folds

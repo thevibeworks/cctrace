@@ -835,6 +835,28 @@ export function wsPath(p: any, ws?: any): string {
 }
 
 /**
+ * Relativize every workspace-root / home-dir occurrence INSIDE arbitrary
+ * preview text (a Bash command line, an intent description): the sidebar
+ * shows "cd .cctrace && ls", not the full container path. Display-layer
+ * only — fold bodies keep the literal wire text.
+ */
+export function wsRelText(s: any, ws?: any): string {
+  let t = String(s || "");
+  if (!t) return t;
+  if (typeof ws === "string" && ws && ws !== "/") {
+    const w = ws.charAt(ws.length - 1) === "/" ? ws.slice(0, -1) : ws;
+    t = t.split(w + "/").join("");
+    // bare root mentions (no trailing slash) read as "." — boundary-checked
+    // so /path never eats /path-other
+    const esc = w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    t = t.replace(new RegExp(esc + "(?![\\w@.-])", "g"), ".");
+  }
+  t = t.replace(/\/(?:home|Users)\/[^/\s"']+\//g, "~/");
+  t = t.replace(/\/(?:home|Users)\/[^/\s"']+(?![\w@.-])/g, "~");
+  return t;
+}
+
+/**
  * The traced CLI's working directory, extracted from a request's system/env
  * text. Two precise shapes only (loose "directory" matching catches prose):
  * codex's <cwd>/path</cwd> environment tag, and Claude Code's line-anchored
@@ -920,8 +942,9 @@ export function toolPreview(name: string, input: any, ws?: any): string {
   switch (name) {
     // Bash carries the model's own one-line intent in `description` —
     // lead with it (the "what"), keep the literal command after (the
-    // ground truth; the fold body holds it in full).
-    case "Bash": return (typeof i.description === "string" && i.description ? i.description + " · " : "") + "$ " + (i.command || "");
+    // ground truth; the fold body holds it in full). Paths inside the
+    // command relativize for display (wsRelText).
+    case "Bash": return (typeof i.description === "string" && i.description ? i.description + " · " : "") + "$ " + wsRelText(i.command || "", ws);
     case "Read": {
       let r = wsPath(i.file_path, ws);
       if (typeof i.limit === "number" && typeof i.offset === "number") r += " · " + i.limit + " lines from " + i.offset;

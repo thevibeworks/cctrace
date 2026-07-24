@@ -876,44 +876,39 @@ export function cwdFromText(s: any): string {
 /**
  * CLI-injected user prompts: wire messages with role "user" that the
  * harness generated, not the human. They must never read as (or count as)
- * a human turn. Precise prefixes only — known shapes; the kinds are the
- * display vocabulary of the one SYS label family (SYS RECAP, SYS TOOLS,
- * SYS NOTIFY, SYS REMINDER — see reminderOnly):
- *   "recap"  — the away-recap prompt, answered then dropped from
- *              history; a side exchange INSIDE the current turn
- *   "tools"  — "Tool loaded." after a deferred-tool fetch; the agent
- *              just continues its current work
- *   "notify" — "[SYSTEM NOTIFICATION - NOT USER INPUT]" automated
- *              wakeups (task done, scheduled); these START real agent
- *              work, so they head a turn — a CLI-authored one
+ * a human turn. Precise prefixes only — known shapes:
+ *   "recap"        — the away-recap prompt, answered then dropped from
+ *                    history; a side exchange INSIDE the current turn
+ *   "tool-load"    — "Tool loaded." after a deferred-tool fetch; the agent
+ *                    just continues its current work
+ *   "notification" — "[SYSTEM NOTIFICATION - NOT USER INPUT]" automated
+ *                    wakeups (task done, scheduled); these START real
+ *                    agent work, so they head a turn — a CLI-authored one
  * Continuation summaries are NOT listed: they open a resumed thread and
  * are tagged separately. Returns the kind or "".
  */
 export function harnessPrompt(text: any): string {
   const t = String(text || "");
   if (t.lastIndexOf("The user stepped away and is coming back.", 0) === 0) return "recap";
-  if (t.lastIndexOf("Tool loaded", 0) === 0) return "tools";
-  if (t.lastIndexOf("[SYSTEM NOTIFICATION", 0) === 0) return "notify";
+  if (t.lastIndexOf("Tool loaded", 0) === 0) return "tool-load";
+  if (t.lastIndexOf("[SYSTEM NOTIFICATION", 0) === 0) return "notification";
   return "";
 }
 
 /**
- * True when a user turn's visible text is NOTHING but <system-reminder>
- * blocks — harness context injections (task-tool nags, memory recalls,
- * file-change notices) with no human words. Such turns join the SYS
- * family as "reminder" and never head a working-loop turn.
+ * harnessPrompt over a turn's BLOCKS, catching one extra shape the snippet
+ * can't: a user message whose entire text is <system-reminder> blocks (the
+ * harness nudges — task-tool reminders, memory recalls). turnSnippet
+ * strips reminders, so such a turn snippets to "" — if it still has text
+ * blocks and every one carries a reminder, it's kind "reminder".
  */
-export function reminderOnly(blocks: any[]): boolean {
-  let seen = 0;
-  for (const b of blocks || []) {
-    const t = typeof b === "string" ? b : b && b.type === "text" ? b.text : null;
-    if (t == null) continue;
-    const s = String(t).trim();
-    if (!s) continue;
-    if (s.lastIndexOf("<system-reminder>", 0) !== 0) return false;
-    seen++;
-  }
-  return seen > 0;
+export function harnessTurnKind(blocks: any[]): string {
+  const kind = harnessPrompt(turnSnippet(blocks));
+  if (kind) return kind;
+  if (turnSnippet(blocks)) return "";
+  const txts = (blocks || []).filter((b) => b && b.type === "text" && typeof b.text === "string");
+  if (txts.length && txts.every((b) => b.text.indexOf("<system-reminder>") !== -1)) return "reminder";
+  return "";
 }
 
 /**
@@ -935,9 +930,8 @@ export function loopTurns(vis: any[]): any[] {
     const turn = vis[i];
     if (!turn) continue;
     if (turn.role === "user") {
-      let kind = harnessPrompt(turnSnippet(turn.blocks));
-      if (!kind && reminderOnly(turn.blocks)) kind = "reminder";
-      if (!kind || kind === "notify") {
+      const kind = harnessTurnKind(turn.blocks);
+      if (!kind || kind === "notification") {
         cur = { head: i, headInjected: kind, members: [], final: null, injected: {} };
         loops.push(cur);
         continue;

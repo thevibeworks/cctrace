@@ -8,6 +8,17 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Changed
 
+- Session-view emphasis pass: user rows lead with a ❯ prompt glyph
+  (accent-tinted -- the shell's own "your turn" marker) and full text
+  color, and the outline rail line skips user heads so it spans a
+  turn's work; the model chip on thread/session headers wears the
+  identifier color and its hover states the wire facts -- exact model
+  id(s), requested effort level(s), 1m-context beta from the
+  anthropic-beta header; the session id is unbolded (identity, not
+  emphasis); subagent branch rows name the agent's model. Reminder-only
+  user messages (all text is system-reminder nudges, like the task-tool
+  reminder) join the SYS family as sys · reminder.
+
 - The sessions outline counts TURNS the way a human does: one turn =
   user request -> agent work -> final response, not one wire message (a
   real 213-message trace reads as 3 turns). A genuine user message heads
@@ -35,19 +46,9 @@ All notable changes to cctrace are documented here. Format follows
   in the outline and both conversation panes. Paths inside Bash command
   text relativize too (display-only; fold bodies keep the wire text), so
   the sidebar reads "$ cd .cctrace && ls". Harness-authored user-role
-  messages wear one small-caps SYS tag (SYS RECAP / SYS TOOLS / SYS
-  NOTIFY / SYS REMINDER -- the last catches user turns that are nothing
-  but system-reminder blocks, like task-tool nags) in the outline and on
-  the convo role bar -- the same system-scope family as the
-  continuation-summary tag.
-- Session-view reading hierarchy: the human speaks with an
-  accent-tinted ❯ chevron in the gutter (agent rows keep wire-verdict
-  dots); the user prompt and final response render bright while
-  intermediate agent work stays faint; Task/skill/mcp names keep purple
-  in outline labels. The session id is quiet (an address, not a
-  headline) and the model chip takes the highlight instead -- its hover
-  carries the exact wire facts: full model id, requested effort, and
-  the context beta when the request asked for one. The workspace root comes from page
+  messages wear one small-caps SYS tag (sys · recap / tool-load /
+  notification) in the outline and on the convo role bar -- the same
+  system-scope family as the continuation-summary tag. The workspace root comes from page
   metadata, else from the cwd the CLI itself stated on the wire (codex
   <cwd> tag, Claude Code env block); unknown roots keep full paths. The
   requests-view detail panel uses the same previews for tool_use folds

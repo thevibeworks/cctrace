@@ -14,7 +14,7 @@ import {
   wsRelText,
   cwdFromText,
   harnessPrompt,
-  reminderOnly,
+  harnessTurnKind,
   loopTurns,
 } from "../src/session";
 
@@ -392,30 +392,30 @@ describe("loopTurns / harnessPrompt", () => {
     expect(loops[1].head).toBe(1);
   });
 
+  test("a reminder-only user message is sys · reminder, absorbed into the turn", () => {
+    const reminder = { role: "user", blocks: [{ type: "text", text: "<system-reminder>The task tools haven't been used recently. Consider using TaskCreate...</system-reminder>" }] };
+    expect(harnessTurnKind(reminder.blocks)).toBe("reminder");
+    // real text beside a reminder = a genuine user turn, not sys
+    expect(harnessTurnKind([{ type: "text", text: "<system-reminder>ctx</system-reminder>\nreal ask" }])).toBe("");
+    const loops = loopTurns([u("ask"), a("working"), reminder, a("done")]);
+    expect(loops.length).toBe(1);
+    expect(loops[0].injected[2]).toBe("reminder");
+  });
+
   test("'Tool loaded.' continues the current turn; a SYSTEM NOTIFICATION heads a CLI-authored one", () => {
-    expect(harnessPrompt("Tool loaded.")).toBe("tools");
-    expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notify");
+    expect(harnessPrompt("Tool loaded.")).toBe("tool-load");
+    expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notification");
     const loops = loopTurns([
       u("ask"), a("", [{ type: "tool_use", name: "Read", id: "t1", input: {} }]),
       u("Tool loaded."), a("continuing"),
       u("[SYSTEM NOTIFICATION - NOT USER INPUT]\nTask finished."), a("handled it"),
     ]);
     expect(loops.length).toBe(2);
-    expect(loops[0].members).toEqual([1, 2, 3]); // tool-load absorbed into turn 01
-    expect(loops[0].injected[2]).toBe("tools");
-    expect(loops[1].head).toBe(4); // the notification heads turn 02...
-    expect(loops[1].headInjected).toBe("notify"); // ...as CLI-authored, not human
+    expect(loops[0].members).toEqual([1, 2, 3]); // tool-load absorbed into turn00
+    expect(loops[0].injected[2]).toBe("tool-load");
+    expect(loops[1].head).toBe(4); // the notification heads turn01...
+    expect(loops[1].headInjected).toBe("notification"); // ...as CLI-authored, not human
     expect(loops[1].final).toBe(5);
-  });
-
-  test("a user turn that is nothing but system-reminder blocks joins the SYS family", () => {
-    const rem = { role: "user", blocks: [{ type: "text", text: "<system-reminder>The task tools haven't been used recently. Consider TaskCreate...</system-reminder>" }] };
-    expect(reminderOnly(rem.blocks)).toBe(true);
-    expect(reminderOnly([{ type: "text", text: "real ask" }])).toBe(false);
-    expect(reminderOnly([])).toBe(false);
-    const loops = loopTurns([u("ask"), a("working"), rem, a("done")]);
-    expect(loops.length).toBe(1); // the reminder never heads a turn
-    expect(loops[0].injected[2]).toBe("reminder");
   });
 });
 

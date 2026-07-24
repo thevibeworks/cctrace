@@ -987,7 +987,7 @@ export function toolPreview(name: string, input: any, ws?: any): string {
     case "Glob": return (i.pattern || "") + (i.path ? " in " + wsPath(i.path, ws) : "");
     case "Task": case "Agent": case "TaskCreate": return "[" + (i.subagent_type || "agent") + "] " + (i.description || "");
     case "WebFetch": return i.url || "";
-    case "WebSearch": return i.query || "";
+    case "WebSearch": case "ToolSearch": return i.query || "";
     case "Skill": return i.skill || i.command || "";
     case "TodoWrite": {
       if (!Array.isArray(i.todos)) return "";

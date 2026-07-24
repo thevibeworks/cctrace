@@ -325,6 +325,7 @@ describe("toolPreview", () => {
     expect(toolPreview("Grep", { pattern: "foo", path: "src" })).toBe("/foo/ in src");
     expect(toolPreview("Task", { subagent_type: "Explore", description: "map repo" })).toBe("[Explore] map repo");
     expect(toolPreview("TodoWrite", { todos: [1, 2, 3] })).toBe("3 todos");
+    expect(toolPreview("ToolSearch", { query: "select:TaskStop", max_results: 1 })).toBe("select:TaskStop");
     expect(toolPreview("Unknown", { a: 1 })).toBe("");
   });
 

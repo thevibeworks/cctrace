@@ -2774,6 +2774,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // command itself stays in the convo fold. Paths relativize.
         else if (n === 'Bash') args = typeof i.description === 'string' && i.description ? i.description : wsRelText(String(i.command || ''), ws).slice(0, 60);
         else if (n === 'Grep') args = i.pattern || '';
+        else if (n === 'ToolSearch' || n === 'WebSearch') args = i.query || '';
         const key = name + '(' + args + ')';
         if (seen[key]) continue;
         seen[key] = 1;

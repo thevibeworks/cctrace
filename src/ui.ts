@@ -497,6 +497,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sum > span { flex-shrink: 0; }
     .sum > span + span::before { content: '\\00B7'; margin: 0 7px; color: var(--text-faint); }
     .size { color: var(--text-faint); font-size: 11px; min-width: 84px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+    .ttft { color: var(--text-faint); font-size: 11px; min-width: 52px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
     .duration { color: var(--text-muted); min-width: 50px; text-align: right; flex-shrink: 0; }
     .time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
     .empty {
@@ -1610,8 +1611,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       } catch { return String(u); }
     }
 
+    // The newest model call is the one whose cache deadline still means
+    // anything (later hits refresh the TTL) — its ≡ chip may say "expired",
+    // computed at render time, never a ticking countdown.
+    function newestMessagesId() {
+      for (let i = pairs.length - 1; i >= 0; i--) if (pairs[i]._cat === 'messages') return pairs[i].id;
+      return null;
+    }
+
     function chipsHtml(pair) {
-      const chips = summarizePair(pair, pair._cat);
+      const chips = summarizePair(pair, pair._cat, { newest: pair.id === newestMessagesId(), now: Date.now() });
       // Usage/credits chips carry account identity — mask them for screen
       // sharing (hover reveals). data-mask is inert until body.masked is on.
       const mask = pair._cat === 'usage' ? ' data-mask' : '';
@@ -1643,6 +1652,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<span class="size" title="' + escapeHtml(sizeTitle(s)) + '">' + bits.join(' ') + '</span>';
     }
 
+    // First-token delay as its own right-aligned wire column (row order:
+    // content chips · sizes · ttft · duration · time). Empty when the pair
+    // never streamed a token event.
+    function ttftCell(pair) {
+      const lat = extractLatency(pair);
+      if (!lat || !lat.isToken) return '<span class="ttft"></span>';
+      return '<span class="ttft" title="' + escapeHtml('time to first streamed token' +
+        (lat.pct != null ? ' \\u2014 ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
+        escapeHtml(fmtMs(lat.ttftMs)) + '</span>';
+    }
+
     function appendPair(pair, live) {
       const div = document.createElement('div');
       try {
@@ -1661,6 +1681,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
             '<span class="sum">' + chipsHtml(pair) + '</span>' +
             sizeCell(pair) +
+            ttftCell(pair) +
             '<span class="duration" title="' + escapeHtml(duration) + 'ms">' + formatDuration(duration) + '</span>' +
             '<span class="time" title="' + fmtDateTime(when) + '">' + (pair.prior ? fmtDateTime(when) : fmtTime(when)) + '</span>' +
           '</a>';
@@ -1981,7 +2002,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       row2 += kv('input', m.input.toLocaleString());
       row2 += kv('output', m.output.toLocaleString());
       if (m.thinking > 0) row2 += kv('thinking', m.thinking.toLocaleString());
-      const cache = summarizeCache(m, pair.request.body);
+      const cache = summarizeCache(m, pair.request.body,
+        pair.response && typeof pair.response.timestamp === 'number' ? pair.response.timestamp * 1000 : null);
       if (cache) row2 += kv('cache', cache.v, cache.c, cache.title);
       // Derived metrics: effective prompt size, streaming speed, estimated cost.
       const prompt = m.input + m.cacheRead + m.cacheWrite;

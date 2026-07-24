@@ -153,19 +153,33 @@ active one staying visible even at zero. Live-arrived rows get one 160ms
 opacity fade (the motion budget lives in docs/design/ui.md). Two views,
 hash-routed:
 
-- **Requests** (`#`, `#/p/<id>`): one row per request with inline
-  human-readable chips — model, requested reasoning effort (`extractEffort`
-  in src/summarize.ts, one function for every wire shape: Anthropic
-  `output_config.effort` / transitional `thinking.effort` (kimi too) /
-  classic `thinking.budget_tokens` / bare `thinking.type: adaptive`, OpenAI
-  Responses `reasoning.effort`, Chat Completions `reasoning_effort` — the
-  tooltip names the wire field; also a detail-panel param chip), in/out
-  tokens, one compact prompt-cache verdict chip (`summarizeCache` in src/summarize.ts: hit = read > 0, green
+- **Requests** (`#`, `#/p/<id>`): one row per request. Content chips read
+  left-to-right — model · effort · think · in/out · ≡cache · cost — then
+  the wire transport facts sit as right-aligned COLUMNS: ↑req ↓resp sizes ·
+  ttft · duration · time (the flexible gap between chips and columns is
+  structural, `.sum` flex). The chips: model; requested reasoning effort
+  (`extractEffort` in src/summarize.ts, one function for every wire shape:
+  Anthropic `output_config.effort` / transitional `thinking.effort` (kimi
+  too) / classic `thinking.budget_tokens` / bare `thinking.type: adaptive`,
+  OpenAI Responses `reasoning.effort`, Chat Completions `reasoning_effort`
+  — the tooltip names the wire field; also a detail-panel param chip);
+  thinking tokens; in/out tokens; one compact prompt-cache verdict chip
+  prefixed `≡` (the layered-cache glyph, U+2261 — slim, monospace-safe;
+  `summarizeCache` in src/summarize.ts: hit = read > 0, green
   only when ≥90% of the prompt came from cache — a weaker hit is amber, most
   of the context was re-billed at full input price;
   "↓read hit% ↑write" with a 1h-TTL breakdown since 1h bills 2x; cold =
   write only, amber; miss = cache_control set but nothing read/written;
-  no chip when caching isn't used — tooltips spell the numbers out),
+  no chip when caching isn't used — tooltips spell the numbers out. With
+  the response timestamp the tooltip adds the ABSOLUTE hold-until
+  wall-clock ("held until ~14:32 (1h)") — absolute so a rendered page can
+  never go stale, and deliberately NOT a ticking countdown: per-request
+  countdowns lie, every later hit refreshes the TTL, so only the newest
+  request's deadline means anything. That newest model-call pair — and only
+  it — renders "· expired" when the page is drawn past its deadline
+  (opts.newest/now into summarizePair; zero timers, computed at render:
+  the useful case is reopening/viewing an idle session, where it says
+  "resuming now re-writes the prefix");
   estimated cost (src/pricing.ts: the models.dev catalog — refreshed by
   src/pricing-catalog.ts into <data-dir>/pricing.json, injected as
   META.pricing/window.__PRICING__ — resolves any model incl. gpt-5.x and
@@ -173,15 +187,16 @@ hash-routed:
   (gpt-5.6-sol -> gpt-5.6); the embedded Claude table stays as the offline
   fallback. Anthropic cache multipliers: 0.1x read, 1.25x 5m write, 2x 1h
   write, no-TTL writes assumed 5m same as ccusage; a catalog entry without
-  a cache rate means the provider doesn't bill it), first-token delay
-  (ttft chip: `firstTokenMs` on the pair, stamped live by the proxy pump in
-  src/stream.ts when the first token event passes through — SSE events
-  carry no timestamps, so it can't be derived from a saved body; the first
-  body byte lands in `firstByteMs` as the fallback), count_tokens
+  a cache rate means the provider doesn't bill it), count_tokens
   results, usage window percentages (5h / 7d / per-model), telemetry event
   counts, error types, a "stopped early" warn chip when the response is
   truncated (the guarded pump kept capturing the partial reply after a CLI
-  abort — `resp.truncated`). Every row also has a DevTools-style size column
+  abort — `resp.truncated`). First-token delay is the ttft COLUMN
+  (`firstTokenMs` on the pair, stamped live by the proxy pump in
+  src/stream.ts when the first token event passes through — SSE events
+  carry no timestamps, so it can't be derived from a saved body; the first
+  body byte lands in `firstByteMs` as the detail-panel fallback). The size
+  column is DevTools-style
   (`extractSizes` in src/summarize.ts: `bodyBytes` wire counts stamped by
   the proxies at capture time — request as sent, so codex zstd shows the
   compressed size; response as received (identity encoding). Pre-0.17

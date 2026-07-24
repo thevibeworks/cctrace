@@ -6,6 +6,22 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Request rows read left-to-right as content chips then wire columns:
+  model - effort - think - in/out - cache - cost, a structural gap, then
+  right-aligned sizes - ttft - duration - time. First-token delay moved
+  from a chip to its own column.
+- The cache chip leads with the layered-cache glyph (U+2261) instead of
+  the word "cache".
+- The cache tooltip states the absolute hold-until wall-clock ("held
+  until ~14:32 (1h)") from the response time and TTL -- absolute, never a
+  ticking countdown: rendered pages must not go stale, and every later
+  hit refreshes the TTL, so only the newest request's deadline means
+  anything. That newest model call renders "expired" when the page is
+  drawn past its deadline (computed at render, zero timers) -- reopening
+  an idle trace says plainly that resuming will re-write the prefix.
+
 ## [0.22.0] - 2026-07-24
 
 Requests-view legibility batch: the effort knob every client sends is

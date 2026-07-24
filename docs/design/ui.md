@@ -70,6 +70,14 @@ to protect that feeling.
 - `data-mask` marks identity values (session id, project/trace title, credits)
   that `body.masked` blurs for screen sharing; hover reveals one deliberately.
   Display-layer courtesy only — capture-time redaction is `src/redact.ts`.
+- Deadlines render as ABSOLUTE wall-clock ("held until ~14:32"), never
+  relative countdowns: a rendered page must not go stale, and ticking
+  timers are motion. State that depends on "now" (cache expired) is
+  computed at render time only.
+- Request rows: content chips left (model · effort · think · in/out ·
+  ≡cache · cost · state), wire transport as right-aligned columns (sizes ·
+  ttft · duration · time). The ≡ glyph (U+2261) is the cache mark — slim,
+  layered, one monospace cell.
 
 ## When adding UI
 

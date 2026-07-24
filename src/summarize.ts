@@ -197,6 +197,39 @@ export function extractCallInfo(pair: any): any {
   return wireDialect(pair) === "openai" ? extractOpenaiInfo(pair) : extractMessageInfo(pair);
 }
 
+/**
+ * Requested reasoning effort for a model-call request body, across every wire
+ * shape observed in real traces: Anthropic current (output_config.effort,
+ * with thinking.type "adaptive"/"disabled" beside it), the transitional shape
+ * Anthropic and Kimi both send (thinking.effort), classic extended thinking
+ * (thinking.budget_tokens), OpenAI Responses (reasoning.effort — codex/grok),
+ * and Chat Completions (reasoning_effort). Returns {v, title} — v the chip
+ * value, title naming the wire field it came from — or null when the request
+ * doesn't ask for reasoning.
+ */
+export function extractEffort(req: any): any {
+  if (!req || typeof req !== "object") return null;
+  const oc = req.output_config;
+  if (oc && typeof oc === "object" && typeof oc.effort === "string")
+    return { v: oc.effort, title: "requested reasoning effort — output_config.effort" };
+  const th = req.thinking;
+  if (th && typeof th === "object") {
+    if (typeof th.effort === "string") return { v: th.effort, title: "requested reasoning effort — thinking.effort" };
+    if (typeof th.budget_tokens === "number")
+      return {
+        v: fmtCompact(th.budget_tokens) + " budget",
+        title: th.budget_tokens.toLocaleString() + "-token thinking budget — thinking.budget_tokens",
+      };
+    if (th.type === "adaptive") return { v: "adaptive", title: "model decides how much to reason — thinking.type = adaptive" };
+  }
+  const r = req.reasoning;
+  if (r && typeof r === "object" && typeof r.effort === "string")
+    return { v: r.effort, title: "requested reasoning effort — reasoning.effort" };
+  if (typeof req.reasoning_effort === "string")
+    return { v: req.reasoning_effort, title: "requested reasoning effort — reasoning_effort" };
+  return null;
+}
+
 /** True when any system/tools/messages block sets cache_control. */
 export function hasCacheControl(body: any): boolean {
   if (!body || typeof body !== "object") return false;
@@ -400,6 +433,8 @@ export function summarizePair(pair: any, cat: string): any[] {
   if (cat === "messages") {
     const m = extractCallInfo(pair);
     if (m.model) chips.push({ t: shortModel(m.model), c: "model", title: String(m.model) });
+    const eff = extractEffort(pair.request && pair.request.body);
+    if (eff) chips.push({ t: "effort " + eff.v, title: eff.title });
     if (m.error) {
       chips.push({ t: m.error, c: "err" });
       return chips;
@@ -420,6 +455,13 @@ export function summarizePair(pair: any, cat: string): any[] {
     if (cost && cost.total > 0) chips.push({ t: fmtCost(cost.total), title: costTitle(cost) });
     if (m.stopReason && m.stopReason !== "end_turn" && m.stopReason !== "tool_use")
       chips.push({ t: m.stopReason, c: "warn", title: "stop reason" });
+    if (resp.truncated)
+      chips.push({
+        t: "stopped early",
+        c: "warn",
+        title:
+          "stream ended before completion — the partial response up to that point was captured (cctrace keeps capturing after a CLI abort)",
+      });
   } else if (cat === "tokens") {
     const t = extractTokenCount(pair);
     if (t.model) chips.push({ t: shortModel(t.model), c: "model", title: String(t.model) });

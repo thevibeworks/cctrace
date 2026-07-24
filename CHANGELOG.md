@@ -6,6 +6,48 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-07-24
+
+Requests-view legibility batch: the effort knob every client sends is
+now first-class, and the detail panel reads DevTools-style.
+
+### Added
+
+- Requested reasoning effort as a row chip and detail param chip
+  (extractEffort in src/summarize.ts), covering every wire shape seen
+  in real traces: Anthropic output_config.effort, the transitional
+  thinking.effort (kimi sends it too), classic thinking.budget_tokens,
+  bare adaptive thinking, OpenAI Responses reasoning.effort
+  (codex/grok) and Chat Completions reasoning_effort. The tooltip
+  names the wire field the value came from.
+- A "stopped early" warn chip on truncated pairs, plus a skill howto:
+  cctrace keeps capturing after a CLI abort, so the partial reply of a
+  request the user stopped is saved and now discoverable.
+- The request id in the sticky detail toolbar is click-to-copy.
+- Designed tooltips page-wide: the session pane's structured hover
+  panel now serves every title= on the page (folded into data-tip on
+  first hover, so the native ~1s unstyled tooltip never fires), with a
+  short 120ms show delay.
+- Mask mode: a header eye toggle (persisted) blurs identity values --
+  session ids, project/trace title, usage credits -- for screen
+  sharing; hover a blurred value to reveal it. Display-layer only,
+  independent of capture-time redaction.
+- Copy everywhere: every conversation fold (tool inputs, system
+  prompt, thinking) and body fold gets a copy button in its summary;
+  user and assistant text blocks get a hover copy button.
+
+### Changed
+
+- Detail panel order is now chips -> Headers -> Body -> conversation:
+  headers and body folds are short or collapsed, the conversation is
+  the megabyte tail, so reaching Headers no longer means scrolling
+  past the whole conversation.
+
+### Fixed
+
+- Conversation and detail text no longer sits under the floating nav
+  rail (right padding clears it).
+
 ## [0.21.0] - 2026-07-22
 
 Timeline honesty: a /rewind is no longer mislabeled as a compaction,
@@ -936,7 +978,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/thevibeworks/cctrace/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/thevibeworks/cctrace/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/thevibeworks/cctrace/compare/v0.18.0...v0.19.0

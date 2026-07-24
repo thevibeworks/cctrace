@@ -19,7 +19,9 @@ All notable changes to cctrace are documented here. Format follows
   open turn as grey cli rows, and "[SYSTEM NOTIFICATION" wakeups head
   their turn as CLI-authored. Thread cards, session headers, spawn-fold
   stats, and the convo role-bar ordinals all use the same loop
-  numbering.
+  numbering. Ordinals render bare, zero-padded, and 1-based on the rail
+  ("01", final response = a ↳ row) so the last label agrees with the
+  "N turns" count; the convo role bar and hovers spell "turn 01".
 - Tool folds say what the tool touched, in workspace terms: file paths in
   Read/Write/Edit/Grep/Glob previews relativize to the traced CLI's
   working directory (src/ui.ts, not the full container path; ~-relative

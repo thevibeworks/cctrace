@@ -255,7 +255,10 @@ hash-routed:
   TURN is the working-loop unit — user request → agent work → final
   response — NOT one wire message (`loopTurns` in src/session.ts groups
   visible message-turns; a real trace's 213 wire messages read as 3
-  turns). Ordinals number loops; a genuine user message heads turnNN
+  turns). Ordinals number loops — BARE, zero-padded, 1-BASED on the rail
+  ("01"; the word "turn" repeated down the rail is noise, and 1-based
+  makes the last label agree with the "N turns" counts; prose surfaces
+  spell "turn 01"); a genuine user message heads the ordinal
   (prompt via `turnSnippet`: caveat/stdout wrappers skipped, a
   command-only turn previews as "/model"); the agent's intermediate
   messages indent under it (.tturn-sub/.tturn-mid — narration snippet, or
@@ -271,7 +274,7 @@ hash-routed:
   agent work) but render as CLI-authored, not a hollow user ring. Loop
   counts feed every "N turns" label (thread cards, session headers,
   spawn-fold stats) and the convo pane's role-bar ordinals (user head +
-  final response carry turnNN, intermediates none). Row click still jumps
+  final response carry "turn NN", intermediates none). Row click still jumps
   by message index. EVERY row LEADS with a dot — a
   status gutter (user = hollow ring; assistant = wire verdict: green
   healthy cache hit, amber weak <90%/cold/miss, red failed) — then
@@ -428,7 +431,7 @@ hash-routed:
   ("2 turns · out 50 · $0.0035", agentThreadStats) plus the open-thread
   link, and a Skill fold names the skill in its title ("skill · ccx")
   with args as the hint; Read/Bash dumps stay quiet). Every turn's role
-  bar carries the outline's ordinal (turn03 in the pane is turn03 here —
+  bar carries the outline's ordinal ("03" on the rail is "turn 03" here —
   .turn-ord). Every assistant
   turn links back to its wire request. The conversation pane
   tails like tail -f in live mode (open/refresh lands on the newest turn,

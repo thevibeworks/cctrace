@@ -2700,7 +2700,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (p) { if (!t0) t0 = p.request.timestamp; t1 = p.request.timestamp; }
       }
       const tip = 'T' + i + ' \\u00b7 ' + (shortModel(e.model) || 'unknown model') + ' run\\n' +
-        (n ? 'turns ' + pad(ords[0]) + '\\u2013' + pad(ords[n - 1]) + ' (' + n + ' turn' + (n === 1 ? '' : 's') + ')'
+        (n ? 'turns ' + pad(ords[0] + 1) + '\\u2013' + pad(ords[n - 1] + 1) + ' (' + n + ' turn' + (n === 1 ? '' : 's') + ')'
            : 'takes over mid-turn') +
         (t0 ? '\\n' + fmtDateTime(new Date(t0 * 1000)) + (t1 && t1 !== t0 ? ' \\u2013 ' + fmtTime(new Date(t1 * 1000)) : '') : '') +
         '\\nout ' + fmtCompact(out) + (cost ? ' \\u00b7 est. ' + fmtCost(cost) : '') +
@@ -2820,8 +2820,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (hist[i] && hist[i].role === 'user') prompt = turnSnippet(normalizeTurns([hist[i]])[0].blocks);
         }
         const near = linfo[Math.min(vi, vis.length - 1)];
-        const ord = near && near.ord != null ? ordFmt(near.ord) : 'turn?';
-        const tip = ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
+        const ord = near && near.ord != null ? ordFmt(near.ord) : '?';
+        const tip = 'turn ' + ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
           (prompt ? '\\n' + prompt.slice(0, 400) : '') +
           '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
         return '<a class="tturn tturn-sup" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' + escapeHtml(tip) + '">' +
@@ -2938,7 +2938,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           };
         }
       }
-      const ordFmt = (n) => 'turn' + (n < 10 ? '0' + n : n);
+      // Ordinals render BARE and 1-based ("01") — the word "turn" repeated
+      // down the rail is noise, and humans count exchanges from 1, so the
+      // last label agrees with the "N turns" counts. Prose surfaces (hover,
+      // convo role bar) spell "turn 01"; the number is the shared key.
+      const ordFmt = (n) => { const v = n + 1; return v < 10 ? '0' + v : '' + v; };
       let html = '';
       for (let ei = 0; ei < eps.length; ei++) {
         const e = eps[ei];
@@ -2949,7 +2953,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
           const li = linfo[vi] || { ord: null, kind: 'mid' };
-          const ord = li.ord != null ? ordFmt(li.ord) : 'turn?';
+          const ord = li.ord != null ? ordFmt(li.ord) : '?';
           const ordLabel = li.kind === 'head' || li.lead ? ord : li.kind === 'final' ? '\\u21b3' : '';
           const rowCls = li.kind === 'head' ? ' tturn-user'
             : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin');
@@ -2977,7 +2981,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             const failed = p && (!p.response || p.response.status >= 400);
             const cc = u && p ? summarizeCache(u, p.request.body) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
-            const tbits = [ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
+            const tbits = ['turn ' + ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
               (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : '')];
             if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
@@ -3006,14 +3010,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             text = '<span class="sys-tag">sys \\u00b7 ' + escapeHtml(li.injected) + '</span>' +
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
-            tip = ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
+            tip = 'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
               'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human\\n' +
               s.slice(0, 400) + '\\n\\nclick to jump to this turn';
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
             dot = '<span class="cdot cdot-user"></span>'; // hollow: the human's turn
-            tip = ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
+            tip = 'turn ' + ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
           }
           html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '" data-tip="' + escapeHtml(tip) + '">' +
@@ -3398,8 +3402,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         meta = '<span class="turn-usage" title="no captured request matches this reply \\u2014 history was repacked or the reply was edited before it entered history">unattributed</span>';
       }
       // The ordinal ties the turn to the outline in the threads pane —
-      // turn03 there is turn03 here, one shared numbering.
-      const ordHtml = ord != null ? '<span class="turn-ord">turn' + (ord < 10 ? '0' + ord : ord) + '</span>' : '';
+      // "03" there is "turn 03" here, one shared 1-based numbering.
+      const ordHtml = ord != null ? '<span class="turn-ord">turn ' + (ord + 1 < 10 ? '0' + (ord + 1) : ord + 1) + '</span>' : '';
       // The continuation summary is not a normal prompt — it's the text
       // /compact injected as the model's entire memory of the conversation
       // above. Tag it so nobody reads it as something the user typed.

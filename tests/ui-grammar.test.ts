@@ -313,25 +313,26 @@ describe("model epochs rendering", () => {
     expect(threads!.html).toContain(">T0</span>");
     expect(threads!.html).toContain(">fable-5</span>");
     expect(threads!.html).toContain(">opus-4-8</span>");
-    // ordinals count working-loop turns (user → work → final), global
-    // across epochs: two user exchanges = turn00, turn01
-    expect(threads!.html).toContain(">turn00</span>");
-    expect(threads!.html).toContain(">turn01</span>");
+    // ordinals count working-loop turns (user → work → final), BARE and
+    // 1-based on the rail: two user exchanges = 01, 02 — the last label
+    // agrees with the "2 turns" count
+    expect(threads!.html).toContain('tturn-ord">01</span>');
+    expect(threads!.html).toContain('tturn-ord">02</span>');
     // the final response nests under its head with the ↳ marker
     expect(threads!.html).toContain('tturn-sub tturn-fin');
     expect(threads!.html).toContain(">↳</span>");
-    expect(threads!.html.indexOf(">T0</span>")).toBeLessThan(threads!.html.indexOf(">turn00</span>"));
-    expect(threads!.html.indexOf(">turn00</span>")).toBeLessThan(threads!.html.indexOf(">T1</span>"));
+    expect(threads!.html.indexOf(">T0</span>")).toBeLessThan(threads!.html.indexOf('tturn-ord">01</span>'));
+    expect(threads!.html.indexOf('tturn-ord">01</span>')).toBeLessThan(threads!.html.indexOf(">T1</span>"));
     // every turn row carries a dot: user = hollow ring, assistant = verdict
     expect(threads!.html).toContain('cdot-user');
     const convo = page.fragments.filter((f) => f.id === "convo").pop();
     expect(convo!.html).toContain('class="epoch-mark"');     // divider at the switch
     expect(convo!.html).toContain("opus-4-8");
-    // the outline's numbering repeats on the reconstructed turns: the user
-    // head and the final response both carry the loop ordinal
-    expect(convo!.html).toContain('<span class="turn-ord">turn00</span>');
-    expect(convo!.html).toContain('<span class="turn-ord">turn01</span>');
-    expect(convo!.html).not.toContain('<span class="turn-ord">turn03</span>');
+    // prose surfaces spell the same 1-based number: "01" on the rail is
+    // "turn 01" on the convo role bar
+    expect(convo!.html).toContain('<span class="turn-ord">turn 01</span>');
+    expect(convo!.html).toContain('<span class="turn-ord">turn 02</span>');
+    expect(convo!.html).not.toContain('<span class="turn-ord">turn 03</span>');
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });

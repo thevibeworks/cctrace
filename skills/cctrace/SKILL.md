@@ -72,12 +72,14 @@ with `HTTPS_PROXY="" https_proxy=""` prefixed.
 Prints as `Live UI: http://localhost:<port>` (9317 by default; concurrent
 instances land on 9318, 9319, ...). Hash-routed views:
 
-- **Requests** (`#`, `#/p/<id>`): one row per request with chips — model,
-  requested reasoning effort (effort high/xhigh/adaptive/token budget, all
-  clients' wire shapes), in/out tokens, a cache verdict (green hit with
-  ↓read ↑write + hit %, amber cold write or miss), first-token delay (ttft),
-  estimated USD cost, errors —
-  plus a ↑req ↓resp body-size column (wire bytes stamped at capture).
+- **Requests** (`#`, `#/p/<id>`): one row per request. Content chips in
+  reading order — model · effort (high/xhigh/adaptive/token budget, all
+  clients' wire shapes) · think · in/out tokens · ≡ cache verdict (green
+  hit with ↓read ↑write + hit %, amber cold write or miss; tooltip shows
+  the absolute hold-until time, and the newest request says "expired" when
+  the page renders past its deadline — resuming then re-writes the prefix)
+  · estimated USD cost · errors — then right-aligned wire columns: ↑req
+  ↓resp body sizes, first-token delay (ttft), duration, time.
   Click a row for the detail panel. Order top-to-bottom: chips (prompt size,
   first-token delay vs wall-clock, tok/s, cost breakdown) + a click-to-copy
   request id, then a DevTools-style Headers section (general + parsed

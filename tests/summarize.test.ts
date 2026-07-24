@@ -263,6 +263,26 @@ describe("summarizeCache", () => {
     expect(summarizeCache(m(), { messages: [{ role: "user", content: "hi" }] })).toBeNull();
     expect(summarizeCache(m({ error: "overloaded_error" }), cachedBody)).toBeNull();
   });
+
+  test("endMs: absolute hold-until, expiresAt = latest deadline", () => {
+    const end = 1751900005000;
+    // unsplit write (older pairs / openai) assumes 5m, like pricing does
+    const w5 = summarizeCache(m({ cacheWrite: 1000 }), cachedBody, end);
+    expect(w5.expiresAt).toBe(end + 300000);
+    expect(w5.title).toContain("held until");
+    expect(w5.title).toContain("(5m)");
+    // a 1h write holds the longest deadline
+    const w1h = summarizeCache(m({ cacheWrite: 3000, cacheWrite5m: 1000, cacheWrite1h: 2000 }), cachedBody, end);
+    expect(w1h.expiresAt).toBe(end + 3600000);
+    expect(w1h.title).toContain("(1h)");
+    expect(w1h.title).toContain("(5m)");
+    // a pure read refreshed the entry: at least +5m guaranteed
+    const rd = summarizeCache(m({ cacheRead: 40000, cachePct: 95 }), cachedBody, end);
+    expect(rd.expiresAt).toBe(end + 300000);
+    expect(rd.title).toContain("read refreshed the TTL");
+    // no endMs: no hold claim at all
+    expect(summarizeCache(m({ cacheWrite: 1000 }), cachedBody).expiresAt).toBeNull();
+  });
 });
 
 describe("hasCacheControl", () => {
@@ -414,35 +434,45 @@ describe("summarizePair", () => {
     expect(summarizePair(streamingPair(), "messages").some((c: any) => c.t === "stopped early")).toBe(false);
   });
 
-  test("messages: model, tokens, cache, thinking", () => {
+  test("messages: reading order is model · think · in/out · ≡cache · cost", () => {
     const chips = summarizePair(streamingPair(), "messages");
     const texts = chips.map((c: any) => c.t);
-    // One compact cache chip: read + hit% + write. Last chip is the cost.
-    expect(texts.slice(0, 5)).toEqual(["opus-4-6", "in 3", "out 76", "cache ↓19.6k 50% ↑19.6k (19.6k 1h)", "think 44"]);
+    // One compact ≡ cache chip: read + hit% + write. Last chip is the cost.
+    expect(texts.slice(0, 5)).toEqual(["opus-4-6", "think 44", "in 3", "out 76", "≡ ↓19.6k 50% ↑19.6k (19.6k 1h)"]);
     expect(texts[5]).toMatch(/^\$0\./);
     expect(chips[5].title).toContain("estimated");
     // a hit covering only 50% of the prompt is a WARNING, not a win —
     // half the context was re-billed at full input price
-    expect(chips[3].c).toBe("warn");
-    expect(chips[3].title).toContain("low hit rate");
-    expect(chips[3].title).toContain("read from cache");
-    expect(chips[3].title).toContain("written to cache");
+    expect(chips[4].c).toBe("warn");
+    expect(chips[4].title).toContain("low hit rate");
+    expect(chips[4].title).toContain("read from cache");
+    expect(chips[4].title).toContain("written to cache");
+    // hold-until is absolute wall-clock from the response timestamp
+    // (1751900005s + 1h for the 1h write), never a relative countdown
+    expect(chips[4].title).toContain("held until");
+    expect(chips[4].title).toContain("(1h)");
   });
 
-  test("messages: ttft chip appears when the pair carries firstTokenMs", () => {
+  test("messages: ttft is a row column now, never a chip", () => {
     const pair = streamingPair();
     (pair.response as any).firstTokenMs = 1234;
-    const chips = summarizePair(pair, "messages");
-    const ttft = chips.find((c: any) => c.t.startsWith("ttft "));
-    expect(ttft.t).toBe("ttft 1.23s");
-    expect(ttft.title).toContain("25% of 5.00s"); // 1234ms of the 5000ms pair
+    expect(summarizePair(pair, "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
   });
 
-  test("messages: no ttft chip on pre-0.15 pairs or byte-only timing", () => {
-    expect(summarizePair(streamingPair(), "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
-    const byteOnly = streamingPair();
-    (byteOnly.response as any).firstByteMs = 90;
-    expect(summarizePair(byteOnly, "messages").some((c: any) => c.t.startsWith("ttft"))).toBe(false);
+  test("messages: newest pair past its hold deadline says expired", () => {
+    const pair = streamingPair();
+    const end = (pair.response as any).timestamp * 1000;
+    const cacheChip = (opts: any) => summarizePair(pair, "messages", opts).find((c: any) => c.t.startsWith("≡"));
+    // 2h after a 1h write, newest: expired
+    const late = cacheChip({ newest: true, now: end + 2 * 3600000 });
+    expect(late.t).toContain("· expired");
+    expect(late.c).toBe("warn");
+    expect(late.title).toContain("resuming now re-writes the prefix");
+    // same moment but NOT the newest call: a later request refreshed the
+    // cache, this pair's deadline means nothing — no expired claim
+    expect(cacheChip({ newest: false, now: end + 2 * 3600000 }).t).not.toContain("expired");
+    // newest but still inside the hold window: no expired claim
+    expect(cacheChip({ newest: true, now: end + 60000 }).t).not.toContain("expired");
   });
 
   test("tunnel meta rows get a byte-count chip", () => {

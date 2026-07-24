@@ -249,11 +249,16 @@ export function hasCacheControl(body: any): boolean {
  *          conversation, or the cached prefix changed/expired     [amber]
  *   miss — cache_control was set but nothing read OR written
  *          (cacheable prefix below the ~1k-token minimum)         [amber]
- * Returns {kind, v, c, title} — v is the compact value ("↓116.9k 97% ↑1.2k"),
- * title the spelled-out tooltip — or null when the request doesn't use the
- * cache at all. Takes extractMessageInfo's result + the request body.
+ * Returns {kind, v, c, title, expiresAt} — v is the compact value
+ * ("↓116.9k 97% ↑1.2k"), title the spelled-out tooltip — or null when the
+ * request doesn't use the cache at all. Takes extractMessageInfo's result +
+ * the request body. With endMs (response wall-clock, ms) the tooltip adds
+ * the ABSOLUTE hold-until time (5m / 1h TTL from this request; absolute so
+ * it can never go stale in a rendered page — every later hit refreshes the
+ * clock, so only the newest request's expiry means anything) and expiresAt
+ * carries the latest of those deadlines in epoch ms.
  */
-export function summarizeCache(m: any, body: any): any {
+export function summarizeCache(m: any, body: any, endMs?: any): any {
   if (!m || m.error) return null;
   const read = m.cacheRead || 0;
   const write = m.cacheWrite || 0;
@@ -290,15 +295,37 @@ export function summarizeCache(m: any, body: any): any {
   // A hit that covers <90% of the prompt is a warning, not a win: most of
   // the context was re-billed at full input price (prefix changed early).
   const weak = kind === "hit" && typeof m.cachePct === "number" && m.cachePct < 90;
+  // Hold-until deadlines, absolute wall-clock. Writes without a TTL split
+  // are assumed 5m (same convention as pricing); a pure read refreshed the
+  // entry's TTL, guaranteeing at least another 5m from this request.
+  let expiresAt: any = null;
+  const hold: string[] = [];
+  if (typeof endMs === "number" && isFinite(endMs) && endMs > 0) {
+    const hhmm = (t: number) => {
+      const d = new Date(t);
+      const p = (x: number) => (x < 10 ? "0" : "") + x;
+      return p(d.getHours()) + ":" + p(d.getMinutes());
+    };
+    if (write) {
+      if (m.cacheWrite5m > 0 || m.cacheWrite1h === 0) hold.push("~" + hhmm(endMs + 300000) + " (5m)");
+      if (m.cacheWrite1h > 0) hold.push("~" + hhmm(endMs + 3600000) + " (1h)");
+      expiresAt = endMs + (m.cacheWrite1h > 0 ? 3600000 : 300000);
+    } else {
+      hold.push("at least ~" + hhmm(endMs + 300000) + " (read refreshed the TTL)");
+      expiresAt = endMs + 300000;
+    }
+  }
   return {
     kind,
     v: bits.join(" "),
     c: kind === "hit" && !weak ? "ok" : "warn",
+    expiresAt,
     title:
       "prompt cache: " + tip.join(" · ") +
       (read
         ? (weak ? " — low hit rate: under 90% of the prompt came from cache, the rest was re-billed at full input price" : "")
-        : " — cold: no prefix reuse (conversation start, or the cached prefix changed/expired)"),
+        : " — cold: no prefix reuse (conversation start, or the cached prefix changed/expired)") +
+      (hold.length ? " — held until " + hold.join(" / ") + "; every later hit refreshes the clock" : ""),
   };
 }
 
@@ -422,10 +449,16 @@ export function assembleAssistant(events: any[]): any[] {
 }
 
 /**
- * One-line, human-first summary chips for an index row.
- * Returns [{t: text, c?: css class, title?: tooltip}].
+ * One-line, human-first summary chips for an index row, in reading order:
+ * model · effort · think · in/out · ≡cache · cost, then state (stop/error)
+ * chips. Wire transport facts (sizes, ttft, duration) are the row's
+ * right-side COLUMNS, not chips. Returns [{t, c?, title?}].
+ * opts.newest + opts.now: when this is the trace's newest model call and its
+ * cache hold deadline has passed, the ≡ chip says "expired" — computed at
+ * render, never a ticking countdown (a per-request countdown would lie:
+ * every later hit refreshes the TTL).
  */
-export function summarizePair(pair: any, cat: string): any[] {
+export function summarizePair(pair: any, cat: string, opts?: any): any[] {
   const chips: any[] = [];
   const resp = pair && pair.response;
   if (!resp) return [{ t: "no response", c: "err" }];
@@ -439,18 +472,23 @@ export function summarizePair(pair: any, cat: string): any[] {
       chips.push({ t: m.error, c: "err" });
       return chips;
     }
+    if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
     chips.push({ t: "in " + fmtCompact(m.input), title: m.input.toLocaleString() + " uncached input tokens" });
     chips.push({ t: "out " + fmtCompact(m.output), title: m.output.toLocaleString() + " output tokens" });
-    const cache = summarizeCache(m, pair.request && pair.request.body);
-    if (cache) chips.push({ t: "cache " + cache.v, c: cache.c, title: cache.title });
-    if (m.thinking > 0) chips.push({ t: "think " + fmtCompact(m.thinking), title: m.thinking.toLocaleString() + " thinking tokens" });
-    const lat = extractLatency(pair);
-    if (lat && lat.isToken)
-      chips.push({
-        t: "ttft " + fmtMs(lat.ttftMs),
-        title: "time to first streamed token" +
-          (lat.pct != null ? " — " + lat.pct + "% of " + fmtMs(lat.totalMs) + " wall-clock" : ""),
-      });
+    const endMs = resp && typeof resp.timestamp === "number" ? resp.timestamp * 1000 : null;
+    const cache = summarizeCache(m, pair.request && pair.request.body, endMs);
+    if (cache) {
+      let v = "≡ " + cache.v;
+      let c = cache.c;
+      let title = cache.title;
+      const now = opts && typeof opts.now === "number" ? opts.now : null;
+      if (opts && opts.newest && now != null && cache.expiresAt != null && now > cache.expiresAt) {
+        v += " · expired";
+        c = "warn";
+        title += " — this is the newest request and its hold deadline has passed: resuming now re-writes the prefix";
+      }
+      chips.push({ t: v, c, title });
+    }
     const cost = pairCost(m);
     if (cost && cost.total > 0) chips.push({ t: fmtCost(cost.total), title: costTitle(cost) });
     if (m.stopReason && m.stopReason !== "end_turn" && m.stopReason !== "tool_use")

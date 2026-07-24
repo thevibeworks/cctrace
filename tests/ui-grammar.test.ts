@@ -287,9 +287,9 @@ describe("harness-authored messages", () => {
     const page = bootSnapshotPage(renderSnapshot([p1, p2]));
     page.goto("#/session");
     const threads = page.fragments.filter((f) => f.id === "threads").pop();
-    expect(threads!.html).toContain('sys-tag">sys · recap</span>');
+    expect(threads!.html).toContain('sys-tag">sys recap</span>');
     const convo = page.fragments.filter((f) => f.id === "convo").pop();
-    expect(convo!.html).toContain("sys · recap");
+    expect(convo!.html).toContain("sys recap");
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });
@@ -323,8 +323,10 @@ describe("model epochs rendering", () => {
     expect(threads!.html).toContain(">↳</span>");
     expect(threads!.html.indexOf(">T0</span>")).toBeLessThan(threads!.html.indexOf('tturn-ord">01</span>'));
     expect(threads!.html.indexOf('tturn-ord">01</span>')).toBeLessThan(threads!.html.indexOf(">T1</span>"));
-    // every turn row carries a dot: user = hollow ring, assistant = verdict
-    expect(threads!.html).toContain('cdot-user');
+    // gutter marks: the human speaks with the ❯ chevron, agent rows carry
+    // wire-verdict dots
+    expect(threads!.html).toContain('cprompt">❯</span>');
+    expect(threads!.html).toContain('class="cdot"');
     const convo = page.fragments.filter((f) => f.id === "convo").pop();
     expect(convo!.html).toContain('class="epoch-mark"');     // divider at the switch
     expect(convo!.html).toContain("opus-4-8");

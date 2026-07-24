@@ -14,6 +14,7 @@ import {
   wsRelText,
   cwdFromText,
   harnessPrompt,
+  reminderOnly,
   loopTurns,
 } from "../src/session";
 
@@ -392,19 +393,29 @@ describe("loopTurns / harnessPrompt", () => {
   });
 
   test("'Tool loaded.' continues the current turn; a SYSTEM NOTIFICATION heads a CLI-authored one", () => {
-    expect(harnessPrompt("Tool loaded.")).toBe("tool-load");
-    expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notification");
+    expect(harnessPrompt("Tool loaded.")).toBe("tools");
+    expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notify");
     const loops = loopTurns([
       u("ask"), a("", [{ type: "tool_use", name: "Read", id: "t1", input: {} }]),
       u("Tool loaded."), a("continuing"),
       u("[SYSTEM NOTIFICATION - NOT USER INPUT]\nTask finished."), a("handled it"),
     ]);
     expect(loops.length).toBe(2);
-    expect(loops[0].members).toEqual([1, 2, 3]); // tool-load absorbed into turn00
-    expect(loops[0].injected[2]).toBe("tool-load");
-    expect(loops[1].head).toBe(4); // the notification heads turn01...
-    expect(loops[1].headInjected).toBe("notification"); // ...as CLI-authored, not human
+    expect(loops[0].members).toEqual([1, 2, 3]); // tool-load absorbed into turn 01
+    expect(loops[0].injected[2]).toBe("tools");
+    expect(loops[1].head).toBe(4); // the notification heads turn 02...
+    expect(loops[1].headInjected).toBe("notify"); // ...as CLI-authored, not human
     expect(loops[1].final).toBe(5);
+  });
+
+  test("a user turn that is nothing but system-reminder blocks joins the SYS family", () => {
+    const rem = { role: "user", blocks: [{ type: "text", text: "<system-reminder>The task tools haven't been used recently. Consider TaskCreate...</system-reminder>" }] };
+    expect(reminderOnly(rem.blocks)).toBe(true);
+    expect(reminderOnly([{ type: "text", text: "real ask" }])).toBe(false);
+    expect(reminderOnly([])).toBe(false);
+    const loops = loopTurns([u("ask"), a("working"), rem, a("done")]);
+    expect(loops.length).toBe(1); // the reminder never heads a turn
+    expect(loops[0].injected[2]).toBe("reminder");
   });
 });
 

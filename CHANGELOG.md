@@ -35,9 +35,19 @@ All notable changes to cctrace are documented here. Format follows
   in the outline and both conversation panes. Paths inside Bash command
   text relativize too (display-only; fold bodies keep the wire text), so
   the sidebar reads "$ cd .cctrace && ls". Harness-authored user-role
-  messages wear one small-caps SYS tag (sys · recap / tool-load /
-  notification) in the outline and on the convo role bar -- the same
-  system-scope family as the continuation-summary tag. The workspace root comes from page
+  messages wear one small-caps SYS tag (SYS RECAP / SYS TOOLS / SYS
+  NOTIFY / SYS REMINDER -- the last catches user turns that are nothing
+  but system-reminder blocks, like task-tool nags) in the outline and on
+  the convo role bar -- the same system-scope family as the
+  continuation-summary tag.
+- Session-view reading hierarchy: the human speaks with an
+  accent-tinted ❯ chevron in the gutter (agent rows keep wire-verdict
+  dots); the user prompt and final response render bright while
+  intermediate agent work stays faint; Task/skill/mcp names keep purple
+  in outline labels. The session id is quiet (an address, not a
+  headline) and the model chip takes the highlight instead -- its hover
+  carries the exact wire facts: full model id, requested effort, and
+  the context beta when the request asked for one. The workspace root comes from page
   metadata, else from the cwd the CLI itself stated on the wire (codex
   <cwd> tag, Claude Code env block); unknown roots keep full paths. The
   requests-view detail panel uses the same previews for tool_use folds

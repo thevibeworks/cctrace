@@ -6,6 +6,14 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-24
+
+The session-legibility release: the outline's turn becomes the human
+unit (user request -> agent work -> final response), tool rows say
+which file they touched, harness-authored messages stop impersonating
+the user, and every claim below was validated against real traces --
+including cctrace's own trace of the sessions that built this.
+
 ### Changed
 
 - Session-view emphasis pass: user rows lead with a ❯ prompt glyph
@@ -49,8 +57,12 @@ All notable changes to cctrace are documented here. Format follows
   own intent line (the tool input's description field), literal command
   after: "Install package dependencies · $ npm i". Tool rows and fold
   titles read ToolName(args) with the name colorized in the request-
-  method color -- Edit(src/ui.ts), Bash(Install deps), skill(ccx) --
-  in the outline and both conversation panes. Paths inside Bash command
+  method color -- Edit(src/ui.ts), Bash(Install deps), skill(ccx),
+  ToolSearch(select:TaskStop) -- in the outline and both conversation
+  panes. Spawn labels name the real tool, agent type, and goal in the
+  notable-event purple -- Agent(general-purpose · map repo) -- instead
+  of a bare "Task" that went blank when the subagent thread wasn't
+  linked. Paths inside Bash command
   text relativize too (display-only; fold bodies keep the wire text), so
   the sidebar reads "$ cd .cctrace && ls". Harness-authored user-role
   messages wear one small-caps SYS tag (sys · recap / tool-load /
@@ -1047,7 +1059,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/thevibeworks/cctrace/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/thevibeworks/cctrace/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/thevibeworks/cctrace/compare/v0.19.0...v0.20.0

@@ -974,6 +974,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* Tool names are the agent's verbs — same color as the request METHOD
        column, no new palette entry. Args stay in the row's quiet color. */
     .tname { color: var(--text-method); }
+    .tname-agent { color: var(--purple); }
     .fold-tool > summary .fold-title { color: var(--text-method); }
     /* Working-loop nesting: agent work + final response indent under their
        user head; intermediate rows read quieter than the final response. */
@@ -2761,8 +2762,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!b || (b.type !== 'tool_use' && b.type !== 'server_tool_use')) continue;
         const n = b.name || '?';
         const i = b.input || {};
-        let name = n, args = '';
-        if (SPAWN_TOOLS[n]) name = 'Task'; // the branch row below carries the detail
+        let name = n, args = '', ncls = 'tname';
+        if (SPAWN_TOOLS[n]) {
+          // The real tool name (Task/Agent) + who was spawned for what —
+          // a bare "Task" said nothing when the subagent thread wasn't
+          // linked (no branch row). Purple name: spawns are notable.
+          ncls = 'tname tname-agent';
+          args = (i.subagent_type || '') +
+            (i.subagent_type && i.description ? ' \\u00b7 ' : '') + (i.description || '');
+        }
         else if (n === 'Skill') { name = 'skill'; args = i.skill || i.command || ''; }
         else if (n.lastIndexOf('mcp__', 0) === 0) { name = 'mcp'; args = n.slice(5).split('__')[0]; }
         else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'NotebookEdit') {
@@ -2778,7 +2786,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const key = name + '(' + args + ')';
         if (seen[key]) continue;
         seen[key] = 1;
-        items.push('<span class="tname">' + escapeHtml(name) + '</span>' + (args ? '(' + escapeHtml(args) + ')' : ''));
+        items.push('<span class="' + ncls + '">' + escapeHtml(name) + '</span>' + (args ? '(' + escapeHtml(args) + ')' : ''));
       }
       if (!items.length) return '';
       return items.slice(0, 3).join(', ') + (items.length > 3 ? ', +' + (items.length - 3) : '');

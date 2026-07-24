@@ -245,6 +245,20 @@ describe("outline tool labels", () => {
     expect(page.errors).toEqual([]);
   });
 
+  test("spawn tools name the agent type and goal, purple-tinted", () => {
+    const p = msgPair("p1", {
+      resBody: {
+        content: [{ type: "tool_use", name: "Agent", id: "t1", input: { subagent_type: "general-purpose", description: "map repo" } }],
+        stop_reason: "tool_use",
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const threads = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(threads!.html).toContain('tname tname-agent">Agent</span>(general-purpose · map repo)');
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
   test("multiple distinct tools are listed, capped with +N", () => {
     const p = msgPair("p1", {
       resBody: {

@@ -269,30 +269,30 @@ hash-routed:
   never read as the human: the away-recap prompt and "Tool loaded."
   absorb into the open turn wearing a small-caps SYS tag (.sys-tag in the
   outline, the sum-tag style on the convo role bar — one system-scope
-  marker family with the continuation-summary tag; kinds: SYS RECAP /
-  SYS TOOLS / SYS NOTIFY / SYS REMINDER — `reminderOnly` catches user
-  turns that are nothing but <system-reminder> blocks, e.g. task-tool
-  nags, and previews the reminder body with tags stripped);
+  marker family with the continuation-summary tag);
   "[SYSTEM NOTIFICATION" wakeups DO head their turn (they start real
-  agent work) but render as CLI-authored, not a hollow user ring. Loop
+  agent work) but render as CLI-authored, not with the human's ❯ mark;
+  reminder-only user messages (all text is <system-reminder> nudges —
+  harnessTurnKind, since turnSnippet strips reminders to "") absorb as
+  sys · reminder. Loop
   counts feed every "N turns" label (thread cards, session headers,
   spawn-fold stats) and the convo pane's role-bar ordinals (user head +
   final response carry "turn NN", intermediates none). Row click still jumps
   by message index. EVERY row LEADS with a dot — a
-  status gutter (user = the ❯ shell-prompt chevron, accent-tinted — the
-  human speaking; assistant = wire verdict dot: green healthy cache hit,
-  amber weak <90%/cold/miss, red failed) — then
+  status gutter (user = a ❯ prompt glyph in the accent tint — the shell's
+  own "your turn" marker, and the rail line skips user heads so the rail
+  spans a turn's WORK; assistant = wire verdict dot: green
+  healthy cache hit, amber weak <90%/cold/miss, red failed) — then
   ordinal + message text, nothing else inline: all metrics live in the
-  hover. Reading hierarchy inside a turn: the user prompt and the final
-  response render bright, intermediate agent work faint; Task/skill/mcp
-  names keep purple even in outline labels (.tname-hot). Session headers
-  open with a glyph + accent-tinted small-caps
+  hover; user rows read in full text color, finals muted, mids faint.
+  The thread/session model chip wears the identifier color (--text-method,
+  same as METHOD and tool names) and its hover carries the wire facts:
+  exact model id(s), requested effort level(s), 1m-context beta when the
+  anthropic-beta header says so (threadWireFacts); the sid is unbolded —
+  identity, not emphasis. Subagent branch rows name the agent's model
+  ("[general-purpose] map repo · opus-4-6 · 2 turns · $0.0035"). Session headers open with a glyph + accent-tinted small-caps
   SESSION label (.sico/.klabel); epoch heads a branch glyph + T<n>;
-  the sid is quiet (an address, not a headline) and the MODEL chip is the
-  highlighted attribute (verb color, same as requests-view model chips) —
-  its hover carries the exact wire facts: full model id, requested effort
-  (extractEffort on the thread's newest request), and the context beta
-  when the anthropic-beta header names one. Hover details are near-instant
+  the model chip is bare (hover explains). Hover details are near-instant
   (120ms show delay so mousing across chips doesn't flicker) and
   structured — a custom page-wide .tip singleton filled from data-tip; a
   plain `title=` anywhere on the page is folded into the same panel on first

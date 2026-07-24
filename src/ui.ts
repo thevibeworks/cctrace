@@ -47,7 +47,7 @@ import {
   wsRelText,
   cwdFromText,
   harnessPrompt,
-  reminderOnly,
+  harnessTurnKind,
   loopTurns,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
@@ -816,6 +816,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border: 1px solid var(--border); flex-shrink: 0;
     }
     .thread-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* the model wears the identifier color (same as request METHOD and
+       tool names) — it is the header fact people look for; hover carries
+       the exact id, effort level, and context-window facts */
     .tmodel {
       margin-left: auto; flex-shrink: 0; font-size: 10px;
       color: var(--text-method); font-variant-numeric: tabular-nums;
@@ -888,6 +891,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       margin-left: 12px; color: var(--purple); overflow: hidden;
       text-overflow: ellipsis; white-space: nowrap;
     }
+    .tbranch-model { color: var(--text-method); flex: none; font-size: 10px; }
     .tbranch-stat { margin-left: auto; flex-shrink: 0; }
     /* compact boundary: the request body sent to the API changed
        completely here — a break mark on the rail (two slanted hairlines,
@@ -950,29 +954,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cdot-hit { background: var(--green); }
     .cdot-warn { background: var(--amber); }
     .cdot-err { background: var(--red); }
-    .cdot-user { background: var(--bg); box-shadow: 0 0 0 2px var(--bg), inset 0 0 0 1.5px var(--text-faint); }
-    /* ❯ marks the human speaking (shell-prompt chevron), accent-tinted like
-       the session label — every agent row keeps a wire-verdict dot instead. */
-    .cprompt {
+    /* The human's rows are a terminal prompt glyph, not a wire dot — the
+       user has no wire verdict; ❯ is the shell's own "your turn" marker.
+       The rail line skips user heads: the rail spans the WORK of a turn. */
+    .gut-user {
       color: color-mix(in srgb, var(--accent) 65%, var(--text-muted));
-      font-weight: 600; font-size: 10px; line-height: 1; flex: none;
+      font-weight: 600; font-size: 10px; line-height: 1;
+      background: var(--bg); box-shadow: 0 0 0 2px var(--bg);
     }
-    .tturn:hover { background: var(--hover); color: var(--text); }
-    .tturn-ord { color: var(--text-faint); flex-shrink: 0; }
-    /* Reading hierarchy inside a turn: the two poles pop — the user's
-       prompt (what was asked) and the final response (what came back) —
-       while intermediate agent work stays faint. */
+    .tturn-user .rgut::before { display: none; }
     .tturn-user .tturn-text { color: var(--text); }
     .tturn-fin .tturn-text { color: var(--text-muted); }
+    .tturn:hover { background: var(--hover); color: var(--text); }
+    .tturn-ord { color: var(--text-faint); flex-shrink: 0; }
     .tturn:hover .tturn-text { color: var(--text); }
     .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tturn-tools { color: var(--text-faint); }
     /* Tool names are the agent's verbs — same color as the request METHOD
        column, no new palette entry. Args stay in the row's quiet color. */
     .tname { color: var(--text-method); }
-    /* notable stages — subagent spawns, skills, MCP — keep purple even in
-       the outline's compact labels, same as their convo folds */
-    .tname-hot { color: var(--purple); }
     .fold-tool > summary .fold-title { color: var(--text-method); }
     /* Working-loop nesting: agent work + final response indent under their
        user head; intermediate rows read quieter than the final response. */
@@ -1032,9 +1032,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sess.selected > summary {
       background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
     }
-    /* The sid is an address, not a headline — quiet weight; the MODEL is
-       the attribute the eye should find (same verb color as the requests
-       view's model chips). */
+    /* not bold — the sid is identity, not emphasis; the model chip is the
+       thing worth finding on a header */
     .sess-sid { color: var(--text-muted); font-variant-numeric: tabular-nums; }
     .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
     .sess-turns { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
@@ -1273,7 +1272,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${wsRelText.toString()}
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
-    ${reminderOnly.toString()}
+    ${harnessTurnKind.toString()}
     ${loopTurns.toString()}
 
     const statusEl = document.getElementById('status');
@@ -2777,8 +2776,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const key = name + '(' + args + ')';
         if (seen[key]) continue;
         seen[key] = 1;
-        const hot = name === 'Task' || name === 'skill' || name === 'mcp' ? ' tname-hot' : '';
-        items.push('<span class="tname' + hot + '">' + escapeHtml(name) + '</span>' + (args ? '(' + escapeHtml(args) + ')' : ''));
+        items.push('<span class="tname">' + escapeHtml(name) + '</span>' + (args ? '(' + escapeHtml(args) + ')' : ''));
       }
       if (!items.length) return '';
       return items.slice(0, 3).join(', ') + (items.length > 3 ? ', +' + (items.length - 3) : '');
@@ -2933,6 +2931,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n\\nclick to open this subagent thread') + '">' +
             '<span class="rgut rgut-br"></span>' +
             '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
+            (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + '</span>' : '') +
             '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>';
         }
         return out;
@@ -3021,21 +3020,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn';
           } else if (li.injected) {
             // A user-ROLE wire message the harness generated (recap, tool
-            // load, automated notification, pure system-reminder blocks) —
-            // it must never read as the human speaking. Notifications still
-            // head their turn (they start real agent work), but as a
-            // CLI-authored one. The SYS tag is the one system-scope marker,
-            // shared with the convo.
+            // load, automated notification) — it must never read as the
+            // human speaking. Notifications still head their turn (they
+            // start real agent work), but as a CLI-authored one. The SYS
+            // tag is the one system-scope marker, shared with the convo.
             let s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             if (!s) {
-              // reminder-only turns: both snippet paths skip reminder text
-              // by design — preview the reminder body itself, tags stripped
-              for (const bb of turn.blocks || []) {
-                const tx = typeof bb === 'string' ? bb : bb && bb.type === 'text' ? bb.text : '';
-                if (tx) { s = String(tx).replace(/<\\/?system-reminder>/g, '').trim(); break; }
-              }
+              // reminder-only messages snippet to "" (turnSnippet strips
+              // <system-reminder>) — preview the reminder text itself
+              const tb = (turn.blocks || []).find(b => b && b.type === 'text' && b.text);
+              s = tb ? String(tb.text).replace(/<\\/?system-reminder>/g, '').trim() : '';
             }
-            text = '<span class="sys-tag">sys ' + escapeHtml(li.injected) + '</span>' +
+            text = '<span class="sys-tag">sys \\u00b7 ' + escapeHtml(li.injected) + '</span>' +
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
             tip = 'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
@@ -3044,9 +3040,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
-            // ❯ — the shell-prompt chevron: the human speaking, visually
-            // distinct from every wire-verdict dot the agent's rows carry.
-            dot = '<span class="cprompt">\\u276F</span>';
+            dot = '<span class="gut-user">\\u276F</span>'; // the human's prompt
             tip = 'turn ' + ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
           }
           html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
@@ -3108,24 +3102,36 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // The model as an attribute chip, right-aligned on the thread card —
     // never part of the thread's identity (a thread is a conversation; it
     // can span models). "+N" marks mid-thread switches.
+    // Wire-level model config for a thread's hover: exact ids, the effort
+    // level(s) requested, 1m-context beta. Read from the thread's own
+    // pairs (capped scan) — facts the wire states, never inferred.
+    function threadWireFacts(t) {
+      const effs = [];
+      const seen = {};
+      let ctx1m = false;
+      let scanned = 0;
+      for (const turn of t.turns || []) {
+        if (!turn.pairId) continue;
+        if (++scanned > 80) break;
+        const p = pairs.find(x => x.id === turn.pairId);
+        if (!p || !p.request) continue;
+        const e = extractEffort(p.request.body);
+        if (e && !seen[e.v]) { seen[e.v] = 1; effs.push(e.v); }
+        if (!ctx1m && String((p.request.headers || {})['anthropic-beta'] || '').indexOf('context-1m') !== -1) ctx1m = true;
+      }
+      return { effs, ctx1m };
+    }
+
     function modelChip(t) {
       if (!t.model) return '';
       const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
       const mt = modelTitle(t);
-      // The hover carries the exact wire facts behind the short chip: full
-      // model id, the requested effort, and the context beta if the header
-      // asked for one — read from the thread's newest attributed request.
-      let cfg = '\\nid ' + t.model;
-      let p = null;
-      for (let i = t.turns.length - 1; i >= 0 && !p; i--) if (t.turns[i].pairId) p = pairs.find(x => x.id === t.turns[i].pairId);
-      if (p) {
-        const eff = extractEffort(p.request && p.request.body);
-        if (eff) cfg += ' \\u00b7 effort ' + eff.v;
-        const beta = String(((p.request && p.request.headers) || {})['anthropic-beta'] || '');
-        const cm = /context-(1m|[0-9]+[km])/i.exec(beta);
-        if (cm) cfg += ' \\u00b7 context ' + cm[1];
-      }
-      const tip = 'model ' + shortModel(t.model) + (extra ? ' (+' + extra + ' via /model)' : '') + cfg +
+      const ids = Object.keys(t.models || {});
+      const wf = threadWireFacts(t);
+      const tip = 'model ' + shortModel(t.model) + (extra ? ' (+' + extra + ' via /model)' : '') +
+        (ids.length ? '\\nexact: ' + ids.join(', ') : '') +
+        (wf.effs.length ? '\\neffort: ' + wf.effs.join(' / ') : '') +
+        (wf.ctx1m ? '\\ncontext: 1m (anthropic-beta context-1m)' : '') +
         '\\nprimary = most output tokens, never last-used' +
         (mt ? '\\n\\n' + mt : '');
       return '<span class="tmodel" data-tip="' + escapeHtml(tip) + '">' +
@@ -3462,11 +3468,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tag = '<span class="sum-tag" title="injected by /compact \\u2014 this text replaced the full history in the model\\u2019s context; it is not something the user typed">continuation summary</span>';
       } else if (turn.role === 'user') {
         // Same system scope as the continuation tag: harness-authored
-        // user-role messages (recap, tool loads, notifications, pure
-        // system-reminder injections) carry a SYS tag so they never read
-        // as the human speaking.
-        const hk = harnessPrompt(turnSnippet(turn.blocks)) || (reminderOnly(turn.blocks) ? 'reminder' : '');
-        if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">sys ' + escapeHtml(hk) + '</span>';
+        // user-role messages (recap, tool loads, notifications, reminder
+        // nudges) carry a sys tag so they never read as the human speaking.
+        const hk = harnessTurnKind(turn.blocks);
+        if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">sys \\u00b7 ' + escapeHtml(hk) + '</span>';
       }
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
         '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + '</div>' + inner + '</div>';

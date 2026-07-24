@@ -892,6 +892,7 @@ export function harnessPrompt(text: any): string {
   if (t.lastIndexOf("The user stepped away and is coming back.", 0) === 0) return "recap";
   if (t.lastIndexOf("Tool loaded", 0) === 0) return "tool-load";
   if (t.lastIndexOf("[SYSTEM NOTIFICATION", 0) === 0) return "notification";
+  if (t.lastIndexOf("The task tools haven't been used recently", 0) === 0) return "reminder";
   return "";
 }
 
@@ -944,6 +945,10 @@ export function loopTurns(vis: any[]): any[] {
     if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {} }; loops.push(cur); }
     cur.members.push(i);
     if (turn.role === "assistant") cur.final = i;
+    // A role that is neither user nor assistant (Claude Code sends its
+    // nudges as role "system" messages) is harness-authored by
+    // definition: an injected member, never a head, never the human.
+    else cur.injected[i] = harnessPrompt(turnSnippet(turn.blocks)) || String(turn.role || "system");
   }
   return loops;
 }

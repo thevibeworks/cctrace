@@ -18,6 +18,13 @@ All notable changes to cctrace are documented here. Format follows
   emphasis); subagent branch rows name the agent's model. Reminder-only
   user messages (all text is system-reminder nudges, like the task-tool
   reminder) join the SYS family as sys · reminder.
+- Role:system wire messages (Claude Code sends its nudges that way) are
+  harness-authored by definition: injected members of the open turn,
+  never a turn head -- one once rendered with the human's ❯ glyph (a
+  real bug from this trace). SYS tags show the bare kind (RECAP,
+  REMINDER, SYSTEM) -- "sys ·" prefixed everything and overflowed the
+  rows. The session tree column widens to 400px for the ToolName(args)
+  + file-path labels.
 
 - The sessions outline counts TURNS the way a human does: one turn =
   user request -> agent work -> final response, not one wire message (a

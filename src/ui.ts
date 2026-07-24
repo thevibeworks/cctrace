@@ -369,7 +369,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #session-view { display: none; flex: 1; min-height: 0; position: relative; flex-direction: column; }
     body.view-session #session-view { display: flex; }
     #session-main { display: flex; flex: 1; min-height: 0; position: relative; }
-    #threads { flex: 0 0 320px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
+    /* wider since rows carry ToolName(args) + file paths now */
+    #threads { flex: 0 0 400px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
     /* right padding clears the floating nav-rail (right:18 + 26px button) so
        conversation text never sits under it */
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 48px 12px 16px; }
@@ -3031,7 +3032,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               const tb = (turn.blocks || []).find(b => b && b.type === 'text' && b.text);
               s = tb ? String(tb.text).replace(/<\\/?system-reminder>/g, '').trim() : '';
             }
-            text = '<span class="sys-tag">sys \\u00b7 ' + escapeHtml(li.injected) + '</span>' +
+            text = '<span class="sys-tag">' + escapeHtml(li.injected) + '</span>' +
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
             tip = 'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
@@ -3471,7 +3472,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // user-role messages (recap, tool loads, notifications, reminder
         // nudges) carry a sys tag so they never read as the human speaking.
         const hk = harnessTurnKind(turn.blocks);
-        if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">sys \\u00b7 ' + escapeHtml(hk) + '</span>';
+        if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">' + escapeHtml(hk) + '</span>';
       }
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
         '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + '</div>' + inner + '</div>';

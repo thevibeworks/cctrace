@@ -402,6 +402,19 @@ describe("loopTurns / harnessPrompt", () => {
     expect(loops[0].injected[2]).toBe("reminder");
   });
 
+  test("a role:system nudge is an injected member, never the human", () => {
+    // Claude Code sends the task-tool reminder as a bare role:system
+    // message — it once rendered with the human's ❯ glyph (real bug)
+    const sys = { role: "system", blocks: [{ type: "text", text: "The task tools haven't been used recently. If you're working on tasks..." }] };
+    const loops = loopTurns([u("ask"), a("working"), sys, a("done")]);
+    expect(loops.length).toBe(1);
+    expect(loops[0].injected[2]).toBe("reminder");
+    expect(loops[0].final).toBe(3);
+    // an unrecognized system text still classifies by its role
+    const loops2 = loopTurns([u("ask"), { role: "system", blocks: [{ type: "text", text: "something else" }] }, a("r")]);
+    expect(loops2[0].injected[1]).toBe("system");
+  });
+
   test("'Tool loaded.' continues the current turn; a SYSTEM NOTIFICATION heads a CLI-authored one", () => {
     expect(harnessPrompt("Tool loaded.")).toBe("tool-load");
     expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notification");

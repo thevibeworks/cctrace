@@ -3,13 +3,18 @@
 One self-contained page serves the live view, `cctrace view` rebuilds, and
 offline snapshots -- same UI, three ways in.
 
-- **Inline row summaries** -- every request row reads at a glance: model,
-  in/out tokens, a prompt-cache verdict (green hit with read/write arrows +
-  hit %, amber cold write or miss -- the session view's wire rows carry a
-  matching dot, so cache breaks stand out), count_tokens results, usage
-  window percentages (5h / 7d / per-model), telemetry event counts, error
-  types.
-- **First-token latency** -- every streamed model call shows a `ttft` chip
+- **Inline row summaries** -- every request row reads left-to-right:
+  model, requested reasoning effort (`effort high` / `xhigh` / `adaptive`
+  / a token budget -- every wire shape the four clients send, tooltip
+  names the field), thinking tokens, in/out tokens, a `≡` prompt-cache
+  verdict (green hit with read/write arrows + hit %, amber cold write or
+  miss; the tooltip states the absolute hold-until wall-clock, and the
+  newest request says "expired" when the page renders past its deadline),
+  estimated cost -- then right-aligned wire columns: body sizes, `ttft`,
+  duration, time. count_tokens results, usage window percentages
+  (5h / 7d / per-model), telemetry event counts, and error types keep
+  their own chips.
+- **First-token latency** -- streamed model calls carry a `ttft` column
   (measured live at the proxy pump; SSE events carry no timestamps, so a
   saved trace can't reconstruct it) and tok/s computed over the
   post-first-token stream -- slow-start vs slow-stream is one glance.
@@ -17,17 +22,27 @@ offline snapshots -- same UI, three ways in.
   trace actually has (a Codex run shows no Count Tokens chip). Click to
   filter; combine with text search.
 - **Split detail panel** -- click a row and the detail opens beside the list
-  (deep-linkable by request id). Messages render conversation-first with the
-  streamed reply decoded from SSE; usage requests render limit bars; raw
-  headers/bodies stay one fold away. `j`/`k` walk the filtered list.
-- **Sessions view** -- the reconstructed conversation on a rail: sessions
-  group their threads (main chat, subagent runs attached as branches at
-  the turn that spawned them, utility noise collapsed), a `/model` switch
-  marks an epoch, a compaction marks a break node with the context
-  collapse in turns and tokens, and superseded exchanges (rewinds, edits,
-  injected recaps) sit grey at the ordinal they occupied. Every turn
-  links back to its wire request; tokens, timing, and cost live in
-  instant hovers.
+  (deep-linkable by request id, click the id in the sticky toolbar to copy
+  it). DevTools-style order: chips, then Headers and body folds (every
+  fold has a copy button; bodies toggle pretty/raw), then the conversation
+  with the streamed reply decoded from SSE; usage requests render limit
+  bars. `j`/`k` walk the filtered list.
+- **Sessions view** -- the reconstructed conversation on a rail, where a
+  TURN is what a human means by one: user request (a `❯` row), the
+  agent's work indented under it -- tool rows read `Edit(src/ui.ts)`,
+  `Bash(Install deps)`, `Agent(general-purpose · goal)` with
+  workspace-relative paths -- and the final response (`↳`). A real
+  213-message trace reads as 3 turns. Harness-authored messages
+  (recaps, reminders, notification wakeups -- role "user" on the wire,
+  but not the human) wear a small SYS tag; subagent runs attach as
+  branches at the spawning turn with their model and outcome; a
+  `/model` switch marks an epoch; a compaction marks a break node with
+  the context collapse in turns and tokens; superseded exchanges
+  (rewinds, edits, injected recaps) sit grey at the ordinal they
+  occupied. Every turn links back to its wire request; tokens, timing,
+  cost, exact model ids, and effort levels live in hovers. A masked
+  screen-share mode (header eye toggle) blurs session ids and account
+  values.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,

@@ -73,14 +73,18 @@ Prints as `Live UI: http://localhost:<port>` (9317 by default; concurrent
 instances land on 9318, 9319, ...). Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with chips — model,
-  in/out tokens, a cache verdict (green hit with ↓read ↑write + hit %, amber
-  cold write or miss), first-token delay (ttft), estimated USD cost, errors —
+  requested reasoning effort (effort high/xhigh/adaptive/token budget, all
+  clients' wire shapes), in/out tokens, a cache verdict (green hit with
+  ↓read ↑write + hit %, amber cold write or miss), first-token delay (ttft),
+  estimated USD cost, errors —
   plus a ↑req ↓resp body-size column (wire bytes stamped at capture).
-  Click a row for the detail panel: full conversation, prompt size,
-  first-token delay vs wall-clock, tok/s, cost breakdown, a DevTools-style
-  Headers section (general + parsed request/response headers, raw toggle,
-  copy), and body folds with pretty/raw and SSE events/raw toggles.
-  `j`/`k` walk rows, `/` filters, `Esc` closes.
+  Click a row for the detail panel. Order top-to-bottom: chips (prompt size,
+  first-token delay vs wall-clock, tok/s, cost breakdown) + a click-to-copy
+  request id, then a DevTools-style Headers section (general + parsed
+  request/response headers, raw toggle, copy), then body folds with
+  pretty/raw and SSE events/raw toggles, then the full conversation last (it
+  is the long part). Every fold has a `copy` button; text blocks have a hover
+  copy. `j`/`k` walk rows, `/` filters, `Esc` closes.
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
   conversation (main chat, subagent runs linked to the Task call that
   spawned them, utility probes as separate threads) beside the wire
@@ -110,6 +114,16 @@ same UI anytime. Live runs no longer write a snapshot `.html` at exit (big
 sessions produced multi-hundred-MB files); `cctrace view <target> --html`
 renders one on demand, and static mode (`-s`) still writes one, since the
 snapshot is its whole point.
+
+### Recovering a response the user stopped in the CLI
+
+cctrace keeps capturing after the CLI aborts a request, so the partial reply
+up to the stop point is saved. To find it: in the Requests list, look for the
+row with a **"stopped early"** warn chip (the wire pair has `resp.truncated:
+true`); open it, and the assembled partial reply renders in the detail
+conversation like any other response. The detail Headers → General also shows
+a "stopped early" row. Use this when the user says "it cut off / I hit Esc —
+what did the model actually send?".
 
 ## Saved traces
 

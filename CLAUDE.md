@@ -138,10 +138,15 @@ title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
 opens its WebSocket origin-relative (never a baked port: behind
 container/host port forwards the bound port isn't the browser's port, and a
 baked URL once handed a view page another instance's live stream). The
-right side is count · instance-switcher · live-dot · version · theme/github:
+right side is count · instance-switcher · live-dot · version · mask/theme/github:
 the live status sits beside the "⇄ N more" switcher (both are
 instance-level facts), and the cctrace version (+ amber update link) sits
-with the page chrome in its own `#ver` mount, hover = short about text. Wall-clock times render 24h
+with the page chrome in its own `#ver` mount, hover = short about text. A
+mask toggle (eye glyph, persisted in localStorage `cctrace-mask`) blurs
+identity values marked `data-mask` (header session id + trace title,
+per-session sid labels, usage/credits chips) for screen sharing — hover any
+one to reveal it; display-layer only, unrelated to capture-time redaction
+(src/redact.ts). Wall-clock times render 24h
 (`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
 the trace actually contains (a codex run never shows Count Tokens), the
 active one staying visible even at zero. Live-arrived rows get one 160ms
@@ -149,8 +154,13 @@ opacity fade (the motion budget lives in docs/design/ui.md). Two views,
 hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request with inline
-  human-readable chips — model, in/out tokens, one compact prompt-cache
-  verdict chip (`summarizeCache` in src/summarize.ts: hit = read > 0, green
+  human-readable chips — model, requested reasoning effort (`extractEffort`
+  in src/summarize.ts, one function for every wire shape: Anthropic
+  `output_config.effort` / transitional `thinking.effort` (kimi too) /
+  classic `thinking.budget_tokens` / bare `thinking.type: adaptive`, OpenAI
+  Responses `reasoning.effort`, Chat Completions `reasoning_effort` — the
+  tooltip names the wire field; also a detail-panel param chip), in/out
+  tokens, one compact prompt-cache verdict chip (`summarizeCache` in src/summarize.ts: hit = read > 0, green
   only when ≥90% of the prompt came from cache — a weaker hit is amber, most
   of the context was re-billed at full input price;
   "↓read hit% ↑write" with a 1h-TTL breakdown since 1h bills 2x; cold =
@@ -169,7 +179,9 @@ hash-routed:
   carry no timestamps, so it can't be derived from a saved body; the first
   body byte lands in `firstByteMs` as the fallback), count_tokens
   results, usage window percentages (5h / 7d / per-model), telemetry event
-  counts, error types. Every row also has a DevTools-style size column
+  counts, error types, a "stopped early" warn chip when the response is
+  truncated (the guarded pump kept capturing the partial reply after a CLI
+  abort — `resp.truncated`). Every row also has a DevTools-style size column
   (`extractSizes` in src/summarize.ts: `bodyBytes` wire counts stamped by
   the proxies at capture time — request as sent, so codex zstd shows the
   compressed size; response as received (identity encoding). Pre-0.17
@@ -188,16 +200,23 @@ hash-routed:
   row opens a split detail panel beside the list (no page jump);
   prev/next + `j`/`k` walk the FILTERED list; `Esc` closes. The detail
   toolbar (close/prev/next/position) is sticky, so it stays reachable
-  inside megabyte conversations. Messages render conversation-first
+  inside megabyte conversations; the request id in that sticky bar is
+  click-to-copy. Panel order is chips (identity) → Headers →
+  Body → conversation: headers/body are short or collapsed folds, the
+  conversation is the megabyte tail, so it renders LAST (reaching Headers no
+  longer means scrolling past the whole conversation). The DevTools-style
+  Headers section: General (url/method/status/host/timing/sizes — plus a
+  "stopped early" row when the response is truncated) plus request/response
+  headers as parsed k/v tables with a raw toggle and one-click copy. Body
+  payloads stay lazy `<details>` folds, each with a mode toggle — pretty
+  JSON vs as-logged raw text for bodies ("raw" is the decoded trace body
+  re-serialized, not original wire bytes), raw SSE text vs parsed events for
+  the stream. Every fold summary carries a quiet `copy` .fold-btn (copies the
+  fold's body text — pretty JSON, full system prompt, tool input); user and
+  assistant text blocks get a hover copy button. Then the conversation
   (system prompt, tools, thinking, tool_use collapsed; long texts clamp
   with a "show all" expander; streamed assistant reply reconstructed from
-  SSE). Usage requests render limit bars. Below the conversation a
-  DevTools-style Headers section: General (url/method/status/host/timing/
-  sizes) plus request/response headers as parsed k/v tables with a raw
-  toggle and one-click copy. Body payloads stay lazy `<details>` folds,
-  each with a mode toggle — pretty JSON vs as-logged raw text for bodies
-  ("raw" is the decoded trace body re-serialized, not original wire
-  bytes), raw SSE text vs parsed events for the stream. A quiet nav rail overlays the detail panel
+  SSE); usage requests render limit bars in its place. A quiet nav rail overlays the detail panel
   and the session convo (same targets both places): jump top/bottom, prev/
   next turn, prev/next user prompt, system prompt — in the session view
   also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
@@ -228,9 +247,12 @@ hash-routed:
   ordinal + message text, nothing else inline: all metrics live in the
   hover. Session headers open with a glyph + accent-tinted small-caps
   SESSION label (.sico/.klabel); epoch heads a branch glyph + T<n>;
-  the model chip is bare (hover explains). Hover details are instant
-  and structured — a custom .tip singleton filled from data-tip
-  attributes, not native title. Kind chips are neutral outlines
+  the model chip is bare (hover explains). Hover details are near-instant
+  (120ms show delay so mousing across chips doesn't flicker) and
+  structured — a custom page-wide .tip singleton filled from data-tip; a
+  plain `title=` anywhere on the page is folded into the same panel on first
+  hover (the attribute is moved to data-tip so the native tooltip never
+  fires). Kind chips are neutral outlines
   (ui.md one-accent rule), red/amber reserved for state.
   `session.ts` groups model-call pairs into threads, one
   `buildSession(pairs, wire)` entry for BOTH wire dialects (`wireDialect`

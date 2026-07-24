@@ -18,6 +18,7 @@ import {
   summarizePair,
   hasCacheControl,
   summarizeCache,
+  extractEffort,
 } from "./summarize";
 import {
   wireDialect,
@@ -234,6 +235,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .icon-btn:hover { background: var(--btn-bg); border-color: var(--border); color: var(--text); }
     .icon-btn svg { width: 16px; height: 16px; }
+    /* Mask mode: blur identity values for screen sharing; hover to reveal
+       one deliberately. Display-layer only (see src/redact.ts for capture). */
+    body.masked [data-mask] { filter: blur(5px); }
+    body.masked [data-mask]:hover { filter: none; }
     .toolbar {
       padding: 8px 16px;
       background: var(--bg-surface);
@@ -345,7 +350,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       display: none;
       min-width: 0;
       overflow-y: auto;
-      padding: 0 16px 12px;
+      /* right padding clears the floating #rail-detail (right:18 + 26px) */
+      padding: 0 48px 12px 16px;
       border-left: 1px solid var(--border);
     }
     body.detail-open #detail { display: block; flex: 0 0 60%; max-width: 60%; }
@@ -358,7 +364,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     body.view-session #session-view { display: flex; }
     #session-main { display: flex; flex: 1; min-height: 0; position: relative; }
     #threads { flex: 0 0 320px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
-    #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 16px; }
+    /* right padding clears the floating nav-rail (right:18 + 26px button) so
+       conversation text never sits under it */
+    #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 48px 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
     /* ---- Replay transport bar (body.replaying) ---- */
     #replay-toggle { display: none; }
@@ -552,7 +560,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-bottom: 1px solid var(--border);
     }
     .detail-pos { color: var(--text-muted); font-size: 11px; }
-    .detail-id { margin-left: auto; color: var(--text-faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+    /* The sticky-bar request id doubles as click-to-copy (reachable even
+       mid-scroll inside a megabyte conversation — that is why the bar is
+       sticky). Button reset keeps it reading as the quiet label it was. */
+    .detail-id {
+      margin-left: auto; color: var(--text-faint); font-size: 11px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      background: none; border: none; padding: 0; font-family: inherit;
+      cursor: pointer;
+    }
+    .detail-id:hover { color: var(--text-muted); }
+    .detail-id.copied { color: var(--green); }
     .btn-icon { padding: 4px 8px; font-size: 13px; line-height: 1; }
     /* ---- In-document nav rail (session convo + detail panel) ----
        Quiet until hovered; every affordance repeats a keyboard shortcut. */
@@ -708,6 +726,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .fold-btn:hover { color: var(--text); border-color: var(--accent); }
     .fold-btn.copied { color: var(--green); border-color: var(--green); }
+    /* Conversation folds appear by the hundred — their copy button reveals
+       on summary hover (same pattern as .pre-wrap's copy), visibility so the
+       layout never shifts. Payload folds keep theirs visible (few of them,
+       matches the Headers section's copy). */
+    .fold > summary .fold-copy { visibility: hidden; }
+    .fold > summary:hover .fold-copy, .fold[open] > summary .fold-copy { visibility: visible; }
     /* Headers section: parsed k/v table by default, raw text when toggled. */
     .hdr-table { padding: 4px 0; font-size: 11px; }
     .hdr-row { display: flex; gap: 12px; padding: 2px 12px; }
@@ -1052,6 +1076,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
+      <button class="icon-btn" id="mask-toggle" title="Mask identity (blur session id, project, credits) for screen sharing — hover a blurred value to reveal it"></button>
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
     </span>
@@ -1172,6 +1197,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${assembleAssistant.toString()}
     ${hasCacheControl.toString()}
     ${summarizeCache.toString()}
+    ${extractEffort.toString()}
     ${summarizePair.toString()}
 
     // Pricing + cost estimation, injected from src/pricing.ts.
@@ -1252,6 +1278,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     applyTheme(getThemePref());
 
+    // ---- Mask toggle: blur identity for screen sharing ----
+    // Display-layer courtesy only (capture-time redaction is a separate
+    // thing, src/redact.ts): blur [data-mask] values (session id, project,
+    // credits); hover any one to reveal it deliberately.
+    const maskToggle = document.getElementById('mask-toggle');
+    const MASK_ICONS = {
+      off: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>',
+      on: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l12 12M6.3 6.3A2 2 0 008 10a2 2 0 001.7-1M4.2 4.4C2.3 5.6 1 8 1 8s2.5 4.5 7 4.5c1.2 0 2.2-.2 3.1-.6M7 3.5A7.5 7.5 0 018 3.5c4.5 0 7 4.5 7 4.5s-.6 1.1-1.8 2.3"/></svg>',
+    };
+    function applyMask(on) {
+      document.body.classList.toggle('masked', on);
+      maskToggle.innerHTML = on ? MASK_ICONS.on : MASK_ICONS.off;
+      maskToggle.title = on
+        ? 'Identity masked \\u2014 click to unmask (hover a blurred value to reveal it)'
+        : 'Mask identity (blur session id, project, credits) for screen sharing \\u2014 hover a blurred value to reveal it';
+    }
+    maskToggle.onclick = function() {
+      var on = !document.body.classList.contains('masked');
+      localStorage.setItem('cctrace-mask', on ? '1' : '0');
+      applyMask(on);
+    };
+    applyMask(localStorage.getItem('cctrace-mask') === '1');
+
     // ---- Header context: traced client + project + current session id ----
 
     const ctxEl = document.getElementById('ctx');
@@ -1312,11 +1361,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // behind this page, live log and view rebuild alike.
         const label = META.project + (META.traceFile ? '/' + META.traceFile : '');
         const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '');
-        html += '<span class="ctx-proj" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+        html += '<span class="ctx-proj" data-mask title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
       }
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<button class="ctx-sess" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+        html += '<button class="ctx-sess" data-mask title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
       }
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
@@ -1542,6 +1591,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="pre-wrap"><button class="copy-btn" onclick="copyBlock(this)" title="Copy">' + COPY_SVG + '</button><pre>' + content + '</pre></div>';
     }
 
+    window.copyReqId = function(ev, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      navigator.clipboard.writeText(btn.dataset.id || '').then(function() {
+        var was = btn.textContent;
+        btn.classList.add('copied');
+        btn.textContent = 'copied';
+        setTimeout(function() { btn.classList.remove('copied'); btn.textContent = was; }, 1200);
+      });
+    };
+
     // ---- Requests list ----
 
     function shortUrl(u) {
@@ -1553,8 +1612,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function chipsHtml(pair) {
       const chips = summarizePair(pair, pair._cat);
+      // Usage/credits chips carry account identity — mask them for screen
+      // sharing (hover reveals). data-mask is inert until body.masked is on.
+      const mask = pair._cat === 'usage' ? ' data-mask' : '';
       return chips.map(c =>
-        '<span class="' + (c.c || '') + '"' + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '') + '>' + escapeHtml(c.t) + '</span>'
+        '<span class="' + (c.c || '') + '"' + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '') + mask + '>' + escapeHtml(c.t) + '</span>'
       ).join('');
     }
 
@@ -1794,7 +1856,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<button class="btn btn-icon" onclick="navDetail(-1)"' + (vIdx <= 0 ? ' disabled' : '') + ' title="Previous shown request (k)">\\u2039</button>' +
         '<button class="btn btn-icon" onclick="navDetail(1)"' + (vIdx === -1 || vIdx >= vis.length - 1 ? ' disabled' : '') + ' title="Next shown request (j)">\\u203a</button>' +
         '<span class="detail-pos">' + pos + '</span>' +
-        '<span class="detail-id" title="request id">' + escapeHtml(id) + '</span>' +
+        '<button class="detail-id" data-id="' + escapeHtml(id) + '" onclick="copyReqId(event, this)" title="request id \\u2014 click to copy">' + escapeHtml(id) + '</button>' +
       '</div>';
     }
 
@@ -1882,11 +1944,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="time">' + fmtDateTime(new Date(request.timestamp * 1000)) + '</span>' +
         '</div>';
 
-      if (pair._cat === 'messages') html += messagesChips(pair) + renderConversation(pair);
-      else if (pair._cat === 'tokens') html += tokensChips(pair) + renderConversation(pair);
-      else if (pair._cat === 'usage') html += renderUsagePanel(pair);
+      // Chips (short identity) stay on top; then the Headers + Body folds
+      // (short or collapsed); the conversation is the megabyte tail, so it
+      // renders last — reaching Headers no longer means scrolling past it.
+      if (pair._cat === 'messages') html += messagesChips(pair);
+      else if (pair._cat === 'tokens') html += tokensChips(pair);
       html += headersSection(pair);
       html += rawSections(pair);
+      if (pair._cat === 'messages' || pair._cat === 'tokens') html += renderConversation(pair);
+      else if (pair._cat === 'usage') html += renderUsagePanel(pair);
       return html;
     }
 
@@ -1905,7 +1971,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       row1 += kv('stream', m.stream ? 'yes' : 'no');
       if (m.maxTokens != null) row1 += kv('max_tokens', m.maxTokens.toLocaleString());
       if (m.temperature != null) row1 += kv('temp', m.temperature);
+      const eff = extractEffort(pair.request.body);
+      if (eff) row1 += kv('effort', eff.v, '', eff.title);
       if (m.stopReason) row1 += kv('stop', m.stopReason, m.stopReason === 'end_turn' || m.stopReason === 'tool_use' ? '' : 'warn');
+      if (pair.response && pair.response.truncated) row1 += kv('stopped', 'early', 'warn', 'stream ended before completion \\u2014 the partial response up to that point was captured (cctrace keeps capturing after a CLI abort)');
       if (m.serviceTier) row1 += kv('tier', m.serviceTier);
       if (m.error) return '<div class="chips">' + row1 + '</div>';
       let row2 = '';
@@ -1955,6 +2024,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
         (extraHtml || '') +
+        (hint ? '' : '<span class="fold-hint"></span>') +
+        '<button class="fold-btn fold-copy" onclick="copyFoldBody(event, this)" title="Copy contents">copy</button>' +
         '</summary><div class="fold-body">' + body + '</div></details>';
     }
 
@@ -1994,11 +2065,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Long texts render clamped with a "show all" expander; short ones inline.
     // md renders assistant reply text as markdown (safe subset, renderMd).
-    function textBlock(text, cls, md) {
+    function textBlock(text, cls, md, copy) {
       const t = String(text == null ? '' : text);
       const inner = '<div class="msg-text' + (cls ? ' ' + cls : '') + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
-      if (t.length <= 2000) return inner;
-      return '<div class="msg-clamp clamped">' + inner +
+      // copy: a hover copy button for standalone user/assistant text (thinking
+      // and tool_result text live inside folds that already carry copy). The
+      // button copies the block's full text even when it renders clamped.
+      const box = copy && t
+        ? '<div class="pre-wrap"><button class="copy-btn" onclick="copyBlock(this)" title="Copy">' + COPY_SVG + '</button>' + inner + '</div>'
+        : inner;
+      if (t.length <= 2000) return box;
+      return '<div class="msg-clamp clamped">' + box +
         '<button class="msg-more" onclick="toggleClamp(this)">show all \\u00b7 ' + fmtCompact(t.length) + ' chars</button></div>';
     }
     window.toggleClamp = function(btn) {
@@ -2014,9 +2091,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function renderBlock(b, md) {
       if (b == null) return '';
-      if (typeof b === 'string') return textBlock(b, '', md);
+      if (typeof b === 'string') return textBlock(b, '', md, true);
       const type = b.type;
-      if (type === 'text') return textBlock(b.text, '', md);
+      if (type === 'text') return textBlock(b.text, '', md, true);
       if (type === 'thinking') {
         const t = b.thinking || '';
         if (!t) return '<div class="block-note">thinking (no visible content)</div>';
@@ -2161,7 +2238,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (u.credits) {
         const d = Math.pow(10, u.credits.decimalPlaces);
-        rows += '<div class="ubar-row"><span class="ubar-label">credits</span><span class="ubar-pct" style="flex:none">' +
+        rows += '<div class="ubar-row"><span class="ubar-label">credits</span><span class="ubar-pct" data-mask style="flex:none">' +
           (u.credits.used / d) + ' / ' + (u.credits.limit / d) + ' ' + escapeHtml(u.credits.currency) + '</span></div>';
       }
       return '<div class="section"><h4>Usage limits</h4>' + rows + '</div>';
@@ -2217,6 +2294,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
     };
 
+    // Copy a fold's body: the pretty JSON of a tool_use / body fold, the full
+    // system-prompt text, etc. Lazy raw folds (data-raw) are filled first so
+    // there is something to copy. The button lives in the summary and stops
+    // the click from toggling the fold.
+    window.copyFoldBody = function(ev, btn) {
+      ev.preventDefault(); ev.stopPropagation();
+      const det = btn.closest('details');
+      if (det.dataset && det.dataset.raw) fillRaw(det);
+      const body = det.querySelector(':scope > .fold-body');
+      navigator.clipboard.writeText(body ? body.textContent : '').then(function() {
+        btn.classList.add('copied');
+        const was = btn.textContent;
+        btn.textContent = 'copied';
+        setTimeout(function() { btn.classList.remove('copied'); btn.textContent = was; }, 1500);
+      });
+    };
+
     function headersSection(pair) {
       const r = pair.response;
       const s = sizesOf(pair);
@@ -2252,8 +2346,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // (single line), not the original wire bytes — those aren't stored.
     function rawFold(title, kind, open, altLabel) {
       return '<details class="fold box" data-raw="' + kind + '"' + (open ? ' open' : '') + '>' +
-        '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
-        (altLabel ? '<span class="fold-hint"></span><button class="fold-btn" data-alt-label="' + escapeHtml(altLabel) + '" onclick="toggleRawMode(event, this)">' + escapeHtml(altLabel) + '</button>' : '') +
+        '<summary><span class="fold-title">' + escapeHtml(title) + '</span><span class="fold-hint"></span>' +
+        (altLabel ? '<button class="fold-btn" data-alt-label="' + escapeHtml(altLabel) + '" onclick="toggleRawMode(event, this)">' + escapeHtml(altLabel) + '</button>' : '') +
+        '<button class="fold-btn" onclick="copyFoldBody(event, this)" title="Copy contents">copy</button>' +
         '</summary><div class="fold-body"></div></details>';
     }
 
@@ -2406,23 +2501,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderConvoPane(sel);
     }
 
-    // ---- Instant tooltip (session pane) ----
-    // Native title waits ~1s and renders unstyled; the session pane's
-    // hover details deserve better. One fixed singleton, filled from
-    // data-tip on mouseover: first line renders as the heading, blank
-    // lines as section gaps. Pointer-events off so it never traps the
-    // mouse; guarded so headless boots (tests) skip it.
+    // ---- Designed tooltip (page-wide) ----
+    // Native title waits ~1s and renders unstyled; every hover detail on the
+    // page deserves better. One fixed singleton, filled from data-tip: first
+    // line renders as the heading, blank lines as section gaps. Elements that
+    // carry a plain title= get folded into the same panel — the title is
+    // moved into data-tip on first hover so the native tooltip never fires.
+    // A short show-delay keeps mousing across a row of chips from flickering
+    // panels. Pointer-events off so it never traps the mouse; guarded so
+    // headless boots (tests) skip it.
     if (document.createElement && document.body) {
       const tipEl = document.createElement('div');
       tipEl.className = 'tip';
       document.body.appendChild(tipEl);
-      let tipFor = null;
-      const hideTip = () => { tipFor = null; tipEl.classList.remove('show'); };
-      document.addEventListener('mouseover', (e) => {
-        const t = e.target && e.target.closest ? e.target.closest('[data-tip]') : null;
-        if (t === tipFor) return;
-        if (!t) { hideTip(); return; }
-        tipFor = t;
+      const SHOW_DELAY = 120;
+      let tipFor = null, showTimer = 0;
+      const hideTip = () => { clearTimeout(showTimer); tipFor = null; tipEl.classList.remove('show'); };
+      const showTipFor = (t) => {
         const lines = String(t.dataset.tip || '').split('\\n');
         let h = '';
         for (let i = 0; i < lines.length; i++) {
@@ -2439,6 +2534,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
         tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
         tipEl.style.top = y + 'px';
+      };
+      document.addEventListener('mouseover', (e) => {
+        const t = e.target && e.target.closest ? e.target.closest('[data-tip],[title]') : null;
+        // Fold a plain title into the designed panel and kill the native one.
+        // Re-reading title= each time keeps dynamic titles (theme toggle) fresh.
+        if (t && t.hasAttribute('title')) { t.dataset.tip = t.getAttribute('title'); t.removeAttribute('title'); }
+        if (t === tipFor) return;
+        clearTimeout(showTimer);
+        tipEl.classList.remove('show');
+        tipFor = t;
+        if (!t) return;
+        // A blank tip (title="") must not summon an empty panel.
+        if (!String(t.dataset.tip || '').trim()) return;
+        showTimer = setTimeout(() => showTipFor(t), SHOW_DELAY);
       });
       document.addEventListener('scroll', hideTip, true);
       document.addEventListener('mouseleave', hideTip);
@@ -3034,7 +3143,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const hm = (ts) => fmtTime(new Date(ts * 1000)).slice(0, 5);
       const range = t0 === Infinity ? '' : (hm(t0) === hm(t1) ? hm(t0) : hm(t0) + '\\u2013' + hm(t1));
       return ICON_SESSION + '<span class="klabel">session</span>' +
-        '<span class="sess-sid"' +
+        '<span class="sess-sid" data-mask' +
         (sid ? ' data-sid="' + escapeHtml(sid) + '"' +
           ' onclick="event.preventDefault();event.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sid)"' : '') +
         '>' + (sid ? escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +

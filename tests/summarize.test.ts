@@ -14,6 +14,7 @@ import {
   summarizePair,
   hasCacheControl,
   summarizeCache,
+  extractEffort,
 } from "../src/summarize";
 
 // Fixtures mirror real captured shapes (sanitized), see .cctrace/*.jsonl.
@@ -348,7 +349,71 @@ describe("extractSizes", () => {
   });
 });
 
+describe("extractEffort", () => {
+  test("anthropic current: output_config.effort wins over adaptive thinking", () => {
+    const eff = extractEffort({ thinking: { type: "adaptive" }, output_config: { effort: "xhigh" } });
+    expect(eff.v).toBe("xhigh");
+    expect(eff.title).toContain("output_config.effort");
+  });
+
+  test("transitional anthropic / kimi: thinking.effort", () => {
+    const eff = extractEffort({ thinking: { type: "enabled", effort: "high", keep: "all" } });
+    expect(eff.v).toBe("high");
+    expect(eff.title).toContain("thinking.effort");
+  });
+
+  test("classic extended thinking: budget_tokens", () => {
+    const eff = extractEffort({ thinking: { type: "enabled", budget_tokens: 31999 } });
+    expect(eff.v).toBe("32.0k budget");
+    expect(eff.title).toContain("31,999");
+  });
+
+  test("adaptive without an explicit effort", () => {
+    expect(extractEffort({ thinking: { type: "adaptive" } }).v).toBe("adaptive");
+  });
+
+  test("codex/grok Responses: reasoning.effort", () => {
+    const eff = extractEffort({ reasoning: { effort: "medium", summary: "concise" } });
+    expect(eff.v).toBe("medium");
+    expect(eff.title).toContain("reasoning.effort");
+  });
+
+  test("chat completions: top-level reasoning_effort", () => {
+    expect(extractEffort({ reasoning_effort: "low" }).v).toBe("low");
+  });
+
+  test("null when reasoning isn't requested", () => {
+    expect(extractEffort({ model: "claude-haiku-4-5" })).toBeNull();
+    expect(extractEffort({ thinking: { type: "disabled" } })).toBeNull();
+    expect(extractEffort({ reasoning: { summary: "concise" } })).toBeNull();
+    expect(extractEffort(null)).toBeNull();
+    expect(extractEffort("nope")).toBeNull();
+  });
+});
+
 describe("summarizePair", () => {
+  test("messages: effort chip follows the model chip", () => {
+    const pair = streamingPair();
+    (pair.request.body as any).thinking = { type: "adaptive" };
+    (pair.request.body as any).output_config = { effort: "high" };
+    const chips = summarizePair(pair, "messages");
+    expect(chips[0].t).toBe("opus-4-6");
+    expect(chips[1].t).toBe("effort high");
+    expect(chips[1].title).toContain("output_config.effort");
+  });
+
+  test("messages: truncated response gets a 'stopped early' warn chip", () => {
+    const pair = streamingPair();
+    (pair.response as any).truncated = true;
+    const chips = summarizePair(pair, "messages");
+    const stopped = chips.find((c: any) => c.t === "stopped early");
+    expect(stopped).toBeTruthy();
+    expect(stopped.c).toBe("warn");
+    expect(stopped.title).toContain("keeps capturing after a CLI abort");
+    // absent when the stream completed normally
+    expect(summarizePair(streamingPair(), "messages").some((c: any) => c.t === "stopped early")).toBe(false);
+  });
+
   test("messages: model, tokens, cache, thinking", () => {
     const chips = summarizePair(streamingPair(), "messages");
     const texts = chips.map((c: any) => c.t);

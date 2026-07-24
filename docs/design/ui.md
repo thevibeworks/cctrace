@@ -63,6 +63,13 @@ to protect that feeling.
   subset doesn't cover stays literal.
 - Floating chrome is limited to the tail pill and the nav rail; the rail is
   faint until hovered and every button names its keyboard shortcut.
+- Hover detail is one page-wide `.tip` singleton (filled from `data-tip`,
+  first line = heading). A plain `title=` is folded into it on first hover
+  (moved to `data-tip` so the native tooltip never fires). A ~120ms show
+  delay debounces mousing across a row of chips — a debounce, not motion.
+- `data-mask` marks identity values (session id, project/trace title, credits)
+  that `body.masked` blurs for screen sharing; hover reveals one deliberately.
+  Display-layer courtesy only — capture-time redaction is `src/redact.ts`.
 
 ## When adding UI
 

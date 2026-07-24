@@ -8,6 +8,17 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Changed
 
+- Tool folds say what the tool touched, in workspace terms: file paths in
+  Read/Write/Edit/Grep/Glob previews relativize to the traced CLI's
+  working directory (src/ui.ts, not the full container path; ~-relative
+  under a home dir, full path only when outside both). Read previews show
+  the requested line window, Write the content size, Edit a replace-all
+  flag, TodoWrite the done count. The workspace root comes from page
+  metadata, else from the cwd the CLI itself stated on the wire (codex
+  <cwd> tag, Claude Code env block); unknown roots keep full paths. The
+  requests-view detail panel uses the same previews for tool_use folds
+  instead of a raw JSON snippet.
+
 - Request rows read left-to-right as content chips then wire columns:
   model - effort - think - in/out - cache - cost, a structural gap, then
   right-aligned sizes - ttft - duration - time. First-token delay moved

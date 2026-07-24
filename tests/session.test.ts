@@ -10,6 +10,8 @@ import {
   turnSnippet,
   mainThread,
   toolPreview,
+  wsPath,
+  cwdFromText,
 } from "../src/session";
 
 // Wire-shaped fixtures mirroring real captures (see .cctrace/*.jsonl):
@@ -317,6 +319,55 @@ describe("toolPreview", () => {
     expect(toolPreview("Task", { subagent_type: "Explore", description: "map repo" })).toBe("[Explore] map repo");
     expect(toolPreview("TodoWrite", { todos: [1, 2, 3] })).toBe("3 todos");
     expect(toolPreview("Unknown", { a: 1 })).toBe("");
+  });
+
+  test("file tools relativize to the workspace root", () => {
+    const ws = "/Users/eric/proj";
+    expect(toolPreview("Read", { file_path: "/Users/eric/proj/src/ui.ts" }, ws)).toBe("src/ui.ts");
+    expect(toolPreview("Edit", { file_path: "/Users/eric/proj/a.ts", replace_all: true }, ws)).toBe("a.ts · replace all");
+    expect(toolPreview("Write", { file_path: "/Users/eric/proj/big.md", content: "x".repeat(12345) }, ws)).toBe("big.md · 12.3k chars");
+    expect(toolPreview("Grep", { pattern: "foo", path: "/Users/eric/proj/src" }, ws)).toBe("/foo/ in src");
+    // outside the workspace but under a home dir: ~-relative
+    expect(toolPreview("Read", { file_path: "/home/deva/.claude/settings.json" }, ws)).toBe("~/.claude/settings.json");
+    // outside both: full path, honestly
+    expect(toolPreview("Read", { file_path: "/etc/hosts" }, ws)).toBe("/etc/hosts");
+  });
+
+  test("Read shows the requested line window", () => {
+    expect(toolPreview("Read", { file_path: "/a.ts", limit: 40, offset: 120 })).toBe("/a.ts · 40 lines from 120");
+    expect(toolPreview("Read", { file_path: "/a.ts", limit: 40 })).toBe("/a.ts · first 40 lines");
+    expect(toolPreview("Read", { file_path: "/a.ts", offset: 120 })).toBe("/a.ts · from line 120");
+  });
+
+  test("TodoWrite counts completed items", () => {
+    expect(toolPreview("TodoWrite", { todos: [{ status: "completed" }, { status: "completed" }, { status: "pending" }] }))
+      .toBe("3 todos · 2 done");
+  });
+});
+
+describe("wsPath / cwdFromText", () => {
+  test("wsPath: workspace, home, and foreign paths", () => {
+    expect(wsPath("/w/root/a/b.ts", "/w/root")).toBe("a/b.ts");
+    expect(wsPath("/w/root", "/w/root")).toBe(".");
+    expect(wsPath("/w/rooter/a.ts", "/w/root")).toBe("/w/rooter/a.ts"); // prefix must be a dir boundary
+    expect(wsPath("/Users/x/other/f.ts", "/w/root")).toBe("~/other/f.ts");
+    expect(wsPath("/tmp/f", "/w/root")).toBe("/tmp/f");
+    expect(wsPath("", "/w/root")).toBe("");
+    expect(wsPath("/w/root/a.ts")).toBe("/w/root/a.ts"); // no ws, not a home path: untouched
+  });
+
+  test("cwdFromText: precise shapes only, prose never matches", () => {
+    expect(cwdFromText("env:\n<cwd>/Users/x/proj</cwd>\nother")).toBe("/Users/x/proj");
+    expect(cwdFromText("Stuff\nPrimary working directory: /Users/x/proj\nMore")).toBe("/Users/x/proj");
+    expect(cwdFromText("Working directory: /w/app")).toBe("/w/app");
+    // the real Claude Code env block bullets the line
+    expect(cwdFromText("environment: \n - Primary working directory: /Users/x/proj\n - Is a git repository: true"))
+      .toBe("/Users/x/proj");
+    // prose mentioning a working directory must not match
+    expect(cwdFromText("things in the working directory or on the internet")).toBe("");
+    // relative paths are not a cwd
+    expect(cwdFromText("Working directory: see below")).toBe("");
+    expect(cwdFromText(null)).toBe("");
   });
 });
 

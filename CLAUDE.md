@@ -397,7 +397,16 @@ hash-routed:
   (`renderMd`: fenced/inline code, headings, bold, http(s) links —
   escaped first, so wire content can't smuggle markup), subagent
   spawns / Skill / MCP calls keep a purple title + glyph (branch / bolt /
-  plug); a spawn fold shows the spawned thread's outcome inline
+  plug); tool fold previews name what the tool touched in workspace terms
+  (`toolPreview`/`wsPath` in src/session.ts: file paths relativize to the
+  workspace root — "src/ui.ts", "~/.claude/settings.json", full path only
+  when outside both; Read shows its line window, Write its size, Edit
+  flags replace-all, TodoWrite counts done. The root comes from
+  META.projectPath, else `cwdFromText` reads the cwd the traced CLI stated
+  on the wire — codex's <cwd> tag or Claude Code's bulleted
+  " - Primary working directory:" env line, precise shapes only, scanned
+  over the first 3 messages pairs since utility probes carry no env
+  block); a spawn fold shows the spawned thread's outcome inline
   ("2 turns · out 50 · $0.0035", agentThreadStats) plus the open-thread
   link, and a Skill fold names the skill in its title ("skill · ccx")
   with args as the hint; Read/Bash dumps stay quiet). Every turn's role

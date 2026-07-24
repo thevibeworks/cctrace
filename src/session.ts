@@ -1,4 +1,4 @@
-import { parseSse, assembleAssistant, extractCallInfo, shortModel, extractSessionId } from "./summarize";
+import { parseSse, assembleAssistant, extractCallInfo, shortModel, extractSessionId, fmtCompact } from "./summarize";
 import { pairCost } from "./pricing";
 import {
   wireDialect,
@@ -815,19 +815,79 @@ export function mainThread(threads: any[]): any {
   return best || (threads && threads[0]) || null;
 }
 
-/** ccx-style one-line preview for a tool_use, keyed by tool name. */
-export function toolPreview(name: string, input: any): string {
+/**
+ * A file path as the reader knows it: workspace-relative when it sits under
+ * ws (the traced CLI's working directory), ~-relative when it sits under a
+ * home dir, untouched otherwise. Never lies — a path outside both stays
+ * absolute.
+ */
+export function wsPath(p: any, ws?: any): string {
+  const s = String(p || "");
+  if (!s) return s;
+  if (typeof ws === "string" && ws) {
+    const w = ws.charAt(ws.length - 1) === "/" ? ws : ws + "/";
+    if (s === ws || s === w) return ".";
+    if (s.lastIndexOf(w, 0) === 0) return s.slice(w.length);
+  }
+  const hm = /^\/(?:home|Users)\/[^/]+(?=\/)/.exec(s);
+  if (hm) return "~" + s.slice(hm[0].length);
+  return s;
+}
+
+/**
+ * The traced CLI's working directory, extracted from a request's system/env
+ * text. Two precise shapes only (loose "directory" matching catches prose):
+ * codex's <cwd>/path</cwd> environment tag, and Claude Code's line-anchored
+ * env-block entry — on the real wire that line is bulleted
+ * (" - Primary working directory: /path"), so one optional list marker is
+ * allowed. Returns "" when absent — callers fall back to page metadata or
+ * full paths, never a guess.
+ */
+export function cwdFromText(s: any): string {
+  const t = String(s || "");
+  let m = /<cwd>(\/[^<\n]*)<\/cwd>/.exec(t);
+  if (m) return m[1].trim();
+  m = /^[ \t]*(?:[-*>]\s+)?(?:Primary working directory|Working directory|Current working directory)\s*:\s*(\/[^\n]+?)\s*$/m.exec(t);
+  return m ? m[1] : "";
+}
+
+/**
+ * ccx-style one-line preview for a tool_use, keyed by tool name. ws (the
+ * workspace root) relativizes file paths — the fold says src/ui.ts, not the
+ * full container path.
+ */
+export function toolPreview(name: string, input: any, ws?: any): string {
   const i = input || {};
   switch (name) {
     case "Bash": return "$ " + (i.command || "");
-    case "Read": case "Write": case "Edit": case "NotebookEdit": return i.file_path || "";
-    case "Grep": return "/" + (i.pattern || "") + "/" + (i.path ? " in " + i.path : "");
-    case "Glob": return i.pattern || "";
+    case "Read": {
+      let r = wsPath(i.file_path, ws);
+      if (typeof i.limit === "number" && typeof i.offset === "number") r += " · " + i.limit + " lines from " + i.offset;
+      else if (typeof i.limit === "number") r += " · first " + i.limit + " lines";
+      else if (typeof i.offset === "number") r += " · from line " + i.offset;
+      return r;
+    }
+    case "Write": {
+      const len = typeof i.content === "string" ? i.content.length : 0;
+      return wsPath(i.file_path, ws) + (len ? " · " + fmtCompact(len) + " chars" : "");
+    }
+    case "Edit": {
+      let r = wsPath(i.file_path, ws);
+      if (i.replace_all) r += " · replace all";
+      return r;
+    }
+    case "NotebookEdit": return wsPath(i.notebook_path || i.file_path, ws);
+    case "Grep": return "/" + (i.pattern || "") + "/" + (i.path ? " in " + wsPath(i.path, ws) : "");
+    case "Glob": return (i.pattern || "") + (i.path ? " in " + wsPath(i.path, ws) : "");
     case "Task": case "Agent": case "TaskCreate": return "[" + (i.subagent_type || "agent") + "] " + (i.description || "");
     case "WebFetch": return i.url || "";
     case "WebSearch": return i.query || "";
     case "Skill": return i.skill || i.command || "";
-    case "TodoWrite": return Array.isArray(i.todos) ? i.todos.length + " todos" : "";
+    case "TodoWrite": {
+      if (!Array.isArray(i.todos)) return "";
+      const done = i.todos.filter((t: any) => t && t.status === "completed").length;
+      return i.todos.length + " todos" + (done ? " · " + done + " done" : "");
+    }
     default: return "";
   }
 }

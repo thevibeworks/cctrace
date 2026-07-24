@@ -43,6 +43,8 @@ import {
   turnSnippet,
   mainThread,
   toolPreview,
+  wsPath,
+  cwdFromText,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
 import {
@@ -1231,6 +1233,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${buildSession.toString()}
     ${mainThread.toString()}
     ${toolPreview.toString()}
+    ${wsPath.toString()}
+    ${cwdFromText.toString()}
 
     const statusEl = document.getElementById('status');
     const countEl = document.getElementById('count');
@@ -1617,6 +1621,37 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function newestMessagesId() {
       for (let i = pairs.length - 1; i >= 0; i--) if (pairs[i]._cat === 'messages') return pairs[i].id;
       return null;
+    }
+
+    // Workspace root for path display: the page's own project metadata when
+    // it has one, else the cwd the traced CLI stated on the wire (system/env
+    // text, precise shapes only — see cwdFromText). Cached; rescans on new
+    // pairs until found. null = unknown, previews keep full paths honestly.
+    let _ws = null, _wsScan = -1;
+    function wsRoot() {
+      if (META.projectPath) return META.projectPath;
+      if (_ws !== null || _wsScan === pairs.length) return _ws;
+      _wsScan = pairs.length;
+      let seen = 0;
+      for (const p of pairs) {
+        if (p._cat !== 'messages') continue;
+        if (++seen > 3) break;
+        const req = (p.request && p.request.body) || {};
+        const texts = [];
+        if (typeof req.system === 'string') texts.push(req.system);
+        else if (Array.isArray(req.system)) for (const b of req.system) if (b && typeof b.text === 'string') texts.push(b.text);
+        if (typeof req.instructions === 'string') texts.push(req.instructions);
+        const items = openaiInput(req);
+        for (let i = 0; i < items.length && i < 12; i++) {
+          const it = items[i];
+          if (!it || it.type !== 'message') continue;
+          const c = it.content;
+          if (typeof c === 'string') texts.push(c);
+          else if (Array.isArray(c)) for (const part of c) if (part && typeof part.text === 'string') texts.push(part.text);
+        }
+        for (const t of texts) { const c = cwdFromText(t); if (c) { _ws = c; return _ws; } }
+      }
+      return _ws;
     }
 
     function chipsHtml(pair) {
@@ -2123,7 +2158,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (type === 'redacted_thinking') return '<div class="block-note">redacted thinking</div>';
       if (type === 'tool_use' || type === 'server_tool_use') {
-        return fold('tool_use \\u00b7 ' + (b.name || '?'), snippet(b.input, 110), preBlock(formatJson(b.input)));
+        const pv = toolPreview(b.name || '?', b.input, wsRoot());
+        return fold('tool_use \\u00b7 ' + (b.name || '?'), pv || snippet(b.input, 110), preBlock(formatJson(b.input)));
       }
       if (type === 'tool_result') {
         let body = '';
@@ -3193,7 +3229,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (b && (b.type === 'tool_use' || b.type === 'server_tool_use')) {
         const name = b.name || '?';
         let title = name;
-        let pv = toolPreview(name, b.input) || snippet(b.input, 110);
+        let pv = toolPreview(name, b.input, wsRoot()) || snippet(b.input, 110);
         let cls = '';
         let extra = '';
         let icon = '';

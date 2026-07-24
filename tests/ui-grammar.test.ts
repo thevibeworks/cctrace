@@ -239,7 +239,7 @@ describe("outline tool labels", () => {
     const page = bootSnapshotPage(renderSnapshot([p]));
     page.goto("#/session");
     const threads = page.fragments.filter((f) => f.id === "threads").pop();
-    expect(threads!.html).toMatch(/class="tturn-tools">Bash</); // named the tool
+    expect(threads!.html).toMatch(/class="tname">Bash</); // named the tool, colorized
     expect(threads!.html).not.toContain("tools…"); // the old dead fallback is gone
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
@@ -260,8 +260,12 @@ describe("outline tool labels", () => {
     const page = bootSnapshotPage(renderSnapshot([p]));
     page.goto("#/session");
     const threads = page.fragments.filter((f) => f.id === "threads").pop();
-    // file tools name what they touched; 3 shown, remainder counted
-    expect(threads!.html).toContain("Read a, Edit a, Bash, +1");
+    // ToolName(args) items: file tools name what they touched; 3 shown,
+    // remainder counted
+    expect(threads!.html).toContain('Read</span>(a)');
+    expect(threads!.html).toContain('Edit</span>(a)');
+    expect(threads!.html).toContain('Bash</span>(x)');
+    expect(threads!.html).toContain(", +1");
     expect(fragmentErrors(page)).toEqual([]);
   });
 });

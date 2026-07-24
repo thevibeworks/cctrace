@@ -316,6 +316,9 @@ describe("responseBlocks", () => {
 describe("toolPreview", () => {
   test("per-tool one-liners", () => {
     expect(toolPreview("Bash", { command: "ls -la" })).toBe("$ ls -la");
+    // the model's own intent line leads; the literal command stays
+    expect(toolPreview("Bash", { command: "npm i", description: "Install package dependencies" }))
+      .toBe("Install package dependencies · $ npm i");
     expect(toolPreview("Read", { file_path: "/a/b.ts" })).toBe("/a/b.ts");
     expect(toolPreview("Grep", { pattern: "foo", path: "src" })).toBe("/foo/ in src");
     expect(toolPreview("Task", { subagent_type: "Explore", description: "map repo" })).toBe("[Explore] map repo");

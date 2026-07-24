@@ -2735,6 +2735,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const fp = wsPath(i.file_path || i.notebook_path, ws);
           label = n + (fp ? ' ' + fp : '');
         }
+        // Bash: the model's own intent line beats a bare tool name.
+        else if (n === 'Bash' && typeof i.description === 'string' && i.description) label = 'Bash ' + i.description;
         else label = n;
         if (seen[label]) continue;
         seen[label] = 1;

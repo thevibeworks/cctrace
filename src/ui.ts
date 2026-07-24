@@ -955,6 +955,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tturn:hover .tturn-text { color: var(--text); }
     .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tturn-tools { color: var(--text-faint); }
+    /* Tool names are the agent's verbs — same color as the request METHOD
+       column, no new palette entry. Args stay in the row's quiet color. */
+    .tname { color: var(--text-method); }
+    .fold-tool > summary .fold-title { color: var(--text-method); }
     /* Working-loop nesting: agent work + final response indent under their
        user head; intermediate rows read quieter than the final response. */
     .tturn-sub { padding-left: 20px; }
@@ -2166,8 +2170,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (type === 'redacted_thinking') return '<div class="block-note">redacted thinking</div>';
       if (type === 'tool_use' || type === 'server_tool_use') {
-        const pv = toolPreview(b.name || '?', b.input, wsRoot());
-        return fold('tool_use \\u00b7 ' + (b.name || '?'), pv || snippet(b.input, 110), preBlock(formatJson(b.input)));
+        const pv = toolPreview(b.name || '?', b.input, wsRoot()) || snippet(b.input, 110);
+        return fold(b.name || '?', pv ? '(' + pv + ')' : '', preBlock(formatJson(b.input)), 'fold-tool');
       }
       if (type === 'tool_result') {
         let body = '';
@@ -2717,31 +2721,38 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // "tools\\u2026": same vocabulary as the convo folds (Task/skill/mcp/plain
     // tool name), deduped, capped. The rail should narrate the agent's
     // actions, which is cctrace's whole job.
+    // Returns HTML (caller must NOT re-escape): ToolName(args) items, the
+    // name colorized via .tname — tools are the agent's verbs, so they wear
+    // the same color as the request METHOD column; args say what was acted
+    // on (file workspace-relative, Bash's own intent line, skill name).
     function turnToolLabel(turn) {
-      const names = [];
+      const items = [];
       const seen = {};
       const ws = wsRoot();
       for (const b of turn.blocks || []) {
         if (!b || (b.type !== 'tool_use' && b.type !== 'server_tool_use')) continue;
         const n = b.name || '?';
         const i = b.input || {};
-        let label;
-        if (SPAWN_TOOLS[n]) label = 'Task';
-        else if (n === 'Skill') label = 'skill' + (i.skill || i.command ? ' \\u00b7 ' + (i.skill || i.command) : '');
-        else if (n.lastIndexOf('mcp__', 0) === 0) label = 'mcp \\u00b7 ' + n.slice(5).split('__')[0];
+        let name = n, args = '';
+        if (SPAWN_TOOLS[n]) name = 'Task'; // the branch row below carries the detail
+        else if (n === 'Skill') { name = 'skill'; args = i.skill || i.command || ''; }
+        else if (n.lastIndexOf('mcp__', 0) === 0) { name = 'mcp'; args = n.slice(5).split('__')[0]; }
         else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'NotebookEdit') {
-          // Name WHAT was touched, workspace-relative — "Edit src/ui.ts"
+          // Name WHAT was touched, workspace-relative — "Edit(src/ui.ts)"
           // says more than "Edit". Dedupe is per tool+file.
-          const fp = wsPath(i.file_path || i.notebook_path, ws);
-          label = n + (fp ? ' ' + fp : '');
+          args = wsPath(i.file_path || i.notebook_path, ws) || '';
         }
-        else label = n;
-        if (seen[label]) continue;
-        seen[label] = 1;
-        names.push(label);
+        // Bash: the model's own intent line beats the raw command; the
+        // command itself stays in the convo fold.
+        else if (n === 'Bash') args = typeof i.description === 'string' && i.description ? i.description : String(i.command || '').slice(0, 60);
+        else if (n === 'Grep') args = i.pattern || '';
+        const key = name + '(' + args + ')';
+        if (seen[key]) continue;
+        seen[key] = 1;
+        items.push('<span class="tname">' + escapeHtml(name) + '</span>' + (args ? '(' + escapeHtml(args) + ')' : ''));
       }
-      if (!names.length) return '';
-      return names.slice(0, 3).join(', ') + (names.length > 3 ? ', +' + (names.length - 3) : '');
+      if (!items.length) return '';
+      return items.slice(0, 3).join(', ') + (items.length > 3 ? ', +' + (items.length - 3) : '');
     }
 
     // The SELECTED conversation's outline (session-tab 2026-07-20): epoch
@@ -2940,8 +2951,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (b && b.type === 'text' && b.text) { text = escapeHtml(b.text.slice(0, 120)); break; }
             }
             if (!text) {
-              const tl = turnToolLabel(turn);
-              text = '<span class="tturn-tools">' + (tl ? escapeHtml(tl)
+              const tl = turnToolLabel(turn); // pre-escaped HTML (.tname spans)
+              text = '<span class="tturn-tools">' + (tl ? tl
                 : (turn.blocks || []).some(b => b && b.type === 'thinking' && b.thinking) ? 'thinking\\u2026'
                 : '(no text)') + '</span>';
             }
@@ -3324,6 +3335,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           title = 'mcp \\u00b7 ' + name.slice(5).split('__').join(' \\u00b7 ');
           cls = 'fold-mcp';
           icon = ICON_MCP;
+        } else {
+          // Plain tool: ToolName(args) — colored name (.fold-tool title),
+          // the preview parenthesized as its arguments.
+          cls = 'fold-tool';
+          if (pv) pv = '(' + pv + ')';
         }
         let body = preBlock(formatJson(b.input));
         const res = results[b.id];

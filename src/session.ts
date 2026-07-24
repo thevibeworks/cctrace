@@ -918,7 +918,10 @@ export function loopTurns(vis: any[]): any[] {
 export function toolPreview(name: string, input: any, ws?: any): string {
   const i = input || {};
   switch (name) {
-    case "Bash": return "$ " + (i.command || "");
+    // Bash carries the model's own one-line intent in `description` —
+    // lead with it (the "what"), keep the literal command after (the
+    // ground truth; the fold body holds it in full).
+    case "Bash": return (typeof i.description === "string" && i.description ? i.description + " · " : "") + "$ " + (i.command || "");
     case "Read": {
       let r = wsPath(i.file_path, ws);
       if (typeof i.limit === "number" && typeof i.offset === "number") r += " · " + i.limit + " lines from " + i.offset;

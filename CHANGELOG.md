@@ -25,7 +25,12 @@ All notable changes to cctrace are documented here. Format follows
   working directory (src/ui.ts, not the full container path; ~-relative
   under a home dir, full path only when outside both). Read previews show
   the requested line window, Write the content size, Edit a replace-all
-  flag, TodoWrite the done count. The workspace root comes from page
+  flag, TodoWrite the done count. Bash previews lead with the model's
+  own intent line (the tool input's description field), literal command
+  after: "Install package dependencies · $ npm i". Tool rows and fold
+  titles read ToolName(args) with the name colorized in the request-
+  method color -- Edit(src/ui.ts), Bash(Install deps), skill(ccx) --
+  in the outline and both conversation panes. The workspace root comes from page
   metadata, else from the cwd the CLI itself stated on the wire (codex
   <cwd> tag, Claude Code env block); unknown roots keep full paths. The
   requests-view detail panel uses the same previews for tool_use folds

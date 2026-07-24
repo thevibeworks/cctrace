@@ -287,9 +287,9 @@ describe("harness-authored messages", () => {
     const page = bootSnapshotPage(renderSnapshot([p1, p2]));
     page.goto("#/session");
     const threads = page.fragments.filter((f) => f.id === "threads").pop();
-    expect(threads!.html).toContain('sys-tag">sys · recap</span>');
+    expect(threads!.html).toContain('sys-tag">recap</span>');
     const convo = page.fragments.filter((f) => f.id === "convo").pop();
-    expect(convo!.html).toContain("sys · recap");
+    expect(convo!.html).toContain('sum-tag" title="sent with role');
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });

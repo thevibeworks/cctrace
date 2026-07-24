@@ -8,6 +8,18 @@ All notable changes to cctrace are documented here. Format follows
 
 ### Changed
 
+- The sessions outline counts TURNS the way a human does: one turn =
+  user request -> agent work -> final response, not one wire message (a
+  real 213-message trace reads as 3 turns). A genuine user message heads
+  turnNN; the agent's intermediate messages indent under it, showing
+  narration or the tools it ran with the files they touched ("Edit
+  src/ui.ts, Read src/session.ts, +2"); the last assistant message is
+  the final-response row. Harness-authored user-role messages never
+  read as the human: the away recap and "Tool loaded." absorb into the
+  open turn as grey cli rows, and "[SYSTEM NOTIFICATION" wakeups head
+  their turn as CLI-authored. Thread cards, session headers, spawn-fold
+  stats, and the convo role-bar ordinals all use the same loop
+  numbering.
 - Tool folds say what the tool touched, in workspace terms: file paths in
   Read/Write/Edit/Grep/Glob previews relativize to the traced CLI's
   working directory (src/ui.ts, not the full container path; ~-relative

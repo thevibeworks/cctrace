@@ -852,6 +852,65 @@ export function cwdFromText(s: any): string {
 }
 
 /**
+ * CLI-injected user prompts: wire messages with role "user" that the
+ * harness generated, not the human. They must never read as (or count as)
+ * a human turn. Precise prefixes only — known shapes:
+ *   "recap"        — the away-recap prompt, answered then dropped from
+ *                    history; a side exchange INSIDE the current turn
+ *   "tool-load"    — "Tool loaded." after a deferred-tool fetch; the agent
+ *                    just continues its current work
+ *   "notification" — "[SYSTEM NOTIFICATION - NOT USER INPUT]" automated
+ *                    wakeups (task done, scheduled); these START real
+ *                    agent work, so they head a turn — a CLI-authored one
+ * Continuation summaries are NOT listed: they open a resumed thread and
+ * are tagged separately. Returns the kind or "".
+ */
+export function harnessPrompt(text: any): string {
+  const t = String(text || "");
+  if (t.lastIndexOf("The user stepped away and is coming back.", 0) === 0) return "recap";
+  if (t.lastIndexOf("Tool loaded", 0) === 0) return "tool-load";
+  if (t.lastIndexOf("[SYSTEM NOTIFICATION", 0) === 0) return "notification";
+  return "";
+}
+
+/**
+ * Group visible message-turns into working-loop TURNS — the unit a human
+ * means by "turn": user request → agent work (thinking, tool calls,
+ * subagents, intermediate narration) → final response. A genuine user
+ * message heads a new loop; harness-injected user prompts (harnessPrompt)
+ * and all assistant messages join the open loop; the loop's last assistant
+ * message is its final response. Turns arriving before any user head (a
+ * thread cut mid-history) collect into a headless loop. Automated
+ * notifications head a turn too — a CLI-authored one (headInjected).
+ * Returns [{head: idx|null, headInjected: kind|"", members: [idx...],
+ * final: idx|null, injected: {idx: kind}}] over the input array's indices.
+ */
+export function loopTurns(vis: any[]): any[] {
+  const loops: any[] = [];
+  let cur: any = null;
+  for (let i = 0; i < (vis || []).length; i++) {
+    const turn = vis[i];
+    if (!turn) continue;
+    if (turn.role === "user") {
+      const kind = harnessPrompt(turnSnippet(turn.blocks));
+      if (!kind || kind === "notification") {
+        cur = { head: i, headInjected: kind, members: [], final: null, injected: {} };
+        loops.push(cur);
+        continue;
+      }
+      if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {} }; loops.push(cur); }
+      cur.injected[i] = kind;
+      cur.members.push(i);
+      continue;
+    }
+    if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {} }; loops.push(cur); }
+    cur.members.push(i);
+    if (turn.role === "assistant") cur.final = i;
+  }
+  return loops;
+}
+
+/**
  * ccx-style one-line preview for a tool_use, keyed by tool name. ws (the
  * workspace root) relativizes file paths — the fold says src/ui.ts, not the
  * full container path.

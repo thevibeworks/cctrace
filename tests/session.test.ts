@@ -12,6 +12,8 @@ import {
   toolPreview,
   wsPath,
   cwdFromText,
+  harnessPrompt,
+  loopTurns,
 } from "../src/session";
 
 // Wire-shaped fixtures mirroring real captures (see .cctrace/*.jsonl):
@@ -342,6 +344,63 @@ describe("toolPreview", () => {
   test("TodoWrite counts completed items", () => {
     expect(toolPreview("TodoWrite", { todos: [{ status: "completed" }, { status: "completed" }, { status: "pending" }] }))
       .toBe("3 todos · 2 done");
+  });
+});
+
+describe("loopTurns / harnessPrompt", () => {
+  const u = (text: string) => ({ role: "user", blocks: [{ type: "text", text }] });
+  const a = (text: string, tools?: any[]) => ({ role: "assistant", blocks: [...(text ? [{ type: "text", text }] : []), ...(tools || [])] });
+  const RECAP = "The user stepped away and is coming back. Recap in under 40 words, 1-2 plain sentences, no markdown.";
+
+  test("user → agent work → final response is ONE turn", () => {
+    const vis = [u("do X"), a("", [{ type: "tool_use", name: "Read", id: "t1", input: {} }]), a("", [{ type: "tool_use", name: "Edit", id: "t2", input: {} }]), a("done, X works")];
+    const loops = loopTurns(vis);
+    expect(loops.length).toBe(1);
+    expect(loops[0].head).toBe(0);
+    expect(loops[0].members).toEqual([1, 2, 3]);
+    expect(loops[0].final).toBe(3); // the last assistant message is the final response
+  });
+
+  test("each genuine user message heads a new turn", () => {
+    const loops = loopTurns([u("one"), a("r1"), u("two"), a("r2")]);
+    expect(loops.map((l: any) => l.head)).toEqual([0, 2]);
+    expect(loops.map((l: any) => l.final)).toEqual([1, 3]);
+  });
+
+  test("a harness-injected recap prompt never heads a turn", () => {
+    expect(harnessPrompt(RECAP)).toBe("recap");
+    expect(harnessPrompt("please recap the meeting notes")).toBe("");
+    const loops = loopTurns([u("real ask"), a("working"), u(RECAP), a("recap answer"), u("next ask"), a("r")]);
+    // recap + its answer stay INSIDE turn00; "next ask" opens turn01
+    expect(loops.length).toBe(2);
+    expect(loops[0].members).toEqual([1, 2, 3]);
+    expect(loops[0].injected[2]).toBe("recap");
+    expect(loops[0].final).toBe(3);
+    expect(loops[1].head).toBe(4);
+  });
+
+  test("turns before any user head collect into a headless loop", () => {
+    const loops = loopTurns([a("mid-history reply"), u("ask"), a("r")]);
+    expect(loops.length).toBe(2);
+    expect(loops[0].head).toBeNull();
+    expect(loops[0].members).toEqual([0]);
+    expect(loops[1].head).toBe(1);
+  });
+
+  test("'Tool loaded.' continues the current turn; a SYSTEM NOTIFICATION heads a CLI-authored one", () => {
+    expect(harnessPrompt("Tool loaded.")).toBe("tool-load");
+    expect(harnessPrompt("[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated wakeup")).toBe("notification");
+    const loops = loopTurns([
+      u("ask"), a("", [{ type: "tool_use", name: "Read", id: "t1", input: {} }]),
+      u("Tool loaded."), a("continuing"),
+      u("[SYSTEM NOTIFICATION - NOT USER INPUT]\nTask finished."), a("handled it"),
+    ]);
+    expect(loops.length).toBe(2);
+    expect(loops[0].members).toEqual([1, 2, 3]); // tool-load absorbed into turn00
+    expect(loops[0].injected[2]).toBe("tool-load");
+    expect(loops[1].head).toBe(4); // the notification heads turn01...
+    expect(loops[1].headInjected).toBe("notification"); // ...as CLI-authored, not human
+    expect(loops[1].final).toBe(5);
   });
 });
 

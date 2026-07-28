@@ -317,10 +317,17 @@ hash-routed:
   SESSION label (.sico/.klabel); epoch heads a branch glyph + T<n>;
   the model chip is bare (hover explains). Hover details are near-instant
   (120ms show delay so mousing across chips doesn't flicker) and
-  structured — a custom page-wide .tip singleton filled from data-tip; a
+  structured — a custom page-wide .tip singleton filled from data-tip
+  (first line = heading, "---" line = hairline section divider, "> "
+  prefix = faint interaction hint; the convention reads content →
+  metrics → hints); a
   plain `title=` anywhere on the page is folded into the same panel on first
   hover (the attribute is moved to data-tip so the native tooltip never
-  fires). Kind chips are neutral outlines
+  fires). Tips are capped at 320px wide; anchors inside the threads pane
+  fly out to the RIGHT of the pane instead of covering the rows below,
+  and a tip whose anchor a live re-render detached hides itself
+  (tipDetachedGuard). The ❯ fold gutter carries its own tip naming the
+  fold toggle. Kind chips are neutral outlines
   (ui.md one-accent rule), red/amber reserved for state.
   `session.ts` groups model-call pairs into threads, one
   `buildSession(pairs, wire)` entry for BOTH wire dialects (`wireDialect`
@@ -469,8 +476,13 @@ hash-routed:
   .turn-ord). Every assistant
   turn links back to its wire request. The conversation pane
   tails like tail -f in live mode (open/refresh lands on the newest turn,
-  sticky bottom, "new activity" pill when scrolled up, folds survive
-  re-renders via positional restore); snapshots open at the top.
+  sticky bottom, "new activity" pill when scrolled up); live re-renders
+  PATCH per top-level node (applyConvoParts: the pane renders as a parts
+  array, only nodes whose html changed are replaced, so an expanded
+  final response / open fold / text selection the user is reading is
+  never rebuilt by a pair landing elsewhere — thread switches and
+  misaligned node counts fall back to the full innerHTML rewrite with
+  positional fold restore); snapshots open at the top.
 - **Replay** (inside the Sessions view): a time cursor over the same data —
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the

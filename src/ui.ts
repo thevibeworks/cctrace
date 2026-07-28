@@ -944,10 +944,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sico { width: 12px; height: 12px; flex-shrink: 0; color: var(--text-faint); }
     .sess > summary .sico { color: color-mix(in srgb, var(--accent) 55%, var(--text-faint)); }
     /* Instant hover panel (session pane): filled from data-tip, first
-       line = heading, blank lines = section gaps. */
+       line = heading, blank lines = section gaps, "---" lines = hairline
+       section dividers, "> " lines = faint interaction hints. Width is
+       capped below the threads pane's 400px so a hover never blankets
+       the whole sidebar column. */
     .tip {
       position: fixed; z-index: 100; display: none;
-      max-width: 380px; padding: 7px 10px;
+      max-width: 320px; padding: 7px 10px;
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
       font-size: 11px; line-height: 1.55; color: var(--text-muted);
@@ -957,6 +960,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tip.show { display: block; }
     .tip-head { color: var(--text); }
     .tip-gap { height: 6px; }
+    .tip-sep { border-top: 1px solid var(--border); margin: 6px -10px; }
+    .tip-hint { color: var(--text-faint); font-size: 10px; }
     .tturn {
       display: flex; align-items: center; gap: 8px;
       padding: 3px 10px; font-size: 11px;
@@ -1066,6 +1071,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        thing worth finding on a header */
     .sess-sid { color: var(--text-muted); font-variant-numeric: tabular-nums; }
     .sess-sid[data-sid]:hover { text-decoration: underline dashed; }
+    .sess-sid.copied { color: var(--green); }
     .sess-turns { color: var(--text-muted); font-size: 11px; flex-shrink: 0; }
     .sess-attrs {
       margin-left: auto; flex-shrink: 0; text-align: right;
@@ -1749,6 +1755,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
     };
 
+    // Session-header sid copy — same confirmation grammar as every other
+    // click-to-copy on the page: the value flashes to a green "copied".
+    window.copySessSid = function(ev, el) {
+      ev.preventDefault(); ev.stopPropagation();
+      if (!navigator.clipboard || !el.dataset.sid) return;
+      navigator.clipboard.writeText(el.dataset.sid).then(function() {
+        var was = el.textContent;
+        el.classList.add('copied');
+        el.textContent = 'copied';
+        setTimeout(function() { el.classList.remove('copied'); el.textContent = was; }, 1200);
+      });
+    };
+
     // ---- Requests list ----
 
     function shortUrl(u) {
@@ -2221,11 +2240,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // extraHtml is raw (not escaped) — only trusted, renderer-built markup
     // like the subagent thread link goes there, never wire-derived strings.
     function fold(title, hint, body, cls, open, extraHtml, icon) {
-      // A hint long enough to ellipsize gets the full text in the hover —
-      // the tooltip answers "what does the rest of this command/preview
-      // say" before the user has to open the fold.
+      // A hint long enough to ellipsize gets the full text in the hover,
+      // led by the fold's own name — for a tool_use that reads "Edit" then
+      // the full file list the row truncated, then metrics/hints. The
+      // tooltip answers "what does the rest of this command/preview say"
+      // before the user has to open the fold.
       const hintTip = hint && hint.length > 60
-        ? ' data-tip="' + escapeHtml(String(hint).slice(0, 600) + (hint.length > 600 ? '\\u2026' : '')) + '"'
+        ? ' data-tip="' + escapeHtml(String(title) + '\\n' +
+            String(hint).slice(0, 600) + (hint.length > 600 ? '\\u2026' : '') +
+            '\\n---\\n> click to expand') + '"'
         : '';
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
         '<summary' + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
@@ -2713,12 +2736,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // ---- Designed tooltip (page-wide) ----
     // Native title waits ~1s and renders unstyled; every hover detail on the
     // page deserves better. One fixed singleton, filled from data-tip: first
-    // line renders as the heading, blank lines as section gaps. Elements that
-    // carry a plain title= get folded into the same panel — the title is
-    // moved into data-tip on first hover so the native tooltip never fires.
-    // A short show-delay keeps mousing across a row of chips from flickering
-    // panels. Pointer-events off so it never traps the mouse; guarded so
-    // headless boots (tests) skip it.
+    // line renders as the heading, blank lines as section gaps, a line of
+    // exactly "---" as a hairline divider between sections (content /
+    // metrics / hints), and lines starting with "> " as faint interaction
+    // hints. Elements that carry a plain title= get folded into the same
+    // panel — the title is moved into data-tip on first hover so the native
+    // tooltip never fires. A short show-delay keeps mousing across a row of
+    // chips from flickering panels. Pointer-events off so it never traps
+    // the mouse; guarded so headless boots (tests) skip it.
+    let tipDetachedGuard = function() {};
     if (document.createElement && document.body) {
       const tipEl = document.createElement('div');
       tipEl.className = 'tip';
@@ -2726,11 +2752,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const SHOW_DELAY = 120;
       let tipFor = null, showTimer = 0;
       const hideTip = () => { clearTimeout(showTimer); tipFor = null; tipEl.classList.remove('show'); };
+      // Live re-renders replace sidebar/convo DOM under the mouse; a tip
+      // anchored to a detached node would linger until the next mouse move.
+      tipDetachedGuard = () => {
+        if (tipFor && document.body.contains && !document.body.contains(tipFor)) hideTip();
+      };
       const showTipFor = (t) => {
         const lines = String(t.dataset.tip || '').split('\\n');
         let h = '';
         for (let i = 0; i < lines.length; i++) {
           if (!lines[i].trim()) { h += '<div class="tip-gap"></div>'; continue; }
+          if (lines[i].trim() === '---') { h += '<div class="tip-sep"></div>'; continue; }
+          if (lines[i].lastIndexOf('> ', 0) === 0) { h += '<div class="tip-hint">' + escapeHtml(lines[i].slice(2)) + '</div>'; continue; }
           h += '<div class="' + (i === 0 ? 'tip-head' : 'tip-line') + '">' + escapeHtml(lines[i]) + '</div>';
         }
         tipEl.innerHTML = h;
@@ -2739,6 +2772,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tipEl.style.top = '0px';
         const r = t.getBoundingClientRect();
         const tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+        // Threads-pane anchors fly out to the RIGHT of the sidebar instead
+        // of dropping below — a below-tip covered the very rows the user
+        // was scanning (the whole outline under the cursor went blind).
+        const pane = t.closest ? t.closest('#threads') : null;
+        if (pane && pane.getBoundingClientRect) {
+          const pr = pane.getBoundingClientRect();
+          let x = pr.right + 8;
+          if (x + tw > window.innerWidth - 8) x = Math.max(8, window.innerWidth - tw - 12);
+          tipEl.style.left = x + 'px';
+          tipEl.style.top = Math.max(8, Math.min(r.top, window.innerHeight - th - 8)) + 'px';
+          return;
+        }
         let y = r.bottom + 6;
         if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
         tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
@@ -3056,7 +3101,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const m = agentThreadMeta[b.id];
           if (!m) continue;
           out += '<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
-            ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n\\nclick to open this subagent thread') + '">' +
+            ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n---\\n> click to open this subagent thread') + '">' +
             '<span class="rgut rgut-br"></span>' +
             '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
             (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + '</span>' : '') +
@@ -3112,9 +3157,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             (li.kind === 'head' ? ' tturn-user'
             : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin'));
           // The tooltip leads with the FULL text the row had to truncate;
-          // metrics and click hints follow — hover answers "what does the
-          // rest say" first.
-          const foldHint = 'click \\u276F to ' + (folded ? 'unfold' : 'fold') + ' this turn\\u2019s work';
+          // a divider, then metrics, then faint click hints — hover answers
+          // "what does the rest say" first, "what can I do" last.
+          const foldHint = '> click \\u276F to ' + (folded ? 'unfold' : 'fold') + ' this turn\\u2019s work';
           let text = '';
           let dot = '';
           let tip = '';
@@ -3142,7 +3187,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             const cc = u && p ? summarizeCache(u, p.request.body) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
             const tbits = [];
-            if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '');
+            if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '---');
             tbits.push('turn ' + ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
               (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : ''));
             if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
@@ -3161,7 +3206,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (cc) tbits.push(cc.title);
             if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
             if (!p) tbits.push('unattributed \\u2014 no captured request matches this reply');
-            tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn' + (li.lead ? '\\n' + foldHint : '');
+            tip = tbits.join('\\n') + '\\n---\\n> click to jump to this turn' + (li.lead ? '\\n' + foldHint : '');
           } else if (li.injected) {
             // A user-ROLE wire message the harness generated (recap, tool
             // load, automated notification) — it must never read as the
@@ -3178,24 +3223,33 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             text = '<span class="sys-tag">' + escapeHtml(li.injected) + '</span>' +
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
-            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\n' +
+            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
               'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
               'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human' +
-              '\\n\\nclick to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
+              '\\n---\\n> click to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
             dot = '<span class="gut-user">\\u276F</span>'; // the human's prompt
-            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\n' +
-              'turn ' + ord + ' \\u00b7 user prompt\\n\\nclick to jump to this turn\\n' + foldHint;
+            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
+              'turn ' + ord + ' \\u00b7 user prompt\\n---\\n> click to jump to this turn\\n' + foldHint;
           }
           const hidN = folded ? loopSize[li.ord] - (li.kind === 'head' ? 0 : 1) : 0;
           const foldN = hidN > 0 ? '<span class="tturn-fold-n" title="' + hidN + ' agent message' + (hidN === 1 ? '' : 's') + ' folded \\u2014 click \\u276F to unfold">\\u22ef ' + hidN + '</span>' : '';
+          // The gutter is the fold toggle on head rows — hovering the
+          // symbol itself explains the symbol, not the whole row.
+          const canFold = li.ord != null && (li.kind === 'head' || li.lead);
+          const gutTip = canFold
+            ? ' data-tip="' + escapeHtml('fold toggle\\n' +
+                (folded ? 'this turn\\u2019s agent work is folded under the prompt line'
+                  : 'collapses this turn\\u2019s agent work under the prompt line') +
+                '\\n---\\n> click to ' + (folded ? 'unfold' : 'fold')) + '"'
+            : '';
           html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
-            (li.ord != null && (li.kind === 'head' || li.lead) ? ' data-fold="' + li.ord + '"' : '') +
+            (canFold ? ' data-fold="' + li.ord + '"' : '') +
             ' data-tip="' + escapeHtml(tip) + '">' +
-            '<span class="rgut">' + dot + '</span><span class="tturn-ord">' + ordLabel + '</span>' +
+            '<span class="rgut"' + gutTip + '>' + dot + '</span><span class="tturn-ord">' + ordLabel + '</span>' +
             '<span class="tturn-text">' + text + '</span>' + foldN + '</a>';
           if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
@@ -3407,6 +3461,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const top = threadsEl.scrollTop; // live re-renders must not move the list
       threadsEl.innerHTML = html;
       threadsEl.scrollTop = top;
+      tipDetachedGuard(); // the hovered row may have just been replaced
       for (const d of threadsEl.querySelectorAll('details.sess')) {
         d.addEventListener('toggle', () => { sessOpen[d.dataset.sid] = d.open; });
         const sum = d.querySelector(':scope > summary');
@@ -3487,7 +3542,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (mk.length) bits.push('models: ' + mk.map(shortModel).join(', '));
       const et = errTitle(errs);
       if (et) bits.push(et);
-      return bits.join('\\n') + (sid ? '\\n\\nclick the id to copy it' : '');
+      return bits.join('\\n') + (sid ? '\\n---\\n> click the id to copy it' : '');
     }
 
     // Session card header — same visual grammar as a thread card, one level
@@ -3513,7 +3568,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return ICON_SESSION + '<span class="klabel">session</span>' +
         '<span class="sess-sid" data-mask' +
         (sid ? ' data-sid="' + escapeHtml(sid) + '"' +
-          ' onclick="event.preventDefault();event.stopPropagation();navigator.clipboard&&navigator.clipboard.writeText(this.dataset.sid)"' : '') +
+          ' onclick="copySessSid(event, this)"' : '') +
         '>' + (sid ? escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
         '<span class="sess-turns">' + turns + ' turn' + (turns === 1 ? '' : 's') + '</span>' +
         (face ? modelChip(face) : '') +
@@ -3722,14 +3777,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'exchanges that left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices); the wire pairs are kept, never lost');
       if (eu.unattributed) chips += kv('unplaced', String(eu.unattributed), '',
         'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
-      let html = '<div class="chips">' + chips + '</div>';
+      // The pane renders as a PARTS array — one string per top-level node —
+      // so live re-renders can patch only the nodes whose html actually
+      // changed (see the apply step below).
+      const parts = ['<div class="chips">' + chips + '</div>'];
       if (t.agentOf) {
-        html += '<div class="agent-note">subagent run' +
+        parts.push('<div class="agent-note">subagent run' +
           (t.agentOf.agentType ? ' \\u00b7 [' + escapeHtml(t.agentOf.agentType) + '] ' + escapeHtml(t.agentOf.description || '') : '') +
-          ' \\u2014 dispatched by <a href="' + threadHash(t.agentOf.thread) + '">parent thread</a></div>';
+          ' \\u2014 dispatched by <a href="' + threadHash(t.agentOf.thread) + '">parent thread</a></div>');
       }
-      if (t.system) html += renderSystem(t.system);
-      if (t.tools && t.tools.length) html += renderTools(t.tools);
+      if (t.system) parts.push(renderSystem(t.system));
+      if (t.tools && t.tools.length) parts.push(renderTools(t.tools));
       const results = buildToolResultIndex(t.turns);
       // Rewound exchanges mark their divergence point (devlog 2026-07-17
       // decision 4: keep + mark, never lose) — the erased branch's wire
@@ -3783,41 +3841,37 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ti++;
         if (cms) for (const c of cms) {
           const rw = c.mode === 'rewind';
-          html += '<div class="cmark" title="' +
+          parts.push('<div class="cmark" title="' +
             escapeHtml('the request body sent to the API changed completely here \\u2014 ' +
               (rw ? 'history was truncated back to an earlier point (/rewind or an edited message); the turns above left the conversation history, their wire pairs are kept'
                 : (c.mode === 'rewrite' ? 'history replaced by a continuation summary' : 'older turns folded, recent tail kept') +
                   '; everything above survives only in that form')) + '">' +
             '<a href="#/p/' + encodeURIComponent(c.pairId) + '">' +
             (rw ? 'rewound \\u00b7 history stepped back' : 'compacted \\u00b7 context rewritten') + ' \\u00b7 ' +
-            c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns \\u00b7 wire</a></div>';
+            c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns \\u00b7 wire</a></div>');
         }
         if (marks) for (const pid of marks) {
-          html += '<div class="rewound-mark" title="an exchange here left the conversation history — /rewind, an edited message, or an ephemeral injected exchange (recap, notices); its wire pair is kept">superseded exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>';
+          parts.push('<div class="rewound-mark" title="an exchange here left the conversation history — /rewind, an edited message, or an ephemeral injected exchange (recap, notices); its wire pair is kept">superseded exchange \\u00b7 <a href="#/p/' + encodeURIComponent(pid) + '">wire</a></div>');
         }
         if (fails) {
-          html += '<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
-            (fails.length > 1 ? fails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(fails[0].pairId) + '">wire</a></div>';
+          parts.push('<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
+            (fails.length > 1 ? fails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(fails[0].pairId) + '">wire</a></div>');
         }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
         if (epochAt[vi] !== undefined) {
-          html += '<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>';
+          parts.push('<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>');
         }
-        try { html += renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary); }
-        catch (e) { html += brokenItem('turn', turn && turn.pairId, e); }
+        try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary)); }
+        catch (e) { parts.push(brokenItem('turn', turn && turn.pairId, e)); }
         vi++;
       }
       // Trailing failures: the storm after the last completed turn.
       const tailFails = failedAt[t.turns.length];
       if (tailFails) {
-        html += '<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
-          (tailFails.length > 1 ? tailFails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(tailFails[0].pairId) + '">wire</a></div>';
+        parts.push('<div class="rewound-mark errrun-mark" title="failed wire requests at this position \\u2014 no reply entered the conversation; retries at the same history position">' +
+          (tailFails.length > 1 ? tailFails.length + ' failed requests' : 'failed request') + ' \\u00b7 <a href="#/p/' + encodeURIComponent(tailFails[0].pairId) + '">wire</a></div>');
       }
-      convoEl.innerHTML = html;
-      if (foldState) {
-        const details = convoEl.querySelectorAll('details');
-        for (let i = 0; i < details.length && i < foldState.length; i++) details[i].open = foldState[i];
-      }
+      applyConvoParts(t, parts, foldState, sameThread);
       convoKey = t.key;
       if (!sameThread) {
         convoEl.scrollTop = IS_SNAPSHOT ? 0 : convoEl.scrollHeight;
@@ -3830,6 +3884,52 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // cursor's doing, not new activity.
         if (convoEl.scrollHeight > prevHeight && !replay.active) tailPill.classList.add('show');
       }
+    }
+
+    // Apply the parts array to the pane. Same thread + aligned node counts
+    // = patch mode: only nodes whose html changed are replaced, so the DOM
+    // the user is READING — an expanded final response, a text selection,
+    // an opened fold — is never rebuilt by a live pair landing elsewhere
+    // in the conversation (turns only mutate at the tail). Anything else
+    // (thread switch, mid-stream inserts shifting alignment, headless test
+    // stubs without a children list) falls back to the full innerHTML
+    // rewrite with the positional fold restore.
+    let convoParts = null; // per-node html of the last render, patch baseline
+    function applyConvoParts(t, rawParts, foldState, sameThread) {
+      const parts = rawParts.filter(s => s); // renderSystem may yield ''
+      const canPatch = sameThread && convoParts && convoEl.replaceChild &&
+        convoEl.children && convoEl.children.length === convoParts.length;
+      if (!canPatch) {
+        convoEl.innerHTML = parts.join('');
+        if (foldState) {
+          const details = convoEl.querySelectorAll('details');
+          for (let i = 0; i < details.length && i < foldState.length; i++) details[i].open = foldState[i];
+        }
+        convoParts = parts;
+        tipDetachedGuard();
+        return;
+      }
+      const n = Math.min(convoParts.length, parts.length);
+      for (let i = 0; i < n; i++) {
+        if (convoParts[i] === parts[i]) continue;
+        const tmp = document.createElement('div');
+        tmp.innerHTML = parts[i];
+        const nu = tmp.firstElementChild;
+        if (!nu) continue;
+        // Carry the replaced node's own fold state across, positionally.
+        const old = convoEl.children[i];
+        const of_ = old.querySelectorAll('details'), nf = nu.querySelectorAll('details');
+        for (let j = 0; j < of_.length && j < nf.length; j++) nf[j].open = of_[j].open;
+        convoEl.replaceChild(nu, old);
+      }
+      for (let i = convoParts.length; i < parts.length; i++) {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = parts[i];
+        if (tmp.firstElementChild) convoEl.appendChild(tmp.firstElementChild);
+      }
+      while (convoEl.children.length > parts.length) convoEl.removeChild(convoEl.lastElementChild);
+      convoParts = parts;
+      tipDetachedGuard();
     }
 
     // ---- Session replay ----

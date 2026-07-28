@@ -224,6 +224,22 @@ describe("sessions layer rendering", () => {
     expect(page.errors).toEqual([]);
   });
 
+  test("outline rows carry sectioned tips, a fold-gutter tip, and copy feedback", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    // The ❯ gutter (the fold toggle) explains itself on hover — the symbol's
+    // own tip, separate from the row's content tip.
+    expect(frag!.html).toContain("fold toggle");
+    // Tips read content → divider (---) → metrics → "> " hints.
+    expect(frag!.html).toContain("---");
+    expect(frag!.html).toMatch(/data-tip="[^"]*&gt; click/);
+    // The sid copy goes through the feedback handler, not a bare writeText.
+    expect(frag!.html).toContain("copySessSid(event, this)");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
   test("a session with exactly one chat absorbs it into the header (no chat card)", () => {
     const older = msgPair("p1");
     const newer = msgPair("p9", { reqBody: { metadata: { user_id: SID_B } } });

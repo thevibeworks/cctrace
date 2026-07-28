@@ -134,3 +134,14 @@ it also forces `visibleAt()` into existence, which P2 merely animates.
    view concept.
 3. `count_tokens` / usage-probe pairs during replay: show on the minimap as
    ticks, or hide as noise? Leaning: ticks, they mark turn boundaries well.
+
+## P5 seed (2026-07-28, unbuilt): diff between moments
+
+Out of a "rebrand replay as time travel?" review (sj): the rename was cut —
+replay names what the feature observably does, and "what did the agent know
+at this moment" is already answered by visibleAt + the wire links. The one
+genuinely new idea inside "time travel" is comparing two cursor positions:
+pick moment A and moment B, see what entered/left the context window between
+them (turns, system prompt changes, compaction boundaries crossed, token
+delta). Build nothing here until someone actually asks for it; this note
+exists so the idea isn't re-derived from scratch.

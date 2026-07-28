@@ -763,6 +763,52 @@ export function turnSnippet(blocks: any[]): string {
 }
 
 /**
+ * The human's first real prompt in a request body — capture-time identity
+ * for a trace (registry entries, the view picker). Walks the first user
+ * messages through turnSnippet's harness filters; skips harness-authored
+ * prompts (recap, tool loads) and the bare "quota" probe. "" when the pair
+ * carries no genuine user text. Handles Anthropic/Chat Completions
+ * messages[] and Responses input[] without importing the dialect layer —
+ * only text-bearing blocks matter here.
+ */
+export function firstPromptOfPair(pair: any): string {
+  const body = pair?.request?.body;
+  if (!body || typeof body !== "object") return "";
+  const msgs = Array.isArray(body.messages) ? body.messages
+    : Array.isArray(body.input) ? body.input
+    : [];
+  // A continuation summary IS the first user message of a resumed trace —
+  // real, but weak identity. Keep it only when no genuine prompt follows.
+  const CONT = "This session is being continued from a previous conversation";
+  let fallback = "";
+  let checked = 0;
+  for (const m of msgs) {
+    if (!m || m.role !== "user") continue;
+    if (++checked > 4) break; // identity lives at the front or not at all
+    const raw = m.content;
+    const blocks = typeof raw === "string"
+      ? [{ type: "text", text: raw }]
+      : Array.isArray(raw)
+        ? raw.map((b: any) =>
+            b && b.type === "input_text" && typeof b.text === "string"
+              ? { type: "text", text: b.text } : b)
+        : [];
+    let s = turnSnippet(blocks);
+    if (!s || s === "quota" || harnessPrompt(s)) continue;
+    // Title-gen probes quote the whole conversation inside <session> tags —
+    // what follows the tag IS the user's opening prompt, the identity we want.
+    s = s.replace(/^<session>\s*/, "").replace(/\s+/g, " ").trim();
+    if (!s) continue;
+    if (s.lastIndexOf(CONT, 0) === 0) {
+      if (!fallback) fallback = s;
+      continue;
+    }
+    return s;
+  }
+  return fallback;
+}
+
+/**
  * Model epochs: contiguous runs of a thread's visible turns answered by one
  * model, folded from attributed assistant turns. Presentation-level
  * sub-structure — thread identity stays the conversation (session-tab

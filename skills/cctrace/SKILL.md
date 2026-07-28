@@ -160,6 +160,12 @@ cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)
 cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,tokens,external)
+cctrace spec [target] [--out F] [--md] [--diff F]  # observed-wire catalog: endpoints, header
+                                          # names, body field shapes, SSE events with sample
+                                          # counts and first/last-seen; values redacted except
+                                          # negotiation headers + model ids. No target = all
+                                          # traces in the dir. --diff vs a saved catalog =
+                                          # what changed on the wire (new headers/fields/events)
 cctrace compact [--zstd] [--yes]          # fold redundant bodies (-95%+): superseded request
                                           # bodies stub, noise collapses to meta; the session
                                           # view renders identically, no pair is deleted

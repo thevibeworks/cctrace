@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import type { TracePair } from "./types";
 import { getLiveHtml, type PageMeta } from "./ui";
 import { extractSessionId } from "./summarize";
+import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
@@ -32,6 +33,9 @@ interface ServerConfig {
   self?: () => InstanceInfo | null;
   /** Called once per newly-seen Claude session id on the wire. */
   onSession?: (sid: string) => void;
+  /** Called once, with the human's first real prompt seen on the wire —
+   * capture-time identity for the registry entry / view picker. */
+  onPrompt?: (snippet: string) => void;
   /**
    * Deletes the given (already memory-removed) pairs from their backing
    * trace files — the web UI's select-to-purge. Absent = memory-only purge
@@ -92,6 +96,7 @@ export function createServer(config: ServerConfig) {
   // being resumed. Preload it so the UI opens populated; the first live
   // session id confirms the guess or evicts the preload.
   let speculativeSid: string | null = null;
+  let promptStamped = false;
   if (config.speculate && !config.noHistory) {
     const prior = loadPriorPairs(config.logDir, config.logFile || "", new Set([config.speculate]));
     if (prior.length) {
@@ -133,6 +138,13 @@ export function createServer(config: ServerConfig) {
   const onLivePair = (pair: TracePair) => {
     mergePairs([pair]);
     broadcast({ type: "pair", pair });
+    if (config.onPrompt && !promptStamped) {
+      const prompt = firstPromptOfPair(pair);
+      if (prompt) {
+        promptStamped = true;
+        config.onPrompt(prompt.slice(0, 120));
+      }
+    }
     const sid = extractSessionId(pair, WIRE);
     if (!sid) return;
     if (speculativeSid) resolveSpeculation(sid);

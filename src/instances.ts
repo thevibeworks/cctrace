@@ -36,6 +36,9 @@ export interface InstanceInfo {
   sessionId?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
+  /** The human's first real prompt, stamped when it appears on the wire —
+   * the trace's identity in pickers (a timestamp filename says nothing). */
+  firstPrompt?: string;
   /**
    * Pid of the spawned client child. Informational only — pids are
    * namespace-local (another container's pid isn't addressable here), so
@@ -150,6 +153,13 @@ export function listPastRuns(dataDir: string): InstanceInfo[] {
     .map((e) => e.info)
     .filter((i) => i.endedAt)
     .sort(byProjectThenTime);
+}
+
+/** Every parseable registry entry, live and tombstone alike — the identity
+ * join for the view picker (client / session / first prompt per trace
+ * file). Unverified by design: never use for liveness decisions. */
+export function listAllRuns(dataDir: string): InstanceInfo[] {
+  return readEntries(dataDir).map((e) => e.info);
 }
 
 interface RawEntry {

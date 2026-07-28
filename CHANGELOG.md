@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.25.0
+
+- Added cctrace spec: an observed-wire catalog built from saved traces — endpoints, methods, statuses, header names, body field shapes (types + presence counts), and SSE event types, every entry stamped with sample counts and first/last-seen. Observations with provenance, never inferred truth: no OpenAPI guessing, values redacted by design except content-negotiation headers and model ids (regression-tested — auth material, prompts, and ids cannot enter the artifact). Volatile path segments normalize ({uuid}, {hex}, {n}, {token}) so catalogs compare cleanly
+- Added cctrace spec --diff: compare against a previously written catalog and print what changed on the wire ("+ request header x-claude-code-agent-id", "+ sse event ...", "+ request field output_config.effort") — the changelog of the API surface a client actually calls; --md renders the catalog as a readable document
+- Added identity-first rows to the cctrace view picker: client, session id, and the user's first real prompt instead of indistinguishable timestamp filenames. Identity is stamped into the instance registry at capture time (the first genuine prompt seen on the wire; probes, harness prompts, and title-gen wrappers filtered) with a bounded head-read fallback for older traces — the menu stays instant
+- Changed cctrace view pages to read as documents: the status chip says "view" (never "live" or a false "offline"), the conversation opens at the top like a snapshot, and nothing auto-tails; the WebSocket stays only as the data channel
+- Changed entering the sessions view to position both panes instantly — the threads outline scrolls to the active session and the conversation lands on the newest turn (live) or the top (view/snapshot); arrival is positioning, not animation
+- Fixed cctrace spec on multi-GB log dirs: traces fold into the catalog one file at a time instead of loading every pair at once (a real dir OOM'd the process)
+
 ## 0.24.1
 
 - Added a tooltip on the outline's ❯ fold gutter: hovering the symbol itself now explains the fold toggle before you click it

@@ -36,6 +36,10 @@ src/
 ├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply)
 ├── compact.ts      # `cctrace compact`: supersede-stub messages bodies + exemplar
 │                   #   retention for noise categories (-95%+, body-level only)
+├── spec.ts         # `cctrace spec`: observed-wire catalog (endpoints, header
+│                   #   names, body shapes, SSE events — counts + provenance,
+│                   #   values redacted except negotiation headers/model ids;
+│                   #   diff = what changed on the wire between observations)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Sessions view
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
@@ -566,12 +570,24 @@ Claude spawn. `clean`/`merge`/`compress`/`purge` are dry-run by default;
 ```bash
 cctrace view                              # no target: list traces newest-first and
                                           # pick one (TTY prompt, Enter = newest;
-                                          # non-TTY prints the list and a hint)
+                                          # non-TTY prints the list and a hint).
+                                          # Rows are IDENTITY-first — client · sid8 ·
+                                          # "first prompt…" · size · age — joined from
+                                          # the registry (firstPrompt stamped at capture
+                                          # time via server onPrompt) with a bounded
+                                          # head-read fallback (peekTrace: head bytes
+                                          # only, small archives decompressed, big ones
+                                          # skipped) for pre-0.25 traces
 cctrace view latest                       # reopen the newest trace directly
 cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves it
                                           # from the live web server (registers in
-                                          # the instance registry, mode "view";
-                                          # --port N; --serve = legacy alias)
+                                          # the instance registry, mode "view").
+                                          # The page reads as a DOCUMENT (PageMeta.mode
+                                          # "view" -> IS_VIEW/IS_READING in ui.ts):
+                                          # status chip says "view" never live/offline,
+                                          # conversation opens at the top, no auto-tail
+                                          # — the WS stays as the data channel only
+                                          # (--port N; --serve = legacy alias)
 cctrace view <target> --html              # write a snapshot .html instead (shareable,
                                           # but a big session renders 100s of MB)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
@@ -583,6 +599,19 @@ cctrace compact [--zstd] [--yes]          # fold redundant bodies: superseded me
                                           # full; session view renders identically), noise
                                           # cats -> meta-only except first/last/largest/
                                           # slowest/errors; never deletes pairs
+cctrace spec [target] [--out F] [--md]    # observed-wire catalog from saved traces: endpoints,
+             [--diff CATALOG.json]        # methods, header NAMES, body field SHAPES (types +
+                                          # presence counts), SSE event types — observations
+                                          # with provenance (samples, first/last seen, client
+                                          # UAs), never inferred truth (no OpenAPI guessing;
+                                          # a projection can derive from the catalog later).
+                                          # Values redacted by design except negotiation
+                                          # headers (content-type, anthropic-version/-beta)
+                                          # and model ids — regression-tested. No target =
+                                          # every trace in the dir. --diff prints what changed
+                                          # vs a saved catalog ("+ request header x-claude-
+                                          # code-agent-id") — the wire changelog behind
+                                          # thevibeworks/claude-code-http-spec
 cctrace ps [--json]                       # live instances (URL, pids, client, project, session)
 cctrace --version                         # print version (+ newer version if known)
 ```
@@ -596,7 +625,10 @@ and the instance registry.
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
 <run-id>.json` (unique run id, port, project, session id once seen on the
-wire, plus its own pid and the traced client child's `agentPid` —
+wire, the human's first real prompt (`firstPrompt`, stamped once via the
+server's onPrompt callback — firstPromptOfPair in src/session.ts skips
+harness prompts and the "quota" probe; it is the trace's identity in the
+view picker), plus its own pid and the traced client child's `agentPid` —
 informational only: pids are namespace-local and never feed liveness).
 Capture runs don't delete their entry on exit — they TOMBSTONE it
 (`endedAt` stamped, heartbeat stopped): the tombstones are the cross-project

@@ -1,9 +1,10 @@
-import { readdirSync, existsSync, statSync, writeFileSync } from "fs";
+import { readdirSync, existsSync, statSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 import { join, basename, dirname, relative, resolve } from "path";
 import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { CCTRACE_VERSION } from "./version";
 import { extractSessionId } from "./summarize";
+import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import type { TracePair } from "./types";
 
@@ -63,6 +64,62 @@ export function listTraceInfos(logDir: string): TraceInfo[] {
 
 function htmlSibling(tracePath: string): string {
   return tracePath.replace(/\.jsonl(\.zst|\.gz)?$/, "") + ".html";
+}
+
+export interface TracePeek {
+  client?: string;
+  sessionId?: string;
+  prompt?: string;
+}
+
+/**
+ * Bounded identity read for the picker — who/what a trace is, without
+ * reading it. Plain .jsonl reads only its head bytes (a first line can be
+ * megabytes, so the tail of the read is dropped as torn); compressed
+ * archives decompress only when small. Registry entries are the primary
+ * identity source (stamped at capture time, 0.25+); this is the fallback
+ * for traces that predate them.
+ */
+export function peekTrace(path: string, maxBytes = 8 << 20): TracePeek {
+  let text: string;
+  try {
+    if (/\.(zst|gz)$/.test(path)) {
+      if (statSync(path).size > 8 * 1024 * 1024) return {};
+      text = readTraceText(path);
+    } else {
+      const fd = openSync(path, "r");
+      try {
+        const buf = Buffer.alloc(maxBytes);
+        const n = readSync(fd, buf, 0, maxBytes, 0);
+        text = buf.toString("utf8", 0, n);
+      } finally {
+        closeSync(fd);
+      }
+    }
+  } catch {
+    return {};
+  }
+  const lines = text.split("\n");
+  if (!text.endsWith("\n")) lines.pop(); // bounded read tore the last line
+  const out: TracePeek = {};
+  let parsed = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    // Telemetry/bootstrap pairs open most traces; the first real messages
+    // pair can sit hundreds of cheap lines in, so the cap is generous —
+    // the byte bound above is what keeps this instant.
+    if (++parsed > 400) break;
+    let pair: TracePair;
+    try { pair = JSON.parse(line); } catch { continue; }
+    if (!out.client && pair.client) out.client = pair.client;
+    if (!out.sessionId) out.sessionId = extractSessionId(pair, WIRE) || undefined;
+    if (!out.prompt) {
+      const p = firstPromptOfPair(pair);
+      if (p) out.prompt = p.slice(0, 120);
+    }
+    if (out.client && out.sessionId && out.prompt) break;
+  }
+  return out;
 }
 
 function isSessionIdish(s: string): boolean {

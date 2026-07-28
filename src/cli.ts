@@ -1,18 +1,19 @@
 #!/usr/bin/env bun
 
 import { basename, dirname, join, relative, resolve } from "path";
-import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
-import { loadPriorPairs, loadTraceFiles, newestPriorSessionId } from "./history";
+import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, parseTraceText, readTraceText } from "./history";
+import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, listTraceInfos, ViewError } from "./view";
-import { registerInstance, listLiveInstances, listPastRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle } from "./instances";
+import { writeView, resolveView, listTraceInfos, peekTrace, ViewError } from "./view";
+import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
@@ -62,7 +63,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
@@ -251,11 +252,29 @@ async function runView(args: string[]): Promise<boolean> {
       process.exit(1);
     }
     const shown = infos.slice(0, 15);
+    const snip = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
     if (shown.length) {
+      // Identity-first rows: a timestamp filename says nothing when a dozen
+      // sessions ran today. The registry stamped client/session/first-prompt
+      // at capture time (0.25+); older traces get a bounded head-read.
+      const byLog = new Map<string, InstanceInfo>();
+      for (const r of listAllRuns(DATA_DIR)) {
+        if (!r.logFile) continue;
+        const key = resolve(r.logFile);
+        const prev = byLog.get(key);
+        if (!prev || (!prev.firstPrompt && r.firstPrompt)) byLog.set(key, r);
+      }
       log(`traces in ${logDir} (newest first):`, C.cyan);
       shown.forEach((t, i) => {
+        const reg = byLog.get(resolve(t.path));
+        const peek = reg?.client && reg?.sessionId && reg?.firstPrompt ? {} : peekTrace(t.path);
+        const client = reg?.client || peek.client || "";
+        const sid = (reg?.sessionId || peek.sessionId || "").slice(0, 8);
+        const prompt = reg?.firstPrompt || peek.prompt || "";
+        const who = prompt ? `"${snip(prompt, 46)}"` : t.base;
         console.log(
-          `  ${String(i + 1).padStart(2)}  ${t.base.padEnd(44)} ${human(t.size).padStart(9)}   ${ago(t.mtimeMs)}`,
+          `  ${String(i + 1).padStart(2)}  ${client.padEnd(6)} ${(sid || "-").padEnd(8)} ` +
+          `${who.padEnd(48)} ${human(t.size).padStart(8)}  ${ago(t.mtimeMs)}`,
         );
       });
       if (infos.length > shown.length) console.log(`      ... ${infos.length - shown.length} more`);
@@ -265,8 +284,9 @@ async function runView(args: string[]): Promise<boolean> {
       elsewhere.forEach((r, i) => {
         const when = r.endedAt ? ago(Date.parse(r.endedAt)) : "";
         const label = `${r.project || "?"}${r.client ? ` (${r.client})` : ""}`;
+        const who = r.firstPrompt ? `"${snip(r.firstPrompt, 34)}"` : basename(r.logFile);
         console.log(
-          `  ${String(shown.length + i + 1).padStart(2)}  ${label.padEnd(28)} ${basename(r.logFile).padEnd(34)} ${when}`,
+          `  ${String(shown.length + i + 1).padStart(2)}  ${label.padEnd(28)} ${who.padEnd(36)} ${when}`,
         );
       });
     }
@@ -310,6 +330,94 @@ async function runView(args: string[]): Promise<boolean> {
   return false;
 }
 
+// `cctrace spec [target] [--out FILE] [--md] [--diff CATALOG.json]` — the
+// observed-wire catalog: endpoints, methods, header names, body field
+// shapes, SSE event types, each with sample counts and first/last-seen
+// stamps. Observations with provenance, never inferred truth (no OpenAPI
+// guessing); values are redacted except content-negotiation headers and
+// model ids. No target = every trace in the log dir (the catalog gets
+// better with more observations). --diff compares against a previously
+// written catalog and prints what changed — the changelog of the wire.
+function runSpec(args: string[]) {
+  const usage =
+    "usage: cctrace spec [file.jsonl[.zst|.gz] | session-id | latest] [--dir DIR] [--out FILE] [--md] [--diff CATALOG.json]";
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        dir: { type: "string" },
+        out: { type: "string" },
+        md: { type: "boolean" },
+        diff: { type: "string" },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] spec: ${(err as Error).message}\n  ${usage}`);
+    process.exit(1);
+  }
+  const logDir = (parsed.values.dir as string) || ".cctrace";
+  const target = parsed.positionals[0];
+  // Fold traces into the catalog ONE FILE AT A TIME — a log dir of multi-GB
+  // session traces cannot be held as pairs all at once (a real dir OOM'd
+  // the process, exit 137). The accumulator keeps only counters and shapes.
+  const acc = createSpecAccumulator({ generator: `cctrace ${CCTRACE_VERSION}` });
+  let sourceCount = 0;
+  try {
+    if (target) {
+      const result = resolveView(target, logDir);
+      acc.add(result.pairs);
+      sourceCount = result.sources.length;
+    } else {
+      const infos = listTraceInfos(logDir);
+      if (!infos.length) {
+        console.error(`[cctrace] spec: no .jsonl traces in ${logDir}\n  ${usage}`);
+        process.exit(1);
+      }
+      for (const t of infos) {
+        try {
+          acc.add(parseTraceText(readTraceText(t.path), { torn: 0, invalid: 0 }));
+          sourceCount++;
+        } catch {
+          // unreadable trace: the catalog is built from what opens
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof ViewError) {
+      console.error(`[cctrace] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  const catalog = acc.finish();
+  // Summary to stderr: stdout is the artifact (pipeable).
+  console.error(
+    `[cctrace] spec: ${catalog.pairsScanned} pairs from ${sourceCount} trace(s) -> ` +
+      `${catalog.endpoints.length} endpoints`,
+  );
+  if (parsed.values.diff) {
+    let prev;
+    try {
+      prev = JSON.parse(readFileSync(parsed.values.diff as string, "utf8"));
+    } catch (err) {
+      console.error(`[cctrace] spec: cannot read ${parsed.values.diff}: ${(err as Error).message}`);
+      process.exit(1);
+    }
+    console.log(renderSpecDiff(diffSpecCatalogs(prev, catalog)));
+    return;
+  }
+  const text = parsed.values.md ? renderSpecMarkdown(catalog) : JSON.stringify(catalog, null, 2);
+  if (parsed.values.out) {
+    writeFileSync(parsed.values.out as string, text);
+    log(`wrote ${parsed.values.out}`, C.green);
+  } else {
+    process.stdout.write(text + "\n");
+  }
+}
+
 // The --serve half of `cctrace view`: same target resolution, but the pairs
 // are seeded into the live web server instead of embedded in a file. The run
 // registers in the instance registry like any live capture (mode "view"), so
@@ -339,6 +447,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     meta: {
       ...pageMeta(client), project: viewProject, projectPath: projectRoot,
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, join(viewDir, viewTrace)),
+      mode: "view",
     },
     dataDir: DATA_DIR,
     instanceId,
@@ -729,6 +838,14 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           exact wire bytes of superseded requests (per-turn
                           "what exactly was sent" diffing). Never deletes
                           pairs. --zstd archives afterwards.
+  ${C.cyan}spec${C.reset} [target] [--out FILE] [--md] [--diff CATALOG.json]
+                          Observed-wire catalog: endpoints, methods, header
+                          names, body field shapes, SSE event types — sample
+                          counts and first/last-seen on every entry, values
+                          redacted (except content-negotiation headers and
+                          model ids). No target scans every trace in the dir.
+                          --diff against a saved catalog prints what changed
+                          on the wire between two observations.
   ${C.cyan}ps${C.reset} [--json]               List live cctrace instances (URL, client, project,
                           session).
   ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge/compact${C.reset}
@@ -1014,6 +1131,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       instanceId,
       self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
+      onPrompt: (p) => instance?.update({ firstPrompt: p }),
       onPurge: (removed) => {
         // A pair belongs to this run's log file unless it was merged from a
         // prior trace (pair.prior = basename in the log dir) or an explicit
@@ -1123,6 +1241,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       instanceId,
       self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
+      onPrompt: (p) => instance?.update({ firstPrompt: p }),
     });
     livePort = server.port;
     instance = registerInstance(DATA_DIR, {
@@ -1214,6 +1333,7 @@ async function main() {
     else if (SUBCOMMAND === "compress") runCompress(rest);
     else if (SUBCOMMAND === "purge") runPurge(rest);
     else if (SUBCOMMAND === "compact") runCompact(rest);
+    else if (SUBCOMMAND === "spec") runSpec(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
     process.exit(0);
   }

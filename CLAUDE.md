@@ -132,13 +132,18 @@ generic monograms in `CLIENT_ICONS`, not vendor logos — from
 the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
 live runs, view serves, and snapshots all name the .jsonl behind the page;
 view resolves the project from the log dir's parent when it's a standard
-./.cctrace) and the current session id (extracted
+./.cctrace, and projectPath is that repo root so tool paths relativize;
+clicking the title copies PageMeta.traceRelPath, the project-relative
+".cctrace/trace-….jsonl" ready for `cctrace view`) and the current session id (extracted
 client-side from pairs, newest live pair wins, click to copy) — the tab
 title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
 opens its WebSocket origin-relative (never a baked port: behind
 container/host port forwards the bound port isn't the browser's port, and a
 baked URL once handed a view page another instance's live stream). The
-right side is count · instance-switcher · live-dot · version · mask/theme/github:
+right side is trace totals · instance-switcher · live-dot · version · mask/theme/github
+(totals = requests · in/out tokens · est cost across the whole trace,
+live-updating, breakdown in the hover — per-pair call info memoized on the
+pair since extractCallInfo parses SSE):
 the live status sits beside the "⇄ N more" switcher (both are
 instance-level facts), and the cctrace version (+ amber update link) sits
 with the page chrome in its own `#ver` mount, hover = short about text. A
@@ -153,7 +158,14 @@ active one staying visible even at zero. Live-arrived rows get one 160ms
 opacity fade (the motion budget lives in docs/design/ui.md). Two views,
 hash-routed:
 
-- **Requests** (`#`, `#/p/<id>`): one row per request. Content chips read
+- **Requests** (`#`, `#/p/<id>`): one row per request. The toolbar's Select
+  button enters select-to-purge (hidden on snapshots): rows grow a check
+  gutter, "all shown" selects the filtered list, purge confirms then POSTs
+  `/api/purge {ids}` — the server drops the pairs from memory, calls the
+  CLI's onPurge to rewrite the backing .jsonl(s) (`purgePairsById` in
+  src/storage.ts: atomic, archive-preserving, torn lines kept, skips files
+  changed mid-flight), and broadcasts `purged` so every page removes the
+  rows. Content chips read
   left-to-right — model · effort · think · in/out · ≡cache · cost — then
   the wire transport facts sit as right-aligned COLUMNS: ↑req ↓resp sizes ·
   ttft · duration · time (the flexible gap between chips and columns is
@@ -263,8 +275,19 @@ hash-routed:
   command-only turn previews as "/model"); the agent's intermediate
   messages indent under it (.tturn-sub/.tturn-mid — narration snippet, or
   the enriched tool label: `turnToolLabel` names files workspace-relative,
-  "Edit src/ui.ts, Read src/session.ts, +2"); the loop's last assistant
-  message is the final response row (↳ marker, reply snippet). Harness-
+  "Edit src/ui.ts, Read src/session.ts, +2" — with a toolPreview fallback
+  covering the whole Claude Code tool surface: MultiEdit, SlashCommand,
+  AskUserQuestion, ExitPlanMode, BashOutput/KillShell, Workflow (meta.name
+  pulled from inline scripts), TaskUpdate/Get, MCP resources; task-tracking
+  TaskCreate {subject} never renders as a subagent spawn); the loop's last
+  assistant message is the final response row (↳ marker, reply snippet).
+  Clicking a head's ❯ gutter folds the loop's member rows under the prompt
+  line ("⋯ N" count; state per thread+ordinal in foldedTurns, survives live
+  re-renders; truth markers — compact/superseded/failed rows — never fold).
+  Row tooltips LEAD with the full text the row truncated (user prompt,
+  assistant narration, injected prompt, superseded prompt — 600-char cap),
+  then the metrics; long fold hints get the same treatment (fold() puts
+  hints > 60 chars in data-tip). Harness-
   authored user-ROLE messages (`harnessPrompt`, precise prefixes only)
   never read as the human: the away-recap prompt and "Tool loaded."
   absorb into the open turn wearing a small-caps SYS tag (.sys-tag in the

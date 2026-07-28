@@ -956,7 +956,9 @@ export function loopTurns(vis: any[]): any[] {
 /**
  * ccx-style one-line preview for a tool_use, keyed by tool name. ws (the
  * workspace root) relativizes file paths — the fold says src/ui.ts, not the
- * full container path.
+ * full container path. Covers the full Claude Code tool surface (file tools,
+ * shell, search, web, plan/task/agent procedures, MCP resources); unknown
+ * tools return "" so callers fall back to a raw input snippet.
  */
 export function toolPreview(name: string, input: any, ws?: any): string {
   const i = input || {};
@@ -966,8 +968,10 @@ export function toolPreview(name: string, input: any, ws?: any): string {
     // ground truth; the fold body holds it in full). Paths inside the
     // command relativize for display (wsRelText).
     case "Bash": return (typeof i.description === "string" && i.description ? i.description + " · " : "") + "$ " + wsRelText(i.command || "", ws);
-    case "Read": {
-      let r = wsPath(i.file_path, ws);
+    case "BashOutput": case "TaskOutput": return "shell " + (i.bash_id || i.task_id || i.shell_id || "?") + (i.filter ? " · /" + i.filter + "/" : "");
+    case "KillShell": case "KillBash": case "TaskStop": return "shell " + (i.shell_id || i.bash_id || i.task_id || "?");
+    case "Read": case "NotebookRead": {
+      let r = wsPath(i.file_path || i.notebook_path, ws);
       if (typeof i.limit === "number" && typeof i.offset === "number") r += " · " + i.limit + " lines from " + i.offset;
       else if (typeof i.limit === "number") r += " · first " + i.limit + " lines";
       else if (typeof i.offset === "number") r += " · from line " + i.offset;
@@ -982,13 +986,54 @@ export function toolPreview(name: string, input: any, ws?: any): string {
       if (i.replace_all) r += " · replace all";
       return r;
     }
+    case "MultiEdit": {
+      const n = Array.isArray(i.edits) ? i.edits.length : 0;
+      return wsPath(i.file_path, ws) + (n ? " · " + n + " edits" : "");
+    }
     case "NotebookEdit": return wsPath(i.notebook_path || i.file_path, ws);
-    case "Grep": return "/" + (i.pattern || "") + "/" + (i.path ? " in " + wsPath(i.path, ws) : "");
+    case "LS": return wsPath(i.path, ws);
+    case "Grep": return "/" + (i.pattern || "") + "/" + (i.path ? " in " + wsPath(i.path, ws) : "") + (i.glob ? " · " + i.glob : "");
     case "Glob": return (i.pattern || "") + (i.path ? " in " + wsPath(i.path, ws) : "");
-    case "Task": case "Agent": case "TaskCreate": return "[" + (i.subagent_type || "agent") + "] " + (i.description || "");
+    case "Task": case "Agent": case "TaskCreate": {
+      // Two wire shapes share these names: the subagent dispatch
+      // (subagent_type/description/prompt) and task-tracking TaskCreate
+      // (subject/description). A dispatch names who was spawned for what;
+      // a tracked task previews as its subject line.
+      if (i.subagent_type || typeof i.prompt === "string") return "[" + (i.subagent_type || "agent") + "] " + (i.description || "");
+      return i.subject || i.description || "";
+    }
+    case "TaskUpdate": return "#" + (i.taskId || "?") + (i.status ? " → " + i.status : "");
+    case "TaskGet": return "#" + (i.taskId || "?");
+    case "TaskList": return "";
+    case "TodoRead": return "";
+    case "SendMessage": return (i.recipient || i.agent || i.agentName || "") + (typeof i.message === "string" ? (i.recipient || i.agent || i.agentName ? " · " : "") + i.message.slice(0, 80) : "");
     case "WebFetch": return i.url || "";
     case "WebSearch": case "ToolSearch": return i.query || "";
-    case "Skill": return i.skill || i.command || "";
+    case "Skill": return (i.skill || i.command || "") + (typeof i.args === "string" && i.args ? " " + i.args : "");
+    case "SlashCommand": return i.command || "";
+    case "AskUserQuestion": {
+      const qs = Array.isArray(i.questions) ? i.questions : [];
+      const first = (qs[0] && qs[0].question) || "";
+      return first + (qs.length > 1 ? " · +" + (qs.length - 1) + " more" : "");
+    }
+    case "EnterPlanMode": return "";
+    case "ExitPlanMode": {
+      // The plan itself is markdown; its first non-heading-marker line is
+      // the human preview, the fold body keeps the whole plan.
+      const first = String(i.plan || "").split("\n").find((l: string) => l.trim()) || "";
+      return first.replace(/^#+\s*/, "").slice(0, 120);
+    }
+    case "EnterWorktree": case "ExitWorktree": return i.name || "";
+    case "Workflow": {
+      if (typeof i.name === "string" && i.name) return i.name;
+      // Inline scripts carry their identity in meta.name — pull it out so
+      // the row says which workflow ran, not "Workflow(...)".
+      const m = /name\s*:\s*['"]([^'"]+)['"]/.exec(String(i.script || "").slice(0, 600));
+      if (m) return m[1] || "";
+      return i.scriptPath ? wsPath(i.scriptPath, ws) : "";
+    }
+    case "ListMcpResources": return i.server || "";
+    case "ReadMcpResource": return (i.server ? i.server + " · " : "") + (i.uri || "");
     case "TodoWrite": {
       if (!Array.isArray(i.todos)) return "";
       const done = i.todos.filter((t: any) => t && t.status === "completed").length;

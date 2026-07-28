@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
@@ -22,7 +22,7 @@ import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, human,
+  planPurge, applyPurge, purgePairsById, human,
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
@@ -322,8 +322,12 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
   // The header shows <project>/<trace-file>: the project is the traced
   // repo, i.e. the log dir's parent when it's a standard ./.cctrace.
+  // projectPath must be that repo root too — the UI relativizes tool-call
+  // file paths against it (wsRoot), and .cctrace itself contains nothing.
   const viewDir = resolve(logDir);
-  const viewProject = basename(viewDir) === ".cctrace" ? basename(dirname(viewDir)) : basename(viewDir);
+  const projectRoot = basename(viewDir) === ".cctrace" ? dirname(viewDir) : viewDir;
+  const viewProject = basename(projectRoot);
+  const viewTrace = basename(result.sources[0] || target);
   // The rebuilt pairs know who produced them (0.13+ traces); older traces
   // carry no label and the header degrades to project-only.
   const client = result.pairs.findLast((p) => p.client)?.client;
@@ -332,11 +336,21 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   const server = createServer({
     port: opts.port,
     logDir,
-    meta: { ...pageMeta(client), project: viewProject, projectPath: viewDir, traceFile: basename(result.sources[0] || target) },
+    meta: {
+      ...pageMeta(client), project: viewProject, projectPath: projectRoot,
+      traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, join(viewDir, viewTrace)),
+    },
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
     self: () => instance?.snapshot() ?? null,
+    onPurge: (removed) => {
+      const res = purgePairsById(result.sourcePaths, new Set(removed.map((p) => p.id)));
+      const touched = res.rewritten.concat(res.removed);
+      log(`web purge: dropped ${res.droppedCount} pair(s) from ${touched.join(", ") || "no file"}` +
+        (res.skipped.length ? ` — skipped ${res.skipped.join(", ")}` : ""), C.yellow);
+      return { files: touched, skippedFiles: res.skipped };
+    },
   });
   instance = registerInstance(DATA_DIR, {
     id: instanceId,
@@ -839,6 +853,14 @@ function pageMeta(client?: string): PageMeta {
   return meta;
 }
 
+/** Trace path relative to the project dir (".cctrace/trace-….jsonl") — the
+ * header title's click-to-copy value. A trace outside the project (custom
+ * --dir elsewhere) keeps its absolute path: a relpath would be a lie. */
+function traceRelPath(projectDir: string, traceFile: string): string {
+  const rel = relative(projectDir, resolve(traceFile));
+  return rel && !rel.startsWith("..") ? rel : resolve(traceFile);
+}
+
 /** The current run's log paths, computed once so server + sink agree. */
 function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
   const base = opts.logName || `trace-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5)}`;
@@ -885,7 +907,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
         }
         all.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
       }
-      const snapHtml = renderSnapshot(all, { ...pageMeta(CLIENT.name), traceFile: basename(logFile) });
+      const snapHtml = renderSnapshot(all, { ...pageMeta(CLIENT.name), traceFile: basename(logFile), traceRelPath: traceRelPath(process.cwd(), logFile) });
       const problem = verifySnapshot(snapHtml, all.length);
       if (problem) log(`warning: snapshot self-check failed: ${problem}`, C.yellow);
       writeFileSync(htmlFile, snapHtml);
@@ -987,11 +1009,26 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
       speculate: speculateSid,
-      meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile) },
+      meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile), traceRelPath: traceRelPath(process.cwd(), logFile) },
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,
       onSession: (sid) => instance?.update({ sessionId: sid }),
+      onPurge: (removed) => {
+        // A pair belongs to this run's log file unless it was merged from a
+        // prior trace (pair.prior = basename in the log dir) or an explicit
+        // --with file (basename of an arbitrary path).
+        const withByBase = new Map(opts.withFiles.map((f) => [basename(f), resolve(f)]));
+        const files = new Set<string>();
+        for (const p of removed) {
+          files.add(p.prior ? withByBase.get(p.prior) ?? join(opts.logDir, p.prior) : logFile);
+        }
+        const res = purgePairsById([...files], new Set(removed.map((p) => p.id)));
+        const touched = res.rewritten.concat(res.removed);
+        log(`web purge: dropped ${res.droppedCount} pair(s) from ${touched.join(", ") || "no file"}` +
+          (res.skipped.length ? ` — skipped ${res.skipped.join(", ")}` : ""), C.yellow);
+        return { files: touched, skippedFiles: res.skipped };
+      },
     });
     ingest = server.ingest;
     instance = registerInstance(DATA_DIR, {

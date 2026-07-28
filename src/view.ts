@@ -1,5 +1,5 @@
 import { readdirSync, existsSync, statSync, writeFileSync } from "fs";
-import { join, basename, resolve } from "path";
+import { join, basename, dirname, relative, resolve } from "path";
 import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { CCTRACE_VERSION } from "./version";
@@ -21,6 +21,8 @@ export interface ViewResult {
   htmlPath: string;
   /** Trace files that contributed pairs, basename only. */
   sources: string[];
+  /** The same files as absolute paths — what select-to-purge rewrites. */
+  sourcePaths: string[];
   matchedBy: "file" | "session" | "filename";
   /** Non-fatal problems worth telling the user about (damaged lines, ...). */
   warnings: string[];
@@ -90,6 +92,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
       pairs,
       htmlPath: htmlSibling(resolve(target)),
       sources: [basename(target)],
+      sourcePaths: [resolve(target)],
       matchedBy: "file",
       warnings: damageWarnings(basename(target), stats),
     };
@@ -109,6 +112,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
     const merged: TracePair[] = [];
     const seen = new Set<string>();
     const sources = new Set<string>();
+    const sourcePaths = new Set<string>();
     for (const path of traces) {
       let text: string;
       try { text = readTraceText(path); } catch { continue; }
@@ -118,6 +122,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
         if (pair.id) seen.add(pair.id);
         merged.push(pair);
         sources.add(basename(path));
+        sourcePaths.add(resolve(path));
       }
     }
     if (merged.length) {
@@ -127,6 +132,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
         pairs: merged,
         htmlPath: join(logDir, `session-${safe}.html`),
         sources: [...sources],
+        sourcePaths: [...sourcePaths],
         matchedBy: "session",
         warnings: [],
       };
@@ -143,6 +149,7 @@ export function resolveView(target: string, logDir: string): ViewResult {
       pairs,
       htmlPath: htmlSibling(byName[0]),
       sources: [basename(byName[0])],
+      sourcePaths: [resolve(byName[0]!)],
       matchedBy: "filename",
       warnings: damageWarnings(basename(byName[0]), stats),
     };
@@ -189,7 +196,20 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
 export function writeView(target: string, logDir: string, meta: PageMeta = {}): ViewResult {
   const result = resolveView(target, logDir);
   const traceFile = basename(result.sources[0] || target);
-  const html = renderSnapshot(result.pairs, { ...meta, traceFile, version: CCTRACE_VERSION });
+  // Same header identity a served view gets: project = the log dir's parent
+  // when it's a standard ./.cctrace, and the trace's project-relative path
+  // for the title's click-to-copy.
+  const viewDir = resolve(logDir);
+  const projectRoot = basename(viewDir) === ".cctrace" ? dirname(viewDir) : viewDir;
+  const rel = relative(projectRoot, join(viewDir, traceFile));
+  const html = renderSnapshot(result.pairs, {
+    project: basename(projectRoot),
+    projectPath: projectRoot,
+    traceRelPath: rel && !rel.startsWith("..") ? rel : join(viewDir, traceFile),
+    ...meta,
+    traceFile,
+    version: CCTRACE_VERSION,
+  });
   const problem = verifySnapshot(html, result.pairs.length);
   if (problem) result.warnings.push(`snapshot self-check failed: ${problem}`);
   writeFileSync(result.htmlPath, html);

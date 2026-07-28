@@ -18,7 +18,11 @@ const pair = (id: string): TracePair => ({
 
 // One server for the file: server.ts holds pairs at module level.
 const INSTANCE_ID = "test-instance-0000";
-const server = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, instanceId: INSTANCE_ID });
+const purgeCalls: TracePair[][] = [];
+const server = createServer({
+  port: 0, logDir: ".cctrace-test-none", noHistory: true, instanceId: INSTANCE_ID,
+  onPurge: (removed) => { purgeCalls.push(removed); return { files: ["trace-x.jsonl"], skippedFiles: [] }; },
+});
 const base = `http://127.0.0.1:${server.port}`;
 afterAll(() => server.stop());
 
@@ -55,5 +59,35 @@ describe("live server ingestion", () => {
     server.ingest(pair("in-process"));
     const listed = (await (await fetch(`${base}/api/pairs`)).json()) as TracePair[];
     expect(listed.some((p) => p.id === "in-process")).toBe(true);
+  });
+
+  test("/api/purge removes named pairs from memory and hands them to onPurge", async () => {
+    server.ingest(pair("purge-me"));
+    server.ingest(pair("keep-me"));
+    const res = await fetch(`${base}/api/purge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: ["purge-me", "not-here"] }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { removed: number; files: string[] };
+    expect(body.removed).toBe(1);
+    expect(body.files).toEqual(["trace-x.jsonl"]);
+    expect(purgeCalls.length).toBe(1);
+    expect(purgeCalls[0]!.map((p) => p.id)).toEqual(["purge-me"]);
+    const listed = (await (await fetch(`${base}/api/pairs`)).json()) as TracePair[];
+    expect(listed.some((p) => p.id === "purge-me")).toBe(false);
+    expect(listed.some((p) => p.id === "keep-me")).toBe(true);
+  });
+
+  test("/api/purge rejects an empty or malformed id list", async () => {
+    for (const body of [JSON.stringify({}), JSON.stringify({ ids: [] }), JSON.stringify({ ids: [42] }), "not json"]) {
+      const res = await fetch(`${base}/api/purge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+      });
+      expect(res.status).toBe(400);
+    }
   });
 });

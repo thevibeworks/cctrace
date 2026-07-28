@@ -351,6 +351,34 @@ describe("toolPreview", () => {
     expect(toolPreview("TodoWrite", { todos: [{ status: "completed" }, { status: "completed" }, { status: "pending" }] }))
       .toBe("3 todos · 2 done");
   });
+
+  test("harness procedure tools preview meaningfully", () => {
+    expect(toolPreview("MultiEdit", { file_path: "/p/a.ts", edits: [{}, {}, {}] }, "/p")).toBe("a.ts · 3 edits");
+    expect(toolPreview("SlashCommand", { command: "/review-pr 123" })).toBe("/review-pr 123");
+    expect(toolPreview("AskUserQuestion", { questions: [{ question: "Auth method?" }, { question: "Library?" }] }))
+      .toBe("Auth method? · +1 more");
+    expect(toolPreview("ExitPlanMode", { plan: "## The plan\ndetails follow" })).toBe("The plan");
+    expect(toolPreview("BashOutput", { bash_id: "b3" })).toBe("shell b3");
+    expect(toolPreview("KillShell", { shell_id: "b3" })).toBe("shell b3");
+    expect(toolPreview("Workflow", { script: "export const meta = { name: 'review-changes', description: 'x' }" }))
+      .toBe("review-changes");
+    expect(toolPreview("Workflow", { name: "find-flaky-tests" })).toBe("find-flaky-tests");
+    expect(toolPreview("ListMcpResources", { server: "linear" })).toBe("linear");
+    expect(toolPreview("ReadMcpResource", { server: "linear", uri: "issue://42" })).toBe("linear · issue://42");
+    expect(toolPreview("WebFetch", { url: "https://x.test/a", prompt: "summarize" })).toBe("https://x.test/a");
+    expect(toolPreview("Skill", { skill: "ccx", args: "sessions --today" })).toBe("ccx sessions --today");
+    expect(toolPreview("LS", { path: "/p/src" }, "/p")).toBe("src");
+  });
+
+  test("Task family: dispatch shape vs task-tracking shape", () => {
+    // dispatch (subagent spawn): [type] goal
+    expect(toolPreview("TaskCreate", { subagent_type: "Explore", description: "map repo", prompt: "..." }))
+      .toBe("[Explore] map repo");
+    // task tracking: the subject line, never "[agent] ..."
+    expect(toolPreview("TaskCreate", { subject: "Fix login bug", description: "details" })).toBe("Fix login bug");
+    expect(toolPreview("TaskUpdate", { taskId: "3", status: "completed" })).toBe("#3 → completed");
+    expect(toolPreview("TaskGet", { taskId: "7" })).toBe("#7");
+  });
 });
 
 describe("loopTurns / harnessPrompt", () => {

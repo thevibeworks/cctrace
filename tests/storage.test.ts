@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { gunzipSync, gzipSync } from "zlib";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, human,
+  planPurge, applyPurge, purgePairsById, human,
 } from "../src/storage";
 import { parseTraceText } from "../src/history";
 
@@ -307,6 +307,45 @@ describe("purge", () => {
   test("no matching pairs -> empty plan", () => {
     writeFileSync(join(dir, "trace-1.jsonl"), jl(convPair("m1", SID_A, 1)));
     expect(planPurge(dir, DROP, cat).files).toHaveLength(0);
+  });
+});
+
+describe("purgePairsById (web select-to-purge)", () => {
+  test("rewrites only files holding a named pair; torn lines survive", () => {
+    const a = join(dir, "trace-a.jsonl");
+    const b = join(dir, "trace-b.jsonl");
+    writeFileSync(a, jl(convPair("p1", SID_A, 1), convPair("p2", SID_A, 2)) + '{"torn": tail');
+    writeFileSync(b, jl(convPair("p3", SID_B, 3)));
+    const untouchedBytes = readFileSync(b, "utf8");
+    const res = purgePairsById([a, b], new Set(["p1"]));
+    expect(res.droppedCount).toBe(1);
+    expect(res.rewritten).toEqual(["trace-a.jsonl"]);
+    expect(res.skipped).toEqual([]);
+    const text = readFileSync(a, "utf8");
+    expect(text).not.toContain('"p1"');
+    expect(text).toContain('"p2"');
+    expect(text).toContain('{"torn": tail'); // never a purge target
+    // no matching pair -> the file is not rewritten at all
+    expect(readFileSync(b, "utf8")).toBe(untouchedBytes);
+  });
+
+  test("a file emptied by the purge is removed; missing files are skipped", () => {
+    const a = join(dir, "trace-a.jsonl");
+    writeFileSync(a, jl(convPair("p1", SID_A, 1)));
+    const res = purgePairsById([a, join(dir, "not-there.jsonl")], new Set(["p1"]));
+    expect(res.removed).toEqual(["trace-a.jsonl"]);
+    expect(res.skipped).toEqual(["not-there.jsonl"]);
+    expect(existsSync(a)).toBe(false);
+  });
+
+  test("archives stay archives", () => {
+    const gz = join(dir, "trace-a.jsonl.gz");
+    writeFileSync(gz, gzipSync(jl(convPair("p1", SID_A, 1), convPair("p2", SID_A, 2))));
+    const res = purgePairsById([gz], new Set(["p2"]));
+    expect(res.rewritten).toEqual(["trace-a.jsonl.gz"]);
+    const text = gunzipSync(readFileSync(gz)).toString("utf8");
+    expect(text).toContain('"p1"');
+    expect(text).not.toContain('"p2"');
   });
 });
 

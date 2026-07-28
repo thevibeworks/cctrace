@@ -490,3 +490,74 @@ export function applyPurge(plan: PurgePlan, categorize: (url: string, client?: s
   }
   return { rewritten, removed, skipped, bytes };
 }
+
+// ---- purge by pair id: the web UI's select-to-purge ----
+
+export interface IdPurgeResult {
+  /** Files rewritten without the purged pairs (basenames). */
+  rewritten: string[];
+  /** Files removed because nothing was left in them (basenames). */
+  removed: string[];
+  /** Files that could not be rewritten — unreadable, or changed mid-flight
+   * by a writer we don't own (basenames). Their pairs stay on disk. */
+  skipped: string[];
+  droppedCount: number;
+}
+
+/**
+ * Remove named pairs from trace files. The privacy tool behind the web UI's
+ * select-to-purge — same discipline as applyPurge: atomic rewrites, archives
+ * stay archives, unparseable (torn) lines are preserved untouched, a file
+ * left empty is deleted. Files without any named pair are never rewritten.
+ * A file that changes size between read and write (a live capture we don't
+ * own appending) is skipped, not truncated — the caller reports it.
+ */
+export function purgePairsById(paths: string[], ids: Set<string>): IdPurgeResult {
+  const rewritten: string[] = [];
+  const removed: string[] = [];
+  const skipped: string[] = [];
+  let droppedCount = 0;
+  for (const path of [...new Set(paths)]) {
+    let before: number;
+    let text: string;
+    try {
+      before = statSync(path).size;
+      text = readTraceText(path);
+    } catch {
+      skipped.push(basename(path));
+      continue;
+    }
+    const kept: string[] = [];
+    let dropped = 0;
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      let id: unknown;
+      try {
+        id = (JSON.parse(line) as TracePair | null)?.id;
+      } catch {
+        kept.push(line); // torn tail line — never a purge target
+        continue;
+      }
+      if (typeof id === "string" && ids.has(id)) { dropped++; continue; }
+      kept.push(line);
+    }
+    if (!dropped) continue;
+    try {
+      if (statSync(path).size !== before) { skipped.push(basename(path)); continue; }
+      if (!kept.length) {
+        unlinkSync(path);
+        removed.push(basename(path));
+      } else {
+        const out = kept.join("\n") + "\n";
+        if (path.endsWith(".zst")) writeAtomic(path, zstd(out));
+        else if (path.endsWith(".gz")) writeAtomic(path, gzipSync(out, { level: 9 }));
+        else writeAtomic(path, out);
+        rewritten.push(basename(path));
+      }
+      droppedCount += dropped;
+    } catch {
+      skipped.push(basename(path));
+    }
+  }
+  return { rewritten, removed, skipped, droppedCount };
+}

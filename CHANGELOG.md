@@ -6,6 +6,70 @@ All notable changes to cctrace are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-27
+
+Select-to-purge from the web UI, trace totals in the header, foldable
+turns in the outline, and tool previews covering the whole Claude Code
+tool surface.
+
+### Added
+
+- Select-to-purge in the Requests view: a toolbar Select button enters
+  selection mode (rows grow a check gutter, "all shown" selects the
+  filtered list -- combine with the category chips to pick e.g. all
+  telemetry), purge confirms and then deletes the selected pairs from
+  the page and the backing .jsonl trace file(s). Server side: POST
+  /api/purge removes the pairs from memory, rewrites the files via
+  purgePairsById in src/storage.ts (atomic tmp+rename, archives stay
+  archives, torn lines preserved, files changed mid-flight are skipped
+  and reported), and broadcasts so every connected page drops the rows.
+  Hidden on snapshots -- no server, nothing to delete.
+- Header trace totals: the request counter is now requests, in/out
+  tokens, and estimated cost for the whole trace, live-updating; the
+  hover breaks it down (model calls, cache read/written, thinking
+  tokens, failed requests, time span). Per-pair call info and cost are
+  memoized on the pair -- extractCallInfo parses SSE, too heavy to redo
+  per render.
+- The header trace title copies its project-relative path on click
+  (.cctrace/trace-<ts>.jsonl -- the string you paste into cctrace view
+  or hand to an agent). PageMeta.traceRelPath is filled by live runs,
+  view serves, and --html snapshots; a trace outside the project keeps
+  its absolute path.
+- Outline turns fold: clicking a turn head's ❯ gutter collapses the
+  loop's agent work under the prompt line (a quiet "⋯ N" count marks
+  what's hidden). Fold state is keyed by thread + turn ordinal and
+  survives live re-renders; compaction/superseded/failed truth markers
+  never fold away. Closes the 0.23.0 open item (198 work rows under one
+  head).
+- Tool previews cover the full Claude Code tool surface: MultiEdit,
+  SlashCommand, AskUserQuestion, ExitPlanMode (first plan line),
+  BashOutput/KillShell, Workflow (name pulled from the inline script's
+  meta), TaskUpdate/TaskGet, SendMessage, LS, NotebookRead,
+  ListMcpResources/ReadMcpResource, EnterWorktree/ExitWorktree. The
+  outline's tool labels fall back to the same previews, so both
+  surfaces share one vocabulary. Task-tracking TaskCreate {subject}
+  previews as its subject line and no longer renders as a subagent
+  spawn.
+
+### Changed
+
+- Tooltips on truncated surfaces lead with the full text the row cut
+  off (user prompts, assistant narration, harness-injected prompts,
+  superseded prompts -- capped at 600 chars), then the metrics; fold
+  hints long enough to ellipsize (a full Bash command line) get the
+  same hover.
+- View pages resolve projectPath to the repo root (the log dir's parent
+  for a standard ./.cctrace), so tool-call file paths render
+  workspace-relative in served views and --html snapshots too, and the
+  snapshot header carries the project name it was missing.
+
+### Fixed
+
+- The request-row entry animation fired on every bulk and filter
+  re-render (a translateY slide predating the motion budget); live
+  arrivals keep their single 160ms opacity fade, everything else is
+  instant.
+
 ## [0.23.0] - 2026-07-24
 
 The session-legibility release: the outline's turn becomes the human
@@ -1059,7 +1123,8 @@ Initial public release.
 - Partial redaction of sensitive headers in captured output.
 - Automatic port fallback when the default UI port is busy.
 
-[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/thevibeworks/cctrace/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/thevibeworks/cctrace/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/thevibeworks/cctrace/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/thevibeworks/cctrace/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/thevibeworks/cctrace/compare/v0.20.0...v0.21.0

@@ -67,6 +67,13 @@ to protect that feeling.
   first line = heading). A plain `title=` is folded into it on first hover
   (moved to `data-tip` so the native tooltip never fires). A ~120ms show
   delay debounces mousing across a row of chips — a debounce, not motion.
+- A tooltip on a truncated surface LEADS with the full text the surface cut
+  off (capped ~600 chars); metadata and click hints follow. Hover answers
+  "what does the rest say" before anything else.
+- Select-to-purge is the one destructive surface: entered explicitly
+  (toolbar Select), rows grow a quiet ○/● check gutter, the purge button
+  wears the state red, and a confirm dialog spells out that trace files are
+  rewritten. Hidden on snapshots — no server, nothing to delete.
 - `data-mask` marks identity values (session id, project/trace title, credits)
   that `body.masked` blurs for screen sharing; hover reveals one deliberately.
   Display-layer courtesy only — capture-time redaction is `src/redact.ts`.

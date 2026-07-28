@@ -114,6 +114,18 @@ describe("generated markup grammar", () => {
   });
 });
 
+describe("header trace totals", () => {
+  test("the stats rollup sums requests, tokens, and est cost with a breakdown tip", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    const stats = page.els["stats"]!;
+    expect(stats.textContent).toContain("2 req");
+    expect(stats.textContent).toContain("in 200");
+    expect(stats.textContent).toContain("out 100");
+    expect(stats.textContent).toContain("$");
+    expect(String(stats.dataset.tip)).toContain("2 model calls");
+  });
+});
+
 describe("broken pairs degrade to one visible card", () => {
   test("a request-less pair is dropped at ingestion; the rest of the page renders", () => {
     const broken = { id: "bad1", request: null, response: null, duration: 0 } as unknown as TracePair;

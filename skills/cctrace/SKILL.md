@@ -87,12 +87,22 @@ instances land on 9318, 9319, ...). Hash-routed views:
   pretty/raw and SSE events/raw toggles, then the full conversation last (it
   is the long part). Every fold has a `copy` button; text blocks have a hover
   copy. `j`/`k` walk rows, `/` filters, `Esc` closes.
+  The toolbar's **Select** button enters select-to-purge: click rows (or
+  "all shown" with a filter/category active), then **purge** deletes the
+  selected pairs from the page AND rewrites the backing `.jsonl` — the web
+  face of `cctrace purge`, by hand-picked request (confirmed, no undo;
+  hidden on snapshots). Server side it's `POST /api/purge {ids:[...]}`.
+  The header shows the trace's running totals (requests · in/out tokens ·
+  est cost, breakdown on hover), and clicking the trace title copies its
+  project-relative path (".cctrace/trace-….jsonl") — ready for
+  `cctrace view`.
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
   conversation (main chat, subagent runs linked to the Task call that
   spawned them, utility probes as separate threads) beside the wire
   requests. A TURN is the working-loop unit — user request, agent work
   (indented: tool rows name the files touched, workspace-relative),
-  final response (↳) — so "3 turns" can span hundreds of wire messages;
+  final response (↳) — so "3 turns" can span hundreds of wire messages
+  (clicking a turn's ❯ gutter folds its agent work under the prompt line);
   CLI-injected user-role prompts (recap, "Tool loaded.", SYSTEM
   NOTIFICATION wakeups) are marked "cli", never shown as the human.
   Per-turn tokens/duration/cost link back to each wire request,

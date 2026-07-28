@@ -33,6 +33,12 @@ interface ServerConfig {
   /** Called once per newly-seen Claude session id on the wire. */
   onSession?: (sid: string) => void;
   /**
+   * Deletes the given (already memory-removed) pairs from their backing
+   * trace files — the web UI's select-to-purge. Absent = memory-only purge
+   * (pairs return on the next restart/reload from disk).
+   */
+  onPurge?: (removed: TracePair[]) => { files: string[]; skippedFiles: string[] };
+  /**
    * Session id to preload as a GUESS at startup (`--continue` before the
    * first request reveals the real one). Confirmed or evicted when the
    * first live pair carries a session id.
@@ -162,6 +168,39 @@ export function createServer(config: ServerConfig) {
       }
       if (url.pathname === "/api/pairs") {
         return Response.json(pairs);
+      }
+      if (url.pathname === "/api/purge" && req.method === "POST") {
+        // Select-to-purge from the web UI: remove named pairs from memory
+        // AND the backing trace files (via config.onPurge), then tell every
+        // connected page. Trust boundary: anyone who can load the page can
+        // already read the whole trace; purge only ever deletes trace data,
+        // and only pairs this server holds.
+        try {
+          const body = (await req.json()) as { ids?: unknown };
+          const ids = Array.isArray(body?.ids)
+            ? body.ids.filter((x): x is string => typeof x === "string")
+            : [];
+          if (!ids.length) return Response.json({ error: "ids required" }, { status: 400 });
+          const idSet = new Set(ids);
+          const removedPairs: TracePair[] = [];
+          for (let i = pairs.length - 1; i >= 0; i--) {
+            const p = pairs[i]!;
+            if (idSet.has(p.id)) {
+              removedPairs.push(p);
+              knownIds.delete(p.id);
+              pairs.splice(i, 1);
+            }
+          }
+          let files: string[] = [];
+          let skippedFiles: string[] = [];
+          if (removedPairs.length && config.onPurge) {
+            ({ files, skippedFiles } = config.onPurge(removedPairs));
+          }
+          if (removedPairs.length) broadcast({ type: "purged", ids: removedPairs.map((p) => p.id) });
+          return Response.json({ ok: true, removed: removedPairs.length, files, skippedFiles });
+        } catch (e) {
+          return Response.json({ error: String(e) }, { status: 400 });
+        }
       }
       if (url.pathname === "/api/self") {
         // Identity for cross-instance liveness probes. Answers from memory

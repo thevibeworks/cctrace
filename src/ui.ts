@@ -87,6 +87,9 @@ export interface PageMeta {
   projectPath?: string;
   /** Basename of the trace file behind this page (live log or view source). */
   traceFile?: string;
+  /** That file's path relative to the project dir (".cctrace/trace-….jsonl")
+   * — the header title's click-to-copy value, ready for `cctrace view`. */
+  traceRelPath?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
   /** cctrace version that produced this page/snapshot. */
@@ -171,6 +174,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
     .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
     .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The trace title copies its project-relative path (.cctrace/…jsonl) —
+       the string you paste into "cctrace view" or hand to an agent. */
+    .ctx-proj.ctx-copy { cursor: pointer; }
+    .ctx-proj.ctx-copy:hover { color: var(--accent); }
+    .ctx-proj.copied { color: var(--green); }
     .ctx-client {
       display: inline-flex; align-items: center; gap: 5px;
       border: 1px solid var(--border); border-radius: 4px;
@@ -230,7 +238,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       .status.connected::before { animation: none; }
       * { scroll-behavior: auto !important; }
     }
-    .count { color: var(--text-muted); margin-left: auto; }
+    .count { color: var(--text-muted); margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .header-actions { display: flex; align-items: center; gap: 2px; }
     .icon-btn {
       display: inline-flex; align-items: center; justify-content: center;
@@ -290,6 +298,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .toolbar button:hover { background: var(--border); }
     .toolbar button.active { background: var(--status-ok); border-color: var(--status-ok); color: #fff; }
     body.view-session #filter, body.view-session #autoscroll, body.view-session #clear { display: none; }
+    /* ---- Select-to-purge ---- */
+    /* Rows grow a quiet check gutter in selection mode; the purge button
+       wears the state color — it deletes trace data permanently. */
+    #sel-actions { display: none; align-items: center; gap: 6px; }
+    body.selecting #sel-actions { display: inline-flex; }
+    body.view-session #select-toggle, body.view-session #sel-actions { display: none; }
+    #sel-count { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+    #sel-purge { color: var(--red); }
+    #sel-purge[disabled] { opacity: 0.4; pointer-events: none; }
+    body.selecting .pair-header::before {
+      content: '\\25cb'; color: var(--text-faint); flex-shrink: 0; font-size: 11px;
+    }
+    body.selecting .pair.sel .pair-header::before { content: '\\25cf'; color: var(--accent); }
+    body.selecting .pair.sel { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+    body.selecting .pair.sel .pair-header { background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface)); }
     #prior-toggle { display: none; }
     #prior-toggle.avail { display: inline-block; }
     body.view-session #prior-toggle { display: none; }
@@ -446,19 +469,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .warn { color: var(--amber); }
     .err { color: var(--red); }
     .model { color: var(--text-method); }
+    /* No entry animation on .pair itself: bulk renders and filter
+       re-renders must be instant (motion budget) — live arrivals get the
+       one .arrived opacity fade below. */
     .pair {
       border: 1px solid var(--border);
       border-radius: 6px;
       margin-bottom: 6px;
       overflow: hidden;
-      animation: slideIn 0.2s ease-out;
     }
     .pair.selected { border-color: var(--accent); }
     .pair.selected .pair-header { background: var(--hover); }
-    @keyframes slideIn {
-      from { opacity: 0; transform: translateY(-10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
     .pair-header {
       display: flex;
       align-items: center;
@@ -964,6 +985,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       background: var(--bg); box-shadow: 0 0 0 2px var(--bg);
     }
     .tturn-user .rgut::before { display: none; }
+    /* The ❯ gutter doubles as the turn's fold toggle: clicking it collapses
+       the loop's agent work under the head (terminal semantics — the prompt
+       line stays, the output folds). Hover names the affordance. */
+    .tturn-head .rgut { cursor: pointer; }
+    .tturn-head .rgut:hover .gut-user, .tturn-head .rgut:hover .cdot { color: var(--accent); background: var(--accent); }
+    .tturn-head .rgut:hover .gut-user { background: var(--bg); }
+    .tturn-fold-n { margin-left: auto; flex: none; color: var(--text-faint); font-size: 10px; }
     .tturn-user .tturn-text { color: var(--text); }
     .tturn-fin .tturn-text { color: var(--text-muted); }
     .tturn:hover { background: var(--hover); color: var(--text); }
@@ -1111,7 +1139,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   <header>
     <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
     <span class="ctx" id="ctx"></span>
-    <span class="count"><span id="count">0</span> requests</span>
+    <span class="count" id="stats"></span>
     <span class="inst" id="inst"></span>
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
@@ -1129,6 +1157,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
     <button id="replay-toggle" title="Replay this session — ←/→ step turns, Space plays">⏵ replay</button>
     <button id="prior-toggle" class="active" title="Show/hide requests merged from previous runs of this session">Prev runs</button>
+    <span id="sel-actions">
+      <span id="sel-count"></span>
+      <button id="sel-shown" title="Select every request currently shown — combine with the filter and category chips to select e.g. all telemetry">all shown</button>
+      <button id="sel-none" title="Clear the selection">none</button>
+      <button id="sel-purge" title="Delete the selected requests from this trace — removes them from the page AND rewrites the .jsonl trace file(s). No undo.">purge</button>
+    </span>
+    <button id="select-toggle" title="Select requests to purge from the trace file (privacy tool — deletes pairs permanently)">Select</button>
     <button id="autoscroll" class="active">Auto-scroll</button>
     <button id="clear">Clear</button>
   </div>
@@ -1187,6 +1222,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let filter = '';
     let activeCat = 'all';
     let showPrior = true;      // include prior-run pairs in the Requests list
+    let selMode = false;       // select-to-purge mode (Requests view)
+    const selIds = new Set();  // selected pair ids
     let view = 'requests';      // 'requests' | 'session'
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session view
@@ -1278,7 +1315,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${loopTurns.toString()}
 
     const statusEl = document.getElementById('status');
-    const countEl = document.getElementById('count');
+    const statsEl = document.getElementById('stats');
     const pairsEl = document.getElementById('pairs');
     const detailEl = document.getElementById('detail');
     const threadsEl = document.getElementById('threads');
@@ -1384,6 +1421,47 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       kimi: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
     };
 
+    // ---- Header trace totals: what this whole trace adds up to ----
+    // requests · in/out tokens · est cost, live-updating; the hover carries
+    // the full breakdown (model calls, cache, thinking, failures, span).
+    // Call info + cost are memoized per pair (extractCallInfo parses SSE —
+    // too heavy to redo for every arriving pair times every pair).
+    function renderStats() {
+      let calls = 0, inTok = 0, outTok = 0, cr = 0, cw = 0, think = 0, cost = 0, errs = 0;
+      let t0 = Infinity, t1 = 0;
+      for (const p of pairs) {
+        const ts = p.request.timestamp || 0;
+        if (ts) { if (ts < t0) t0 = ts; if (ts > t1) t1 = ts; }
+        if (!p.response || p.response.status >= 400) errs++;
+        if (p._cat !== 'messages') continue;
+        const m = p._ci || (p._ci = extractCallInfo(p));
+        calls++;
+        inTok += m.input || 0; outTok += m.output || 0;
+        cr += m.cacheRead || 0; cw += m.cacheWrite || 0; think += m.thinking || 0;
+        if (p._cost === undefined) { const c = pairCost(m); p._cost = c ? c.total : 0; }
+        cost += p._cost;
+      }
+      let t = pairs.length + ' req';
+      if (calls) {
+        t += ' \\u00b7 in ' + fmtCompact(inTok) + ' \\u00b7 out ' + fmtCompact(outTok);
+        if (cost > 0) t += ' \\u00b7 ' + fmtCost(cost);
+      }
+      const tip = ['trace totals'];
+      tip.push(pairs.length + ' requests \\u00b7 ' + calls + ' model calls' + (errs ? ' \\u00b7 ' + errs + ' failed' : ''));
+      if (calls) {
+        tip.push('input ' + inTok.toLocaleString() + ' (uncached) \\u00b7 output ' + outTok.toLocaleString() +
+          (think ? ' \\u00b7 thinking ' + think.toLocaleString() : ''));
+        if (cr || cw) tip.push('cache read ' + cr.toLocaleString() + ' \\u00b7 written ' + cw.toLocaleString());
+        if (cost > 0) tip.push('est. cost ' + fmtCost(cost) + ' \\u2014 sticker pricing over every model call');
+      }
+      if (t0 !== Infinity && t1 > t0) {
+        tip.push('');
+        tip.push(fmtDateTime(new Date(t0 * 1000)) + ' \\u2013 ' + fmtTime(new Date(t1 * 1000)));
+      }
+      statsEl.textContent = t;
+      statsEl.dataset.tip = tip.join('\\n');
+    }
+
     let ctxKey = null;
     function renderCtx() {
       const sid = currentSessionId();
@@ -1404,10 +1482,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (META.project) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
         // The trace title: <project>/<trace-file> — names the artifact
-        // behind this page, live log and view rebuild alike.
+        // behind this page, live log and view rebuild alike. Clicking it
+        // copies the trace's project-relative path (.cctrace/…jsonl) —
+        // the string you paste into "cctrace view" or hand to an agent.
         const label = META.project + (META.traceFile ? '/' + META.traceFile : '');
-        const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '');
-        html += '<span class="ctx-proj" data-mask title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+        const rel = META.traceRelPath || META.traceFile || '';
+        const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '') +
+          (rel ? '\\n\\nclick to copy ' + rel : '');
+        html += '<span class="ctx-proj' + (rel ? ' ctx-copy' : '') + '" data-mask title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
       }
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
@@ -1420,6 +1502,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           btn.classList.add('copied');
           btn.textContent = 'copied';
           setTimeout(function() { btn.classList.remove('copied'); btn.textContent = sid.slice(0, 8); }, 1200);
+        });
+      };
+      const proj = ctxEl.querySelector('.ctx-copy');
+      if (proj) proj.onclick = function() {
+        navigator.clipboard.writeText(META.traceRelPath || META.traceFile || '').then(function() {
+          // color flash only — swapping the text would shift the header
+          proj.classList.add('copied');
+          setTimeout(function() { proj.classList.remove('copied'); }, 1200);
         });
       };
     }
@@ -1536,7 +1626,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           route();
         } else if (msg.type === 'pair') {
           if (!ingestPair(msg.pair)) return;
-          countEl.textContent = pairs.length;
+          renderStats();
           renderCats();
           renderCtx();
           if (passesFilters(msg.pair)) {
@@ -1564,6 +1654,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
+          refreshDetailNav();
+          if (view === 'session') showSession(sessionSelKey);
+        } else if (msg.type === 'purged') {
+          // Pairs deleted via select-to-purge (this page or another one on
+          // the same server): drop them everywhere and re-render.
+          const gone = new Set(msg.ids || []);
+          for (let i = pairs.length - 1; i >= 0; i--) if (gone.has(pairs[i].id)) pairs.splice(i, 1);
+          for (const id of gone) selIds.delete(id);
+          sessionCache = { key: '', threads: [] };
+          if (detailId && gone.has(detailId)) location.hash = '';
+          render();
+          updateSelBar();
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
         }
@@ -1745,7 +1847,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const { request, response, duration } = pair;
         const status = response ? response.status : 'ERR';
         const cat = CAT_BY_ID[pair._cat] || CAT_BY_ID.other;
-        div.className = 'pair' + (pair.id === detailId ? ' selected' : '') + (pair.prior ? ' prior' : '');
+        div.className = 'pair' + (pair.id === detailId ? ' selected' : '') + (pair.prior ? ' prior' : '') +
+          (selMode && selIds.has(pair.id) ? ' sel' : '');
         div.dataset.id = pair.id;
         const when = new Date(request.timestamp * 1000);
         div.innerHTML =
@@ -1772,8 +1875,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function render() {
       renderCats();
       renderCtx();
+      renderStats();
       priorToggle.classList.toggle('avail', pairs.some(p => p.prior));
-      countEl.textContent = pairs.length;
       pairsEl.innerHTML = '';
       if (pairs.length === 0) {
         pairsEl.innerHTML = '<div class="empty">Waiting for requests...' +
@@ -1837,6 +1940,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function setView(v) {
       view = v;
+      if (v === 'session' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
@@ -1852,7 +1956,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       catch (e) { detailEl.innerHTML = detailNavHtml(id) + brokenItem('request', id, e); }
       detailEl.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
       if (isNew) detailEl.scrollTop = 0;
-      countEl.textContent = pairs.length;
       markSelected();
     }
 
@@ -1888,6 +1991,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       if (e.key === '/') { filterEl.focus(); e.preventDefault(); return; }
+      if (view === 'requests' && selMode && !detailId && e.key === 'Escape') { setSelMode(false); return; }
       if (view === 'requests' && detailId) {
         if (e.key === 'Escape') location.hash = '';
         else if (e.key === 'j' || e.key === 'ArrowDown') { navDetail(1); e.preventDefault(); }
@@ -2117,8 +2221,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // extraHtml is raw (not escaped) — only trusted, renderer-built markup
     // like the subagent thread link goes there, never wire-derived strings.
     function fold(title, hint, body, cls, open, extraHtml, icon) {
+      // A hint long enough to ellipsize gets the full text in the hover —
+      // the tooltip answers "what does the rest of this command/preview
+      // say" before the user has to open the fold.
+      const hintTip = hint && hint.length > 60
+        ? ' data-tip="' + escapeHtml(String(hint).slice(0, 600) + (hint.length > 600 ? '\\u2026' : '')) + '"'
+        : '';
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
-        '<summary>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
+        '<summary' + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
         '<span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
         (extraHtml || '') +
@@ -2763,7 +2873,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const n = b.name || '?';
         const i = b.input || {};
         let name = n, args = '', ncls = 'tname';
-        if (SPAWN_TOOLS[n]) {
+        // Spawn shape only (subagent_type / prompt): task-tracking
+        // TaskCreate {subject} falls through to the generic preview.
+        if (SPAWN_TOOLS[n] && (i.subagent_type || typeof i.prompt === 'string')) {
           // The real tool name (Task/Agent) + who was spawned for what —
           // a bare "Task" said nothing when the subagent thread wasn't
           // linked (no branch row). Purple name: spawns are notable.
@@ -2773,7 +2885,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         else if (n === 'Skill') { name = 'skill'; args = i.skill || i.command || ''; }
         else if (n.lastIndexOf('mcp__', 0) === 0) { name = 'mcp'; args = n.slice(5).split('__')[0]; }
-        else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'NotebookEdit') {
+        else if (n === 'Read' || n === 'Write' || n === 'Edit' || n === 'MultiEdit' || n === 'NotebookEdit') {
           // Name WHAT was touched, workspace-relative — "Edit(src/ui.ts)"
           // says more than "Edit". Dedupe is per tool+file.
           args = wsPath(i.file_path || i.notebook_path, ws) || '';
@@ -2782,7 +2894,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // command itself stays in the convo fold. Paths relativize.
         else if (n === 'Bash') args = typeof i.description === 'string' && i.description ? i.description : wsRelText(String(i.command || ''), ws).slice(0, 60);
         else if (n === 'Grep') args = i.pattern || '';
-        else if (n === 'ToolSearch' || n === 'WebSearch') args = i.query || '';
+        else {
+          // Everything else (Glob, WebFetch, SlashCommand, AskUserQuestion,
+          // ExitPlanMode, TaskUpdate, Workflow, MCP resources, ...) takes
+          // its one-line preview — one vocabulary with the convo folds.
+          args = toolPreview(n, i, ws);
+          if (args.length > 60) args = args.slice(0, 59) + '\\u2026';
+        }
         const key = name + '(' + args + ')';
         if (seen[key]) continue;
         seen[key] = 1;
@@ -2848,8 +2966,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         const near = linfo[Math.min(vi, vis.length - 1)];
         const ord = near && near.ord != null ? ordFmt(near.ord) : '?';
-        const tip = 'turn ' + ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
-          (prompt ? '\\n' + prompt.slice(0, 400) : '') +
+        const tip = (prompt ? prompt.slice(0, 400) + (prompt.length > 400 ? '\\u2026' : '') + '\\n\\n' : '') +
+          'turn ' + ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
           '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
         return '<a class="tturn tturn-sup" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' + escapeHtml(tip) + '">' +
           '<span class="rgut"><span class="cdot"></span></span>' +
@@ -2951,8 +3069,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // not one wire message. Ordinals number loops; member rows indent.
       const loops = loopTurns(vis);
       const linfo = {};
+      const loopSize = {}; // member rows a folded head hides
       for (let li = 0; li < loops.length; li++) {
         const L = loops[li];
+        loopSize[li] = L.members.length;
         if (L.head != null) linfo[L.head] = { ord: li, kind: 'head', injected: L.headInjected || '' };
         for (let mi = 0; mi < L.members.length; mi++) {
           const v = L.members[mi];
@@ -2981,17 +3101,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
           const li = linfo[vi] || { ord: null, kind: 'mid' };
+          // A folded loop (❯ gutter click) hides its member rows — the
+          // head line stays with a "⋯ N" count; truth markers (compact/
+          // superseded/failed rows) above never fold away.
+          const folded = li.ord != null && foldedTurns[t.key + '#' + li.ord];
+          if (folded && li.kind !== 'head' && !li.lead) continue;
           const ord = li.ord != null ? ordFmt(li.ord) : '?';
           const ordLabel = li.kind === 'head' || li.lead ? ord : li.kind === 'final' ? '\\u21b3' : '';
-          const rowCls = li.kind === 'head' ? ' tturn-user'
-            : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin');
+          const rowCls = (li.kind === 'head' || li.lead ? ' tturn-head' : '') +
+            (li.kind === 'head' ? ' tturn-user'
+            : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin'));
+          // The tooltip leads with the FULL text the row had to truncate;
+          // metrics and click hints follow — hover answers "what does the
+          // rest say" first.
+          const foldHint = 'click \\u276F to ' + (folded ? 'unfold' : 'fold') + ' this turn\\u2019s work';
           let text = '';
           let dot = '';
           let tip = '';
           if (turn.role === 'assistant') {
+            let raw = '';
             for (const b of turn.blocks || []) {
-              if (b && b.type === 'text' && b.text) { text = escapeHtml(b.text.slice(0, 120)); break; }
+              if (b && b.type === 'text' && b.text) { raw = String(b.text); break; }
             }
+            text = raw ? escapeHtml(raw.slice(0, 120)) : '';
             if (!text) {
               const tl = turnToolLabel(turn); // pre-escaped HTML (.tname spans)
               text = '<span class="tturn-tools">' + (tl ? tl
@@ -3009,8 +3141,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             const failed = p && (!p.response || p.response.status >= 400);
             const cc = u && p ? summarizeCache(u, p.request.body) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
-            const tbits = ['turn ' + ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
-              (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : '')];
+            const tbits = [];
+            if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '');
+            tbits.push('turn ' + ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
+              (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : ''));
             if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
               let l = 'in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output);
@@ -3027,7 +3161,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (cc) tbits.push(cc.title);
             if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
             if (!p) tbits.push('unattributed \\u2014 no captured request matches this reply');
-            tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn';
+            tip = tbits.join('\\n') + '\\n\\nclick to jump to this turn' + (li.lead ? '\\n' + foldHint : '');
           } else if (li.injected) {
             // A user-ROLE wire message the harness generated (recap, tool
             // load, automated notification) — it must never read as the
@@ -3044,20 +3178,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             text = '<span class="sys-tag">' + escapeHtml(li.injected) + '</span>' +
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
-            tip = 'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
-              'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human\\n' +
-              s.slice(0, 400) + '\\n\\nclick to jump to this turn';
+            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\n' +
+              'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
+              'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human' +
+              '\\n\\nclick to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
             dot = '<span class="gut-user">\\u276F</span>'; // the human's prompt
-            tip = 'turn ' + ord + ' \\u00b7 user prompt\\n' + s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\nclick to jump to this turn';
+            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n\\n' +
+              'turn ' + ord + ' \\u00b7 user prompt\\n\\nclick to jump to this turn\\n' + foldHint;
           }
+          const hidN = folded ? loopSize[li.ord] - (li.kind === 'head' ? 0 : 1) : 0;
+          const foldN = hidN > 0 ? '<span class="tturn-fold-n" title="' + hidN + ' agent message' + (hidN === 1 ? '' : 's') + ' folded \\u2014 click \\u276F to unfold">\\u22ef ' + hidN + '</span>' : '';
           html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
-            ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '" data-tip="' + escapeHtml(tip) + '">' +
+            ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
+            (li.ord != null && (li.kind === 'head' || li.lead) ? ' data-fold="' + li.ord + '"' : '') +
+            ' data-tip="' + escapeHtml(tip) + '">' +
             '<span class="rgut">' + dot + '</span><span class="tturn-ord">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span></a>';
-          if (turn.role === 'assistant') html += branchRows(turn);
+            '<span class="tturn-text">' + text + '</span>' + foldN + '</a>';
+          if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
       }
       // boundary rows / superseded exchanges / error runs whose position
@@ -3192,6 +3332,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // positionally (sections can appear mid-run). Unset = default (newest
     // session and the selection's session open, the rest collapsed).
     const sessOpen = {};
+    // Outline turns folded via the ❯ gutter — keyed by thread key + loop
+    // ordinal so live re-renders (and thread switches back and forth)
+    // keep what the user collapsed.
+    const foldedTurns = {};
 
     function renderThreadsPane(threads, sel) {
       const card = (t) => {
@@ -3278,6 +3422,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       for (const a of threadsEl.querySelectorAll('a.tepoch[data-key], a.tturn[data-key]')) {
         a.addEventListener('click', (e) => {
+          // The ❯ gutter on a turn head is the fold toggle; the rest of the
+          // row jumps. One row, two targets — like a tree view.
+          if (a.dataset.fold != null && e.target && e.target.closest && e.target.closest('.rgut')) {
+            e.preventDefault();
+            e.stopPropagation();
+            const k = a.dataset.key + '#' + a.dataset.fold;
+            foldedTurns[k] = !foldedTurns[k];
+            showSession(sessionSelKey);
+            return;
+          }
           e.preventDefault();
           e.stopPropagation();
           jumpToTurn(a.dataset.key, +a.dataset.turn);
@@ -3389,7 +3543,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         let cls = '';
         let extra = '';
         let icon = '';
-        if (SPAWN_TOOLS[name]) {
+        const inp = b.input || {};
+        // Spawn shape only — task-tracking TaskCreate {subject} is a plain
+        // tool fold, not a "subagent" title with no thread behind it.
+        if (SPAWN_TOOLS[name] && (inp.subagent_type || typeof inp.prompt === 'string')) {
           title = 'subagent';
           cls = 'fold-agent';
           icon = ICON_EPOCH;
@@ -3841,6 +3998,75 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     });
     rpTrack.addEventListener('pointermove', (e) => { if (rpDragging) seekFromPointer(e); });
     rpTrack.addEventListener('pointerup', () => { rpDragging = false; updateReplayHash(); });
+
+    // ---- Select-to-purge ----
+    // The web face of "cctrace purge", but by hand-picked request: enter
+    // selection mode, click rows (or "all shown" with a filter active),
+    // purge. The server deletes the pairs from memory AND rewrites the
+    // backing .jsonl file(s) — a privacy tool, so it confirms first and
+    // reports what could not be rewritten. Snapshots have no server to
+    // delete from; the button hides there.
+    const selectToggle = document.getElementById('select-toggle');
+    const selCount = document.getElementById('sel-count');
+    const selShown = document.getElementById('sel-shown');
+    const selNone = document.getElementById('sel-none');
+    const selPurge = document.getElementById('sel-purge');
+    function updateSelBar() {
+      if (!selMode) return;
+      selCount.textContent = selIds.size + ' selected';
+      selPurge.disabled = selIds.size === 0;
+      selPurge.textContent = selIds.size ? 'purge ' + selIds.size : 'purge';
+    }
+    function setSelMode(on) {
+      selMode = on;
+      if (!on) selIds.clear();
+      document.body.classList.toggle('selecting', on);
+      selectToggle.classList.toggle('active', on);
+      render();
+      updateSelBar();
+    }
+    selectToggle.onclick = () => setSelMode(!selMode);
+    selNone.onclick = () => { selIds.clear(); render(); updateSelBar(); };
+    selShown.onclick = () => {
+      for (const p of visibleList()) selIds.add(p.id);
+      render();
+      updateSelBar();
+    };
+    // Row clicks toggle selection instead of navigating (capture phase so
+    // the row's anchor never fires).
+    pairsEl.addEventListener('click', (e) => {
+      if (!selMode) return;
+      const row = e.target && e.target.closest ? e.target.closest('.pair') : null;
+      if (!row || !row.dataset.id) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (selIds.has(row.dataset.id)) selIds.delete(row.dataset.id);
+      else selIds.add(row.dataset.id);
+      row.classList.toggle('sel', selIds.has(row.dataset.id));
+      updateSelBar();
+    }, true);
+    selPurge.onclick = () => {
+      const n = selIds.size;
+      if (!n) return;
+      if (!confirm('Purge ' + n + ' request' + (n === 1 ? '' : 's') + ' from the trace?\\n\\n' +
+        'This deletes them from the page AND rewrites the .jsonl trace file(s). There is no undo.')) return;
+      fetch('/api/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selIds) }),
+      }).then(r => r.json().then(res => ({ ok: r.ok, res })))
+        .then(({ ok, res }) => {
+          if (!ok) { alert('purge failed: ' + (res.error || 'server error')); return; }
+          // The 'purged' broadcast removes the rows on every connected page,
+          // this one included. Only surface what did NOT fully happen.
+          if (res.skippedFiles && res.skippedFiles.length) {
+            alert('Purged from the page, but these file(s) could not be rewritten (live writer or archive changed mid-flight):\\n' +
+              res.skippedFiles.join('\\n') + '\\n\\nRe-run the purge, or use: cctrace purge');
+          }
+        })
+        .catch(e => alert('purge failed: ' + e));
+    };
+    if (IS_SNAPSHOT) selectToggle.style.display = 'none';
 
     filterEl.oninput = () => { filter = filterEl.value; render(); refreshDetailNav(); };
     priorToggle.onclick = () => {

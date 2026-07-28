@@ -62,3 +62,17 @@ Reuse: audit the rules against the shipped code, not the code against a stale
 rule. A design bible that lies is worse than none. When code and doc disagree
 and the code is defensible, the doc is the bug.
 Expires: never.
+
+## 2026-07-28 scar family: surfaces asserting knowledge they don't have
+Three instances caught in one review batch (sj): a served saved trace showed
+a live/offline WebSocket dot ("offline" on a finished document reads as an
+error); the view picker listed timestamp filenames as if they identified
+anything; and a "time travel" rebrand was proposed for replay (a metaphor
+claiming more than the feature does). Fixed as: page mode "view" (document
+semantics, no live framing), identity-first picker rows (client · session ·
+first prompt, stamped at capture time), rename cut.
+Reuse: before shipping any surface, ask what it CLAIMS vs what it KNOWS. A
+status dot claims liveness; a filename claims identity; a name claims a
+capability. If the claim exceeds the observation, the surface is lying —
+same rule as the wire reconstruction (superseded, not "rewound").
+Expires: never.

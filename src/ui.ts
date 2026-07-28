@@ -92,6 +92,9 @@ export interface PageMeta {
   traceRelPath?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
+  /** "view" when the page serves a saved trace (cctrace view) — the UI
+   * reads as a document (no live/offline framing, opens at the top). */
+  mode?: string;
   /** cctrace version that produced this page/snapshot. */
   version?: string;
   /** Newer version known from the update check, if any. */
@@ -1209,6 +1212,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const pairs = [];
     // Snapshot pages embed their pairs in <head>; live pages stream over WS.
     const IS_SNAPSHOT = Array.isArray(window.__PAIRS__);
+    // A served saved trace (cctrace view): the WebSocket is only the data
+    // channel — the page must read as a finished document, never as a live
+    // capture that happens to be "offline" (ui.md: never pretend).
+    const IS_VIEW = !IS_SNAPSHOT && META.mode === 'view';
+    const IS_READING = IS_SNAPSHOT || IS_VIEW;
     // Every pair enters through here: a structurally broken one (no request
     // object / url — a torn trace line or a capture bug) is dropped with a
     // console note. Renderers, buildSession, and the replay timeline all
@@ -1479,7 +1487,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (client) t += client;
       if (META.project) { if (t) t += ' \\u00b7 '; t += META.project; }
       if (sid) { if (t) t += ' \\u00b7 '; t += sid.slice(0, 8); }
-      document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_SNAPSHOT ? 'CCTrace' : 'CCTrace live');
+      document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_READING ? 'CCTrace' : 'CCTrace live');
       let html = '';
       if (client) {
         html += '<span class="ctx-client" title="traced CLI">' + (CLIENT_ICONS[client] || '') +
@@ -1614,9 +1622,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // forwards the server's bound port is not the port the browser sees,
       // and a baked URL can hand this page another instance's stream.
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
-      ws.onopen = () => { statusEl.textContent = 'live'; statusEl.className = 'status connected'; };
+      ws.onopen = () => {
+        if (IS_VIEW) { statusEl.textContent = 'view'; statusEl.className = 'status snapshot'; }
+        else { statusEl.textContent = 'live'; statusEl.className = 'status connected'; }
+      };
       ws.onclose = () => {
-        statusEl.textContent = 'offline'; statusEl.className = 'status disconnected';
+        // A view page losing its server is not an outage — the document is
+        // already here. Only a live capture reports "offline".
+        if (IS_VIEW) { statusEl.textContent = 'view'; statusEl.className = 'status snapshot'; }
+        else { statusEl.textContent = 'offline'; statusEl.className = 'status disconnected'; }
         setTimeout(connect, 1000);
       };
       ws.onmessage = (e) => {
@@ -1958,6 +1972,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     window.addEventListener('hashchange', route);
 
     function setView(v) {
+      // Entering the sessions view must POSITION both panes — the outline
+      // scrolled to its active row, the conversation at its landing point —
+      // instantly: arrival is not a jump, the destination is simply there
+      // (ui.md motion budget; animation is reserved for in-view jumps).
+      if (v === 'session' && view !== 'session') pendingSessionFocus = true;
       view = v;
       if (v === 'session' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
@@ -2731,6 +2750,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       renderThreadsPane(threads, sel);
       renderConvoPane(sel);
+      if (pendingSessionFocus) {
+        pendingSessionFocus = false;
+        focusThreadsPane();
+        // Live entry lands on the newest turn (terminal semantics); reading
+        // modes (snapshot/view) keep their document position.
+        if (!IS_READING) convoToBottom();
+      }
+    }
+
+    // On entry the outline must answer "where am I": scroll the threads
+    // pane so the selected session/thread is in view. Instant — arrival
+    // positioning, not a jump. Live re-renders preserve scrollTop, so this
+    // runs once per entry into the sessions view.
+    let pendingSessionFocus = false;
+    function focusThreadsPane() {
+      const el = threadsEl.querySelector && (
+        threadsEl.querySelector('.thread.selected') ||
+        threadsEl.querySelector('details.sess.selected'));
+      if (!el || !el.getBoundingClientRect) return;
+      const top = el.getBoundingClientRect().top - threadsEl.getBoundingClientRect().top;
+      threadsEl.scrollTop = Math.max(0, threadsEl.scrollTop + top - 8);
     }
 
     // ---- Designed tooltip (page-wide) ----
@@ -3874,7 +3914,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       applyConvoParts(t, parts, foldState, sameThread);
       convoKey = t.key;
       if (!sameThread) {
-        convoEl.scrollTop = IS_SNAPSHOT ? 0 : convoEl.scrollHeight;
+        convoEl.scrollTop = IS_READING ? 0 : convoEl.scrollHeight;
         tailPill.classList.remove('show');
       } else if (stick) {
         convoToBottom();
@@ -3960,7 +4000,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.body.classList.remove('replaying');
       if (view === 'session') {
         showSession(sessionSelKey);
-        if (!IS_SNAPSHOT) convoToBottom();
+        if (!IS_READING) convoToBottom();
         if (sessionSelKey) history.replaceState(null, '', threadHash(sessionSelKey));
       }
     }
@@ -4062,8 +4102,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     replayToggle.onclick = () => { replay.active ? exitReplay() : enterReplay(); };
-    rpExit.textContent = IS_SNAPSHOT ? '\\u2715 exit' : 'live \\u2913';
-    rpExit.title = IS_SNAPSHOT ? 'Exit replay (Esc)' : 'Exit replay, back to the live tail (Esc)';
+    rpExit.textContent = IS_READING ? '\\u2715 exit' : 'live \\u2913';
+    rpExit.title = IS_READING ? 'Exit replay (Esc)' : 'Exit replay, back to the live tail (Esc)';
     rpExit.onclick = exitReplay;
     rpRestart.onclick = () => {
       if (!replay.active) enterReplay();
@@ -4200,6 +4240,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       autoScroll = false;
       autoScrollBtn.classList.remove('active');
     } else {
+      if (IS_VIEW) {
+        // Reading a finished trace: no auto-tail, the document opens where
+        // documents open. The socket still loads the pairs.
+        statusEl.textContent = 'view';
+        statusEl.className = 'status snapshot';
+        autoScroll = false;
+        autoScrollBtn.classList.remove('active');
+      }
       connect();
     }
     render();

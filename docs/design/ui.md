@@ -64,12 +64,19 @@ to protect that feeling.
 - Floating chrome is limited to the tail pill and the nav rail; the rail is
   faint until hovered and every button names its keyboard shortcut.
 - Hover detail is one page-wide `.tip` singleton (filled from `data-tip`,
-  first line = heading). A plain `title=` is folded into it on first hover
-  (moved to `data-tip` so the native tooltip never fires). A ~120ms show
-  delay debounces mousing across a row of chips — a debounce, not motion.
+  first line = heading, a line of exactly `---` = hairline section divider,
+  a `> ` prefix = faint interaction hint). A plain `title=` is folded into
+  it on first hover (moved to `data-tip` so the native tooltip never
+  fires). A ~120ms show delay debounces mousing across a row of chips — a
+  debounce, not motion. Max width 320px, below the threads pane's 400px.
 - A tooltip on a truncated surface LEADS with the full text the surface cut
-  off (capped ~600 chars); metadata and click hints follow. Hover answers
-  "what does the rest say" before anything else.
+  off (capped ~600 chars); a divider, then metrics, then hints. Hover
+  answers "what does the rest say" first and "what can I do" last.
+- Tooltips anchored inside the threads pane fly out to the RIGHT of the
+  pane, never below the row — a below-tip covers the very rows the user is
+  scanning. The tip hides when a live re-render detaches its anchor.
+- A symbol that is also a control (the ❯ fold gutter) carries its own
+  tooltip explaining the control; the row around it keeps the content tip.
 - Select-to-purge is the one destructive surface: entered explicitly
   (toolbar Select), rows grow a quiet ○/● check gutter, the purge button
   wears the state red, and a confirm dialog spells out that trace files are

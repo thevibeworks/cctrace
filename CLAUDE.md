@@ -137,6 +137,15 @@ the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
 live runs, view serves, and snapshots all name the .jsonl behind the page;
 view resolves the project from the log dir's parent when it's a standard
 ./.cctrace, and projectPath is that repo root so tool paths relativize;
+live/tail pages carry a PULSE strip (bottom of the session view, body
+.pulse-on): newest model call's tool labels + age (1s tick — the one
+ticking surface, terminal convention) + the newest request's cache
+deadline (absolute hold-until, amber "expired" past it; the same 1s
+timer re-renders the requests list once when the deadline crosses).
+Boot shows a rotating loading VERB (ccx tradition, #boot-verb) until
+the first render replaces it. The cache "expired" state also renders
+on the detail panel's cache chip and the outline's newest-turn hover
+— newest model call ONLY (later hits refresh the TTL);
 clicking the title copies PageMeta.traceRelPath, the project-relative
 ".cctrace/trace-….jsonl" ready for `cctrace view`) and the current session id (extracted
 client-side from pairs, newest live pair wins, click to copy) — the tab
@@ -618,6 +627,12 @@ cctrace view <target> --html              # write a snapshot .html instead (shar
 cctrace view <target> --slice a..b        # narrow to a slice window first (the @a..b
                                           # of a slice deep link) — with --html this
                                           # is the small shareable artifact
+cctrace view <target> --tail              # follow the trace file live (tail -f the
+                                          # .jsonl: poll + complete-lines-only via
+                                          # followTrace in src/view.ts; mode "tail" —
+                                          # live UI behavior + a "tail" status chip;
+                                          # the deva case: a sibling container shares
+                                          # the .jsonl but not the capture's port)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly

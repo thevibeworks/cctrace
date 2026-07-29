@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.28.0
+
+- Added cctrace view --tail (alias --live): follow a running capture's trace file like tail -f — a second window (or a sibling container sharing the .jsonl but not the capture's port) gets a live view server that polls the file, ingests complete new lines, and streams them to the page; torn tail lines are held until their newline arrives, truncations rescan with id-dedup, and the status chip says "tail"
+- Added the pulse: a terminal-like status line at the bottom of the session view on live and tail pages — what the model last did (tool labels from the newest reply), how long ago, and the one cache deadline that matters, absolute while it holds and an amber "expired" once passed
+- Added loading verbs: pages open with a ccx-style rotating gerund ("Reticulating…", "Teeing…") instead of a blank screen while the wire loads
+- Added the cache "expired" state to the request detail panel and the session outline hover — on the newest model call only, since any later hit refreshes the TTL and older deadlines mean nothing; live pages now flip to "expired" the moment the deadline passes instead of waiting for a reload
+- Fixed duplicate row broadcasts when a followed trace file is rewritten mid-tail (purge): pairs the server already holds are no longer re-announced to connected pages
+
 ## 0.27.0
 
 - Added timeline slices to replay: shift+drag on the scrubber selects a range; both panes rebuild from that window's pairs only, playback and stepping bound to it, and the selection renders as a band on the track with a chip naming the range and its pair count

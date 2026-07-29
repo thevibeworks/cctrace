@@ -89,3 +89,27 @@ describe("applySlice", () => {
     expect(() => applySlice(ps, "zz..a1")).toThrow(ViewError);
   });
 });
+
+describe("followTrace", () => {
+  test("delivers complete appended lines, buffers torn tails, survives truncation", async () => {
+    const { followTrace } = await import("../src/view");
+    const { appendFileSync, writeFileSync: wf, statSync: st } = await import("fs");
+    const f = join(dir, "live.jsonl");
+    wf(f, JSON.stringify(pair("t1", SID_A, 100)) + "\n");
+    const got: string[] = [];
+    const h = followTrace(f, st(f).size, (ps) => got.push(...ps.map((p: any) => p.id)), 15);
+    // a complete line + a torn line (no newline yet)
+    appendFileSync(f, JSON.stringify(pair("t2", SID_A, 200)) + "\n" + '{"id":"t3","request"');
+    await new Promise((r) => setTimeout(r, 60));
+    expect(got).toEqual(["t2"]); // t3 is torn — held, not delivered
+    // the torn line completes
+    appendFileSync(f, ':{"timestamp":300,"url":"https://api.anthropic.com/v1/messages"}}' + "\n");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(got).toEqual(["t2", "t3"]);
+    // truncation (purge rewrote the file) — rescan from 0, dedup is the server's job
+    wf(f, JSON.stringify(pair("t4", SID_A, 400)) + "\n");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(got).toContain("t4");
+    h.stop();
+  });
+});

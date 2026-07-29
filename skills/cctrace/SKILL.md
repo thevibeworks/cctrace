@@ -161,6 +161,8 @@ cctrace view <target> --html              # write a snapshot .html instead
                                           # (shareable; huge traces choke browsers)
 cctrace view <target> --slice a..b        # narrow to a slice window (the @a..b of a
                                           # slice deep link); with --html = small artifact
+cctrace view <target> --tail              # follow a RUNNING capture's trace live from
+                                          # another terminal/container (tail -f the .jsonl)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)

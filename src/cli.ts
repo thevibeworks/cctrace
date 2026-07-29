@@ -12,7 +12,7 @@ import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, parseTraceText, r
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, applySlice, listTraceInfos, peekTrace, ViewError } from "./view";
+import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, ViewError } from "./view";
 import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
@@ -209,7 +209,7 @@ function openBrowser(url: string) {
 // no-op. No proxy, no Claude spawn either way. Returns true when a server
 // was started and the process must stay alive.
 async function runView(args: string[]): Promise<boolean> {
-  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--html] [--slice a..b] [--port N] [--dir DIR] [--no-open]";
+  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--tail] [--html] [--slice a..b] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -219,6 +219,8 @@ async function runView(args: string[]): Promise<boolean> {
         "no-open": { type: "boolean" },
         html: { type: "boolean" },
         serve: { type: "boolean" }, // legacy alias of the default
+        tail: { type: "boolean" },  // follow the trace file live (tail -f the .jsonl)
+        live: { type: "boolean" },  // alias of --tail
         slice: { type: "string" },  // pair-id window: the @a..b of a slice deep link
         port: { type: "string" },
       },
@@ -310,6 +312,7 @@ async function runView(args: string[]): Promise<boolean> {
         port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
         noOpen: !!parsed.values["no-open"],
         slice: parsed.values.slice as string | undefined,
+        tail: !!(parsed.values.tail || parsed.values.live),
       });
       return true;
     }
@@ -424,9 +427,16 @@ function runSpec(args: string[]) {
 // are seeded into the live web server instead of embedded in a file. The run
 // registers in the instance registry like any live capture (mode "view"), so
 // `cctrace ps` and the header switcher see it. Ctrl-C stops it.
-function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean; slice?: string }) {
+function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean; slice?: string; tail?: boolean }) {
   const result = resolveView(target, logDir);
   if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
+  // --tail follows plain .jsonl files only: archives can't grow, and a
+  // slice is a closed window — both quietly fall back to a static view.
+  const tailPaths = opts.tail && !opts.slice
+    ? result.sourcePaths.filter((p) => /\.jsonl$/.test(p))
+    : [];
+  const tailing = tailPaths.length > 0;
+  if (opts.tail && !tailing) log("--tail: no plain .jsonl source to follow (archive or slice) — serving static view", C.yellow);
   log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}` +
     (opts.slice ? ` (slice ${opts.slice})` : ""), C.cyan);
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
@@ -451,7 +461,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     meta: {
       ...pageMeta(client), project: viewProject, projectPath: projectRoot,
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, join(viewDir, viewTrace)),
-      mode: "view",
+      mode: tailing ? "tail" : "view",
     },
     dataDir: DATA_DIR,
     instanceId,
@@ -476,10 +486,19 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     client,
     startedAt: new Date().toISOString(),
   });
+  if (tailing) {
+    // Follow each source from its current end — the initial load already
+    // holds everything before it; the server's knownIds dedups overlap.
+    for (const p of tailPaths) {
+      let off = 0;
+      try { off = statSync(p).size; } catch {}
+      followTrace(p, off, (pairs) => { for (const pr of pairs) server.ingest(pr); });
+    }
+  }
   process.on("exit", () => instance?.unregister());
   process.on("SIGINT", () => process.exit(0));
   process.on("SIGTERM", () => process.exit(0));
-  log(`Serving ${result.sources.join(", ")} at http://localhost:${server.port} — Ctrl-C to stop`, C.green);
+  log(`Serving ${result.sources.join(", ")} at http://localhost:${server.port}${tailing ? " — tailing live" : ""} — Ctrl-C to stop`, C.green);
   if (!opts.noOpen) setTimeout(() => openBrowser(`http://localhost:${server.port}`), 300);
 }
 
@@ -906,6 +925,7 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace view 4f9a2c1e             ${C.dim}# reopen by Claude Code session id${C.reset}
   cctrace view 4f9a2c1e --html      ${C.dim}# write a shareable snapshot .html instead${C.reset}
   cctrace view latest --slice a..b  ${C.dim}# just a slice window (the @a..b of a slice link)${C.reset}
+  cctrace view latest --tail        ${C.dim}# follow a running capture's trace live (tail -f)${C.reset}
   cctrace purge --drop telemetry --yes ${C.dim}# strip telemetry rows from saved traces${C.reset}
 
   ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}

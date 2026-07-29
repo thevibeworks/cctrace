@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.1
+
+- Fixed every live and view page failing to load in 0.25.0 with "Cannot access 'META' before initialization": the view-mode check read META above its declaration, killing the whole page script; snapshot pages were unaffected because their code path short-circuits before the read
+- Added live-page boot execution to the test suite: the non-snapshot script path (WebSocket connect, init/pair frames, view-mode boot) now runs under the DOM stub, so a declaration-order bug in the page script fails a unit test instead of shipping
+
 ## 0.25.0
 
 - Added cctrace spec: an observed-wire catalog built from saved traces — endpoints, methods, statuses, header names, body field shapes (types + presence counts), and SSE event types, every entry stamped with sample counts and first/last-seen. Observations with provenance, never inferred truth: no OpenAPI guessing, values redacted by design except content-negotiation headers and model ids (regression-tested — auth material, prompts, and ids cannot enter the artifact). Volatile path segments normalize ({uuid}, {hex}, {n}, {token}) so catalogs compare cleanly

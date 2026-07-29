@@ -1,8 +1,8 @@
 import { describe, test, expect } from "bun:test";
 import { parseFragment } from "parse5";
-import { renderSnapshot, verifySnapshot } from "../src/ui";
+import { renderSnapshot, verifySnapshot, getLiveHtml } from "../src/ui";
 import { parseTraceText, type TraceParseStats } from "../src/history";
-import { bootSnapshotPage } from "./dom-stub";
+import { bootSnapshotPage, bootPage } from "./dom-stub";
 import type { TracePair } from "../src/types";
 
 // The snapshot page builds its DOM as innerHTML strings from captured wire
@@ -88,6 +88,33 @@ function fragmentErrors(page: ReturnType<typeof bootSnapshotPage>): string[] {
   }
   return out;
 }
+
+describe("live page boot", () => {
+  // 0.25.0 shipped IS_VIEW reading META.mode ABOVE `const META` — a temporal
+  // dead zone that killed every live page at load. Snapshot boots never caught
+  // it: IS_SNAPSHOT short-circuits the read. These boots execute the
+  // NON-snapshot script path, where declaration order actually runs.
+  test("a live capture page boots, connects, and ingests ws frames cleanly", () => {
+    const page = bootPage(getLiveHtml({}));
+    expect(page.errors).toEqual([]);
+    const ws = page.sockets[0]!;
+    ws.onopen!({});
+    expect(page.els["status"].textContent).toBe("live");
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: msgPair("p2") }) });
+    page.goto("#/session");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.els["convo"].innerHTML).toContain("hello");
+  });
+
+  test("a view page boots as a document: status view, no auto-tail", () => {
+    const page = bootPage(getLiveHtml({ mode: "view" }));
+    expect(page.errors).toEqual([]);
+    expect(page.els["status"].textContent).toBe("view");
+    expect(page.els["autoscroll"].classList.contains("active")).toBe(false);
+  });
+});
 
 describe("generated markup grammar", () => {
   test("hostile captures render on every route with zero HTML parse errors", () => {

@@ -508,9 +508,23 @@ hash-routed:
   jump, Esc exits. The scrubber doubles as a minimap (turns = tall accent
   marks, errors red, probes short ticks). Deep links anchor on pair id —
   `#/session/<key>/@<pair-id>` opens paused at that moment (ids survive
-  cross-run merges; wall-clock offsets wouldn't). Works identically in
-  snapshots; live captures extend the track and "live ⤓" re-attaches the
-  tail. P1+P2 shipped; P3 (--record-timing chunk replay) + P4 remain
+  cross-run merges; wall-clock offsets wouldn't). SLICES: shift+drag on
+  the track selects a range (`sliceWindow` in src/replay.ts — pairs whose
+  response completed inside it, every category); while set, both panes
+  rebuild from the window only, playback/stepping/scrubbing bound to it,
+  the band + a chip render on the transport bar, and the deep link
+  becomes `@a..b` (the window's edge pair ids by END time —
+  sliceBoundPairs). The chip's "export" downloads `/api/slice.html?from=
+  &to=` — a snapshot holding exactly the window's pairs (~KBs, the
+  honest shareable artifact; whole-session --html pages run 100s of MB);
+  `cctrace view <t> --slice a..b` is the CLI face (applySlice in
+  src/view.ts), composing with --html and serve. A shift-CLICK
+  (zero-width window) clears instead of filtering everything out; ✕ on
+  the chip clears; Esc exits replay and the slice with it. Works
+  identically in snapshots (export hidden — no server); live captures
+  extend the track and "live ⤓" re-attaches the tail. P1+P2+slices
+  shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
+  moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
@@ -601,6 +615,9 @@ cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves
                                           # (--port N; --serve = legacy alias)
 cctrace view <target> --html              # write a snapshot .html instead (shareable,
                                           # but a big session renders 100s of MB)
+cctrace view <target> --slice a..b        # narrow to a slice window first (the @a..b
+                                          # of a slice deep link) — with --html this
+                                          # is the small shareable artifact
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly

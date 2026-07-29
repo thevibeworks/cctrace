@@ -114,6 +114,27 @@ describe("live page boot", () => {
     expect(page.els["status"].textContent).toBe("view");
     expect(page.els["autoscroll"].classList.contains("active")).toBe(false);
   });
+
+  test("a slice deep link (@a..b) enters replay with the window set", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1"), msgPair("p2"), msgPair("p3")] }) });
+    page.goto("#/session/aaaabbbb/@p1..p2");
+    expect(page.errors).toEqual([]);
+    expect(page.els["rp-slice"].style.display).toBe("block");
+    expect(page.els["rp-slice-chip"].innerHTML).toContain("2 pairs");
+    expect(page.els["rp-slice-chip"].innerHTML).toContain("export");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a single-pair deep link (@id) still works after the range grammar", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1"), msgPair("p2")] }) });
+    page.goto("#/session/aaaabbbb/@p1");
+    expect(page.errors).toEqual([]);
+    expect(page.els["rp-slice"].style.display).not.toBe("block");
+  });
 });
 
 describe("steps tree (turn → steps → final/recap)", () => {

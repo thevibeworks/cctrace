@@ -63,6 +63,7 @@ import {
   prevBoundary,
   anchorAt,
   nextTick,
+  sliceWindow,
 } from "./replay";
 
 // The whole web UI lives in this file: one self-contained HTML page serving
@@ -443,6 +444,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       background: color-mix(in srgb, var(--accent) 14%, transparent);
       pointer-events: none;
     }
+    /* the slice band: a selected range of the timeline (shift+drag) */
+    #rp-slice {
+      position: absolute; top: 0; bottom: 0; display: none;
+      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      border-left: 1px solid var(--accent); border-right: 1px solid var(--accent);
+      pointer-events: none;
+    }
+    #rp-slice-chip { display: none; align-items: center; gap: 6px; font-size: 11px;
+      color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    #rp-slice-chip .rp-btn { font-size: 10px; padding: 3px 7px; }
     #rp-marks { position: absolute; inset: 0; pointer-events: none; }
     .rp-mark {
       position: absolute; top: 50%; width: 2px; height: 7px;
@@ -1199,12 +1210,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         <button class="rp-speed" data-speed="8">8x</button>
         <button class="rp-speed" data-speed="60">60x</button>
       </span>
-      <div id="rp-track" title="Drag to scrub — ticks are wire requests, tall marks are turns">
+      <div id="rp-track" title="Drag to scrub — ticks are wire requests, tall marks are turns. Shift+drag selects a slice">
         <div id="rp-fill"></div>
+        <div id="rp-slice"></div>
         <div id="rp-marks"></div>
         <div id="rp-handle"></div>
       </div>
       <span id="rp-time">0:00 / 0:00</span>
+      <span id="rp-slice-chip"></span>
       <button class="rp-btn" id="rp-exit"></button>
     </div>
     <div id="session-main">
@@ -1314,6 +1327,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${visibleAt.toString()}
     ${nextBoundary.toString()}
     ${prevBoundary.toString()}
+    ${sliceWindow.toString()}
     ${anchorAt.toString()}
     ${nextTick.toString()}
 
@@ -1353,6 +1367,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpMarks = document.getElementById('rp-marks');
     const rpHandle = document.getElementById('rp-handle');
     const rpTime = document.getElementById('rp-time');
+    const rpSlice = document.getElementById('rp-slice');
+    const rpSliceChip = document.getElementById('rp-slice-chip');
     const filterEl = document.getElementById('filter');
     const autoScrollBtn = document.getElementById('autoscroll');
     const clearBtn = document.getElementById('clear');
@@ -1959,10 +1975,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (anchor) { try { anchor = decodeURIComponent(anchor); } catch {} }
         setView('session');
         if (anchor) {
-          // Deep link to a moment: enter replay paused at that pair's end.
-          const p = pairs.find(x => x.id === anchor);
-          if (p) {
-            replay.cursor = pairEndMs(p);
+          // Deep link to a moment (@pair) or a slice (@a..b): enter replay
+          // paused — at that pair's end, or at the window's end with the
+          // slice set (pair ids survive cross-run merges; clocks wouldn't).
+          const dots = anchor.indexOf('..');
+          const pa = pairs.find(x => x.id === (dots === -1 ? anchor : anchor.slice(0, dots)));
+          const pb = dots === -1 ? pa : pairs.find(x => x.id === anchor.slice(dots + 2));
+          if (pa && pb) {
+            if (dots !== -1) {
+              replay.sliceA = pairEndMs(pa);
+              replay.sliceB = pairEndMs(pb);
+            }
+            replay.cursor = Math.max(pairEndMs(pa), pairEndMs(pb));
             if (!replay.active) {
               replay.active = true;
               document.body.classList.add('replaying');
@@ -2684,10 +2708,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function getThreads() {
       // Cache on the anchor pair, not the raw cursor: every cursor position
       // between two boundaries sees the same wire, so scrubbing stays cheap.
-      const a = replay.active ? ((anchorAt(replayEvents(pairs), replay.cursor) || { id: '^' }).id) : 'live';
-      const key = pairs.length + ':' + a;
+      // A slice narrows the source to its window first — the session
+      // rebuilds from exactly the pairs the slice (and its export) holds.
+      const base = replay.active ? slicePairs(pairs) : pairs;
+      const a = replay.active ? ((anchorAt(replayEvents(base), replay.cursor) || { id: '^' }).id) : 'live';
+      const key = pairs.length + ':' + a + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
       if (sessionCache.key !== key) {
-        const src = replay.active ? visibleAt(pairs, replay.cursor) : pairs;
+        const src = replay.active ? visibleAt(base, replay.cursor) : pairs;
         sessionCache = { key, threads: buildSession(src, CLIENT_WIRE).threads };
       }
       return sessionCache.threads;
@@ -4049,8 +4076,34 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // everything after doesn't exist yet. Both panes rebuild from the
     // visible subset via the normal buildSession path; playback is a
     // setTimeout ladder over response-end boundaries with idle compression.
-    const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null };
+    const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null };
     const IDLE_CAP_MS = 2000;
+
+    // The slice: a selected range of the timeline (shift+drag on the track).
+    // While set, the session rebuilds from the window's pairs only and
+    // playback/stepping bound to it; the export artifact IS this window.
+    function sliceActive() { return replay.sliceA != null && replay.sliceB != null; }
+    function slicePairs(list) {
+      return sliceActive() ? sliceWindow(list, replay.sliceA, replay.sliceB) : list;
+    }
+    function clearSlice() {
+      replay.sliceA = null;
+      replay.sliceB = null;
+      refreshReplay();
+      updateReplayHash();
+    }
+    // The window's edge pairs BY END TIME — the slice's durable address
+    // (the deep link and the export both name the window by these two ids,
+    // which survive cross-run merges where wall-clock offsets wouldn't).
+    function sliceBoundPairs(w) {
+      let lo = null, hi = null;
+      for (const p of w || []) {
+        if (!p.id) continue;
+        if (!lo || pairEndMs(p) < pairEndMs(lo)) lo = p;
+        if (!hi || pairEndMs(p) > pairEndMs(hi)) hi = p;
+      }
+      return lo && hi ? { lo, hi } : null;
+    }
 
     function enterReplay(cursor) {
       const span = replaySpan(pairs);
@@ -4068,6 +4121,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function exitReplay() {
       pausePlayback();
       replay.active = false;
+      replay.sliceA = null;
+      replay.sliceB = null;
       document.body.classList.remove('replaying');
       if (view === 'session') {
         showSession(sessionSelKey);
@@ -4086,15 +4141,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = replaySpan(pairs);
       if (!span) return;
       if (!replay.active) enterReplay(span.t0);
-      // Play at the end of the tape restarts from the top.
-      if (!nextBoundary(replayEvents(pairs), replay.cursor)) { replay.cursor = span.t0; refreshReplay(); }
+      // Play at the end of the tape (or slice) restarts from its top.
+      if (!nextBoundary(replayEvents(slicePairs(pairs)), replay.cursor)) {
+        replay.cursor = sliceActive() ? Math.min(replay.sliceA, replay.sliceB) - 1 : span.t0;
+        refreshReplay();
+      }
       replay.playing = true;
       rpPlay.textContent = '\\u23f8';
       scheduleTick();
     }
 
     function scheduleTick() {
-      const tick = nextTick(replayEvents(pairs), replay.cursor, replay.speed, IDLE_CAP_MS);
+      const tick = nextTick(replayEvents(slicePairs(pairs)), replay.cursor, replay.speed, IDLE_CAP_MS);
       if (!tick) { pausePlayback(); updateReplayHash(); return; }
       replay.timer = setTimeout(function() {
         replay.cursor = tick.cursor;
@@ -4108,7 +4166,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       if (!replay.active) enterReplay(dir > 0 ? span.t0 - 1 : span.t1);
       pausePlayback();
-      const events = replayEvents(pairs);
+      const events = replayEvents(slicePairs(pairs));
       const b = dir > 0 ? nextBoundary(events, replay.cursor, turnsOnly) : prevBoundary(events, replay.cursor, turnsOnly);
       if (b) { replay.cursor = b.t; refreshReplay(); }
       updateReplayHash();
@@ -4116,6 +4174,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function seekReplay(cursor) {
       pausePlayback();
+      // A slice bounds the cursor — scrubbing outside the window would
+      // show an empty conversation and read as data loss.
+      if (sliceActive()) {
+        cursor = Math.max(Math.min(replay.sliceA, replay.sliceB),
+          Math.min(cursor, Math.max(replay.sliceA, replay.sliceB)));
+      }
       replay.cursor = cursor;
       refreshReplay();
     }
@@ -4154,6 +4218,33 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpFill.style.width = (frac * 100).toFixed(3) + '%';
       rpHandle.style.left = (frac * 100).toFixed(3) + '%';
       rpTime.textContent = fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      // The slice band + chip: the selected window, its size, and the two
+      // actions it affords (export the artifact, clear the selection).
+      if (sliceActive()) {
+        const lo = Math.min(replay.sliceA, replay.sliceB);
+        const hi = Math.max(replay.sliceA, replay.sliceB);
+        rpSlice.style.display = 'block';
+        rpSlice.style.left = (Math.max(0, (lo - span.t0) / dur) * 100).toFixed(3) + '%';
+        rpSlice.style.width = (Math.min(1, (hi - lo) / dur) * 100).toFixed(3) + '%';
+        const w = slicePairs(pairs);
+        rpSliceChip.style.display = 'inline-flex';
+        rpSliceChip.innerHTML = 'slice ' + fmtClock(lo - span.t0) + '\\u2013' + fmtClock(hi - span.t0) +
+          ' \\u00b7 ' + w.length + ' pair' + (w.length === 1 ? '' : 's') +
+          (IS_SNAPSHOT || !w.length ? '' : ' <button class="rp-btn" id="rp-slice-export" title="Download a snapshot .html holding exactly these pairs \\u2014 the shareable artifact">export</button>') +
+          ' <button class="rp-btn" id="rp-slice-clear" title="Clear the slice, keep replaying">\\u2715</button>';
+        const ex = document.getElementById('rp-slice-export');
+        if (ex) ex.onclick = () => {
+          const b = sliceBoundPairs(w);
+          if (!b) return;
+          location.href = '/api/slice.html?from=' + encodeURIComponent(b.lo.id) + '&to=' + encodeURIComponent(b.hi.id);
+        };
+        const cl = document.getElementById('rp-slice-clear');
+        if (cl) cl.onclick = clearSlice;
+      } else {
+        rpSlice.style.display = 'none';
+        rpSliceChip.style.display = 'none';
+        rpSliceChip.innerHTML = '';
+      }
       renderReplayMarks();
     }
 
@@ -4167,8 +4258,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // written when paused (replaceState is rate-limited by browsers).
     function updateReplayHash() {
       if (!replay.active || replay.playing || view !== 'session' || !sessionSelKey) return;
-      const a = anchorAt(replayEvents(pairs), replay.cursor);
       const base = threadHash(sessionSelKey);
+      // A slice deep-links as a RANGE — @a..b, the window's edge pair ids.
+      if (sliceActive()) {
+        const b = sliceBoundPairs(slicePairs(pairs));
+        if (b) { history.replaceState(null, '', base + '/@' + encodeURIComponent(b.lo.id) + '..' + encodeURIComponent(b.hi.id)); return; }
+      }
+      const a = anchorAt(replayEvents(pairs), replay.cursor);
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 
@@ -4194,21 +4290,55 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     });
 
     let rpDragging = false;
-    function seekFromPointer(e) {
+    let rpSliceDrag = false;
+    function timeFromPointer(e) {
       const span = replaySpan(pairs);
-      if (!span) return;
+      if (!span) return null;
       const rect = rpTrack.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
-      seekReplay(span.t0 + frac * (span.t1 - span.t0));
+      return span.t0 + frac * (span.t1 - span.t0);
+    }
+    function seekFromPointer(e) {
+      const t = timeFromPointer(e);
+      if (t != null) seekReplay(t);
     }
     rpTrack.addEventListener('pointerdown', (e) => {
       if (!replay.active) enterReplay();
-      rpDragging = true;
       try { rpTrack.setPointerCapture(e.pointerId); } catch {}
+      // Shift+drag selects a slice; a plain drag scrubs the cursor.
+      if (e.shiftKey) {
+        const t = timeFromPointer(e);
+        if (t == null) return;
+        rpSliceDrag = true;
+        pausePlayback();
+        replay.sliceA = t;
+        replay.sliceB = t;
+        renderReplayBar();
+        return;
+      }
+      rpDragging = true;
       seekFromPointer(e);
     });
-    rpTrack.addEventListener('pointermove', (e) => { if (rpDragging) seekFromPointer(e); });
-    rpTrack.addEventListener('pointerup', () => { rpDragging = false; updateReplayHash(); });
+    rpTrack.addEventListener('pointermove', (e) => {
+      if (rpSliceDrag) {
+        const t = timeFromPointer(e);
+        if (t != null) { replay.sliceB = t; renderReplayBar(); }
+      } else if (rpDragging) seekFromPointer(e);
+    });
+    rpTrack.addEventListener('pointerup', () => {
+      if (rpSliceDrag) {
+        rpSliceDrag = false;
+        // A shift-CLICK (no drag) selects nothing — clear instead of
+        // keeping a zero-width band that filters everything out.
+        if (!slicePairs(pairs).length) { clearSlice(); return; }
+        replay.cursor = Math.max(replay.sliceA, replay.sliceB);
+        refreshReplay();
+        updateReplayHash();
+        return;
+      }
+      rpDragging = false;
+      updateReplayHash();
+    });
 
     // ---- Select-to-purge ----
     // The web face of "cctrace purge", but by hand-picked request: enter

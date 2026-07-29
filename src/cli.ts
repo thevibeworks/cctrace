@@ -12,7 +12,7 @@ import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, parseTraceText, r
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, listTraceInfos, peekTrace, ViewError } from "./view";
+import { writeView, resolveView, applySlice, listTraceInfos, peekTrace, ViewError } from "./view";
 import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
@@ -209,7 +209,7 @@ function openBrowser(url: string) {
 // no-op. No proxy, no Claude spawn either way. Returns true when a server
 // was started and the process must stay alive.
 async function runView(args: string[]): Promise<boolean> {
-  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--html] [--port N] [--dir DIR] [--no-open]";
+  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--html] [--slice a..b] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -219,6 +219,7 @@ async function runView(args: string[]): Promise<boolean> {
         "no-open": { type: "boolean" },
         html: { type: "boolean" },
         serve: { type: "boolean" }, // legacy alias of the default
+        slice: { type: "string" },  // pair-id window: the @a..b of a slice deep link
         port: { type: "string" },
       },
       allowPositionals: true,
@@ -308,10 +309,11 @@ async function runView(args: string[]): Promise<boolean> {
       serveView(target, logDir, {
         port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
         noOpen: !!parsed.values["no-open"],
+        slice: parsed.values.slice as string | undefined,
       });
       return true;
     }
-    const result = writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) });
+    const result = writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) }, { slice: parsed.values.slice as string | undefined });
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
     for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
@@ -422,9 +424,11 @@ function runSpec(args: string[]) {
 // are seeded into the live web server instead of embedded in a file. The run
 // registers in the instance registry like any live capture (mode "view"), so
 // `cctrace ps` and the header switcher see it. Ctrl-C stops it.
-function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean }) {
+function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean; slice?: string }) {
   const result = resolveView(target, logDir);
-  log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
+  if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
+  log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}` +
+    (opts.slice ? ` (slice ${opts.slice})` : ""), C.cyan);
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
@@ -901,6 +905,7 @@ ${C.yellow}EXAMPLES:${C.reset}
   cctrace view trace-2026-07-08     ${C.dim}# reopen a saved trace (filename fragment)${C.reset}
   cctrace view 4f9a2c1e             ${C.dim}# reopen by Claude Code session id${C.reset}
   cctrace view 4f9a2c1e --html      ${C.dim}# write a shareable snapshot .html instead${C.reset}
+  cctrace view latest --slice a..b  ${C.dim}# just a slice window (the @a..b of a slice link)${C.reset}
   cctrace purge --drop telemetry --yes ${C.dim}# strip telemetry rows from saved traces${C.reset}
 
   ${C.dim}Note: -p before "--" is cctrace's port; -p after "--" is Claude's print mode.${C.reset}

@@ -124,7 +124,10 @@ instances land on 9318, 9319, ...). Hash-routed views:
   the scrubber is a minimap (turns tall, errors red). Pausing writes a
   shareable deep link: `#/session/<key>/@<pair-id>` opens paused at that
   exact moment — use these links to point a human at "the turn where it went
-  wrong".
+  wrong". Shift+drag on the scrubber selects a SLICE (a range): both panes
+  narrow to that window, the deep link becomes `@a..b`, and the transport
+  bar's "export" downloads a snapshot holding exactly the window's pairs —
+  the small shareable artifact for bug reports.
 
 The `.jsonl` trace is the durable artifact — `cctrace view` reopens it in the
 same UI anytime. Live runs no longer write a snapshot `.html` at exit (big
@@ -156,6 +159,8 @@ cctrace view <file|session-id|fragment>   # reopen a trace in the web UI (serves
                                           # it locally; Ctrl-C stops; --port N)
 cctrace view <target> --html              # write a snapshot .html instead
                                           # (shareable; huge traces choke browsers)
+cctrace view <target> --slice a..b        # narrow to a slice window (the @a..b of a
+                                          # slice deep link); with --html = small artifact
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
 cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)

@@ -1,6 +1,7 @@
 import type { ServerWebSocket } from "bun";
 import type { TracePair } from "./types";
-import { getLiveHtml, type PageMeta } from "./ui";
+import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
+import { sliceWindow, pairEndMs } from "./replay";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
@@ -213,6 +214,25 @@ export function createServer(config: ServerConfig) {
         } catch (e) {
           return Response.json({ error: String(e) }, { status: 400 });
         }
+      }
+      if (url.pathname === "/api/slice.html") {
+        // Slice export: a snapshot holding exactly the pairs whose response
+        // completed between the two named pairs' ends (inclusive) — the
+        // shareable artifact behind the UI's "export" button. Addressed by
+        // pair ids, same as the deep link, so the URL survives merges.
+        const from = url.searchParams.get("from") || "";
+        const to = url.searchParams.get("to") || "";
+        const pa = pairs.find((p) => p.id === from);
+        const pb = pairs.find((p) => p.id === to);
+        if (!pa || !pb) return Response.json({ error: "unknown slice pair id" }, { status: 404 });
+        const win = sliceWindow(pairs, pairEndMs(pa), pairEndMs(pb));
+        const html = renderSnapshot(win, { ...config.meta, mode: undefined });
+        return new Response(html, {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-disposition": `attachment; filename="slice-${win.length}pairs.html"`,
+          },
+        });
       }
       if (url.pathname === "/api/self") {
         // Identity for cross-instance liveness probes. Answers from memory

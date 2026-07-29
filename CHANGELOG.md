@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.27.0
+
+- Added timeline slices to replay: shift+drag on the scrubber selects a range; both panes rebuild from that window's pairs only, playback and stepping bound to it, and the selection renders as a band on the track with a chip naming the range and its pair count
+- Added slice export: the chip's export button (and `cctrace view <target> --slice a..b`) produces a snapshot holding exactly the window's pairs — a small shareable artifact for pointing someone at "the part where it went wrong", instead of a whole-session page running hundreds of MB
+- Added slice deep links: a selected range writes `#/session/<key>/@a..b` (the window's edge pair ids, which survive cross-run merges); opening one restores the slice paused at its end, and single-moment `@id` links work unchanged
+- Changed scrubbing and Home/End to stay inside an active slice — the cursor can no longer leave the window and show an empty conversation that reads as data loss; a shift-click selecting nothing clears instead of filtering everything out
+
 ## 0.26.0
 
 - Added steps to the session outline: each assistant message in a turn is one step of the agentic loop — one wire request — carrying a faint sub-ordinal (".1 .2 .3") under the turn's "01" and "step 2 of 4" in its hover; the conversation pane's intermediate messages wear the same address ("01.2") on their role bar, so both panes share one numbering down to the single request

@@ -166,7 +166,13 @@ live-updating, breakdown in the hover — per-pair call info memoized on the
 pair since extractCallInfo parses SSE):
 the live status sits beside the "⇄ N more" switcher (both are
 instance-level facts), and the cctrace version (+ amber update link) sits
-with the page chrome in its own `#ver` mount, hover = short about text. A
+with the page chrome in its own `#ver` mount, hover = a miniature release
+note (slogan + fresh-features list in renderVer — refresh it when cutting
+a release). Chrome tooltips (toolbar/header/replay bar) all speak the
+designed tip grammar: heading line, `---` divider, `> ` interaction hints.
+In the session view the trace controls (replay, ⌘ actions) right-align via
+margin-left:auto — the requests view's filter input holds that edge, so
+the controls keep one position in both views. A
 mask toggle (eye glyph, persisted in localStorage `cctrace-mask`) blurs
 identity values marked `data-mask` (header session id + trace title,
 per-session sid labels, usage/credits chips) for screen sharing — hover any

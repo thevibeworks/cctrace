@@ -1212,6 +1212,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const pairs = [];
     // Snapshot pages embed their pairs in <head>; live pages stream over WS.
     const IS_SNAPSHOT = Array.isArray(window.__PAIRS__);
+    // Run identity injected by the server / snapshot writer ({} when unknown,
+    // e.g. a snapshot rebuilt by \`cctrace view\`). Declared before anything
+    // derives from it — IS_VIEW below reads it at top level.
+    const META = ${jsonForScript(meta)};
     // A served saved trace (cctrace view): the WebSocket is only the data
     // channel — the page must read as a finished document, never as a live
     // capture that happens to be "offline" (ui.md: never pretend).
@@ -1244,9 +1248,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
 
-    // Run identity injected by the server / snapshot writer ({} when unknown,
-    // e.g. a snapshot rebuilt by \`cctrace view\`).
-    const META = ${jsonForScript(meta)};
     // modelPricing consults the ambient models.dev catalog (fail-soft: the
     // embedded Claude table still prices Claude traffic without it).
     if (META.pricing) window.__PRICING__ = META.pricing;

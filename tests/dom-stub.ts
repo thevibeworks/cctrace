@@ -10,11 +10,21 @@ export interface Fragment {
   route: string;
 }
 
+export interface StubSocket {
+  url: string;
+  onopen: Listener | null;
+  onclose: Listener | null;
+  onmessage: Listener | null;
+  sent: string[];
+}
+
 export interface StubPage {
   els: Record<string, StubEl>;
   fragments: Fragment[];
   /** Errors thrown during boot or navigation, tagged with the route. */
   errors: string[];
+  /** WebSockets the page opened (live/view boots) — drive onmessage to feed pairs. */
+  sockets: StubSocket[];
   goto(hash: string): void;
   fireKey(key: string, opts?: Record<string, unknown>): void;
 }
@@ -72,10 +82,15 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
 }
 
 /**
- * Boot the page script from a rendered snapshot against the stub DOM.
- * `pairs` ride in via window.__PAIRS__ exactly like a real snapshot.
+ * Boot the page script against the stub DOM. Works for both page kinds:
+ * a snapshot rides its pairs in via window.__PAIRS__; a live/view page
+ * opens a (stubbed) WebSocket — returned in `sockets` so the test can
+ * drive `onmessage` with init/pair frames exactly like the server would.
+ * The non-snapshot boot path MUST be executed somewhere: IS_SNAPSHOT
+ * short-circuits guard it, so snapshot boots alone leave it untested
+ * (the 0.25.0 META temporal-dead-zone shipped exactly that way).
  */
-export function bootSnapshotPage(snapshotHtml: string): StubPage {
+export function bootPage(snapshotHtml: string): StubPage {
   const fragments: Fragment[] = [];
   const routeRef = { current: "(boot)" };
   const docListeners: Record<string, Listener[]> = {};
@@ -100,6 +115,20 @@ export function bootSnapshotPage(snapshotHtml: string): StubPage {
   };
   const localStorageStub = { getItem: () => null, setItem: () => {} };
   const navigatorStub = { clipboard: { writeText: async () => {} } };
+  const sockets: StubSocket[] = [];
+  class WebSocketStub implements StubSocket {
+    url: string;
+    onopen: Listener | null = null;
+    onclose: Listener | null = null;
+    onmessage: Listener | null = null;
+    sent: string[] = [];
+    constructor(url: string) { this.url = url; sockets.push(this); }
+    send(s: string) { this.sent.push(s); }
+    close() {}
+  }
+  // Never resolves: pollInstances stays parked instead of rescheduling
+  // itself on a rejection during the test run.
+  const fetchStub = () => new Promise(() => {});
 
   // Pull __PAIRS__ out of the snapshot's own embed so the test exercises the
   // real serialization path, then run the page script.
@@ -109,9 +138,12 @@ export function bootSnapshotPage(snapshotHtml: string): StubPage {
   if (!scriptMatch) throw new Error("page script not found in snapshot html");
 
   const errors: string[] = [];
-  const run = new Function("window", "document", "localStorage", "location", "history", "navigator", scriptMatch[1]);
+  const run = new Function(
+    "window", "document", "localStorage", "location", "history", "navigator", "WebSocket", "fetch",
+    scriptMatch[1],
+  );
   try {
-    run(windowStub, documentStub, localStorageStub, locationStub, historyStub, navigatorStub);
+    run(windowStub, documentStub, localStorageStub, locationStub, historyStub, navigatorStub, WebSocketStub, fetchStub);
   } catch (e) {
     errors.push(`(boot): ${(e as Error).stack || e}`);
   }
@@ -123,6 +155,7 @@ export function bootSnapshotPage(snapshotHtml: string): StubPage {
     els,
     fragments,
     errors,
+    sockets,
     goto(hash: string) {
       routeRef.current = hash;
       locationStub.hash = hash;
@@ -137,3 +170,6 @@ export function bootSnapshotPage(snapshotHtml: string): StubPage {
     },
   };
 }
+
+/** Historical name — snapshot boots predate live-page boots. Same machinery. */
+export const bootSnapshotPage = bootPage;

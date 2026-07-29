@@ -468,6 +468,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
     }
     #rp-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* boot placeholder: a verb while the wire loads (ccx tradition) */
+    .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
+    .bw-star { color: var(--accent); display: inline-block; animation: bwPulse 1.6s ease-in-out infinite; }
+    @keyframes bwPulse { 50% { opacity: 0.25; } }
+    /* the pulse: a terminal-like status line for LIVE eyes (live + tail
+       pages, session view) — what the agent last did, how long ago, and
+       the one cache deadline that matters (the newest request's) */
+    #pulse {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
+      display: none; align-items: center; gap: 10px; padding: 4px 14px;
+      font-size: 11px; color: var(--text-muted);
+      background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+      backdrop-filter: blur(4px); border-top: 1px solid var(--border);
+      white-space: nowrap; overflow: hidden;
+    }
+    body.view-session.pulse-on #pulse { display: flex; }
+    #pulse .p-star { color: var(--accent); animation: bwPulse 1.6s ease-in-out infinite; }
+    #pulse.idle .p-star { animation: none; opacity: 0.5; }
+    #pulse .p-act { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    #pulse .p-t { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
+    #pulse .p-exp { color: var(--amber); flex: none; }
     #rp-time .rp-skip { color: var(--text-faint); }
     #tail-pill {
       position: absolute; right: 24px; bottom: 16px; z-index: 5;
@@ -1196,7 +1217,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div class="cats" id="cats"></div>
   <div id="split">
-    <main id="pairs"></main>
+    <main id="pairs"><div class="boot-wait"><span class="bw-star">✻</span> <span id="boot-verb">Tracing</span>…</div></main>
     <aside id="detail"></aside>
     <div class="nav-rail" id="rail-detail"></div>
   </div>
@@ -1226,6 +1247,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <div class="nav-rail" id="rail-session"></div>
     </div>
     <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
+    <div id="pulse"></div>
   </div>
 
   <script>
@@ -1240,12 +1262,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // channel — the page must read as a finished document, never as a live
     // capture that happens to be "offline" (ui.md: never pretend).
     const IS_VIEW = !IS_SNAPSHOT && META.mode === 'view';
+    // A --tail view: a saved trace being FOLLOWED — live behavior (auto-
+    // tail, pulse), but the chip says what it is.
+    const IS_TAIL = !IS_SNAPSHOT && META.mode === 'tail';
     const IS_READING = IS_SNAPSHOT || IS_VIEW;
     // Every pair enters through here: a structurally broken one (no request
     // object / url — a torn trace line or a capture bug) is dropped with a
     // console note. Renderers, buildSession, and the replay timeline all
     // assume request.url exists; one bad pair must not blank the page.
     let droppedPairs = 0;
+    let lastModelPair = null; // newest completed model call — the pulse's subject
     function ingestPair(p) {
       if (!p || !p.request || typeof p.request.url !== 'string') {
         droppedPairs++;
@@ -1254,8 +1280,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       p._cat = categorize(p.request.url, p.client, CLIENT_WIRE);
       pairs.push(p);
+      if (p._cat === 'messages' && (!lastModelPair || pairEndMs(p) >= pairEndMs(lastModelPair))) lastModelPair = p;
       return true;
     }
+
+    // Loading verbs (the ccx tradition): pure decoration while the wire
+    // loads — wire-flavored next to cooking and nonsense, gerunds only.
+    const VERBS = ['Tracing', 'Intercepting', 'Decrypting', 'Teeing',
+      'Attributing', 'Reassembling', 'Unspooling', 'Redacting', 'Replaying',
+      'Tokenizing', 'Pondering', 'Mulling', 'Triangulating', 'Percolating',
+      'Sauteing', 'Kneading', 'Proofing', 'Zesting',
+      'Reticulating', 'Discombobulating', 'Moseying'];
+    (function rotateBootVerb() {
+      const t = setInterval(() => {
+        const el = document.getElementById('boot-verb');
+        if (!el) { clearInterval(t); return; } // first render replaced the placeholder
+        el.textContent = VERBS[Math.floor(Math.random() * VERBS.length)];
+      }, 1400);
+    })();
     let autoScroll = true;
     let filter = '';
     let activeCat = 'all';
@@ -1368,6 +1410,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpHandle = document.getElementById('rp-handle');
     const rpTime = document.getElementById('rp-time');
     const rpSlice = document.getElementById('rp-slice');
+    const pulseEl = document.getElementById('pulse');
     const rpSliceChip = document.getElementById('rp-slice-chip');
     const filterEl = document.getElementById('filter');
     const autoScrollBtn = document.getElementById('autoscroll');
@@ -1649,6 +1692,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
       ws.onopen = () => {
         if (IS_VIEW) { statusEl.textContent = 'view'; statusEl.className = 'status snapshot'; }
+        else if (IS_TAIL) { statusEl.textContent = 'tail'; statusEl.className = 'status connected'; }
         else { statusEl.textContent = 'live'; statusEl.className = 'status connected'; }
       };
       ws.onclose = () => {
@@ -1669,11 +1713,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
           render();
           route();
+          renderPulse();
         } else if (msg.type === 'pair') {
           if (!ingestPair(msg.pair)) return;
           renderStats();
           renderCats();
           renderCtx();
+          renderPulse();
           if (passesFilters(msg.pair)) {
             appendPair(msg.pair, true);
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
@@ -2235,6 +2281,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<span class="chip ' + (cls || '') + '"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '><b>' + label + '</b>' + escapeHtml(value) + '</span>';
     }
 
+    function isNewestModelPair(pair) {
+      if (pair._cat !== 'messages') return false;
+      for (const p of pairs) {
+        if (p._cat === 'messages' && p !== pair && pairEndMs(p) > pairEndMs(pair)) return false;
+      }
+      return true;
+    }
+
     function messagesChips(pair) {
       const m = extractCallInfo(pair);
       let row1 = '';
@@ -2255,7 +2309,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (m.thinking > 0) row2 += kv('thinking', m.thinking.toLocaleString());
       const cache = summarizeCache(m, pair.request.body,
         pair.response && typeof pair.response.timestamp === 'number' ? pair.response.timestamp * 1000 : null);
-      if (cache) row2 += kv('cache', cache.v, cache.c, cache.title);
+      if (cache) {
+        // "expired" only on the NEWEST model call: older deadlines are
+        // meaningless (any later hit refreshed the TTL) — same rule as
+        // the requests list.
+        const expired = cache.expiresAt && isNewestModelPair(pair) && Date.now() > cache.expiresAt;
+        row2 += kv('cache', cache.v + (expired ? ' \u00b7 expired' : ''), expired ? 'warn' : cache.c,
+          cache.title + (expired ? ' \u2014 EXPIRED at render time: resuming this session now re-writes the prefix at write price' : ''));
+      }
       // Derived metrics: effective prompt size, streaming speed, estimated cost.
       const prompt = m.input + m.cacheRead + m.cacheWrite;
       if (prompt > 0) row2 += kv('prompt', fmtCompact(prompt), '', prompt.toLocaleString() + ' prompt tokens = input + cache read + cache write');
@@ -3279,7 +3340,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             // (tokens, cost, ttft, duration, folded) lives in the hover —
             // inline numbers were fighting the text for the same pixels.
             const failed = p && (!p.response || p.response.status >= 400);
-            const cc = u && p ? summarizeCache(u, p.request.body) : null;
+            const cc = u && p ? summarizeCache(u, p.request.body, isNewestModelPair(p) ? pairEndMs(p) : null) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
             // Step outcome: tool calls this step made whose folded results
             // came back is_error — a failed step is state, not chrome.
@@ -3322,6 +3383,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (stepErrs) tbits.push(stepErrs + ' tool call' + (stepErrs === 1 ? '' : 's') + ' this step returned an error');
             if (failed) tbits.push('request FAILED: no response or HTTP error \\u2014 see the wire pair');
             if (cc) tbits.push(cc.title);
+            if (cc && cc.expiresAt && Date.now() > cc.expiresAt) tbits.push('cache EXPIRED \u2014 resuming this session now re-writes the prefix at write price');
             if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
             if (!p) tbits.push('unattributed \\u2014 no captured request matches this reply');
             tip = tbits.join('\\n') + '\\n---\\n> click to jump to this turn' + (li.lead ? '\\n' + foldHint : '');
@@ -4430,6 +4492,66 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (detailId) location.hash = '';
       render();
     };
+
+    // ---- The pulse: live eyes on the session ----
+    // A completed pair means the model just replied — the agent is now
+    // running tools or composing the next request. The strip shows the
+    // last reply's work (tool labels), its age (the one ticking surface
+    // the live page allows — terminal convention), and the newest
+    // request's cache deadline: absolute hold-until while it holds, an
+    // amber "expired" once passed. Only the newest deadline is shown —
+    // every later hit refreshes the TTL, so older deadlines mean nothing.
+    function fmtAgo(ms) {
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return sec + 's ago';
+      const m = Math.floor(sec / 60);
+      if (m < 60) return m + 'm ' + (sec % 60) + 's ago';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm ago';
+    }
+    function renderPulse() {
+      if (IS_READING || !pulseEl) return;
+      const p = lastModelPair;
+      if (!p) {
+        pulseEl.innerHTML = '<span class="p-star">\u273b</span><span class="p-act">waiting for the wire\u2026</span>';
+        return;
+      }
+      const ci = p._ci || (p._ci = extractCallInfo(p));
+      const end = pairEndMs(p);
+      const age = Math.max(0, Date.now() - end);
+      pulseEl.classList.toggle('idle', age > 30000);
+      let act = '';
+      try { act = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
+      if (!act) act = ci.stopReason === 'tool_use' ? 'mid-loop \u2014 more work coming' : 'replied';
+      const cc = summarizeCache(ci, p.request.body, end);
+      let cache = '';
+      if (cc && cc.expiresAt) {
+        cache = Date.now() > cc.expiresAt
+          ? '<span class="p-exp" data-tip="prompt cache expired\\nthe cached prefix passed its TTL \\u2014 the next request re-writes it at write price (1.25x/2x input)\\n---\\n> every hit before expiry would have refreshed the clock">\\u2261 expired</span>'
+          : '<span class="p-t" data-tip="' + escapeHtml(cc.title) + '">\u2261 ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
+      }
+      pulseEl.innerHTML = '<span class="p-star">\u273b</span>' +
+        '<span class="p-act">' + escapeHtml(shortModel(ci.model || '') || '?') + ' \u00b7 ' + act + '</span>' +
+        '<span class="p-t">' + fmtAgo(age) + '</span>' + cache;
+    }
+    let expFlipped = false;
+    if (!IS_SNAPSHOT && !IS_VIEW) {
+      document.body.classList.add('pulse-on');
+      renderPulse();
+      setInterval(() => {
+        renderPulse();
+        // When the newest deadline passes, re-render once so the requests
+        // list's "\u00b7 expired" marker appears without a reload.
+        const p = lastModelPair;
+        if (p && p._ci) {
+          const cc = summarizeCache(p._ci, p.request.body, pairEndMs(p));
+          if (cc && cc.expiresAt) {
+            const past = Date.now() > cc.expiresAt;
+            if (past && !expFlipped) { expFlipped = true; render(); }
+            if (!past) expFlipped = false;
+          }
+        }
+      }, 1000);
+    }
 
     renderCats();
     // Offline snapshot: if pairs are embedded (static export), load them and

@@ -124,6 +124,57 @@ export function peekTrace(path: string, maxBytes = 8 << 20): TracePeek {
 }
 
 /**
+ * `view --tail`: follow a live trace file like tail -f. The capture run
+ * appends one JSON line per pair from its own process; this view server
+ * polls the file (fs.watch is unreliable across bind mounts — the deva
+ * reality this exists for: a sibling container shares the .jsonl but not
+ * the capture's port) and hands every COMPLETE new line to onPairs. A
+ * torn tail line (capture mid-write) stays buffered until its newline
+ * arrives. Compressed archives can't grow — callers reject them.
+ * Returns a stop() handle.
+ */
+export function followTrace(
+  path: string,
+  startOffset: number,
+  onPairs: (pairs: TracePair[]) => void,
+  intervalMs = 700,
+): { stop: () => void } {
+  let offset = startOffset;
+  let remainder = "";
+  const tick = () => {
+    let size = 0;
+    try { size = statSync(path).size; } catch { return; }
+    if (size < offset) { offset = 0; remainder = ""; } // truncated/rewritten (purge) — rescan, dedup is the server's job
+    if (size === offset) return;
+    let text = "";
+    try {
+      const fd = openSync(path, "r");
+      try {
+        const buf = Buffer.alloc(size - offset);
+        const n = readSync(fd, buf, 0, buf.length, offset);
+        text = buf.toString("utf8", 0, n);
+        offset += n;
+      } finally {
+        closeSync(fd);
+      }
+    } catch { return; }
+    const lines = (remainder + text).split("\n");
+    remainder = lines.pop() || "";
+    const out: TracePair[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const pair = JSON.parse(line);
+        if (pair && pair.request) out.push(pair);
+      } catch { /* torn or damaged line — skip, the file view already warns */ }
+    }
+    if (out.length) onPairs(out);
+  };
+  const timer = setInterval(tick, intervalMs);
+  return { stop: () => clearInterval(timer) };
+}
+
+/**
  * `--slice a..b`: narrow a trace to the pairs whose response completed
  * between the two named pairs' ends (inclusive) — the CLI face of the
  * UI's slice deep link (#/session/<key>/@a..b; copy the a..b part).

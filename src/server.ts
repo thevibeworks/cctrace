@@ -137,7 +137,10 @@ export function createServer(config: ServerConfig) {
   };
 
   const onLivePair = (pair: TracePair) => {
-    mergePairs([pair]);
+    // A pair the server already holds is not news: capture ids are unique,
+    // but a --tail follower re-scanning a truncated file replays old lines
+    // — broadcasting those would duplicate rows on every connected page.
+    if (!mergePairs([pair]).length) return;
     broadcast({ type: "pair", pair });
     if (config.onPrompt && !promptStamped) {
       const prompt = firstPromptOfPair(pair);

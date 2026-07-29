@@ -127,6 +127,38 @@ describe("live page boot", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
+  test("a tail page behaves live: status 'tail', pulse strip painted from the wire", () => {
+    const page = bootPage(getLiveHtml({ mode: "tail" }));
+    expect(page.errors).toEqual([]);
+    const ws = page.sockets[0]!;
+    ws.onopen!({});
+    expect(page.els["status"].textContent).toBe("tail");
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    expect(page.els["pulse"].innerHTML).toContain("opus-4-6"); // the newest model call
+    expect(page.els["pulse"].innerHTML).toContain("ago");
+  });
+
+  test("the boot placeholder ships a rotating verb; view pages never show the pulse", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain('id="boot-verb"');
+    expect(html).toContain("Reticulating");
+    const view = bootPage(getLiveHtml({ mode: "view" }));
+    const ws = view.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    expect(view.els["pulse"] === undefined || !view.els["pulse"].innerHTML).toBe(true);
+  });
+
+  test("the newest model call's cache chip states 'expired' when past its deadline", () => {
+    // msgPair timestamps are 1970-epoch — any real now is past the 5m hold,
+    // which is exactly the reopened-idle-session case the marker exists for.
+    const cached = msgPair("p2", { resBody: { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900 } } });
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), cached]));
+    page.goto("#/p/p2");
+    expect(page.els["detail"].innerHTML).toContain("expired");
+    page.goto("#/p/p1"); // NOT the newest — older deadlines mean nothing
+    expect(page.els["detail"].innerHTML).not.toContain("· expired");
+  });
+
   test("a single-pair deep link (@id) still works after the range grammar", () => {
     const page = bootPage(getLiveHtml({}));
     const ws = page.sockets[0]!;

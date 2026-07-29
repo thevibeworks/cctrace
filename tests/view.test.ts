@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { resolveView, ViewError } from "../src/view";
+import { resolveView, applySlice, ViewError } from "../src/view";
 
 const SID_A = "4f9a2c1e-1111-2222-3333-444444444444";
 const SID_B = "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd";
@@ -72,5 +72,20 @@ describe("resolveView", () => {
 
   test("no match throws ViewError listing recent traces", () => {
     expect(() => resolveView("nope-nothere", dir)).toThrow(ViewError);
+  });
+});
+
+describe("applySlice", () => {
+  const ps = [pair("a1", SID_A, 100), pair("a2", SID_A, 200), pair("a3", SID_A, 300)] as any[];
+
+  test("narrows to the window between the two pairs' ends, inclusive", () => {
+    expect(applySlice(ps, "a1..a2").map((p: any) => p.id)).toEqual(["a1", "a2"]);
+    expect(applySlice(ps, "a1..a3").map((p: any) => p.id)).toEqual(["a1", "a2", "a3"]);
+  });
+
+  test("malformed specs and unknown ids throw ViewError with the id named", () => {
+    expect(() => applySlice(ps, "a1")).toThrow(ViewError);
+    expect(() => applySlice(ps, "a1..zz")).toThrow('"zz" not found');
+    expect(() => applySlice(ps, "zz..a1")).toThrow(ViewError);
   });
 });

@@ -135,7 +135,15 @@ it also forces `visibleAt()` into existence, which P2 merely animates.
 3. `count_tokens` / usage-probe pairs during replay: show on the minimap as
    ticks, or hide as noise? Leaning: ticks, they mark turn boundaries well.
 
-## P5 seed (2026-07-28, unbuilt): diff between moments
+## Slices (2026-07-28, SHIPPED in 0.27): range over the timeline
+
+Shift+drag selects [a, b]; both panes rebuild from `sliceWindow` pairs
+only, playback bounds to it, the deep link is `@a..b` (edge pair ids by
+end time), and export (`/api/slice.html`, `view --slice a..b`) emits a
+snapshot holding exactly the window — the honest shareable artifact the
+whole-session --html never was.
+
+## P5 seed (2026-07-28, unbuilt): diff between moments — slices give it endpoints
 
 Out of a "rebrand replay as time travel?" review (sj): the rename was cut —
 replay names what the feature observably does, and "what did the agent know

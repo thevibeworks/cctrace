@@ -95,6 +95,21 @@ export function anchorAt(events: any[], cursor: number): any {
 }
 
 /**
+ * The slice window: pairs whose response completed inside [a, b] (either
+ * order). A slice is a shareable range of the timeline — the export
+ * artifact contains exactly these pairs, every category, nothing else.
+ */
+export function sliceWindow(pairs: any[], a: number, b: number): any[] {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  return (pairs || []).filter((p) => {
+    if (!p || !p.request) return false;
+    const e = pairEndMs(p);
+    return e >= lo - 0.5 && e <= hi + 0.5;
+  });
+}
+
+/**
  * Playback scheduler: from `cursor` at `speed`, when and where is the next
  * tick? Returns {cursor, delay, compressed} or null at the end of the tape.
  * Idle compression caps the on-screen wait at `capMs` (default 2000) — real

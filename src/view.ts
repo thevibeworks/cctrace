@@ -3,6 +3,7 @@ import { join, basename, dirname, relative, resolve } from "path";
 import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { parseTraceText, readTraceText, isTraceFile, type TraceParseStats } from "./history";
 import { CCTRACE_VERSION } from "./version";
+import { sliceWindow, pairEndMs } from "./replay";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
@@ -120,6 +121,21 @@ export function peekTrace(path: string, maxBytes = 8 << 20): TracePeek {
     if (out.client && out.sessionId && out.prompt) break;
   }
   return out;
+}
+
+/**
+ * `--slice a..b`: narrow a trace to the pairs whose response completed
+ * between the two named pairs' ends (inclusive) — the CLI face of the
+ * UI's slice deep link (#/session/<key>/@a..b; copy the a..b part).
+ * Throws ViewError on a malformed spec or unknown ids.
+ */
+export function applySlice(pairs: TracePair[], spec: string): TracePair[] {
+  const m = /^(.+?)\.\.(.+)$/.exec(spec);
+  if (!m) throw new ViewError(`--slice wants <pair-id>..<pair-id> (the @a..b from a slice deep link), got "${spec}"`);
+  const pa = pairs.find((p) => p.id === m[1]);
+  const pb = pairs.find((p) => p.id === m[2]);
+  if (!pa || !pb) throw new ViewError(`--slice: pair id "${!pa ? m[1] : m[2]}" not found in this trace`);
+  return sliceWindow(pairs, pairEndMs(pa), pairEndMs(pb));
 }
 
 function isSessionIdish(s: string): boolean {
@@ -250,8 +266,9 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
  * self-check (embedded payload no longer round-trips) is reported as a
  * warning, not a throw — a partially usable snapshot beats none.
  */
-export function writeView(target: string, logDir: string, meta: PageMeta = {}): ViewResult {
+export function writeView(target: string, logDir: string, meta: PageMeta = {}, opts: { slice?: string } = {}): ViewResult {
   const result = resolveView(target, logDir);
+  if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
   const traceFile = basename(result.sources[0] || target);
   // Same header identity a served view gets: project = the log dir's parent
   // when it's a standard ./.cctrace, and the trace's project-relative path

@@ -10,6 +10,7 @@ import {
   prevBoundary,
   anchorAt,
   nextTick,
+  sliceWindow,
 } from "../src/replay";
 
 // Timeline fixture: request.timestamp is in SECONDS on the wire, duration in ms.
@@ -108,5 +109,21 @@ describe("nextTick", () => {
 
   test("returns null at the end of the tape", () => {
     expect(nextTick(ev, 115_000, 1)).toBeNull();
+  });
+});
+
+describe("sliceWindow", () => {
+  test("keeps pairs whose response completed inside [a, b], inclusive", () => {
+    const w = sliceWindow(P, 102_000, 104_300);
+    expect(w.map((p: any) => p.id)).toEqual(["a", "probe", "usage"]);
+  });
+
+  test("bounds are order-agnostic (a drag can go either direction)", () => {
+    expect(sliceWindow(P, 104_300, 102_000).map((p: any) => p.id)).toEqual(["a", "probe", "usage"]);
+  });
+
+  test("a window between events is empty; a degenerate window keeps its one pair", () => {
+    expect(sliceWindow(P, 105_000, 109_000)).toEqual([]);
+    expect(sliceWindow(P, 115_000, 115_000).map((p: any) => p.id)).toEqual(["b"]);
   });
 });

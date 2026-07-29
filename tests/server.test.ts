@@ -91,3 +91,32 @@ describe("live server ingestion", () => {
     }
   });
 });
+
+describe("slice export", () => {
+  const mk = (id: string, ts: number): TracePair => {
+    const p = pair(id);
+    p.request.timestamp = ts;
+    return p;
+  };
+
+  test("/api/slice.html returns a downloadable snapshot holding exactly the window", async () => {
+    for (const p of [mk("sl-a", 5000), mk("sl-b", 6000), mk("sl-c", 7000)]) {
+      await fetch(`${base}/api/pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-cctrace-instance": INSTANCE_ID },
+        body: JSON.stringify(p),
+      });
+    }
+    const res = await fetch(`${base}/api/slice.html?from=sl-a&to=sl-b`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    const html = await res.text();
+    expect(html).toContain("sl-a");
+    expect(html).toContain("sl-b");
+    expect(html).not.toContain("sl-c");
+  });
+
+  test("unknown slice pair ids 404 instead of exporting the wrong window", async () => {
+    expect((await fetch(`${base}/api/slice.html?from=sl-a&to=nope`)).status).toBe(404);
+  });
+});

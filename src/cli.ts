@@ -466,6 +466,11 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
+    traceSize: () => {
+      let n = 0;
+      for (const p of result.sourcePaths) { try { n += statSync(p).size; } catch {} }
+      return n;
+    },
     self: () => instance?.snapshot() ?? null,
     onPurge: (removed) => {
       const res = purgePairsById(result.sourcePaths, new Set(removed.map((p) => p.id)));
@@ -1152,6 +1157,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       withFiles: opts.withFiles,
       speculate: speculateSid,
       meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile), traceRelPath: traceRelPath(process.cwd(), logFile) },
+      traceSize: () => { try { return statSync(logFile).size; } catch { return 0; } },
       dataDir: DATA_DIR,
       instanceId,
       self: () => instance?.snapshot() ?? null,

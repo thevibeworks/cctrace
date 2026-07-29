@@ -3,6 +3,8 @@ import type { TracePair } from "./types";
 import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
 import { sliceWindow, pairEndMs } from "./replay";
 import { createSpecAccumulator, renderSpecMarkdown } from "./spec";
+import { planCompact, applyCompact } from "./compact";
+import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
@@ -19,6 +21,8 @@ interface ServerConfig {
   logDir: string;
   /** The current run's log file — excluded from prior-trace scans. */
   logFile?: string;
+  /** Current trace file size on disk — the header's .jsonl metric. */
+  traceSize?: () => number;
   /** Disable cross-run history merging (--fresh). */
   noHistory?: boolean;
   /** Trace files to force-merge at startup (--with). */
@@ -130,7 +134,7 @@ export function createServer(config: ServerConfig) {
         }
       }
       if (evicted) {
-        broadcast({ type: "init", pairs });
+        broadcast({ type: "init", pairs, traceBytes: config.traceSize?.() });
         termWrite(`[cctrace] resumed a different session — dropped ${evicted} preloaded pairs`);
       }
     }
@@ -142,7 +146,7 @@ export function createServer(config: ServerConfig) {
     // but a --tail follower re-scanning a truncated file replays old lines
     // — broadcasting those would duplicate rows on every connected page.
     if (!mergePairs([pair]).length) return;
-    broadcast({ type: "pair", pair });
+    broadcast({ type: "pair", pair, traceBytes: config.traceSize?.() });
     if (config.onPrompt && !promptStamped) {
       const prompt = firstPromptOfPair(pair);
       if (prompt) {
@@ -217,6 +221,23 @@ export function createServer(config: ServerConfig) {
           return Response.json({ ok: true, removed: removedPairs.length, files, skippedFiles });
         } catch (e) {
           return Response.json({ error: String(e) }, { status: 400 });
+        }
+      }
+      if (url.pathname === "/api/compact" && req.method === "POST") {
+        // The web face of `cctrace compact`: dry-run plan by default,
+        // {apply:true} rewrites. applyCompact re-stats every file — one a
+        // live capture appended to since the plan is skipped, not torn.
+        try {
+          const body = (await req.json().catch(() => ({}))) as { apply?: boolean };
+          const cat = (u: string, client?: string) => categorizeUrl(u, client, WIRE);
+          const plan = planCompact(config.logDir, cat, WIRE);
+          if (!body?.apply) {
+            return Response.json({ ok: true, applied: false, files: plan.files.length, stubbed: plan.stubbed, collapsed: plan.collapsed, savedBytes: plan.savedBytes });
+          }
+          const res = applyCompact(plan, cat, WIRE);
+          return Response.json({ ok: true, applied: true, rewritten: res.rewritten.length, skipped: res.skipped.length, savedBytes: res.bytes });
+        } catch (e) {
+          return Response.json({ error: String(e) }, { status: 500 });
         }
       }
       if (url.pathname === "/api/snapshot.html") {
@@ -296,7 +317,7 @@ export function createServer(config: ServerConfig) {
     websocket: {
       open(ws) {
         clients.add(ws);
-        ws.send(JSON.stringify({ type: "init", pairs }));
+        ws.send(JSON.stringify({ type: "init", pairs, traceBytes: config.traceSize?.() }));
       },
       close(ws) {
         clients.delete(ws);

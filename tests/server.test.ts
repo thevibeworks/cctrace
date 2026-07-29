@@ -136,3 +136,15 @@ describe("web actions exports", () => {
     expect((await md.text())).toContain("#");
   });
 });
+
+describe("web compact", () => {
+  test("/api/compact plans by default and reports apply results", async () => {
+    const plan = await (await fetch(`${base}/api/compact`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json() as any;
+    expect(plan.ok).toBe(true);
+    expect(plan.applied).toBe(false);
+    expect(typeof plan.savedBytes).toBe("number"); // empty test logDir: nothing to fold
+    const res = await (await fetch(`${base}/api/compact`, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"apply":true}' })).json() as any;
+    expect(res.applied).toBe(true);
+    expect(res.rewritten).toBe(0);
+  });
+});

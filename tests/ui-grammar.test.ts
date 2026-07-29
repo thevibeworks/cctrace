@@ -270,9 +270,20 @@ describe("rich tool bodies in the session view", () => {
     expect(html).toContain("['title', 'usage']; // default: sid stays readable");
   });
 
-  test("the actions menu exists on served pages and hides on snapshots", () => {
+  test("the actions menu lives in the toolbar, runs housekeeping, hides on snapshots", () => {
     const live = bootPage(getLiveHtml({}));
     expect(live.els["actions-toggle"].style.display || "").not.toBe("none");
+    const ws = live.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")], traceBytes: 5 * 1024 * 1024 }) });
+    // the trace-size metric rides the ws frames into the header rollup
+    expect(live.els["stats"].textContent).toContain("MB");
+    // opening the menu renders runnable housekeeping, not copy-a-command rows
+    live.els["actions-toggle"].onclick!({ stopPropagation() {} } as any);
+    const menu = live.els["act-menu"].innerHTML;
+    expect(menu).toContain("purge telemetry");
+    expect(menu).toContain("compact bodies");
+    expect(menu).toContain("snapshot .html");
+    expect(menu).not.toContain("click copies");
     const snap = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     expect(snap.els["actions-toggle"].style.display).toBe("none");
   });

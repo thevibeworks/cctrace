@@ -97,6 +97,9 @@ export interface PageMeta {
   traceRelPath?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
+  /** Trace file size on disk at render time (snapshots/view exports);
+   * live pages get the growing number over the WebSocket instead. */
+  traceBytes?: number;
   /** "view" when the page serves a saved trace (cctrace view) — the UI
    * reads as a document (no live/offline framing, opens at the top). */
   mode?: string;
@@ -272,7 +275,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
     }
     .mask-menu.open { display: block; }
-    .act-menu { position: absolute; right: 8px; top: 34px; z-index: 30; display: none;
+    #act-wrap { position: relative; display: inline-block; }
+    .act-menu { position: absolute; right: 0; top: 30px; z-index: 30; display: none;
       background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
       padding: 5px 0; font-size: 11px; min-width: 230px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
@@ -519,18 +523,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        the one cache deadline that matters (the newest request's) */
     #pulse {
       position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
-      display: none; align-items: center; gap: 10px; padding: 4px 14px;
-      font-size: 11px; color: var(--text-muted);
-      background: color-mix(in srgb, var(--bg-surface) 90%, transparent);
+      display: none; align-items: center; gap: 10px; padding: 8px 16px;
+      font-size: 12px; color: var(--text);
+      background: linear-gradient(90deg,
+        color-mix(in srgb, var(--accent) 8%, var(--bg-surface)) 0%,
+        color-mix(in srgb, var(--bg-surface) 94%, transparent) 45%);
       backdrop-filter: blur(4px); border-top: 1px solid var(--border);
       white-space: nowrap; overflow: hidden;
     }
     body.view-session.pulse-on #pulse { display: flex; }
-    #pulse .p-star { color: var(--accent); animation: bwPulse 1.6s ease-in-out infinite; }
-    #pulse.idle .p-star { animation: none; opacity: 0.5; }
+    /* fresh = the star spins and breathes (the agent is between requests);
+       idle = it settles. The verb leads while fresh — the eyes' answer to
+       "is it doing something". */
+    #pulse .p-star { color: var(--accent); display: inline-block; animation: pspin 3.2s linear infinite, bwPulse 1.6s ease-in-out infinite; }
+    #pulse.idle .p-star { animation: none; opacity: 0.45; }
+    @keyframes pspin { to { transform: rotate(360deg); } }
+    #pulse .p-verb { color: var(--accent); flex: none; }
+    #pulse.idle .p-verb { display: none; }
     #pulse .p-act { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    #pulse.idle .p-act { color: var(--text-muted); }
     #pulse .p-t { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
     #pulse .p-exp { color: var(--amber); flex: none; }
+    .p-fade { animation: pfade 160ms ease-out; }
+    @keyframes pfade { from { opacity: 0; } }
     #rp-time .rp-skip { color: var(--text-faint); }
     #tail-pill {
       position: absolute; right: 24px; bottom: 16px; z-index: 5;
@@ -1234,7 +1249,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
-      <button class="icon-btn" id="actions-toggle" title="Actions — exports here, housekeeping commands for the terminal">⌘</button>
       <button class="icon-btn" id="mask-toggle" title="Mask identity (blur session id, project, credits) for screen sharing — hover a blurred value to reveal it"></button>
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -1255,6 +1269,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="sel-purge" title="Delete the selected requests from this trace — removes them from the page AND rewrites the .jsonl trace file(s). No undo.">purge</button>
     </span>
     <button id="select-toggle" title="Select requests to purge from the trace file (privacy tool — deletes pairs permanently)">Select</button>
+    <span id="act-wrap"><button id="actions-toggle" title="Trace actions — downloads run here; housekeeping runs here too, advanced ops stay in the terminal">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     <button id="autoscroll" class="active">Auto-scroll</button>
     <button id="clear">Clear</button>
   </div>
@@ -1315,6 +1330,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // assume request.url exists; one bad pair must not blank the page.
     let droppedPairs = 0;
     let lastModelPair = null; // newest completed model call — the pulse's subject
+    let traceBytes = META.traceBytes || 0; // .jsonl size on disk (ws frames refresh it live)
     function ingestPair(p) {
       if (!p || !p.request || typeof p.request.url !== 'string') {
         droppedPairs++;
@@ -1550,42 +1566,82 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     document.addEventListener('click', function() { maskMenu.classList.remove('open'); });
     applyMask(localStorage.getItem('cctrace-mask') === '1');
 
-    // ---- Actions: the CLI's surface, reachable from the page ----
-    // Read-only exports run HERE (server endpoints, same redaction rules as
-    // the CLI); destructive housekeeping (compact/purge/merge) deliberately
-    // stays in the terminal — a click copies the command instead. Snapshots
-    // have no server, so the button hides there.
+    // ---- Actions: the CLI's surface, runnable from the page ----
+    // Two sections, two contracts. Downloads stream from the server with
+    // the CLI's redaction rules. Housekeeping RUNS here: category purge
+    // rides the existing /api/purge (memory + file rewrite + broadcast),
+    // compact is plan → confirm → apply against /api/compact (applyCompact
+    // re-stats, so a live capture appending mid-flight is skipped, never
+    // torn). merge/compress stay terminal-only — they sweep the whole log
+    // dir, which is more than a page should reach for. Snapshots have no
+    // server; the button hides there.
     const actionsToggle = document.getElementById('actions-toggle');
+    const actMenu = document.getElementById('act-menu');
     if (IS_SNAPSHOT) { actionsToggle.style.display = 'none'; }
     else {
-      const actMenu = document.createElement('div');
-      actMenu.className = 'act-menu';
-      if (document.body.appendChild) document.body.appendChild(actMenu);
-      const CLI_ACTS = [
-        ['cctrace compact', 'fold redundant request bodies (-95% size, view-identical)'],
-        ['cctrace purge --drop telemetry', 'drop noise categories from the trace'],
-        ['cctrace merge', 'one deduped file per session'],
-        ['cctrace compress', 'zstd-archive old traces'],
-      ];
-      actionsToggle.onclick = function(e) {
-        e.stopPropagation();
+      const NOISE_CATS = ['telemetry', 'tokens', 'external'];
+      function renderActMenu() {
+        const counts = {};
+        for (const c of NOISE_CATS) counts[c] = 0;
+        for (const p of pairs) if (counts[p._cat] !== undefined) counts[p._cat]++;
         actMenu.innerHTML =
-          '<div class="am-head">download from this page</div>' +
+          '<div class="am-head">download</div>' +
           '<a href="/api/snapshot.html">snapshot .html <span class="am-hint">whole page, offline</span></a>' +
           '<a href="/api/spec.json">wire spec .json <span class="am-hint">observed catalog</span></a>' +
           '<a href="/api/spec.md">wire spec .md</a>' +
           '<div class="am-sep"></div>' +
-          '<div class="am-head">housekeeping \\u2014 run in the terminal (click copies)</div>' +
-          CLI_ACTS.map(a => '<button data-cmd="' + a[0] + '">' + a[0] + ' <span class="am-hint">' + a[1] + '</span></button>').join('');
-        actMenu.classList.toggle('open');
-        actMenu.querySelectorAll('button[data-cmd]').forEach(btn => {
+          '<div class="am-head">housekeeping \\u2014 runs on this trace</div>' +
+          NOISE_CATS.map(c => counts[c]
+            ? '<button data-purgecat="' + c + '">purge ' + c + ' <span class="am-hint">' + counts[c] + ' pairs, rewrites the file</span></button>'
+            : '<button disabled>purge ' + c + ' <span class="am-hint">none</span></button>').join('') +
+          '<button data-compact="plan">compact bodies <span class="am-hint">plan first \\u2014 folds superseded request bodies</span></button>' +
+          '<div class="am-sep"></div>' +
+          '<div class="am-head">deeper (whole log dir): terminal \\u2014 cctrace merge \\u00b7 compress</div>';
+        actMenu.querySelectorAll('button[data-purgecat]').forEach(btn => {
           btn.onclick = function(ev) {
             ev.stopPropagation();
-            navigator.clipboard && navigator.clipboard.writeText(btn.dataset.cmd);
-            btn.querySelector('.am-hint').textContent = 'copied';
+            const cat = btn.dataset.purgecat;
+            const ids = pairs.filter(p => p._cat === cat).map(p => p.id).filter(Boolean);
+            if (!ids.length) return;
+            if (!confirm('Purge ' + ids.length + ' ' + cat + ' request' + (ids.length === 1 ? '' : 's') + ' from the trace?\\n\\nThis deletes them from the page AND rewrites the .jsonl trace file(s). There is no undo.')) return;
+            fetch('/api/purge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
+              .then(r => r.json())
+              .then(() => renderActMenu())
+              .catch(() => { btn.querySelector('.am-hint').textContent = 'failed \\u2014 see server log'; });
           };
         });
+        const cbtn = actMenu.querySelector('button[data-compact]');
+        if (cbtn) cbtn.onclick = function(ev) {
+          ev.stopPropagation();
+          const hint = cbtn.querySelector('.am-hint');
+          if (cbtn.dataset.compact === 'plan') {
+            hint.textContent = 'planning\\u2026';
+            fetch('/api/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+              .then(r => r.json())
+              .then(plan => {
+                if (!plan.stubbed && !plan.collapsed) { hint.textContent = 'nothing to fold'; return; }
+                cbtn.dataset.compact = 'apply';
+                hint.textContent = 'would fold ' + (plan.stubbed + plan.collapsed) + ' bodies in ' + plan.files + ' file(s), save ' + fmtBytes(plan.savedBytes) + ' \\u2014 click again to apply';
+              })
+              .catch(() => { hint.textContent = 'failed \\u2014 see server log'; });
+          } else {
+            hint.textContent = 'applying\\u2026';
+            fetch('/api/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"apply":true}' })
+              .then(r => r.json())
+              .then(res => {
+                cbtn.dataset.compact = 'plan';
+                hint.textContent = 'done: ' + res.rewritten + ' file(s) rewritten, saved ' + fmtBytes(res.savedBytes) + (res.skipped ? ', ' + res.skipped + ' skipped (changed mid-flight)' : '');
+              })
+              .catch(() => { hint.textContent = 'failed \\u2014 see server log'; });
+          }
+        };
+      }
+      actionsToggle.onclick = function(e) {
+        e.stopPropagation();
+        if (!actMenu.classList.contains('open')) renderActMenu();
+        actMenu.classList.toggle('open');
       };
+      actMenu.onclick = function(e) { e.stopPropagation(); };
       document.addEventListener('click', function() { actMenu.classList.remove('open'); });
     }
 
@@ -1651,8 +1707,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         t += ' \\u00b7 in ' + fmtCompact(inTok) + ' \\u00b7 out ' + fmtCompact(outTok);
         if (cost > 0) t += ' \\u00b7 ' + fmtCost(cost);
       }
+      if (traceBytes > 0) t += ' \\u00b7 ' + fmtBytes(traceBytes);
       const tip = ['trace totals'];
       tip.push(pairs.length + ' requests \\u00b7 ' + calls + ' model calls' + (errs ? ' \\u00b7 ' + errs + ' failed' : ''));
+      if (traceBytes > 0) tip.push('trace file: ' + fmtBytes(traceBytes) + ' on disk (.jsonl' + (IS_SNAPSHOT || IS_VIEW ? ', at export/serve time' : ', growing live') + ') \\u2014 cctrace compact folds redundant bodies');
       if (calls) {
         tip.push('input ' + inTok.toLocaleString() + ' (uncached) \\u00b7 output ' + outTok.toLocaleString() +
           (think ? ' \\u00b7 thinking ' + think.toLocaleString() : ''));
@@ -1828,6 +1886,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
         if (msg.type === 'init') {
+          if (msg.traceBytes) traceBytes = msg.traceBytes;
           pairs.length = 0;
           for (const p of msg.pairs) ingestPair(p);
           for (const p of pairs) {
@@ -1838,6 +1897,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           route();
           renderPulse();
         } else if (msg.type === 'pair') {
+          if (msg.traceBytes) traceBytes = msg.traceBytes;
           if (!ingestPair(msg.pair)) return;
           renderStats();
           renderCats();
@@ -4649,7 +4709,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const ci = p._ci || (p._ci = extractCallInfo(p));
       const end = pairEndMs(p);
       const age = Math.max(0, Date.now() - end);
-      pulseEl.classList.toggle('idle', age > 30000);
+      const fresh = age <= 30000;
+      pulseEl.classList.toggle('idle', !fresh);
       let act = '';
       try { act = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
       if (!act) act = ci.stopReason === 'tool_use' ? 'mid-loop \u2014 more work coming' : 'replied';
@@ -4660,8 +4721,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           ? '<span class="p-exp" data-tip="prompt cache expired\\nthe cached prefix passed its TTL \\u2014 the next request re-writes it at write price (1.25x/2x input)\\n---\\n> every hit before expiry would have refreshed the clock">\\u2261 expired</span>'
           : '<span class="p-t" data-tip="' + escapeHtml(cc.title) + '">\u2261 ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
       }
-      pulseEl.innerHTML = '<span class="p-star">\u273b</span>' +
-        '<span class="p-act">' + escapeHtml(shortModel(ci.model || '') || '?') + ' \u00b7 ' + act + '</span>' +
+      // While fresh, a rotating verb leads (clocked off wall time, no extra
+      // state); a changed action line gets one 160ms fade \u2014 the same motion
+      // budget live-arrived rows use, nothing loops.
+      const verb = fresh ? '<span class="p-verb">' + VERBS[Math.floor(Date.now() / 2000) % VERBS.length] + '\u2026</span>' : '';
+      const actHtml = escapeHtml(shortModel(ci.model || '') || '?') + ' \u00b7 ' + act;
+      const changed = pulseEl.dataset.act !== actHtml;
+      pulseEl.dataset.act = actHtml;
+      pulseEl.innerHTML = '<span class="p-star">\u273b</span>' + verb +
+        '<span class="p-act' + (changed ? ' p-fade' : '') + '">' + actHtml + '</span>' +
         '<span class="p-t">' + fmtAgo(age) + '</span>' + cache;
     }
     let expFlipped = false;

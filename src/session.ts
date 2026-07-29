@@ -943,6 +943,18 @@ export function harnessPrompt(text: any): string {
 }
 
 /**
+ * The /compact (or session-resume) continuation summary: a user-ROLE
+ * message whose text is the harness's replacement for the whole history
+ * above. One detector shared by the convo tag and the outline's recap
+ * head so the two panes can never disagree. Position-at-rewrite-boundary
+ * detection stays the callers' primary signal; this is the string
+ * fallback for packings where the boundary wasn't computable.
+ */
+export function continuationSummaryTurn(blocks: any[]): boolean {
+  return turnSnippet(blocks).lastIndexOf("This session is being continued from a previous conversation", 0) === 0;
+}
+
+/**
  * harnessPrompt over a turn's BLOCKS, catching one extra shape the snippet
  * can't: a user message whose entire text is <system-reminder> blocks (the
  * harness nudges — task-tool reminders, memory recalls). turnSnippet
@@ -967,8 +979,13 @@ export function harnessTurnKind(blocks: any[]): string {
  * message is its final response. Turns arriving before any user head (a
  * thread cut mid-history) collect into a headless loop. Automated
  * notifications head a turn too — a CLI-authored one (headInjected).
+ * Each assistant member is one STEP of the loop — one iteration of the
+ * agentic cycle, i.e. one wire request (assistant message + the tool
+ * results that answer it). Steps number 1-based within their loop; the
+ * final response is the loop's last step.
  * Returns [{head: idx|null, headInjected: kind|"", members: [idx...],
- * final: idx|null, injected: {idx: kind}}] over the input array's indices.
+ * final: idx|null, injected: {idx: kind}, steps: {idx: n}, stepCount}]
+ * over the input array's indices.
  */
 export function loopTurns(vis: any[]): any[] {
   const loops: any[] = [];
@@ -979,18 +996,18 @@ export function loopTurns(vis: any[]): any[] {
     if (turn.role === "user") {
       const kind = harnessTurnKind(turn.blocks);
       if (!kind || kind === "notification") {
-        cur = { head: i, headInjected: kind, members: [], final: null, injected: {} };
+        cur = { head: i, headInjected: kind, members: [], final: null, injected: {}, steps: {}, stepCount: 0 };
         loops.push(cur);
         continue;
       }
-      if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {} }; loops.push(cur); }
+      if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {}, steps: {}, stepCount: 0 }; loops.push(cur); }
       cur.injected[i] = kind;
       cur.members.push(i);
       continue;
     }
-    if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {} }; loops.push(cur); }
+    if (!cur) { cur = { head: null, headInjected: "", members: [], final: null, injected: {}, steps: {}, stepCount: 0 }; loops.push(cur); }
     cur.members.push(i);
-    if (turn.role === "assistant") cur.final = i;
+    if (turn.role === "assistant") { cur.final = i; cur.steps[i] = ++cur.stepCount; }
     // A role that is neither user nor assistant (Claude Code sends its
     // nudges as role "system" messages) is harness-authored by
     // definition: an injected member, never a head, never the human.

@@ -274,7 +274,18 @@ hash-routed:
   turns). Ordinals number loops — BARE, zero-padded, 1-BASED on the rail
   ("01"; the word "turn" repeated down the rail is noise, and 1-based
   makes the last label agree with the "N turns" counts; prose surfaces
-  spell "turn 01"); a genuine user message heads the ordinal
+  spell "turn 01"). Each assistant member is a STEP — one iteration of
+  the agentic cycle = one wire request (loopTurns stamps steps/stepCount):
+  mid rows carry a faint sub-ordinal ".2" in the ordinal cell (01 + .2
+  reads 01.2), hovers say "step 2 of 4", the convo role bar gives mids
+  the same "01.2" address, a step whose folded tool_result is_error wears
+  a quiet red "tool err" mark (count in hover), and the final's hover
+  names the wire stop_reason ("stop: end_turn"; tool_use = loop cut
+  mid-work, said honestly). The continuation summary heads its turn as a
+  RECAP node (sys-tag "recap", neutral dot, never the human's ❯ —
+  continuationSummaryTurn in src/session.ts is the one detector shared
+  with the convo's sum-tag, position-at-rewrite-boundary first, preamble
+  string as fallback); a genuine user message heads the ordinal
   (prompt via `turnSnippet`: caveat/stdout wrappers skipped, a
   command-only turn previews as "/model"); the agent's intermediate
   messages indent under it (.tturn-sub/.tturn-mid — narration snippet, or

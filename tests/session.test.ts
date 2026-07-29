@@ -421,6 +421,21 @@ describe("loopTurns / harnessPrompt", () => {
     expect(loops[1].head).toBe(1);
   });
 
+  test("assistant members number as 1-based steps; the final is the last step", () => {
+    const vis = [u("do X"), a("", [{ type: "tool_use", name: "Read", id: "t1", input: {} }]), a("", [{ type: "tool_use", name: "Edit", id: "t2", input: {} }]), a("done")];
+    const loops = loopTurns(vis);
+    expect(loops[0].steps).toEqual({ 1: 1, 2: 2, 3: 3 });
+    expect(loops[0].stepCount).toBe(3);
+    expect(loops[0].steps[loops[0].final]).toBe(loops[0].stepCount);
+  });
+
+  test("injected user members are not steps; step numbering restarts per loop", () => {
+    const loops = loopTurns([u("ask"), a("working"), u(RECAP), a("recap answer"), u("next"), a("r")]);
+    expect(loops[0].steps).toEqual({ 1: 1, 3: 2 }); // the recap prompt (idx 2) is no step
+    expect(loops[1].steps).toEqual({ 5: 1 });
+    expect(loops[1].stepCount).toBe(1);
+  });
+
   test("a reminder-only user message is sys · reminder, absorbed into the turn", () => {
     const reminder = { role: "user", blocks: [{ type: "text", text: "<system-reminder>The task tools haven't been used recently. Consider using TaskCreate...</system-reminder>" }] };
     expect(harnessTurnKind(reminder.blocks)).toBe("reminder");

@@ -240,6 +240,44 @@ describe("steps tree (turn → steps → final/recap)", () => {
   });
 });
 
+describe("rich tool bodies in the session view", () => {
+  test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
+    const p = msgPair("p1", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "fix it" },
+          { role: "assistant", content: [{ type: "tool_use", name: "Edit", id: "t1", input: { file_path: "src/x.ts", old_string: "if (a < b) {", new_string: "if (a <= b) { // <script>" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="diffview"');
+    expect(convo).toContain("- if (a &lt; b) {");
+    expect(convo).toContain("+ if (a &lt;= b) { // &lt;script&gt;");
+    expect(convo).toContain("raw input");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("mask ships category CSS with sid excluded by default", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain('data-mask="sid"');
+    expect(html).toContain("mask-title [data-mask=");
+    expect(html).toContain("['title', 'usage']; // default: sid stays readable");
+  });
+
+  test("the actions menu exists on served pages and hides on snapshots", () => {
+    const live = bootPage(getLiveHtml({}));
+    expect(live.els["actions-toggle"].style.display || "").not.toBe("none");
+    const snap = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    expect(snap.els["actions-toggle"].style.display).toBe("none");
+  });
+});
+
 describe("generated markup grammar", () => {
   test("hostile captures render on every route with zero HTML parse errors", () => {
     const page = bootSnapshotPage(renderSnapshot(HOSTILE));

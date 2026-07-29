@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.29.0
+
+- Added rich tool bodies in the session view: Edit and MultiEdit folds open to a git-style diff of exactly what changed (removed block, added block, hostile content escaped), Write shows its content as additions, TodoWrite renders a live checklist with per-status glyphs, ExitPlanMode renders its plan as markdown, AskUserQuestion lists its questions and options, and Workflow names its phases — the raw input JSON stays one fold deeper
+- Added an actions menu (⌘ in the header) on served pages: download the full snapshot .html, or the observed-wire spec as .json/.md, straight from the running server with the CLI's redaction rules; destructive housekeeping (compact, purge, merge, compress) deliberately stays in the terminal — clicking one copies the command
+- Changed masking to a user-owned category set: right-click the eye to choose what blurs (project/trace title, session ids, usage/credits); session ids are excluded by default — a local uuid is not a credential, and a blurred header chip read worse than it protected
+
 ## 0.28.0
 
 - Added cctrace view --tail (alias --live): follow a running capture's trace file like tail -f — a second window (or a sibling container sharing the .jsonl but not the capture's port) gets a live view server that polls the file, ingests complete new lines, and streams them to the page; torn tail lines are held until their newline arrives, truncations rescan with id-dedup, and the status chip says "tail"

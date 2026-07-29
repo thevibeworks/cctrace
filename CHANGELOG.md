@@ -1,8 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.31.0
 
 - Added trace identity to the traced client's environment in the proxy modes (mitm/base-url): `CCTRACE_TRACE_FILE` always, `CCTRACE_SERVER_PORT` + `CCTRACE_INSTANCE_ID` on live runs — subprocesses of a traced session (statuslines, hooks, nested agents) can now tell they're captured and where the live UI serves without sniffing proxy plumbing or scanning the instance registry; node mode has exported these names since day one
+- Moved the session view's trace controls (replay, ⌘ actions) to the page's right edge: the requests view's filter input already held them there, so the controls now keep one position in both views instead of hugging the tabs when the filter is hidden
+- Changed every toolbar, header, and replay-bar tooltip to the page's designed tip grammar — a heading, a plain-words line, and interaction hints as faint "> " rows (Esc leaves selection, shift+drag slices, purge says "no undo" up front); the chrome now speaks the same hover language the data surfaces already do
+- Changed the version badge hover into a miniature release note: a one-line slogan, the traced clients, and the freshest features — a reader who wonders "what is this page" gets the pitch and what's new in one hover
 
 ## 0.30.0
 

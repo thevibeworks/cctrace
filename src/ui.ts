@@ -206,7 +206,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .ctx-sess.copied { color: var(--green); border-color: var(--green); }
     /* Version badge: right side with the page chrome — what produced the
        page is a brand fact, separate from the run identity in .ctx. The
-       hover tooltip carries the short about text. */
+       hover tooltip is a miniature release note: slogan + fresh features. */
     .ver { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
     .ver-badge { color: var(--text-faint); font-size: 11px; cursor: default; }
     .ver-badge:hover { color: var(--text-muted); }
@@ -349,6 +349,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .toolbar button:hover { background: var(--border); }
     .toolbar button.active { background: var(--status-ok); border-color: var(--status-ok); color: #fff; }
     body.view-session #filter, body.view-session #autoscroll, body.view-session #clear { display: none; }
+    /* The filter input is the toolbar's flexible middle; the session view
+       hides it, which would let replay/actions hug the tabs. Trace controls
+       keep the page's right edge in both views. */
+    body.view-session #replay-toggle { margin-left: auto; }
     /* ---- Select-to-purge ---- */
     /* Rows grow a quiet check gutter in selection mode; the purge button
        wears the state color — it deletes trace data permanently. */
@@ -1249,8 +1253,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
-      <button class="icon-btn" id="mask-toggle" title="Mask identity (blur session id, project, credits) for screen sharing — hover a blurred value to reveal it"></button>
-      <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
+      <button class="icon-btn" id="mask-toggle" title="mask identity"></button>
+      <button class="icon-btn" id="theme-toggle" title="theme"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
     </span>
   </header>
@@ -1260,18 +1264,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button class="tab" id="tab-session">Sessions</button>
     </span>
     <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
-    <button id="replay-toggle" title="Replay this session — ←/→ step turns, Space plays">⏵ replay</button>
-    <button id="prior-toggle" class="active" title="Show/hide requests merged from previous runs of this session">Prev runs</button>
+    <button id="replay-toggle" title="replay&#10;Step back through the session as it happened.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · shift+drag selects a slice · Esc exits">⏵ replay</button>
+    <button id="prior-toggle" class="active" title="previous runs&#10;Show or hide requests merged from earlier runs of this session — same wire session id, older trace files.">Prev runs</button>
     <span id="sel-actions">
       <span id="sel-count"></span>
-      <button id="sel-shown" title="Select every request currently shown — combine with the filter and category chips to select e.g. all telemetry">all shown</button>
-      <button id="sel-none" title="Clear the selection">none</button>
-      <button id="sel-purge" title="Delete the selected requests from this trace — removes them from the page AND rewrites the .jsonl trace file(s). No undo.">purge</button>
+      <button id="sel-shown" title="select all shown&#10;Selects every request currently listed.&#10;---&#10;> filter first — pick a category chip, then select all shown">all shown</button>
+      <button id="sel-none" title="clear the selection">none</button>
+      <button id="sel-purge" title="purge selected&#10;Removes the selected requests from the page AND rewrites the backing .jsonl trace file(s).&#10;---&#10;> no undo — a confirm dialog spells out what gets deleted">purge</button>
     </span>
-    <button id="select-toggle" title="Select requests to purge from the trace file (privacy tool — deletes pairs permanently)">Select</button>
-    <span id="act-wrap"><button id="actions-toggle" title="Trace actions — downloads run here; housekeeping runs here too, advanced ops stay in the terminal">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
-    <button id="autoscroll" class="active">Auto-scroll</button>
-    <button id="clear">Clear</button>
+    <button id="select-toggle" title="select to purge&#10;Pick requests to delete from the trace file — a privacy tool, removal is permanent.&#10;---&#10;> rows grow a check gutter · Esc leaves selection">Select</button>
+    <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
+    <button id="autoscroll" class="active" title="auto-scroll&#10;Stick to the newest request as pairs arrive.">Auto-scroll</button>
+    <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">Clear</button>
   </div>
   <div class="cats" id="cats"></div>
   <div id="split">
@@ -1281,15 +1285,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <button class="rp-btn" id="rp-restart" title="Jump to start (Home)">⏮</button>
-      <button class="rp-btn" id="rp-play" title="Play / pause (Space) — idle gaps compressed to ≤2s">▶</button>
+      <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
+      <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
       <span class="rp-speeds">
         <button class="rp-speed active" data-speed="1">1x</button>
         <button class="rp-speed" data-speed="2">2x</button>
         <button class="rp-speed" data-speed="8">8x</button>
         <button class="rp-speed" data-speed="60">60x</button>
       </span>
-      <div id="rp-track" title="Drag to scrub — ticks are wire requests, tall marks are turns. Shift+drag selects a slice">
+      <div id="rp-track" title="timeline&#10;Ticks are wire requests, tall marks are turns, red marks are errors.&#10;> drag to scrub · shift+drag selects a slice">
         <div id="rp-fill"></div>
         <div id="rp-slice"></div>
         <div id="rp-marks"></div>
@@ -1494,7 +1498,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (pref === 'system') document.documentElement.removeAttribute('data-theme');
       else document.documentElement.setAttribute('data-theme', pref);
       themeToggle.innerHTML = THEME_ICONS[pref];
-      themeToggle.title = 'Theme: ' + pref;
+      themeToggle.title = 'theme: ' + pref + '\\n> click cycles system \\u2192 light \\u2192 dark';
     }
     themeToggle.onclick = function() {
       var order = ['system', 'light', 'dark'];
@@ -1536,8 +1540,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const mk of MASK_KEYS) document.body.classList.toggle('mask-' + mk.k, on && keys.indexOf(mk.k) !== -1);
       maskToggle.innerHTML = on ? MASK_ICONS.on : MASK_ICONS.off;
       maskToggle.title = on
-        ? 'Identity masked \\u2014 click to unmask; right-click to choose what masks; hover a blurred value to reveal it'
-        : 'Mask identity for screen sharing \\u2014 click to mask, right-click to choose what masks';
+        ? 'identity masked\\nHover any blurred value to reveal it deliberately.\\n---\\n> click to unmask \\u00b7 right-click to choose what blurs'
+        : 'mask identity\\nBlur identity values for screen sharing \\u2014 project & trace title, usage & credits by default.\\n---\\n> click to mask \\u00b7 right-click to choose what blurs';
     }
     maskToggle.onclick = function() {
       var on = !document.body.classList.contains('masked');
@@ -1782,14 +1786,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // version produced the page has nothing to do with which run it shows.
     (function renderVer() {
       if (!META.version) return;
-      const about = 'cctrace v' + META.version + ' \\u2014 HTTP traffic tracer for coding-agent CLIs (Claude Code, Codex, Grok).\\n' +
-        'Captures every API request on the wire and rebuilds sessions, turns, costs, and cache behavior \\u2014 see what your agent really does.\\n' +
-        'github.com/thevibeworks/cctrace';
+      // The version tip is a miniature release note: slogan first, then the
+      // freshest features \\u2014 refresh the list when cutting a release so it
+      // reads like the CHANGELOG's top, not a museum plaque.
+      const about = 'cctrace v' + META.version + '\\n' +
+        'X-ray vision for coding agents \\u2014 every request, token, and dollar on the wire.\\n' +
+        'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
+        '---\\n' +
+        'fresh off the wire:\\n' +
+        '\\u00b7 trace actions run on the page \\u2014 purge categories, compact, download the wire spec\\n' +
+        '\\u00b7 rich tool bodies \\u2014 Edit folds open to git-style diffs, TodoWrite to checklists\\n' +
+        '\\u00b7 session replay + slices \\u2014 scrub time, share exactly the window that matters\\n' +
+        '\\u00b7 the pulse \\u2014 what the model is doing right now, cache deadline included\\n' +
+        '\\u00b7 cctrace spec \\u2014 the observed-wire catalog, diffable across releases\\n' +
+        '---\\n' +
+        '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
       if (META.latestVersion) {
         html += '<a class="ver-upd" href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md"' +
           ' target="_blank" rel="noopener"' +
-          ' title="update available \\u2014 npm i -g @thevibeworks/cctrace@latest (or rerun cctrace and accept the prompt)">' +
+          ' title="update available \\u2014 v' + escapeHtml(META.latestVersion) + '\\nnpm i -g @thevibeworks/cctrace@latest, or rerun cctrace and accept the prompt.\\n> click for the changelog">' +
           'v' + escapeHtml(META.latestVersion) + ' available</a>';
       }
       document.getElementById('ver').innerHTML = html;
@@ -1818,7 +1834,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="inst-port">:' + Number(i.port) + '</span></a>';
       }
       instEl.innerHTML =
-        '<button class="inst-btn" title="Other live cctrace instances">\\u21c4 ' + others.length + ' more</button>' +
+        '<button class="inst-btn" title="other live cctrace runs on this machine\\n> click to list & switch">\\u21c4 ' + others.length + ' more</button>' +
         '<div class="inst-menu' + (open ? ' open' : '') + '">' + rows + '</div>';
       const btn = instEl.querySelector('.inst-btn');
       const menu = instEl.querySelector('.inst-menu');

@@ -40,6 +40,13 @@ cctrace grok -- -p "..."         # trace the Grok CLI
 cctrace kimi                     # trace the Kimi Code CLI (all non-Claude use mitm)
 ```
 
+A traced session tells its child processes where the capture lives: the
+spawned CLI (and its statuslines, hooks, and nested agents) sees
+`CCTRACE_TRACE_FILE` (the .jsonl being written), plus `CCTRACE_SERVER_PORT`
+and `CCTRACE_INSTANCE_ID` when a live server is running. An agent that finds
+these in its environment is running under cctrace and can open its own live
+UI at `http://localhost:$CCTRACE_SERVER_PORT/`.
+
 Two gotchas worth knowing before suggesting commands:
 
 - **`-p` position matters**: before `--` it is cctrace's port; after `--` it is

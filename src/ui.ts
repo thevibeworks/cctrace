@@ -48,6 +48,7 @@ import {
   cwdFromText,
   harnessPrompt,
   harnessTurnKind,
+  continuationSummaryTurn,
   loopTurns,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
@@ -680,6 +681,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       color: var(--text-faint); text-transform: none; letter-spacing: 0;
       font-variant-numeric: tabular-nums;
     }
+    /* an intermediate step's address ("01.3") — quieter than turn ordinals */
+    .turn-sord { opacity: 0.75; }
     .turn-usage {
       margin-left: auto; color: var(--text-faint); font-size: 10px;
       text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums;
@@ -1000,6 +1003,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tturn-head .rgut:hover .gut-user, .tturn-head .rgut:hover .cdot { color: var(--accent); background: var(--accent); }
     .tturn-head .rgut:hover .gut-user { background: var(--bg); }
     .tturn-fold-n { margin-left: auto; flex: none; color: var(--text-faint); font-size: 10px; }
+    /* step sub-ordinal (".2" under the head's "01") — quieter than the head */
+    .tturn-sord { font-size: 10px; opacity: 0.75; }
+    /* step outcome: a tool call this step made returned is_error */
+    .tturn-terr { margin-left: auto; flex: none; color: var(--red); font-size: 10px; opacity: 0.8; }
     .tturn-user .tturn-text { color: var(--text); }
     .tturn-fin .tturn-text { color: var(--text-muted); }
     .tturn:hover { background: var(--hover); color: var(--text); }
@@ -1327,6 +1334,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
     ${harnessTurnKind.toString()}
+    ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
 
     const statusEl = document.getElementById('status');
@@ -3017,6 +3025,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const supAt = {};
       const compAt = {};
       const errAt = {};
+      // The turn AT a rewrite-mode boundary is the injected continuation
+      // summary — same position-first rule the convo tag uses, so the
+      // outline's recap head and the convo's sum-tag can never disagree.
+      const sumVisAt = {};
       {
         let vi2 = 0;
         const fullToVis = [];
@@ -3029,6 +3041,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (const c of (t.compactions || [])) {
           const at = Math.min(Math.max(0, c.at), fullToVis.length - 1);
           (compAt[fullToVis[at]] = compAt[fullToVis[at]] || []).push(c);
+          if (c.mode === 'rewrite') sumVisAt[fullToVis[at]] = 1;
         }
         // Failed requests (t.failed: no response / HTTP error) collapse into
         // one run per timeline position — a 429 retry storm is one row
@@ -3155,10 +3168,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // not one wire message. Ordinals number loops; member rows indent.
       const loops = loopTurns(vis);
       const linfo = {};
-      const loopSize = {}; // member rows a folded head hides
+      const loopSize = {};  // member rows a folded head hides
+      const loopSteps = {}; // steps (wire requests) per loop, for "of N"
       for (let li = 0; li < loops.length; li++) {
         const L = loops[li];
         loopSize[li] = L.members.length;
+        loopSteps[li] = L.stepCount || 0;
         if (L.head != null) linfo[L.head] = { ord: li, kind: 'head', injected: L.headInjected || '' };
         for (let mi = 0; mi < L.members.length; mi++) {
           const v = L.members[mi];
@@ -3166,12 +3181,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ord: li,
             kind: v === L.final ? 'final' : 'mid',
             injected: L.injected[v] || '',
+            // step = this assistant message's 1-based position in the
+            // loop's agentic cycle (one step = one wire request)
+            step: (L.steps && L.steps[v]) || 0,
             // a headless loop (thread cut mid-history) shows its ordinal on
             // its first row so the numbering never skips silently
             lead: L.head == null && mi === 0,
           };
         }
       }
+      // Per-step outcomes need the tool results that answered each step's
+      // tool calls — they live in the (hidden) result-only turns.
+      const toolRes = buildToolResultIndex(t.turns);
       // Ordinals render BARE and 1-based ("01") — the word "turn" repeated
       // down the rail is noise, and humans count exchanges from 1, so the
       // last label agrees with the "N turns" counts. Prose surfaces (hover,
@@ -3193,7 +3214,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const folded = li.ord != null && foldedTurns[t.key + '#' + li.ord];
           if (folded && li.kind !== 'head' && !li.lead) continue;
           const ord = li.ord != null ? ordFmt(li.ord) : '?';
-          const ordLabel = li.kind === 'head' || li.lead ? ord : li.kind === 'final' ? '\\u21b3' : '';
+          // Steps carry a sub-ordinal in the same cell — a faint ".2" under
+          // the head's "01" reads as 01.2, addressing each wire request
+          // without repeating the turn number down the rail.
+          const ordLabel = li.kind === 'head' || li.lead ? ord
+            : li.kind === 'final' ? '\\u21b3'
+            : li.step ? '.' + li.step : '';
           const rowCls = (li.kind === 'head' || li.lead ? ' tturn-head' : '') +
             (li.kind === 'head' ? ' tturn-user'
             : ' tturn-sub' + (li.kind === 'mid' ? ' tturn-mid' : ' tturn-fin'));
@@ -3204,6 +3230,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           let text = '';
           let dot = '';
           let tip = '';
+          let errMark = '';
           if (turn.role === 'assistant') {
             let raw = '';
             for (const b of turn.blocks || []) {
@@ -3227,9 +3254,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             const failed = p && (!p.response || p.response.status >= 400);
             const cc = u && p ? summarizeCache(u, p.request.body) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
+            // Step outcome: tool calls this step made whose folded results
+            // came back is_error — a failed step is state, not chrome.
+            let stepErrs = 0;
+            for (const b of turn.blocks || []) {
+              if (b && b.type === 'tool_use' && b.id && toolRes[b.id] && toolRes[b.id].is_error) stepErrs++;
+            }
+            if (stepErrs) errMark = '<span class="tturn-terr">tool err</span>';
             const tbits = [];
             if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '---');
-            tbits.push('turn ' + ord + ' \\u00b7 ' + (li.kind === 'final' ? 'final response' : 'agent work') +
+            // The heading names the node in the tree: a step is one wire
+            // request of the loop; the final response is its last step.
+            tbits.push('turn ' + ord +
+              (li.kind === 'final'
+                ? ' \\u00b7 final response' + (li.step > 1 ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : '')
+                : li.step ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : ' \\u00b7 agent work') +
               (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : ''));
             if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
@@ -3243,6 +3282,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
               tbits.push(l);
             }
+            // The final's stop is a wire fact, not an inference: end_turn is
+            // a finished response; tool_use here means the loop was cut
+            // mid-work and this "final" is just the last reply captured.
+            if (li.kind === 'final' && p && !failed) {
+              const ci = p._ci || (p._ci = extractCallInfo(p));
+              if (ci && ci.stopReason) tbits.push(
+                ci.stopReason === 'tool_use'
+                  ? 'stop: tool_use \\u2014 the loop was cut mid-work; this is the last reply, not a finished response'
+                  : 'stop: ' + ci.stopReason);
+            }
+            if (stepErrs) tbits.push(stepErrs + ' tool call' + (stepErrs === 1 ? '' : 's') + ' this step returned an error');
             if (failed) tbits.push('request FAILED: no response or HTTP error \\u2014 see the wire pair');
             if (cc) tbits.push(cc.title);
             if (p && p.request.body && p.request.body._cctrace_stub) tbits.push('request body folded by cctrace compact \\u2014 the kept request holds the full history');
@@ -3268,6 +3318,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
               'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human' +
               '\\n---\\n> click to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
+          } else if (sumVisAt[vi] || continuationSummaryTurn(turn.blocks)) {
+            // The auto recap: /compact (or a session resume) injected this
+            // user-role summary as the model's entire memory of the
+            // conversation above. It heads its turn — it does start real
+            // agent work — but it is harness-authored, never the human's ❯.
+            const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
+            text = '<span class="sys-tag">recap</span>' +
+              '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
+            dot = '<span class="cdot"></span>';
+            tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
+              'turn ' + ord + ' \\u00b7 auto recap (continuation summary)\\n' +
+              'injected by the harness as the model\\u2019s entire memory of the conversation above \\u2014 not typed by the human' +
+              '\\n---\\n> click to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
           } else {
             const s = turnSnippet(turn.blocks) || firstUserText(turn.blocks);
             text = escapeHtml(s.slice(0, 120));
@@ -3290,8 +3353,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
             (canFold ? ' data-fold="' + li.ord + '"' : '') +
             ' data-tip="' + escapeHtml(tip) + '">' +
-            '<span class="rgut"' + gutTip + '>' + dot + '</span><span class="tturn-ord">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + foldN + '</a>';
+            '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
+            '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
+            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + '</a>';
           if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
       }
@@ -3687,7 +3751,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return renderBlock(b, md);
     }
 
-    function renderSessionTurn(turn, results, ord, isSummary) {
+    function renderSessionTurn(turn, results, ord, isSummary, stepLbl) {
       let inner = '';
       for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
@@ -3714,8 +3778,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         meta = '<span class="turn-usage" title="no captured request matches this reply \\u2014 history was repacked or the reply was edited before it entered history">unattributed</span>';
       }
       // The ordinal ties the turn to the outline in the threads pane —
-      // "03" there is "turn 03" here, one shared 1-based numbering.
-      const ordHtml = ord != null ? '<span class="turn-ord">turn ' + (ord + 1 < 10 ? '0' + (ord + 1) : ord + 1) + '</span>' : '';
+      // "03" there is "turn 03" here, one shared 1-based numbering; an
+      // intermediate step carries its step address ("01.3") the same way.
+      const ordHtml = ord != null ? '<span class="turn-ord">turn ' + (ord + 1 < 10 ? '0' + (ord + 1) : ord + 1) + '</span>'
+        : stepLbl ? '<span class="turn-ord turn-sord">' + stepLbl + '</span>' : '';
       // The continuation summary is not a normal prompt — it's the text
       // /compact injected as the model's entire memory of the conversation
       // above. Tag it so nobody reads it as something the user typed.
@@ -3726,8 +3792,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // boundary wasn't computable (e.g. a post-compact spine). Via
       // turnSnippet, not firstUserText: the continuation message often
       // opens with a <local-command-caveat> wrapper only it skips.
-      if (turn.role === 'user' && (isSummary ||
-          turnSnippet(turn.blocks).lastIndexOf('This session is being continued from a previous conversation', 0) === 0)) {
+      if (turn.role === 'user' && (isSummary || continuationSummaryTurn(turn.blocks))) {
         tag = '<span class="sum-tag" title="injected by /compact \\u2014 this text replaced the full history in the model\\u2019s context; it is not something the user typed">continuation summary</span>';
       } else if (turn.role === 'user') {
         // Same system scope as the continuation tag: harness-authored
@@ -3863,11 +3928,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // agent-work messages carry none — they are inside the turn.
       const cloops = loopTurns(t.turns.filter(x => !x.toolResultsOnly));
       const viOrd = {};
+      const viStep = {}; // intermediate steps carry "01.3" — same address as the outline
       for (let li = 0; li < cloops.length; li++) {
         const L = cloops[li];
         if (L.head != null) viOrd[L.head] = li;
         if (L.final != null) viOrd[L.final] = li;
         if (L.head == null && L.members.length) viOrd[L.members[0]] = li;
+        for (const v of L.members) {
+          if (v !== L.final && L.steps && L.steps[v])
+            viStep[v] = (li + 1 < 10 ? '0' + (li + 1) : '' + (li + 1)) + '.' + L.steps[v];
+        }
       }
       // The turn sitting AT a rewrite-mode boundary is the injected
       // continuation summary — tagged by position, not by matching
@@ -3902,7 +3972,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (epochAt[vi] !== undefined) {
           parts.push('<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>');
         }
-        try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary)); }
+        try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary, viStep[vi] || '')); }
         catch (e) { parts.push(brokenItem('turn', turn && turn.pairId, e)); }
         vi++;
       }

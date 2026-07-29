@@ -116,6 +116,77 @@ describe("live page boot", () => {
   });
 });
 
+describe("steps tree (turn → steps → final/recap)", () => {
+  // One agentic loop on the wire: user ask, two tool steps (the first one's
+  // result is_error), then the final response from the pair's response body.
+  const loopPair = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "please fix the bug" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "1 fail" }] },
+        { role: "assistant", content: [{ type: "tool_use", name: "Edit", id: "t2", input: { file_path: "src/x.ts", old_string: "a", new_string: "b" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "ok" }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "fixed it" }], stop_reason: "end_turn" },
+  });
+
+  function threadsHtml(pairs: TracePair[]) {
+    const page = bootSnapshotPage(renderSnapshot(pairs));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+    return frag!.html;
+  }
+
+  test("intermediate steps carry sub-ordinals and step-of-N hovers", () => {
+    const html = threadsHtml([loopPair]);
+    expect(html).toContain('class="tturn-ord tturn-sord">.1<');
+    expect(html).toContain('class="tturn-ord tturn-sord">.2<');
+    expect(html).toContain("step 1 of 3");
+    expect(html).toContain("step 2 of 3");
+  });
+
+  test("a step whose tool call errored wears the outcome mark", () => {
+    const html = threadsHtml([loopPair]);
+    expect(html).toContain('<span class="tturn-terr">tool err</span>');
+    expect(html).toContain("1 tool call this step returned an error");
+  });
+
+  test("the final row names its wire stop reason", () => {
+    const html = threadsHtml([loopPair]);
+    expect(html).toContain("final response");
+    expect(html).toContain("stop: end_turn");
+  });
+
+  test("a continuation summary heads its turn as a recap node, never the human's ❯", () => {
+    const cont = msgPair("p2", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "This session is being continued from a previous conversation that ran out of context. The summary covers..." },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "resuming" }], stop_reason: "end_turn" },
+    });
+    const html = threadsHtml([cont]);
+    expect(html).toContain('<span class="sys-tag">recap</span>');
+    expect(html).toContain("auto recap (continuation summary)");
+    // the recap row's gutter is a neutral dot, not the human's prompt glyph
+    const row = html.slice(html.indexOf("auto recap") - 800, html.indexOf("auto recap"));
+    expect(row).not.toContain("gut-user");
+  });
+
+  test("a genuine user head still wears ❯ and plain steps stay unmarked", () => {
+    const html = threadsHtml([loopPair]);
+    expect(html).toContain("gut-user");
+    // the healthy Edit step has no outcome mark of its own
+    const editRow = html.slice(html.indexOf(">.2<"), html.indexOf(">.2<") + 400);
+    expect(editRow).not.toContain("tturn-terr");
+  });
+});
+
 describe("generated markup grammar", () => {
   test("hostile captures render on every route with zero HTML parse errors", () => {
     const page = bootSnapshotPage(renderSnapshot(HOSTILE));

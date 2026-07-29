@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.26.0
+
+- Added steps to the session outline: each assistant message in a turn is one step of the agentic loop — one wire request — carrying a faint sub-ordinal (".1 .2 .3") under the turn's "01" and "step 2 of 4" in its hover; the conversation pane's intermediate messages wear the same address ("01.2") on their role bar, so both panes share one numbering down to the single request
+- Added per-step outcomes: a step whose tool call came back is_error wears a quiet "tool err" mark on the row, with the exact count in the hover
+- Added the wire stop reason to the final response's hover ("stop: end_turn"); a final that stopped at tool_use says the loop was cut mid-work instead of pretending the response finished
+- Changed the continuation summary to head its turn as a recap node: a neutral dot and a small-caps recap tag instead of the human's ❯ prompt glyph, with a hover explaining the harness injected it as the model's entire memory of the conversation above — the outline and conversation pane now share one detector so they can never disagree
+
 ## 0.25.1
 
 - Fixed every live and view page failing to load in 0.25.0 with "Cannot access 'META' before initialization": the view-mode check read META above its declaration, killing the whole page script; snapshot pages were unaffected because their code path short-circuits before the read

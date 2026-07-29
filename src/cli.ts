@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
-import { createCapturer, type CaptureMode, type Capturer } from "./capture";
+import { createCapturer, traceIdentityEnv, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
@@ -1063,7 +1063,7 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
   };
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, onFinalize?: () => string, onAgentPid?: (pid: number) => void) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1080,7 +1080,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
   console.log("");
 
   const child: ChildProcess = spawn(claudePath, claudeArgs, {
-    env: { ...(process.env as Record<string, string>), ...capturer.env },
+    env: { ...(process.env as Record<string, string>), ...capturer.env, ...identityEnv },
     stdio: "inherit",
     cwd: process.cwd(),
   });
@@ -1244,6 +1244,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // self-contained .html, so it keeps the finalize step.
   spawnClaudeWithCapturer(
     claudePath, claudeArgs, capturer, opts, logFile,
+    traceIdentityEnv(resolve(logFile), liveInstance?.snapshot() ?? null),
     opts.liveMode ? undefined : sink.writeHtml,
     (pid) => liveInstance?.update({ agentPid: pid }),
   );

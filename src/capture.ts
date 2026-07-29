@@ -36,6 +36,25 @@ export interface Capturer {
   pairCount(): number;
 }
 
+/**
+ * Trace-identity vars for the spawned client, alongside the capturer's own
+ * proxy/CA vars: subprocesses of a traced session (statuslines, hooks, nested
+ * agents) get to KNOW they run under a capture and where — the trace file
+ * always, the live UI port + run id when a live server exists. Node mode has
+ * exported these names since day one; the proxy modes agree via this helper.
+ */
+export function traceIdentityEnv(
+  logFile: string,
+  instance?: { id?: string; port: number } | null,
+): Record<string, string> {
+  const env: Record<string, string> = { CCTRACE_TRACE_FILE: logFile };
+  if (instance) {
+    if (instance.id) env.CCTRACE_INSTANCE_ID = instance.id;
+    env.CCTRACE_SERVER_PORT = String(instance.port);
+  }
+  return env;
+}
+
 export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): Promise<Capturer> {
   if (mode === "mitm") {
     const certs = await ensureCerts(opts.cacheDir, opts.onStatus);

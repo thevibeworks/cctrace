@@ -327,7 +327,10 @@ export function writeView(target: string, logDir: string, meta: PageMeta = {}, o
   const viewDir = resolve(logDir);
   const projectRoot = basename(viewDir) === ".cctrace" ? dirname(viewDir) : viewDir;
   const rel = relative(projectRoot, join(viewDir, traceFile));
+  let traceBytes = 0;
+  for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
   const html = renderSnapshot(result.pairs, {
+    traceBytes,
     project: basename(projectRoot),
     projectPath: projectRoot,
     traceRelPath: rel && !rel.startsWith("..") ? rel : join(viewDir, traceFile),

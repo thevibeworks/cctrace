@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.30.0
+
+- Moved trace actions out of the page header into the toolbar, where the other trace-level controls live — the header keeps identity and page chrome only
+- Changed housekeeping actions from copy-a-command rows to actually running on the page: purge telemetry/tokens/external shows live pair counts and rides the existing purge path (memory + file rewrite + broadcast, with the same confirm), and compact runs plan → confirm → apply against a new /api/compact endpoint with the CLI's re-stat discipline (a live capture appending mid-flight is skipped, never torn); merge and compress stay terminal-only — they sweep the whole log dir, which is more than a page should reach for
+- Added the trace file's on-disk size to the header totals rollup ("… · 41.2MB"), streaming live as the .jsonl grows; the hover names the file state and points at compact
+- Changed the pulse to stand out: taller and brighter with an accent wash, the ✻ spins and breathes while the session is fresh and settles when idle, a rotating verb leads while work is in flight, and a changed action line gets one 160ms fade — the same motion budget as live-arrived rows
+
 ## 0.29.0
 
 - Added rich tool bodies in the session view: Edit and MultiEdit folds open to a git-style diff of exactly what changed (removed block, added block, hostile content escaped), Write shows its content as additions, TodoWrite renders a live checklist with per-status glyphs, ExitPlanMode renders its plan as markdown, AskUserQuestion lists its questions and options, and Workflow names its phases — the raw input JSON stays one fold deeper

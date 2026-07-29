@@ -168,11 +168,20 @@ one to reveal it; display-layer only, unrelated to capture-time redaction
 body.mask-<k> classes, localStorage cctrace-mask-keys, right-click the eye
 for the picker) — session ids are EXCLUDED by default (a local uuid is not
 a credential; the blurred chip read worse than it protected). Served pages
-(live/view/tail — never snapshots) also carry an ACTIONS menu (⌘ header
-button): download /api/snapshot.html (the view --html equivalent),
-/api/spec.json / /api/spec.md (the `cctrace spec` catalog, same redaction);
-destructive housekeeping stays in the terminal — menu rows copy the
-command (cctrace compact/purge/merge/compress). Wall-clock times render 24h
+(live/view/tail — never snapshots) carry an ACTIONS menu (⌘ toolbar
+button, #act-wrap — trace actions live with the trace controls, not the
+header): downloads (/api/snapshot.html, /api/spec.json|.md — CLI
+redaction rules) plus RUNNABLE housekeeping — per-category purge
+(telemetry/tokens/external, live counts, the existing /api/purge path +
+confirm) and compact via POST /api/compact (plan by default →
+{apply:true}; planCompact/applyCompact from src/compact.ts, re-stat
+discipline: a live capture appending mid-flight is skipped). merge/
+compress stay terminal-only (whole-log-dir sweeps). The header totals
+rollup also shows the trace file's on-disk size (traceBytes: baked into
+PageMeta for exports, refreshed on every ws init/pair frame live —
+config.traceSize in src/server.ts). The PULSE (0.28) grew stand-out
+styling: accent wash, spinning/breathing ✻ while fresh (≤30s), a
+rotating verb while in flight, 160ms fade on action change. Wall-clock times render 24h
 (`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
 the trace actually contains (a codex run never shows Count Tokens), the
 active one staying visible even at zero. Live-arrived rows get one 160ms

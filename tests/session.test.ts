@@ -892,3 +892,45 @@ describe("failed requests land in t.failed at their timeline position", () => {
     expect(t.turns.length).toBe(3);
   });
 });
+
+describe("richToolBody", () => {
+  const { richToolBody, diffHunk } = require("../src/session");
+
+  test("Edit renders a git-style hunk with wire content escaped", () => {
+    const h = richToolBody("Edit", { old_string: "a < b", new_string: "a <= b\nplus" });
+    expect(h).toContain('class="dv-del">- a &lt; b');
+    expect(h).toContain('class="dv-add">+ a &lt;= b');
+    expect(h).toContain('class="dv-add">+ plus');
+    expect(h).not.toContain("a < b");
+  });
+
+  test("Write is all additions; MultiEdit chains hunks", () => {
+    expect(richToolBody("Write", { content: "one\ntwo" }).match(/dv-add/g)!.length).toBe(2);
+    const h = richToolBody("MultiEdit", { edits: [{ old_string: "x", new_string: "y" }, { old_string: "p", new_string: "q" }] });
+    expect(h.match(/<pre class="diffview">/g)!.length).toBe(2);
+  });
+
+  test("TodoWrite renders a checklist with per-status glyphs", () => {
+    const h = richToolBody("TodoWrite", { todos: [
+      { content: "done thing", status: "completed" },
+      { content: "doing <script>", status: "in_progress" },
+      { content: "next", status: "pending" },
+    ]});
+    expect(h).toContain("☑");
+    expect(h).toContain("▸");
+    expect(h).toContain("☐");
+    expect(h).toContain("&lt;script&gt;");
+  });
+
+  test("Workflow surfaces its phase titles; unknown tools fall back to ''", () => {
+    const script = "export const meta = { name: 'x', description: 'd', phases: [{ title: 'Scan' }, { title: 'Fix', detail: 'z' }] }";
+    expect(richToolBody("Workflow", { script })).toContain("Scan → Fix");
+    expect(richToolBody("Bash", { command: "ls" })).toBe("");
+    expect(richToolBody("Edit", { file_path: "x" })).toBe("");
+  });
+
+  test("diffHunk tolerates missing sides", () => {
+    expect(diffHunk("", "new")).toContain("dv-add");
+    expect(diffHunk(undefined, undefined)).toContain("diffview");
+  });
+});

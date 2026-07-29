@@ -2,6 +2,7 @@ import type { ServerWebSocket } from "bun";
 import type { TracePair } from "./types";
 import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
 import { sliceWindow, pairEndMs } from "./replay";
+import { createSpecAccumulator, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
@@ -217,6 +218,32 @@ export function createServer(config: ServerConfig) {
         } catch (e) {
           return Response.json({ error: String(e) }, { status: 400 });
         }
+      }
+      if (url.pathname === "/api/snapshot.html") {
+        // The web face of `view --html`: a full self-contained snapshot of
+        // everything this server holds. On-demand only — big sessions make
+        // big files, which is exactly why live runs stopped writing these.
+        return new Response(renderSnapshot(pairs, { ...config.meta, mode: undefined }), {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "content-disposition": `attachment; filename="cctrace-snapshot-${pairs.length}pairs.html"`,
+          },
+        });
+      }
+      if (url.pathname === "/api/spec.json" || url.pathname === "/api/spec.md") {
+        // The web face of `cctrace spec`: the observed-wire catalog of this
+        // run's pairs. Same redaction guarantees as the CLI (values never
+        // enter the artifact except negotiation headers + model ids).
+        const acc = createSpecAccumulator({ generator: "cctrace live server" });
+        acc.add(pairs);
+        const catalog = acc.finish();
+        const md = url.pathname.endsWith(".md");
+        return new Response(md ? renderSpecMarkdown(catalog) : JSON.stringify(catalog, null, 2), {
+          headers: {
+            "content-type": md ? "text/markdown; charset=utf-8" : "application/json",
+            "content-disposition": `attachment; filename="wire-spec.${md ? "md" : "json"}"`,
+          },
+        });
       }
       if (url.pathname === "/api/slice.html") {
         // Slice export: a snapshot holding exactly the pairs whose response

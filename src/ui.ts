@@ -50,6 +50,9 @@ import {
   harnessTurnKind,
   continuationSummaryTurn,
   loopTurns,
+  escHtml,
+  diffHunk,
+  richToolBody,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
 import {
@@ -256,8 +259,47 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .icon-btn svg { width: 16px; height: 16px; }
     /* Mask mode: blur identity values for screen sharing; hover to reveal
        one deliberately. Display-layer only (see src/redact.ts for capture). */
-    body.masked [data-mask] { filter: blur(5px); }
-    body.masked [data-mask]:hover { filter: none; }
+    /* mask categories: body carries mask-<key> classes for the enabled
+       set (right-click the eye to choose); sid is OFF by default */
+    body.mask-title [data-mask="title"], body.mask-sid [data-mask="sid"],
+    body.mask-usage [data-mask="usage"] { filter: blur(5px); }
+    body.mask-title [data-mask="title"]:hover, body.mask-sid [data-mask="sid"]:hover,
+    body.mask-usage [data-mask="usage"]:hover { filter: none; }
+    .mask-menu {
+      position: absolute; right: 8px; top: 34px; z-index: 30; display: none;
+      background: var(--bg-surface); border: 1px solid var(--border);
+      border-radius: 6px; padding: 6px 10px; font-size: 11px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    }
+    .mask-menu.open { display: block; }
+    .act-menu { position: absolute; right: 8px; top: 34px; z-index: 30; display: none;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 0; font-size: 11px; min-width: 230px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
+    .act-menu.open { display: block; }
+    .act-menu a, .act-menu button { display: block; width: 100%; text-align: left;
+      padding: 5px 12px; color: var(--text); background: none; border: none;
+      font: inherit; cursor: pointer; text-decoration: none; }
+    .act-menu a:hover, .act-menu button:hover { background: var(--hover); }
+    .act-menu .am-head { padding: 4px 12px 2px; color: var(--text-faint); font-size: 10px; }
+    .act-menu .am-sep { border-top: 1px solid var(--border); margin: 4px 0; }
+    .act-menu .am-hint { color: var(--text-faint); font-size: 10px; padding-left: 6px; }
+    .mask-menu label { display: flex; gap: 6px; align-items: center; padding: 3px 0; cursor: pointer; color: var(--text-muted); }
+    .mask-menu .mm-head { color: var(--text-faint); padding-bottom: 3px; }
+    /* rich tool bodies: git-style diffs, checklists, plan markdown */
+    .diffview { margin: 4px 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    .dv-del { display: block; background: color-mix(in srgb, var(--red) 11%, transparent); }
+    .dv-add { display: block; background: color-mix(in srgb, var(--green) 11%, transparent); }
+    .dv-note { color: var(--text-faint); font-size: 10px; padding: 2px 0; }
+    .todolist { padding: 4px 2px; font-size: 12px; }
+    .todo-row { padding: 1px 0; }
+    .todo-st { margin-right: 7px; color: var(--text-muted); }
+    .todo-completed { color: var(--text-faint); }
+    .todo-in_progress .todo-st { color: var(--accent); }
+    .todo-opt { padding-left: 16px; color: var(--text-muted); }
+    .mdplan { padding: 4px 2px; }
+    details.rawin { margin-top: 4px; }
+    details.rawin summary { color: var(--text-faint); font-size: 10px; cursor: pointer; }
     .toolbar {
       padding: 8px 16px;
       background: var(--bg-surface);
@@ -1192,6 +1234,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
+      <button class="icon-btn" id="actions-toggle" title="Actions — exports here, housekeeping commands for the terminal">⌘</button>
       <button class="icon-btn" id="mask-toggle" title="Mask identity (blur session id, project, credits) for screen sharing — hover a blurred value to reveal it"></button>
       <button class="icon-btn" id="theme-toggle" title="Theme: system"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -1392,6 +1435,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${harnessTurnKind.toString()}
     ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
+    ${escHtml.toString()}
+    ${diffHunk.toString()}
+    ${richToolBody.toString()}
 
     const statusEl = document.getElementById('status');
     const statsEl = document.getElementById('stats');
@@ -1452,19 +1498,96 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       off: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>',
       on: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l12 12M6.3 6.3A2 2 0 008 10a2 2 0 001.7-1M4.2 4.4C2.3 5.6 1 8 1 8s2.5 4.5 7 4.5c1.2 0 2.2-.2 3.1-.6M7 3.5A7.5 7.5 0 018 3.5c4.5 0 7 4.5 7 4.5s-.6 1.1-1.8 2.3"/></svg>',
     };
+    // What masks is a SET the user owns (right-click the eye): session id
+    // is excluded by default — it's a local uuid, not a credential, and a
+    // blurred header chip reads worse than it protects. The eye stays the
+    // master switch.
+    const MASK_KEYS = [
+      { k: 'title', label: 'project & trace title' },
+      { k: 'sid', label: 'session ids' },
+      { k: 'usage', label: 'usage & credits' },
+    ];
+    function maskKeySet() {
+      try {
+        const v = JSON.parse(localStorage.getItem('cctrace-mask-keys') || 'null');
+        if (Array.isArray(v)) return v;
+      } catch {}
+      return ['title', 'usage']; // default: sid stays readable
+    }
     function applyMask(on) {
+      const keys = maskKeySet();
       document.body.classList.toggle('masked', on);
+      for (const mk of MASK_KEYS) document.body.classList.toggle('mask-' + mk.k, on && keys.indexOf(mk.k) !== -1);
       maskToggle.innerHTML = on ? MASK_ICONS.on : MASK_ICONS.off;
       maskToggle.title = on
-        ? 'Identity masked \\u2014 click to unmask (hover a blurred value to reveal it)'
-        : 'Mask identity (blur session id, project, credits) for screen sharing \\u2014 hover a blurred value to reveal it';
+        ? 'Identity masked \\u2014 click to unmask; right-click to choose what masks; hover a blurred value to reveal it'
+        : 'Mask identity for screen sharing \\u2014 click to mask, right-click to choose what masks';
     }
     maskToggle.onclick = function() {
       var on = !document.body.classList.contains('masked');
       localStorage.setItem('cctrace-mask', on ? '1' : '0');
       applyMask(on);
     };
+    // Right-click: the category picker.
+    const maskMenu = document.createElement('div');
+    maskMenu.className = 'mask-menu';
+    if (document.body.appendChild) document.body.appendChild(maskMenu);
+    maskToggle.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      const keys = maskKeySet();
+      maskMenu.innerHTML = '<div class="mm-head">blur when masked:</div>' + MASK_KEYS.map(mk =>
+        '<label><input type="checkbox" data-mk="' + mk.k + '"' + (keys.indexOf(mk.k) !== -1 ? ' checked' : '') + '>' + mk.label + '</label>').join('');
+      maskMenu.classList.add('open');
+      maskMenu.querySelectorAll('input[data-mk]').forEach(inp => {
+        inp.onchange = function() {
+          const set = maskKeySet().filter(k => k !== inp.dataset.mk);
+          if (inp.checked) set.push(inp.dataset.mk);
+          localStorage.setItem('cctrace-mask-keys', JSON.stringify(set));
+          applyMask(document.body.classList.contains('masked'));
+        };
+      });
+    });
+    document.addEventListener('click', function() { maskMenu.classList.remove('open'); });
     applyMask(localStorage.getItem('cctrace-mask') === '1');
+
+    // ---- Actions: the CLI's surface, reachable from the page ----
+    // Read-only exports run HERE (server endpoints, same redaction rules as
+    // the CLI); destructive housekeeping (compact/purge/merge) deliberately
+    // stays in the terminal — a click copies the command instead. Snapshots
+    // have no server, so the button hides there.
+    const actionsToggle = document.getElementById('actions-toggle');
+    if (IS_SNAPSHOT) { actionsToggle.style.display = 'none'; }
+    else {
+      const actMenu = document.createElement('div');
+      actMenu.className = 'act-menu';
+      if (document.body.appendChild) document.body.appendChild(actMenu);
+      const CLI_ACTS = [
+        ['cctrace compact', 'fold redundant request bodies (-95% size, view-identical)'],
+        ['cctrace purge --drop telemetry', 'drop noise categories from the trace'],
+        ['cctrace merge', 'one deduped file per session'],
+        ['cctrace compress', 'zstd-archive old traces'],
+      ];
+      actionsToggle.onclick = function(e) {
+        e.stopPropagation();
+        actMenu.innerHTML =
+          '<div class="am-head">download from this page</div>' +
+          '<a href="/api/snapshot.html">snapshot .html <span class="am-hint">whole page, offline</span></a>' +
+          '<a href="/api/spec.json">wire spec .json <span class="am-hint">observed catalog</span></a>' +
+          '<a href="/api/spec.md">wire spec .md</a>' +
+          '<div class="am-sep"></div>' +
+          '<div class="am-head">housekeeping \\u2014 run in the terminal (click copies)</div>' +
+          CLI_ACTS.map(a => '<button data-cmd="' + a[0] + '">' + a[0] + ' <span class="am-hint">' + a[1] + '</span></button>').join('');
+        actMenu.classList.toggle('open');
+        actMenu.querySelectorAll('button[data-cmd]').forEach(btn => {
+          btn.onclick = function(ev) {
+            ev.stopPropagation();
+            navigator.clipboard && navigator.clipboard.writeText(btn.dataset.cmd);
+            btn.querySelector('.am-hint').textContent = 'copied';
+          };
+        });
+      };
+      document.addEventListener('click', function() { actMenu.classList.remove('open'); });
+    }
 
     // ---- Header context: traced client + project + current session id ----
 
@@ -1571,7 +1694,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const rel = META.traceRelPath || META.traceFile || '';
         const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '') +
           (rel ? '\\n\\nclick to copy ' + rel : '');
-        html += '<span class="ctx-proj' + (rel ? ' ctx-copy' : '') + '" data-mask title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+        html += '<span class="ctx-proj' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
       }
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
@@ -1905,7 +2028,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const chips = summarizePair(pair, pair._cat, { newest: pair.id === newestMessagesId(), now: Date.now() });
       // Usage/credits chips carry account identity — mask them for screen
       // sharing (hover reveals). data-mask is inert until body.masked is on.
-      const mask = pair._cat === 'usage' ? ' data-mask' : '';
+      const mask = pair._cat === 'usage' ? ' data-mask="usage"' : '';
       return chips.map(c =>
         '<span class="' + (c.c || '') + '"' + (c.title ? ' title="' + escapeHtml(c.title) + '"' : '') + mask + '>' + escapeHtml(c.t) + '</span>'
       ).join('');
@@ -2583,7 +2706,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (u.credits) {
         const d = Math.pow(10, u.credits.decimalPlaces);
-        rows += '<div class="ubar-row"><span class="ubar-label">credits</span><span class="ubar-pct" data-mask style="flex:none">' +
+        rows += '<div class="ubar-row"><span class="ubar-label">credits</span><span class="ubar-pct" data-mask="usage" style="flex:none">' +
           (u.credits.used / d) + ' / ' + (u.credits.limit / d) + ' ' + escapeHtml(u.credits.currency) + '</span></div>';
       }
       return '<div class="section"><h4>Usage limits</h4>' + rows + '</div>';
@@ -3760,7 +3883,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const hm = (ts) => fmtTime(new Date(ts * 1000)).slice(0, 5);
       const range = t0 === Infinity ? '' : (hm(t0) === hm(t1) ? hm(t0) : hm(t0) + '\\u2013' + hm(t1));
       return ICON_SESSION + '<span class="klabel">session</span>' +
-        '<span class="sess-sid" data-mask' +
+        '<span class="sess-sid" data-mask="sid"' +
         (sid ? ' data-sid="' + escapeHtml(sid) + '"' +
           ' onclick="copySessSid(event, this)"' : '') +
         '>' + (sid ? escapeHtml(sid.slice(0, 8)) : 'no session id') + '</span>' +
@@ -3822,7 +3945,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           cls = 'fold-tool';
           if (pv) pv = '(' + pv + ')';
         }
-        let body = preBlock(formatJson(b.input));
+        let body = '';
+        const rich = b.name === 'ExitPlanMode' && b.input && typeof b.input.plan === 'string'
+          ? '<div class="mdplan">' + renderMd(b.input.plan) + '</div>'
+          : richToolBody(b.name, b.input);
+        if (rich) {
+          body = rich + '<details class="rawin"><summary>raw input</summary>' + preBlock(formatJson(b.input)) + '</details>';
+        } else {
+          body = preBlock(formatJson(b.input));
+        }
         const res = results[b.id];
         if (res) {
           let rbody = '';

@@ -1105,3 +1105,78 @@ export function toolPreview(name: string, input: any, ws?: any): string {
     default: return "";
   }
 }
+
+/**
+ * Minimal HTML escaper for the rich tool bodies below — session.ts owns it
+ * (page inlining: cross-calls resolve by NAME, so the helper must be inlined
+ * beside its callers; the page's own escapeHtml stays untouched).
+ */
+export function escHtml(s: any): string {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** One Edit hunk as a git-style diff: the removed block, then the added. */
+export function diffHunk(oldS: any, newS: any): string {
+  const del = String(oldS || "").split("\n").map((l) => '<span class="dv-del">- ' + escHtml(l) + "</span>").join("");
+  const add = String(newS || "").split("\n").map((l) => '<span class="dv-add">+ ' + escHtml(l) + "</span>").join("");
+  return '<pre class="diffview">' + del + add + "</pre>";
+}
+
+/**
+ * Rich fold bodies for tools whose input has a better shape than raw JSON —
+ * the session view shows the CHANGE (a diff, a checklist), with the raw
+ * input one fold deeper. Returns "" for tools without a rich form so the
+ * caller falls back to pretty JSON. HTML-safe by construction (escHtml on
+ * every wire string).
+ */
+export function richToolBody(name: string, input: any): string {
+  const i = input || {};
+  if (name === "Edit" && typeof i.old_string === "string" && typeof i.new_string === "string") {
+    return diffHunk(i.old_string, i.new_string) + (i.replace_all ? '<div class="dv-note">replace all occurrences</div>' : "");
+  }
+  if (name === "MultiEdit" && Array.isArray(i.edits) && i.edits.length) {
+    let h = "";
+    for (const e of i.edits) if (e) h += diffHunk(e.old_string, e.new_string);
+    return h;
+  }
+  if (name === "Write" && typeof i.content === "string") {
+    return '<pre class="diffview">' +
+      i.content.split("\n").map((l: string) => '<span class="dv-add">+ ' + escHtml(l) + "</span>").join("") +
+      "</pre>";
+  }
+  if (name === "TodoWrite" && Array.isArray(i.todos) && i.todos.length) {
+    let h = '<div class="todolist">';
+    for (const t of i.todos) {
+      if (!t) continue;
+      const st = t.status === "completed" ? "☑" : t.status === "in_progress" ? "▸" : "☐";
+      h += '<div class="todo-row todo-' + escHtml(t.status || "pending") + '"><span class="todo-st">' + st + "</span>" +
+        escHtml(t.content || t.subject || "") + "</div>";
+    }
+    return h + "</div>";
+  }
+  if (name === "AskUserQuestion" && Array.isArray(i.questions) && i.questions.length) {
+    let h = '<div class="todolist">';
+    for (const q of i.questions) {
+      if (!q) continue;
+      h += '<div class="todo-row"><span class="todo-st">?</span>' + escHtml(q.question || "") + "</div>";
+      for (const o of Array.isArray(q.options) ? q.options : [])
+        h += '<div class="todo-row todo-opt"><span class="todo-st">·</span>' + escHtml((o && o.label) || "") + "</div>";
+    }
+    return h + "</div>";
+  }
+  if (name === "Workflow" && typeof i.script === "string") {
+    // The script's meta block names the workflow's phases — surface the
+    // orchestration shape without dumping the whole script.
+    const m = /phases\s*:\s*\[([\s\S]{0,800}?)\]/.exec(i.script.slice(0, 2000));
+    if (m) {
+      const phases: string[] = [];
+      const re = /title\s*:\s*['"]([^'"]+)['"]/g;
+      let x;
+      while ((x = re.exec(m[1]!))) phases.push(x[1]!);
+      if (phases.length) return '<div class="dv-note">phases: ' + escHtml(phases.join(" → ")) + "</div>";
+    }
+  }
+  return "";
+}

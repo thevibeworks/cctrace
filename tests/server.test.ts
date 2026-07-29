@@ -120,3 +120,19 @@ describe("slice export", () => {
     expect((await fetch(`${base}/api/slice.html?from=sl-a&to=nope`)).status).toBe(404);
   });
 });
+
+describe("web actions exports", () => {
+  test("/api/snapshot.html downloads the whole page; /api/spec.json is the redacted catalog", async () => {
+    const snap = await fetch(`${base}/api/snapshot.html`);
+    expect(snap.status).toBe(200);
+    expect(snap.headers.get("content-disposition")).toContain("attachment");
+    expect(await snap.text()).toContain("__PAIRS__");
+    const spec = await fetch(`${base}/api/spec.json`);
+    expect(spec.status).toBe(200);
+    const cat = await spec.json() as any;
+    expect(cat.format).toContain("cctrace-wire-catalog");
+    expect(JSON.stringify(cat)).not.toContain("Bearer");
+    const md = await fetch(`${base}/api/spec.md`);
+    expect((await md.text())).toContain("#");
+  });
+});

@@ -164,7 +164,15 @@ mask toggle (eye glyph, persisted in localStorage `cctrace-mask`) blurs
 identity values marked `data-mask` (header session id + trace title,
 per-session sid labels, usage/credits chips) for screen sharing — hover any
 one to reveal it; display-layer only, unrelated to capture-time redaction
-(src/redact.ts). Wall-clock times render 24h
+(src/redact.ts). What blurs is a category SET (data-mask="title|sid|usage",
+body.mask-<k> classes, localStorage cctrace-mask-keys, right-click the eye
+for the picker) — session ids are EXCLUDED by default (a local uuid is not
+a credential; the blurred chip read worse than it protected). Served pages
+(live/view/tail — never snapshots) also carry an ACTIONS menu (⌘ header
+button): download /api/snapshot.html (the view --html equivalent),
+/api/spec.json / /api/spec.md (the `cctrace spec` catalog, same redaction);
+destructive housekeeping stays in the terminal — menu rows copy the
+command (cctrace compact/purge/merge/compress). Wall-clock times render 24h
 (`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
 the trace actually contains (a codex run never shows Count Tokens), the
 active one staying visible even at zero. Live-arrived rows get one 160ms
@@ -492,7 +500,14 @@ hash-routed:
   on the wire — codex's <cwd> tag or Claude Code's bulleted
   " - Primary working directory:" env line, precise shapes only, scanned
   over the first 3 messages pairs since utility probes carry no env
-  block); a spawn fold shows the spawned thread's outcome inline
+  block); tools with a richer shape than JSON open to RICH bodies
+  (richToolBody/diffHunk/escHtml in src/session.ts, inlined + unit-tested:
+  Edit/MultiEdit = git-style hunks — removed block then added block,
+  everything escaped; Write = all-additions; TodoWrite = a checklist with
+  per-status glyphs; AskUserQuestion = questions + options; Workflow =
+  its meta phase titles; ExitPlanMode renders the plan via the page's
+  renderMd) with the raw input JSON one fold deeper (details.rawin);
+  a spawn fold shows the spawned thread's outcome inline
   ("2 turns · out 50 · $0.0035", agentThreadStats) plus the open-thread
   link, and a Skill fold names the skill in its title ("skill · ccx")
   with args as the hint; Read/Bash dumps stay quiet). Every turn's role

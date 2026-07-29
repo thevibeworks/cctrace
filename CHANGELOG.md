@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added trace identity to the traced client's environment in the proxy modes (mitm/base-url): `CCTRACE_TRACE_FILE` always, `CCTRACE_SERVER_PORT` + `CCTRACE_INSTANCE_ID` on live runs — subprocesses of a traced session (statuslines, hooks, nested agents) can now tell they're captured and where the live UI serves without sniffing proxy plumbing or scanning the instance registry; node mode has exported these names since day one
+
 ## 0.30.0
 
 - Moved trace actions out of the page header into the toolbar, where the other trace-level controls live — the header keeps identity and page chrome only

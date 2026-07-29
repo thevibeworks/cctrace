@@ -93,7 +93,14 @@ credits) independent of `ANTHROPIC_BASE_URL`.
    src/certs.ts) exported as `SSL_CERT_FILE` / `CURL_CA_BUNDLE` /
    `REQUESTS_CA_BUNDLE` / `NIX_SSL_CERT_FILE`; those vars *replace* the trust
    store, hence the union (issue #17). `HTTP_PROXY` stays unset — the front
-   door only speaks CONNECT and would break plain-http subprocess calls
+   door only speaks CONNECT and would break plain-http subprocess calls.
+   Alongside the plumbing, the child also gets trace IDENTITY
+   (`traceIdentityEnv` in src/capture.ts, both proxy modes):
+   `CCTRACE_TRACE_FILE` always, plus `CCTRACE_SERVER_PORT` +
+   `CCTRACE_INSTANCE_ID` on live runs — so subprocesses of a traced
+   session (statuslines, hooks, nested agents) can KNOW they're captured
+   and where the UI serves, without registry heuristics. Node mode has
+   exported these names since day one; the proxy modes agree now
 
 Captures `/v1/messages`, `/api/oauth/*` (incl. usage/credits), `/api/claude_cli/*`,
 `/mcp-registry/*`, `/api/event_logging/*`, plus Claude Code's datadog intake

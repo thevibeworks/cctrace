@@ -852,6 +852,8 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset} [--prune]           Consolidate each session's pairs into one deduped
                           session-<id>.jsonl; --prune drops merged sources.
+                          ${C.dim}A capture run does this for its own session at exit
+                          (--no-auto-merge opts out); this is the whole-dir sweep.${C.reset}
   ${C.cyan}compress${C.reset} [--older-than N] [--keep-jsonl]
                           zstd-archive traces, 40-60x on session traces
                           (view reads .zst/.gz directly; upgrades old .gz).
@@ -895,6 +897,9 @@ ${C.yellow}OPTIONS:${C.reset}
   --log NAME         Custom log file base name
   --dir PATH         Log directory (default: .cctrace)
   --fresh            Don't merge prior traces of a continued session
+                     (also skips the exit auto-merge)
+  --no-auto-merge    Don't consolidate this run's session into
+                     session-<id>.jsonl at exit (see the merge subcommand)
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
   --client-path PATH Custom binary path for any client (codex/grok/kimi too)
@@ -976,6 +981,7 @@ interface RunOpts {
   logAll: boolean;
   noOpen: boolean;
   fresh: boolean;
+  noAutoMerge: boolean;
   withFiles: string[];
 }
 
@@ -1067,7 +1073,44 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
   };
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[]) {
+/**
+ * Consolidate this run's own session(s) on the way out. A resumed session
+ * fragments across one trace-*.jsonl per run; `cctrace merge` fixes that by
+ * hand, and doing it at exit keeps the log dir one file per session instead
+ * of a pile the user has to reason about. Scoped to the sessions this run saw
+ * on the wire — a concurrent run's trace is never a source — and it only
+ * fires when there IS something to consolidate: a fresh single-file session
+ * leaves its trace exactly as written. Returns the merged output path when
+ * this run's own log file was absorbed into it, so callers can stop pointing
+ * at a file that no longer exists. Fail-soft: housekeeping never costs the
+ * exit receipt or the exit code.
+ */
+function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): string | null {
+  try {
+    const wire = wireTables();
+    const sids = new Set<string>();
+    for (const p of pairs) {
+      const sid = extractSessionId(p, wire);
+      if (sid) sids.add(sid);
+    }
+    if (!sids.size) return null;
+    const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true });
+    if (!plan.sessions.length) return null;
+    const res = applyMerge(plan, { prune: true });
+    if (!res.written.length) return null;
+    const sources = new Set(plan.sessions.flatMap((s) => s.sources));
+    log(`Merged ${sources.size} trace file(s) → ${res.written.join(", ")}`, C.cyan);
+    if (res.skipped.length) log(`Kept ${res.skipped.length} source(s) that grew mid-merge: ${res.skipped.join(", ")}`, C.dim);
+    if (!res.pruned.includes(basename(logFile))) return null;
+    const absorbed = plan.sessions.find((s) => s.sources.includes(basename(logFile)));
+    return absorbed ? absorbed.outPath : null;
+  } catch (err) {
+    log(`Auto-merge skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
+    return null;
+  }
+}
+
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1122,13 +1165,25 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
       log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     }
     capturer.stop();
+    // Fold this run's trace into its session file before anything names it:
+    // the receipt, the registry tombstone and `cctrace view` must point at
+    // where the pairs actually live now. --fresh opts out along with the
+    // viewer-side merge; --no-auto-merge opts out of just this.
+    let traceFile = logFile;
+    if (!opts.fresh && !opts.noAutoMerge) {
+      const merged = autoMergeOnExit(opts, logFile, getPairs?.() ?? []);
+      if (merged) {
+        traceFile = merged;
+        onTraceMoved?.(resolve(merged));
+      }
+    }
     if (onFinalize) {
       // Static mode: the self-contained snapshot is the deliverable.
       const htmlFile = onFinalize();
       log(`HTML: ${htmlFile}`, C.green);
       if (!opts.noOpen) openBrowser(htmlFile);
     } else {
-      log(`Reopen anytime: cctrace view ${logFile}`, C.dim);
+      log(`Reopen anytime: cctrace view ${traceFile}`, C.dim);
     }
     if (signal) log(`Terminated: ${signal}`, C.yellow);
     else if (code === 0) log("Session complete", C.green);
@@ -1268,6 +1323,9 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     opts.liveMode ? undefined : sink.writeHtml,
     (pid) => liveInstance?.update({ agentPid: pid }),
     sink.pairs,
+    // The tombstone is the cross-project run catalog: point it at the merged
+    // session file, not the trace the merge just absorbed.
+    (path) => liveInstance?.update({ logFile: path }),
   );
 }
 
@@ -1424,6 +1482,7 @@ async function main() {
     logAll: !values["messages-only"],
     noOpen: !!values["no-open"],
     fresh: !!values.fresh,
+    noAutoMerge: !!values["no-auto-merge"],
     withFiles: values.with ? [...values.with] : [],
   };
 

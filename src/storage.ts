@@ -142,9 +142,17 @@ export interface MergePlan {
   subsumed: FileEntry[];
 }
 
-export function planMerge(logDir: string): MergePlan {
+export interface MergeScope {
+  /** Merge only these sessions (the exit auto-merge scopes to the run's own). */
+  sessionIds?: Set<string>;
+  /** Skip a session that lives in one file with no previously merged output —
+   * there is nothing to consolidate, so leave its trace untouched. */
+  fragmentedOnly?: boolean;
+}
+
+export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   const bySession = new Map<string, { pairs: Map<string, TracePair>; sources: Set<string>; dupes: number }>();
-  const fileSessionPairs = new Map<string, { total: number; attributed: number }>();
+  const fileSessionPairs = new Map<string, { total: number; attributed: number; sids: Set<string> }>();
   let unattributable = 0;
 
   for (const path of ls(logDir)) {
@@ -153,13 +161,18 @@ export function planMerge(logDir: string): MergePlan {
     let pairs: TracePair[];
     try { pairs = parseTraceText(readTraceText(path)); } catch { continue; }
     const name = basename(path);
-    const stat = { total: pairs.length, attributed: 0 };
+    const stat = { total: pairs.length, attributed: 0, sids: new Set<string>() };
     for (const p of pairs) {
       const sid = extractSessionId(p, WIRE);
       if (!sid) { unattributable++; continue; }
       stat.attributed++;
+      stat.sids.add(sid);
       let g = bySession.get(sid);
       if (!g) { g = { pairs: new Map(), sources: new Set(), dupes: 0 }; bySession.set(sid, g); }
+      // Out of scope: the id still registers (output naming must dodge its
+      // prefix, prune safety must see it) but its pairs are never held — a
+      // scoped merge shouldn't carry every other session in the dir.
+      if (scope.sessionIds && !scope.sessionIds.has(sid)) continue;
       g.sources.add(name);
       const key = pairKey(p);
       if (g.pairs.has(key)) g.dupes++;
@@ -179,14 +192,16 @@ export function planMerge(logDir: string): MergePlan {
 
   const sessions: MergeSession[] = [];
   for (const [id, g] of bySession) {
+    if (scope.sessionIds && !scope.sessionIds.has(id)) continue;
     const shortId = shortFor(id);
     const outPath = join(logDir, `session-${shortId}.jsonl`);
+    const priors = [outPath, `${outPath}.zst`, `${outPath}.gz`].filter(existsSync);
+    if (scope.fragmentedOnly && g.sources.size < 2 && !priors.length) continue;
     // A previous merge's output is an INPUT: --prune may have deleted its
     // sources, so union with it — a re-run can only grow the merged file,
     // never shrink it back to whatever the current sources happen to hold.
     let existing = 0;
-    for (const prev of [outPath, `${outPath}.zst`, `${outPath}.gz`]) {
-      if (!existsSync(prev)) continue;
+    for (const prev of priors) {
       let prevPairs: TracePair[];
       try { prevPairs = parseTraceText(readTraceText(prev)); } catch { continue; }
       for (const p of prevPairs) {
@@ -208,11 +223,14 @@ export function planMerge(logDir: string): MergePlan {
   }
   sessions.sort((a, b) => (b.pairCount - a.pairCount));
 
-  // A source is prune-able only if every one of its pairs was attributed to a
-  // session (nothing unique would be lost). Utility traces never qualify.
+  // A source is prune-able only if every one of its pairs lands in a session
+  // this plan actually WRITES (nothing unique would be lost). Utility traces
+  // never qualify — and under a scoped plan neither does a file holding a
+  // session we're not merging: those pairs would exist in no output.
+  const written = new Set(sessions.map((s) => s.id));
   const subsumed: FileEntry[] = [];
   for (const [name, stat] of fileSessionPairs) {
-    if (stat.total > 0 && stat.attributed === stat.total) {
+    if (stat.total > 0 && stat.attributed === stat.total && [...stat.sids].every((id) => written.has(id))) {
       const path = join(logDir, name);
       try { subsumed.push(entry(path)); } catch { /* skip */ }
     }

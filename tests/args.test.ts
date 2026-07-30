@@ -75,6 +75,11 @@ describe("parseCliArgs", () => {
     }
   });
 
+  test("--no-auto-merge is cctrace's own boolean flag", () => {
+    const { values } = parseCliArgs(["--no-auto-merge"]);
+    expect(values["no-auto-merge"]).toBe(true);
+  });
+
   test("missing option value is a usage error", () => {
     expect(() => parseCliArgs(["--mode"])).toThrow(CliUsageError);
   });

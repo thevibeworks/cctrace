@@ -678,6 +678,8 @@ cctrace view <target> --tail              # follow the trace file live (tail -f 
                                           # the .jsonl but not the capture's port)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
+                                          # (whole-dir sweep; every capture run already
+                                          # merges its OWN session at exit)
 cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly
 cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens,external)
 cctrace compact [--zstd] [--yes]          # fold redundant bodies: superseded messages request
@@ -860,6 +862,23 @@ make test       # bun test
   `session.ts` doesn't care which run a request came from. `--fresh` opts out,
   `--with FILE` force-merges. Append-to-one-file was rejected: it corrupts on
   unrelated sessions and still needs the same load-at-startup machinery.
+- **Auto-merge at exit consolidates the DISK side of that continuity**
+  (`autoMergeOnExit` in src/cli.ts): capture stays one immutable file per run,
+  but at exit the run folds its OWN sessions into `session-<sid8>.jsonl` and
+  prunes the sources it fully absorbed — so a resumed session is one file, not
+  one per run. Scoped by the sids this run saw on the wire (`planMerge(logDir,
+  { sessionIds, fragmentedOnly })`), so a concurrent run's trace is never
+  touched, and it only fires when there's something to consolidate: a fresh
+  single-file session's trace is left byte-identical. The scoped plan's prune
+  rule is stricter than the whole-dir one — a source is prunable only when
+  every pair lands in a session THIS plan writes (a file also holding an
+  unmerged session's pairs would otherwise vanish into no output). Everything
+  else is the manual command's discipline: atomic writes, union-never-shrink,
+  re-stat before each unlink. Fail-soft and silent when it does nothing;
+  `--no-auto-merge` opts out, `--fresh` opts out of the whole continuity
+  layer. Legacy node mode doesn't do it. When this run's own trace is
+  absorbed, the exit receipt and the registry tombstone name the session file
+  instead — nothing points at a path that no longer exists.
 
 ## Testing
 

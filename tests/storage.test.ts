@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync, statSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { gunzipSync, gzipSync } from "zlib";
@@ -166,6 +166,98 @@ describe("merge", () => {
     expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(true);
     expect(res.skipped).toEqual(["trace-A2.jsonl"]);
     expect(res.pruned).toEqual(["trace-A1.jsonl"]);
+  });
+});
+
+// The exit auto-merge: same machinery, scoped to the sessions one run saw,
+// and only where there is actually something to consolidate.
+describe("scoped merge (exit auto-merge)", () => {
+  const scoped = (...sids: string[]) => planMerge(dir, { sessionIds: new Set(sids), fragmentedOnly: true });
+  const ids = (path: string) => parseTraceText(readFileSync(path, "utf8")).map((p) => p.id);
+
+  test("merges only the scoped session; another session's files are untouched", () => {
+    writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
+    writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
+    writeFileSync(join(dir, "trace-B1.jsonl"), jl(convPair("b1", SID_B, 300)));
+    writeFileSync(join(dir, "trace-B2.jsonl"), jl(convPair("b2", SID_B, 400)));
+    const plan = scoped(SID_A);
+    expect(plan.sessions.map((s) => s.id)).toEqual([SID_A]);
+    applyMerge(plan, { prune: true });
+    expect(ids(join(dir, "session-2d5c0d3b.jsonl"))).toEqual(["a1", "a2"]);
+    expect(existsSync(join(dir, "session-6fae9380.jsonl"))).toBe(false);
+    expect(existsSync(join(dir, "trace-B1.jsonl"))).toBe(true);
+    expect(existsSync(join(dir, "trace-B2.jsonl"))).toBe(true);
+  });
+
+  // Regression, the trap of a SCOPED plan: prune-ability means "every pair
+  // lands in a session this plan writes", not "every pair has some session id".
+  // A file also holding an unmerged session's pairs must survive — they would
+  // exist in no output.
+  test("a source holding an unmerged session's pairs is never pruned", () => {
+    writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
+    writeFileSync(join(dir, "trace-mixed.jsonl"), jl(convPair("a2", SID_A, 200), convPair("b1", SID_B, 300)));
+    const plan = scoped(SID_A);
+    expect(plan.subsumed.map((f) => f.name)).toEqual(["trace-A1.jsonl"]);
+    const res = applyMerge(plan, { prune: true });
+    expect(res.pruned).toEqual(["trace-A1.jsonl"]);
+    expect(existsSync(join(dir, "trace-mixed.jsonl"))).toBe(true);
+    expect(ids(join(dir, "session-2d5c0d3b.jsonl"))).toEqual(["a1", "a2"]); // still merged in
+    expect(ids(join(dir, "trace-mixed.jsonl"))).toEqual(["a2", "b1"]);      // and still on disk
+  });
+
+  test("a fresh single-file session is left exactly as written", () => {
+    const path = join(dir, "trace-A1.jsonl");
+    writeFileSync(path, jl(convPair("a1", SID_A, 100)));
+    const before = readFileSync(path, "utf8");
+    const plan = scoped(SID_A);
+    expect(plan.sessions).toHaveLength(0);
+    expect(applyMerge(plan, { prune: true })).toMatchObject({ written: [], pruned: [] });
+    expect(readdirSync(dir)).toEqual(["trace-A1.jsonl"]);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  test("a session spanning several runs unions deduped and prunes its sources", () => {
+    writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100), convPair("a2", SID_A, 200)));
+    writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200), convPair("a3", SID_A, 300)));
+    const plan = scoped(SID_A);
+    expect(plan.sessions[0]!.dupes).toBe(1);
+    const res = applyMerge(plan, { prune: true });
+    expect(res.written).toEqual(["session-2d5c0d3b.jsonl"]);
+    expect(res.pruned.sort()).toEqual(["trace-A1.jsonl", "trace-A2.jsonl"]);
+    expect(ids(join(dir, "session-2d5c0d3b.jsonl"))).toEqual(["a1", "a2", "a3"]);
+  });
+
+  // One source is enough when a previous merge already claimed this session:
+  // that's the resumed-session case the auto-merge exists for.
+  test("an existing session file makes a single new trace worth merging", () => {
+    const out = join(dir, "session-2d5c0d3b.jsonl");
+    writeFileSync(out, jl(convPair("a1", SID_A, 100)));
+    writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
+    const plan = scoped(SID_A);
+    expect(plan.sessions[0]!.existing).toBe(1);
+    applyMerge(plan, { prune: true });
+    expect(ids(out)).toEqual(["a1", "a2"]);
+    expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(false);
+  });
+
+  test("utility pairs keep their trace out of the prune set", () => {
+    writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
+    writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200), utilityPair("u1", 201)));
+    const res = applyMerge(scoped(SID_A), { prune: true });
+    expect(res.pruned).toEqual(["trace-A1.jsonl"]);
+    expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(true);
+  });
+
+  // A concurrent capture appending to a source between plan and apply: its
+  // tail is in no output, so the file must survive.
+  test("a source that grew since the plan is skipped, not truncated", () => {
+    writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
+    writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
+    const plan = scoped(SID_A);
+    appendFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a9", SID_A, 900)));
+    const res = applyMerge(plan, { prune: true });
+    expect(res.skipped).toEqual(["trace-A2.jsonl"]);
+    expect(ids(join(dir, "trace-A2.jsonl"))).toEqual(["a2", "a9"]);
   });
 });
 

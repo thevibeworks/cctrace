@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.0
+
+- Added wall-clock timestamps to the session view: every conversation turn's role bar shows its wire time (24h, hover for the full date — user turns inherit the time of the request that carried them), and the outline's user-prompt, recap, and injected-row hovers now name their moment alongside the metrics the step rows already carried
+- Redesigned the toolbar around a left-to-right scope grammar: view tabs, then the list group (filter · prev runs · select), then page behavior (tail · clear — Auto-scroll is now "tail"), then the trace controls (replay · ⌘ actions) holding the right edge in both views; groups separate with hairlines, labels read lowercase, and pressed toggles wear a quiet accent tint instead of a green fill — green stays reserved for state
+- Changed the end-of-run messages into a receipt: what was traced (pair count, per-category breakdown, wall-clock, on-disk size), whose session (ids, primary model, tokens in/out with cache share, estimated cost), and what failed (status codes, dropped responses, in-stream errors) — computed from the run's own pairs, prior-run merges excluded
+- Fixed the header session id carrying a dead mask attribute — sid blurring now follows the mask picker exactly (and stays excluded by default: a local uuid is not a credential)
+
 ## 0.31.0
 
 - Added trace identity to the traced client's environment in the proxy modes (mitm/base-url): `CCTRACE_TRACE_FILE` always, `CCTRACE_SERVER_PORT` + `CCTRACE_INSTANCE_ID` on live runs — subprocesses of a traced session (statuslines, hooks, nested agents) can now tell they're captured and where the live UI serves without sniffing proxy plumbing or scanning the instance registry; node mode has exported these names since day one

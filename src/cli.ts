@@ -27,6 +27,7 @@ import {
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
+import { traceSummary } from "./report";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
@@ -982,6 +983,8 @@ interface LogSink {
   onPair: (pair: TracePair) => void;
   /** Write the categorized HTML report from everything collected. */
   writeHtml: () => string;
+  /** This run's pairs (no prior-run merges) — feeds the exit summary. */
+  pairs: () => TracePair[];
 }
 
 /** Run identity for the page header: the project is the cwd the client runs
@@ -1060,10 +1063,11 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
       writeFileSync(htmlFile, snapHtml);
       return htmlFile;
     },
+    pairs: () => collected,
   };
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[]) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1097,10 +1101,26 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     process.exit(1);
   });
 
+  const startedAt = Date.now();
   child.on("exit", async (code, signal) => {
     await capturer.flush();
     for (const line of unmuteTerm()) console.log(line);
-    log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
+    // The close-out: what got traced (count, categories, wall-clock, disk),
+    // whose session, how many tokens and dollars, what failed — the receipt
+    // for the run, not just a pair count.
+    if (getPairs) {
+      let sizeBytes = 0;
+      try { sizeBytes = statSync(logFile).size; } catch {}
+      const sum = traceSummary(getPairs(), {
+        wire: wireTables(), pricing: pricingCatalog(DATA_DIR),
+        sizeBytes, durationMs: Date.now() - startedAt,
+      });
+      log(sum.traced, C.green);
+      if (sum.session) log(sum.session, C.cyan);
+      if (sum.errors) log(sum.errors, C.yellow);
+    } else {
+      log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
+    }
     capturer.stop();
     if (onFinalize) {
       // Static mode: the self-contained snapshot is the deliverable.
@@ -1247,6 +1267,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     traceIdentityEnv(resolve(logFile), liveInstance?.snapshot() ?? null),
     opts.liveMode ? undefined : sink.writeHtml,
     (pid) => liveInstance?.update({ agentPid: pid }),
+    sink.pairs,
   );
 }
 

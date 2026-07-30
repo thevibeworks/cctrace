@@ -88,6 +88,12 @@ to protect that feeling.
   relative countdowns: a rendered page must not go stale, and ticking
   timers are motion. State that depends on "now" (cache expired) is
   computed at render time only.
+- Toolbar grammar: scope narrows left to right — view tabs · list group
+  (filter + prev runs + select) · page group (tail · clear) · trace group
+  (replay · ⌘ actions) holding the right edge in both views. Groups are
+  spans (the session view hides groups, not ids), page/trace groups open
+  with a hairline, labels are lowercase, and a pressed toggle wears a
+  quiet accent tint — never a green fill (green is state, not preference).
 - Request rows: content chips left (model · effort · think · in/out ·
   ≡cache · cost · state), wire transport as right-aligned columns (sizes ·
   ttft · duration · time). The ≡ glyph (U+2261) is the cache mark — slim,

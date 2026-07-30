@@ -108,6 +108,20 @@ describe("live page boot", () => {
     expect(page.els["convo"].innerHTML).toContain("hello");
   });
 
+  test("session turns carry wall-clock: role-bar time, user rows inherit it", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    // Both the user head (inherited from the request that carried it) and
+    // the attributed reply wear a time on the role bar.
+    expect((convo.match(/class="turn-time/g) || []).length).toBe(2);
+    // The user-prompt row hover names the wall-clock too (epoch fixture —
+    // the rendered date is TZ-dependent, so match the shape).
+    expect(page.els["threads"].innerHTML).toMatch(/user prompt\n\d{4}-\d{2}-\d{2} /);
+  });
+
   test("a view page boots as a document: status view, no auto-tail", () => {
     const page = bootPage(getLiveHtml({ mode: "view" }));
     expect(page.errors).toEqual([]);

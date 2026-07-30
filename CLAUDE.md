@@ -30,6 +30,9 @@ src/
 ├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads;
 │                   #   newest-prior-session guess for --continue preload
 ├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
+├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
+│                   #   category, wall-clock, on-disk size, sids, tokens+cache%,
+│                   #   est cost — this run's pairs only, prior merges excluded)
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
 ├── version.ts      # CCTRACE_VERSION (+ commit hash: build --define, git fallback on source runs) + daily npm update check (cached in data dir, fail-soft)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
@@ -534,7 +537,10 @@ hash-routed:
   link, and a Skill fold names the skill in its title ("skill · ccx")
   with args as the hint; Read/Bash dumps stay quiet). Every turn's role
   bar carries the outline's ordinal ("03" on the rail is "turn 03" here —
-  .turn-ord). Every assistant
+  .turn-ord) and its wall-clock at the right edge (.turn-time, 24h, hover =
+  full date; turnTimes in ui.ts — a user turn inherits the timestamp of the
+  request that carried it, and the outline's user/recap/injected hovers name
+  the same moment). Every assistant
   turn links back to its wire request. The conversation pane
   tails like tail -f in live mode (open/refresh lands on the newest turn,
   sticky bottom, "new activity" pill when scrolled up); live re-renders

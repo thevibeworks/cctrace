@@ -347,18 +347,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-size: 12px;
     }
     .toolbar button:hover { background: var(--border); }
-    .toolbar button.active { background: var(--status-ok); border-color: var(--status-ok); color: #fff; }
-    body.view-session #filter, body.view-session #autoscroll, body.view-session #clear { display: none; }
-    /* The filter input is the toolbar's flexible middle; the session view
-       hides it, which would let replay/actions hug the tabs. Trace controls
-       keep the page's right edge in both views. */
-    body.view-session #replay-toggle { margin-left: auto; }
+    /* Pressed toggles wear a quiet accent tint — accent means interactive
+       (ui.md one-accent rule); green/red stay reserved for state. */
+    .toolbar button.active {
+      background: color-mix(in srgb, var(--accent) 12%, var(--btn-bg));
+      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+      color: var(--accent);
+    }
+    /* Toolbar groups: tight gap inside a group, the toolbar's own gap
+       between groups; page + trace groups open with a hairline. The list
+       group's flexible filter holds the right edge in the requests view;
+       margin-left:auto holds it when the session view hides the middle. */
+    .tb-group { display: flex; gap: 6px; align-items: center; min-width: 0; }
+    #tb-list { flex: 1; }
+    #tb-page, #tb-trace { border-left: 1px solid var(--border); padding-left: 8px; }
+    #tb-trace { margin-left: auto; }
+    body.view-session #tb-list, body.view-session #tb-page { display: none; }
+    body.view-session #tb-trace { border-left: none; padding-left: 0; }
     /* ---- Select-to-purge ---- */
     /* Rows grow a quiet check gutter in selection mode; the purge button
        wears the state color — it deletes trace data permanently. */
     #sel-actions { display: none; align-items: center; gap: 6px; }
     body.selecting #sel-actions { display: inline-flex; }
-    body.view-session #select-toggle, body.view-session #sel-actions { display: none; }
     #sel-count { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
     #sel-purge { color: var(--red); }
     #sel-purge[disabled] { opacity: 0.4; pointer-events: none; }
@@ -370,7 +380,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     body.selecting .pair.sel .pair-header { background: color-mix(in srgb, var(--accent) 7%, var(--bg-surface)); }
     #prior-toggle { display: none; }
     #prior-toggle.avail { display: inline-block; }
-    body.view-session #prior-toggle { display: none; }
     body.view-session .cats { display: none; }
     .cats {
       padding: 8px 16px;
@@ -782,6 +791,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .turn-wire { color: var(--accent); font-size: 10px; text-transform: none; letter-spacing: 0; text-decoration: none; }
     .turn-wire:hover { text-decoration: underline; }
+    /* wall-clock at the role bar's right edge; solo = no usage span holding
+       the edge (user turns), so it takes the flexible gap itself */
+    .turn-time {
+      color: var(--text-faint); font-size: 10px; flex-shrink: 0;
+      text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums;
+    }
+    .turn-time.tt-solo { margin-left: auto; }
     .msg-text {
       padding: 10px 12px;
       white-space: pre-wrap;
@@ -1258,24 +1274,34 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
     </span>
   </header>
+  <!-- Toolbar grammar: scope narrows left to right — view tabs, then the
+       list group (query + list-scoped toggles), then page behavior, then
+       the trace controls holding the right edge in both views. Groups are
+       spans so the session view hides whole groups, not button ids. -->
   <div class="toolbar" id="toolbar">
     <span class="tabs">
-      <button class="tab active" id="tab-requests">Requests</button>
-      <button class="tab" id="tab-session">Sessions</button>
+      <button class="tab active" id="tab-requests">requests</button>
+      <button class="tab" id="tab-session">sessions</button>
     </span>
-    <input type="text" id="filter" placeholder="Filter by URL, method, status...  ( / )">
-    <button id="replay-toggle" title="replay&#10;Step back through the session as it happened.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · shift+drag selects a slice · Esc exits">⏵ replay</button>
-    <button id="prior-toggle" class="active" title="previous runs&#10;Show or hide requests merged from earlier runs of this session — same wire session id, older trace files.">Prev runs</button>
-    <span id="sel-actions">
-      <span id="sel-count"></span>
-      <button id="sel-shown" title="select all shown&#10;Selects every request currently listed.&#10;---&#10;> filter first — pick a category chip, then select all shown">all shown</button>
-      <button id="sel-none" title="clear the selection">none</button>
-      <button id="sel-purge" title="purge selected&#10;Removes the selected requests from the page AND rewrites the backing .jsonl trace file(s).&#10;---&#10;> no undo — a confirm dialog spells out what gets deleted">purge</button>
+    <span class="tb-group" id="tb-list">
+      <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
+      <button id="prior-toggle" class="active" title="previous runs&#10;Requests merged from earlier runs of this session — same wire session id, older trace files.&#10;---&#10;> click shows/hides them in the list">prev runs</button>
+      <button id="select-toggle" title="select to purge&#10;Pick requests to delete from the trace file — a privacy tool, removal is permanent.&#10;---&#10;> rows grow a check gutter · Esc leaves selection">select</button>
+      <span id="sel-actions">
+        <span id="sel-count"></span>
+        <button id="sel-shown" title="select all shown&#10;Selects every request currently listed.&#10;---&#10;> filter first — pick a category chip, then select all shown">all shown</button>
+        <button id="sel-none" title="clear the selection">none</button>
+        <button id="sel-purge" title="purge selected&#10;Removes the selected requests from the page AND rewrites the backing .jsonl trace file(s).&#10;---&#10;> no undo — a confirm dialog spells out what gets deleted">purge</button>
+      </span>
     </span>
-    <button id="select-toggle" title="select to purge&#10;Pick requests to delete from the trace file — a privacy tool, removal is permanent.&#10;---&#10;> rows grow a check gutter · Esc leaves selection">Select</button>
-    <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
-    <button id="autoscroll" class="active" title="auto-scroll&#10;Stick to the newest request as pairs arrive.">Auto-scroll</button>
-    <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">Clear</button>
+    <span class="tb-group" id="tb-page">
+      <button id="autoscroll" class="active" title="tail&#10;Stick to the newest request as pairs arrive.&#10;---&#10;> click toggles">tail</button>
+      <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
+    </span>
+    <span class="tb-group" id="tb-trace">
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · shift+drag selects a slice · Esc exits">⏵ replay</button>
+      <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
+    </span>
   </div>
   <div class="cats" id="cats"></div>
   <div id="split">
@@ -1581,7 +1607,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // server; the button hides there.
     const actionsToggle = document.getElementById('actions-toggle');
     const actMenu = document.getElementById('act-menu');
-    if (IS_SNAPSHOT) { actionsToggle.style.display = 'none'; }
+    if (IS_SNAPSHOT) {
+      actionsToggle.style.display = 'none';
+      // With actions gone and replay session-only, the trace group can sit
+      // empty in the requests view — its hairline must not float alone.
+      const tbTrace = document.getElementById('tb-trace');
+      if (tbTrace) { tbTrace.style.borderLeft = 'none'; tbTrace.style.paddingLeft = '0'; }
+    }
     else {
       const NOISE_CATS = ['telemetry', 'tokens', 'external'];
       function renderActMenu() {
@@ -1760,7 +1792,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (sid) {
         if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<button class="ctx-sess" data-mask title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+        html += '<button class="ctx-sess" data-mask="sid" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
       }
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
@@ -1794,11 +1826,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
+        '\\u00b7 wall-clock on every turn \\u2014 role-bar times in the conversation, moments in every hover\\n' +
+        '\\u00b7 a toolbar that reads left to right \\u2014 view, list, page, trace controls at the edge\\n' +
+        '\\u00b7 an exit receipt \\u2014 pairs, tokens, cache share, est cost when a traced session ends\\n' +
         '\\u00b7 trace actions run on the page \\u2014 purge categories, compact, download the wire spec\\n' +
-        '\\u00b7 rich tool bodies \\u2014 Edit folds open to git-style diffs, TodoWrite to checklists\\n' +
         '\\u00b7 session replay + slices \\u2014 scrub time, share exactly the window that matters\\n' +
-        '\\u00b7 the pulse \\u2014 what the model is doing right now, cache deadline included\\n' +
-        '\\u00b7 cctrace spec \\u2014 the observed-wire catalog, diffable across releases\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -1985,6 +2017,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Wall-clock is always 24h — locale 12h AM/PM wastes row width and
     // reads slower in a dense table.
     function fmtTime(d) { return d.toTimeString().slice(0, 8); }
+    // Wall-clock per conversation turn, in wire seconds: an attributed reply
+    // uses its own request's timestamp; a user/unattributed turn inherits the
+    // NEXT attributed one — that request is the wire message that carried it
+    // (trailing gaps fall back to the previous known). 0 = no wire time.
+    function turnTimes(list) {
+      const ts = list.map(x => {
+        const p = x && x.pairId ? pairs.find(y => y.id === x.pairId) : null;
+        return p && p.request && p.request.timestamp ? p.request.timestamp : 0;
+      });
+      for (let i = ts.length - 2; i >= 0; i--) if (!ts[i]) ts[i] = ts[i + 1];
+      for (let i = 1; i < ts.length; i++) if (!ts[i]) ts[i] = ts[i - 1];
+      return ts;
+    }
     function fmtDateTime(d) {
       const p = n => String(n).padStart(2, '0');
       return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + fmtTime(d);
@@ -3480,6 +3525,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // Per-step outcomes need the tool results that answered each step's
       // tool calls — they live in the (hidden) result-only turns.
       const toolRes = buildToolResultIndex(t.turns);
+      // Wall-clock per visible turn for the row hovers — user heads inherit
+      // the time of the request that carried them (turnTimes).
+      const vts = turnTimes(vis);
+      const vtsLine = (vi) => vts[vi] ? '\\n' + fmtDateTime(new Date(vts[vi] * 1000)) : '';
       // Ordinals render BARE and 1-based ("01") — the word "turn" repeated
       // down the rail is noise, and humans count exchanges from 1, so the
       // last label agrees with the "N turns" counts. Prose surfaces (hover,
@@ -3603,7 +3652,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
             tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
-              'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')\\n' +
+              'turn ' + ord + ' \\u00b7 harness-injected prompt (' + li.injected + ')' + vtsLine(vi) + '\\n' +
               'sent with role \\u201cuser\\u201d by the Claude Code CLI itself, not typed by the human' +
               '\\n---\\n> click to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
           } else if (sumVisAt[vi] || continuationSummaryTurn(turn.blocks)) {
@@ -3616,7 +3665,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               '<span class="tturn-tools">' + escapeHtml(s.slice(0, 90)) + '</span>';
             dot = '<span class="cdot"></span>';
             tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
-              'turn ' + ord + ' \\u00b7 auto recap (continuation summary)\\n' +
+              'turn ' + ord + ' \\u00b7 auto recap (continuation summary)' + vtsLine(vi) + '\\n' +
               'injected by the harness as the model\\u2019s entire memory of the conversation above \\u2014 not typed by the human' +
               '\\n---\\n> click to jump to this turn' + (li.kind === 'head' ? '\\n' + foldHint : '');
           } else {
@@ -3624,7 +3673,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             text = escapeHtml(s.slice(0, 120));
             dot = '<span class="gut-user">\\u276F</span>'; // the human's prompt
             tip = s.slice(0, 600) + (s.length > 600 ? '\\u2026' : '') + '\\n---\\n' +
-              'turn ' + ord + ' \\u00b7 user prompt\\n---\\n> click to jump to this turn\\n' + foldHint;
+              'turn ' + ord + ' \\u00b7 user prompt' + vtsLine(vi) + '\\n---\\n> click to jump to this turn\\n' + foldHint;
           }
           const hidN = folded ? loopSize[li.ord] - (li.kind === 'head' ? 0 : 1) : 0;
           const foldN = hidN > 0 ? '<span class="tturn-fold-n" title="' + hidN + ' agent message' + (hidN === 1 ? '' : 's') + ' folded \\u2014 click \\u276F to unfold">\\u22ef ' + hidN + '</span>' : '';
@@ -4047,7 +4096,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return renderBlock(b, md);
     }
 
-    function renderSessionTurn(turn, results, ord, isSummary, stepLbl) {
+    function renderSessionTurn(turn, results, ord, isSummary, stepLbl, ts) {
       let inner = '';
       for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
@@ -4097,8 +4146,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const hk = harnessTurnKind(turn.blocks);
         if (hk) tag = '<span class="sum-tag" title="sent with role \\u201cuser\\u201d by the Claude Code CLI itself \\u2014 not typed by the human">' + escapeHtml(hk) + '</span>';
       }
+      // Wall-clock closes the role bar (24h, hover = full date) — a user
+      // turn's time is inherited from the request that carried it. Static
+      // text computed at render, never a ticking surface.
+      const timeHtml = ts
+        ? '<span class="turn-time' + (meta ? '' : ' tt-solo') + '" title="' + fmtDateTime(new Date(ts * 1000)) + '">' + fmtTime(new Date(ts * 1000)) + '</span>'
+        : '';
       return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
-        '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + '</div>' + inner + '</div>';
+        '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + timeHtml + '</div>' + inner + '</div>';
     }
 
     // ---- Live tail ----
@@ -4222,7 +4277,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // Working-loop ordinals, same numbering as the outline: the user head
       // and the final response of each loop carry turnNN; intermediate
       // agent-work messages carry none — they are inside the turn.
-      const cloops = loopTurns(t.turns.filter(x => !x.toolResultsOnly));
+      const cvis = t.turns.filter(x => !x.toolResultsOnly);
+      const cloops = loopTurns(cvis);
+      const cts = turnTimes(cvis);
       const viOrd = {};
       const viStep = {}; // intermediate steps carry "01.3" — same address as the outline
       for (let li = 0; li < cloops.length; li++) {
@@ -4268,7 +4325,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (epochAt[vi] !== undefined) {
           parts.push('<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>');
         }
-        try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary, viStep[vi] || '')); }
+        try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary, viStep[vi] || '', cts[vi] || 0)); }
         catch (e) { parts.push(brokenItem('turn', turn && turn.pairId, e)); }
         vi++;
       }

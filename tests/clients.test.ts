@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CLIENTS, findClientBinary, wireTables } from "../src/clients";
+import { codexProviderHosts } from "../src/clients/codex";
 
 describe("client profiles (#20)", () => {
   test("claude, codex, grok, and kimi are registered", () => {
@@ -60,5 +61,39 @@ describe("client profiles (#20)", () => {
       installHint: "Install ghost first",
     };
     expect(() => findClientBinary(profile)).toThrow("Install ghost first");
+  });
+});
+
+describe("codex custom provider hosts (config.toml)", () => {
+  test("every [model_providers.*] base_url enrolls; other sections and comments do not", () => {
+    const toml = [
+      'model_provider = "Corp"',
+      'base_url = "https://top-level-ignored.example"', // not under a provider
+      "",
+      "[model_providers.Corp]",
+      'name = "Corp"',
+      'base_url = "https://gw.corp.example"',
+      '# base_url = "https://commented-out.example"',
+      'wire_api = "responses"',
+      "",
+      '[model_providers."second one"]',
+      "base_url = 'https://alt.example:8443/v1'",
+      "",
+      "[features]",
+      'base_url = "https://not-a-provider.example"',
+      "",
+      "[model_providers.broken]",
+      'base_url = "not a url"',
+    ].join("\n");
+    expect(codexProviderHosts(toml).sort()).toEqual(["alt.example", "gw.corp.example"]);
+  });
+
+  test("configHosts reads $CODEX_HOME/config.toml fail-soft", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cctrace-codex-home-"));
+    writeFileSync(join(dir, "config.toml"), '[model_providers.X]\nbase_url = "https://custom.provider.test"\n');
+    expect(CLIENTS.codex!.configHosts!({ CODEX_HOME: dir })).toEqual(["custom.provider.test"]);
+    // absent config: empty, never a throw
+    expect(CLIENTS.codex!.configHosts!({ CODEX_HOME: join(dir, "nope") })).toEqual([]);
+    expect(CLIENTS.codex!.configHosts!({})).toEqual(expect.any(Array));
   });
 });

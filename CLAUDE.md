@@ -74,7 +74,10 @@ credits) independent of `ANTHROPIC_BASE_URL`.
 2. Front door: an http.Server answers `CONNECT` and decides scope on the
    CONNECT line, before any TLS. Include-listed hosts (`buildInterceptSet`
    in src/certs.ts: the client's `firstPartyHosts` + `hostCategories` pins
-   + base-url env hosts + `--intercept-host` extras) are MITM'd — Anthropic
+   + base-url env hosts + `--intercept-host` extras + the client plugin's
+   `configHosts` discoveries — codex reads every `model_providers.*
+   base_url` in `$CODEX_HOME/config.toml`, fail-soft, so a custom provider
+   is captured without flags) are MITM'd — Anthropic
    hosts via the static leaf terminator, others via dynamically generated
    per-host certs signed by the same CA. Every other host is an OPAQUE
    byte-counted tunnel: no forged cert (cert-pinning tools and system-store

@@ -13,7 +13,9 @@ with `--mode`.
 
 Capture scope is an include-list, decided per connection before any TLS
 (Charles' SSL-proxying model): first-party hosts, the client's pinned
-telemetry sinks, any `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` host, and
+telemetry sinks, any `ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` host, codex
+custom providers (every `model_providers.*.base_url` in
+`$CODEX_HOME/config.toml`, read fail-soft), and
 `--intercept-host` extras get real interception with per-host certs.
 Everything else -- package registries, `gh` calls, apt -- passes through as
 an **opaque tunnel** logged as one small row: host, bytes up/down, duration.

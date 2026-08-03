@@ -1295,7 +1295,13 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // everything else passes through as a byte-counted opaque tunnel.
   const interceptHosts = buildInterceptSet(CLIENT.wire, {
     env: process.env,
-    extraHosts: (values["intercept-host"] as string[] | undefined) || [],
+    extraHosts: [
+      ...((values["intercept-host"] as string[] | undefined) || []),
+      // The client's own config can route model calls to a custom host
+      // (codex model_providers base_url) — enroll those automatically, or
+      // the trace shows an empty Messages view behind a custom provider.
+      ...(CLIENT.configHosts?.(process.env) || []),
+    ],
   });
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,

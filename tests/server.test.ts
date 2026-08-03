@@ -148,3 +148,52 @@ describe("web compact", () => {
     expect(res.rewritten).toBe(0);
   });
 });
+
+describe("session dump", () => {
+  const SID = "dddd4444-eeee-ffff-0000-111122223333";
+  const msg = (id: string, ts: number): TracePair => ({
+    id,
+    request: {
+      timestamp: ts, method: "POST", url: "https://api.anthropic.com/v1/messages", headers: {},
+      body: {
+        model: "claude-opus-4-6",
+        metadata: { user_id: JSON.stringify({ session_id: SID }) },
+        messages: [{ role: "user", content: "dump me " + id }],
+      },
+    },
+    response: {
+      timestamp: ts + 1, status: 200, headers: {},
+      body: { model: "claude-opus-4-6", content: [{ type: "text", text: "reply " + id }], usage: { input_tokens: 10, output_tokens: 5 }, stop_reason: "end_turn" },
+    },
+    duration: 1000,
+    loggedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  test("/api/session.jsonl returns the session's pairs, stripped of viewer markers", async () => {
+    server.ingest(msg("dump1", 100));
+    const withPrior = msg("dump2", 200) as TracePair & { prior?: string };
+    withPrior.prior = "trace-old.jsonl";
+    server.ingest(withPrior);
+    const res = await fetch(`${base}/api/session.jsonl?sid=${SID}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(`session-${SID.slice(0, 8)}.jsonl`);
+    const lines = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((p) => p.id)).toEqual(["dump1", "dump2"]);
+    expect(lines[1].prior).toBeUndefined();
+  });
+
+  test("/api/session.md renders the transcript", async () => {
+    const res = await fetch(`${base}/api/session.md?sid=${SID}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(`session-${SID.slice(0, 8)}.md`);
+    const md = await res.text();
+    expect(md).toContain("# session " + SID);
+    expect(md).toContain("> dump me dump2");
+    expect(md).toContain("reply dump2");
+  });
+
+  test("sid is required and must be known", async () => {
+    expect((await fetch(`${base}/api/session.jsonl`)).status).toBe(400);
+    expect((await fetch(`${base}/api/session.jsonl?sid=nope`)).status).toBe(404);
+  });
+});

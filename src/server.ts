@@ -3,6 +3,7 @@ import type { TracePair } from "./types";
 import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
 import { sliceWindow, pairEndMs } from "./replay";
 import { createSpecAccumulator, renderSpecMarkdown } from "./spec";
+import { renderTranscript } from "./transcript";
 import { planCompact, applyCompact } from "./compact";
 import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
@@ -263,6 +264,37 @@ export function createServer(config: ServerConfig) {
           headers: {
             "content-type": md ? "text/markdown; charset=utf-8" : "application/json",
             "content-disposition": `attachment; filename="wire-spec.${md ? "md" : "json"}"`,
+          },
+        });
+      }
+      if (url.pathname === "/api/session.jsonl" || url.pathname === "/api/session.md") {
+        // The session dump: every pair of ONE session — the same set
+        // `cctrace merge` writes to session-<sid8>.jsonl — as raw wire
+        // pairs, or rendered as a markdown transcript. Viewer-only load
+        // markers (prior/speculative) are stripped from the .jsonl: they
+        // describe this server's load path, not the wire.
+        const sid = url.searchParams.get("sid") || "";
+        if (!sid) return Response.json({ error: "sid required" }, { status: 400 });
+        const sel = pairs.filter((p) => extractSessionId(p, WIRE) === sid);
+        if (!sel.length) return Response.json({ error: "unknown session id" }, { status: 404 });
+        const short = sid.slice(0, 8);
+        if (url.pathname.endsWith(".md")) {
+          const body = renderTranscript(sel, WIRE, { project: config.meta?.project, client: config.meta?.client, sid });
+          return new Response(body, {
+            headers: {
+              "content-type": "text/markdown; charset=utf-8",
+              "content-disposition": `attachment; filename="session-${short}.md"`,
+            },
+          });
+        }
+        const lines = sel.map((p) => {
+          const { prior, speculative, ...rest } = p as TracePair & { prior?: string; speculative?: boolean };
+          return JSON.stringify(rest);
+        });
+        return new Response(lines.join("\n") + "\n", {
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            "content-disposition": `attachment; filename="session-${short}.jsonl"`,
           },
         });
       }

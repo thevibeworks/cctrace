@@ -1312,7 +1312,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     </span>
     <span class="tb-group" id="tb-trace">
       <button id="replay-toggle" title="replay&#10;Step back through the session as it happened.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · shift+drag selects a slice · Esc exits">⏵ replay</button>
-      <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
+      <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
   <div class="cats" id="cats"></div>
@@ -1632,11 +1632,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const counts = {};
         for (const c of NOISE_CATS) counts[c] = 0;
         for (const p of pairs) if (counts[p._cat] !== undefined) counts[p._cat]++;
+        // Session dumps: one .jsonl (wire pairs, merge format) + one .md
+        // (readable transcript) per session on the page, newest first.
+        const dumpSids = [];
+        const seenSid = {};
+        for (let i = pairs.length - 1; i >= 0; i--) {
+          const s = extractSessionId(pairs[i], CLIENT_WIRE);
+          if (s && !seenSid[s]) { seenSid[s] = 1; dumpSids.push(s); }
+        }
         actMenu.innerHTML =
           '<div class="am-head">download</div>' +
           '<a href="/api/snapshot.html">snapshot .html <span class="am-hint">whole page, offline</span></a>' +
           '<a href="/api/spec.json">wire spec .json <span class="am-hint">observed catalog</span></a>' +
           '<a href="/api/spec.md">wire spec .md</a>' +
+          dumpSids.slice(0, 4).map(s =>
+            '<a href="/api/session.jsonl?sid=' + encodeURIComponent(s) + '">session <span data-mask="sid">' + s.slice(0, 8) + '</span> .jsonl <span class="am-hint">wire pairs, merge format</span></a>' +
+            '<a href="/api/session.md?sid=' + encodeURIComponent(s) + '">session <span data-mask="sid">' + s.slice(0, 8) + '</span> .md <span class="am-hint">readable transcript</span></a>').join('') +
+          (dumpSids.length > 4 ? '<div class="am-head">+' + (dumpSids.length - 4) + ' more session' + (dumpSids.length - 4 === 1 ? '' : 's') + ' \\u2014 terminal: cctrace merge</div>' : '') +
           '<div class="am-sep"></div>' +
           '<div class="am-head">housekeeping \\u2014 runs on this trace</div>' +
           NOISE_CATS.map(c => counts[c]

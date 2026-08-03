@@ -552,6 +552,8 @@ async function runPs(args: string[]) {
     `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.agent.padEnd(widths.agent)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
   console.log(C.dim + line({ url: "URL", pid: "PID", agent: "AGENT", client: "CLIENT", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
   for (const r of rows) console.log(line(r));
+  // Any instance serves the same central picture — the registry is shared.
+  log(`Dashboard (all runs): http://localhost:${list[0]!.port}/dashboard`, C.dim);
 }
 
 /** Parse a storage subcommand's flags; exit(1) with usage on error. */

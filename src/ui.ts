@@ -1649,6 +1649,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '<a href="/api/session.jsonl?sid=' + encodeURIComponent(s) + '">session <span data-mask="sid">' + s.slice(0, 8) + '</span> .jsonl <span class="am-hint">wire pairs, merge format</span></a>' +
             '<a href="/api/session.md?sid=' + encodeURIComponent(s) + '">session <span data-mask="sid">' + s.slice(0, 8) + '</span> .md <span class="am-hint">readable transcript</span></a>').join('') +
           (dumpSids.length > 4 ? '<div class="am-head">+' + (dumpSids.length - 4) + ' more session' + (dumpSids.length - 4 === 1 ? '' : 's') + ' \\u2014 terminal: cctrace merge</div>' : '') +
+          '<a href="/dashboard">\\u2302 instances dashboard <span class="am-hint">every live + recent run</span></a>' +
           '<div class="am-sep"></div>' +
           '<div class="am-head">housekeeping \\u2014 runs on this trace</div>' +
           NOISE_CATS.map(c => counts[c]
@@ -1891,7 +1892,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       instEl.innerHTML =
         '<button class="inst-btn" title="other live cctrace runs on this machine\\n> click to list & switch">\\u21c4 ' + others.length + ' more</button>' +
-        '<div class="inst-menu' + (open ? ' open' : '') + '">' + rows + '</div>';
+        '<div class="inst-menu' + (open ? ' open' : '') + '">' + rows +
+        '<a class="inst-row inst-dash" href="/dashboard" title="every live + recent run sharing this data dir \\u2014 served by any instance"><span>\\u2302 dashboard</span><span class="inst-port">all runs</span></a></div>';
       const btn = instEl.querySelector('.inst-btn');
       const menu = instEl.querySelector('.inst-menu');
       btn.onclick = (e) => { e.stopPropagation(); menu.classList.toggle('open'); };

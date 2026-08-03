@@ -230,7 +230,13 @@ entries for live-but-unregistered instances straight from `/api/self`
 (`src/instances.ts`). `cctrace ps` lists live runs; the server exposes
 `/api/instances` (verified listing) and `/api/self` (identity, from memory —
 never triggers registry reads). The web UI header grows a "⇄ N more"
-switcher when other instances exist. Port allocation walks 9317, 9318, ...
+switcher when other instances exist. EVERY live/view server also serves
+`/dashboard` — the central picture: verified live instances + recent
+tombstones (`/api/runs`, traceExists re-stat'd per request), one page for
+all projects/containers sharing the data dir; any instance's port answers
+the same (`src/dashboard.ts`, values rendered via textContent — first
+prompts are wire-derived). Linked from the switcher menu, the ⌘ actions
+menu, and a `cctrace ps` footer line. Port allocation walks 9317, 9318, ...
 before falling back to an OS-assigned port, so concurrent runs land on
 predictable neighbors — the same walk the discovery sweep covers.
 

@@ -52,7 +52,10 @@ a credential; the blurred chip read worse than it protected). Served pages
 (live/view/tail — never snapshots) carry an ACTIONS menu (⌘ toolbar
 button, #act-wrap — trace actions live with the trace controls, not the
 header): downloads (/api/snapshot.html, /api/spec.json|.md — CLI
-redaction rules — and per-session dumps: /api/session.jsonl|.md?sid=…,
+redaction rules — a /dashboard link (the central instances page:
+verified live runs + recent tombstones across every project sharing the
+data dir, served identically by any instance; also linked from the
+instance switcher menu) — and per-session dumps: /api/session.jsonl|.md?sid=…,
 one row pair per sid on the page, newest first, capped at 4 — the .jsonl
 is the same pair set `cctrace merge` writes (viewer-only prior/
 speculative markers stripped), the .md a readable transcript

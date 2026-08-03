@@ -11,7 +11,9 @@ import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
-import { listLiveInstances, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { listLiveInstances, listPastRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { getDashboardHtml } from "./dashboard";
+import { existsSync } from "fs";
 
 const WIRE = wireTables();
 
@@ -335,6 +337,25 @@ export function createServer(config: ServerConfig) {
           ...i,
           self: config.instanceId ? i.id === config.instanceId : i.pid === process.pid,
         })));
+      }
+      if (url.pathname === "/api/runs") {
+        // Finished runs (registry tombstones) for the dashboard — the live
+        // side is /api/instances. traceExists is re-stat'd per request: a
+        // path from another container may not resolve here, and the page
+        // must say so instead of offering a dead view command.
+        const list = config.dataDir ? listPastRuns(config.dataDir) : [];
+        return Response.json(list.map((i) => ({
+          ...i,
+          traceExists: !!(i.logFile && existsSync(i.logFile)),
+        })));
+      }
+      if (url.pathname === "/dashboard") {
+        // The central picture: every live + recent run sharing this data
+        // dir. Any instance's port serves the same page — the registry is
+        // shared, so there is no "main" instance to hunt for.
+        return new Response(getDashboardHtml({ version: config.meta?.version }), {
+          headers: { "Content-Type": "text/html" },
+        });
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         // The page connects its WebSocket origin-relative, so no port is

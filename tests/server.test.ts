@@ -1,5 +1,8 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { createServer } from "../src/server";
+import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { TracePair } from "../src/types";
 
 // The live server's ingestion surface. Regression territory (containers
@@ -195,5 +198,36 @@ describe("session dump", () => {
   test("sid is required and must be known", async () => {
     expect((await fetch(`${base}/api/session.jsonl`)).status).toBe(400);
     expect((await fetch(`${base}/api/session.jsonl?sid=nope`)).status).toBe(404);
+  });
+});
+
+describe("dashboard", () => {
+  test("/dashboard serves the central page; /api/runs lists tombstones with traceExists", async () => {
+    const html = await (await fetch(`${base}/dashboard`)).text();
+    expect(html).toContain("dashboard");
+    expect(html).toContain("/api/runs");
+    // this file's shared server has no dataDir: runs list is empty
+    expect(await (await fetch(`${base}/api/runs`)).json()).toEqual([]);
+
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dash-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    writeFileSync(join(dataDir, "instances", "t1.json"), JSON.stringify({
+      id: "t1", pid: 1, port: 9999, project: "proj", projectPath: "/x/proj",
+      logFile: join(dataDir, "trace-x.jsonl"), mode: "mitm",
+      startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+      client: "codex", firstPrompt: "hello world",
+    }));
+    const s2 = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const runs = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
+      expect(runs.length).toBe(1);
+      expect(runs[0].client).toBe("codex");
+      expect(runs[0].traceExists).toBe(false); // path not on this host yet
+      writeFileSync(join(dataDir, "trace-x.jsonl"), "");
+      const runs2 = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
+      expect(runs2[0].traceExists).toBe(true);
+    } finally {
+      s2.stop();
+    }
   });
 });

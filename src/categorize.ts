@@ -16,6 +16,18 @@ export const CATEGORIES: CatMeta[] = [
   { id: "other", label: "Other", color: "#8b949e" },
 ];
 
+/**
+ * The model-call wire shapes, one predicate: Anthropic /v1/messages (incl.
+ * count_tokens) and the OpenAI path tails on ANY host/prefix. The mitm
+ * --messages-only filter uses this so it can never drop a pair
+ * categorizeUrl would have called "messages" — a custom provider mounting
+ * at the root ({base}/responses) was exactly that bug.
+ */
+export function isModelCallPath(path: string): boolean {
+  const p = path.toLowerCase();
+  return p.includes("/v1/messages") || /\/(responses|chat\/completions)($|\?)/.test(p);
+}
+
 // Pure, self-contained: a request URL in, a category id out. This function is
 // ALSO inlined into the live web UI via toString(), so it must not reference
 // anything outside its own body — per-client wire knowledge arrives as the
@@ -42,6 +54,9 @@ export function categorizeUrl(url: string, client?: string, wire?: any): string 
   // OpenAI wire shapes: custom providers mount them under arbitrary prefixes
   // (api.openai.com/v1/responses, chatgpt.com/backend-api/codex/responses,
   // relay.example/responses), so match the path tail, not a /v1/ prefix.
+  // Keep in lockstep with isModelCallPath below (regression-tested) — this
+  // body can't call it: categorizeUrl is inlined into the page via
+  // toString() and must stay self-contained.
   if (/\/(responses|chat\/completions)($|\?)/.test(path)) return "messages";
   // Client wire table: explicit host/path pins first (these may pin
   // third-party analytics hosts like mixpanel to telemetry), then the

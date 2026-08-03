@@ -3,6 +3,7 @@ import * as net from "net";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isInterceptHost, hostInSet, generateHostCert } from "./certs";
+import { isModelCallPath } from "./categorize";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
 import type { TracePair } from "./types";
@@ -138,10 +139,10 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     const enrolled = isInterceptHost(targetHost) || hostInSet(targetHost, interceptSet);
     const path = new URL(req.url).pathname + new URL(req.url).search;
     const targetUrl = `https://${targetHost}${path}`;
-    // --messages-only means "just the model API calls" — match the same wire
-    // shapes categorize.ts calls "messages", so codex/grok filtering works.
-    const shouldLog = logAll || path.includes("/v1/messages") ||
-      path.includes("/v1/chat/completions") || path.includes("/v1/responses") || path.includes("/codex/responses");
+    // --messages-only means "just the model API calls" — the SAME predicate
+    // categorize.ts calls "messages", or the filter drops pairs the page
+    // would have shown (a custom provider mounting {base}/responses did).
+    const shouldLog = logAll || isModelCallPath(path);
     const startTime = Date.now();
 
     const reqHeaders: Record<string, string> = {};

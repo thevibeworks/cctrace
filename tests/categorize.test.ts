@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { categorizeUrl, CATEGORIES } from "../src/categorize";
+import { categorizeUrl, CATEGORIES, isModelCallPath } from "../src/categorize";
 import { wireTables } from "../src/clients";
 
 describe("categorizeUrl — real Claude Code endpoints", () => {
@@ -156,6 +156,34 @@ describe("categorizeUrl — client-scoped wire tables", () => {
     for (const u of urls) {
       expect(categorizeUrl(u, undefined, WIRE)).toBe(categorizeUrl(u));
       expect(categorizeUrl(u, "some-future-client", WIRE)).toBe(categorizeUrl(u));
+    }
+  });
+});
+
+describe("isModelCallPath — the --messages-only predicate", () => {
+  const MODEL_CALLS = [
+    "/v1/messages",
+    "/v1/messages?beta=true",
+    "/v1/messages/count_tokens",
+    "/responses", // custom provider mounted at the root (codex base_url)
+    "/backend-api/codex/responses",
+    "/coding/v1/chat/completions",
+    "/v1/chat/completions",
+    "/openai/v1/responses?x=1",
+  ];
+  const NOT_MODEL_CALLS = ["/v1/responses/stream", "/api/oauth/token", "/backend-api/codex/models", "/otlp/v1/logs"];
+
+  test("keeps every model-call shape, on any host prefix", () => {
+    for (const p of MODEL_CALLS) expect(isModelCallPath(p)).toBe(true);
+    for (const p of NOT_MODEL_CALLS) expect(isModelCallPath(p)).toBe(false);
+  });
+
+  test("lockstep with categorizeUrl: whatever categorize calls messages/tokens, the filter keeps", () => {
+    for (const p of [...MODEL_CALLS, ...NOT_MODEL_CALLS]) {
+      const cat = categorizeUrl("https://any-host.example" + p);
+      if (cat === "messages" || cat === "tokens") {
+        expect(isModelCallPath(p)).toBe(true);
+      }
     }
   });
 });

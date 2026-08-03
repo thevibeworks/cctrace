@@ -1212,6 +1212,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sess .thread.selected .thread-head {
       background: color-mix(in srgb, var(--accent) 9%, var(--bg));
     }
+    /* subagent cards nest under their dispatching thread: an indented
+       block hanging off the same rail tint as the outline — structure,
+       not accent (the tree edge is a fact, not an interaction) */
+    .tkids { position: relative; padding-left: 14px; }
+    .tkids::before {
+      content: ''; position: absolute; left: 7px; top: 0; bottom: 0;
+      width: 1px; background: color-mix(in srgb, var(--accent) 22%, var(--border));
+    }
+    .tkids .thread { border-top: 1px solid var(--border); }
+    /* the way home from a stray subagent card (parent in another session) */
+    .tparent { color: var(--text-muted); text-decoration: none; }
+    .tparent:hover { color: var(--accent); }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
       border: 1px dashed var(--purple); border-radius: 6px;
@@ -3217,14 +3229,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return loopTurns((t.turns || []).filter(x => !x.toolResultsOnly)).length;
     }
 
-    function threadMeta(t) {
+    function threadMeta(t, nested) {
       const u = t.usage;
       const errs = (u.wireErrors || 0) + (u.toolErrors || 0) + (u.truncated || 0);
+      // A subagent card that ISN'T nested under its parent (the parent
+      // lives in another session section) still names the way home.
+      const parent = !nested && t.agentOf
+        ? ' \\u00b7 <a class="tparent" href="' + threadHash(t.agentOf.thread) + '"' +
+          ' data-key="' + escapeHtml(t.agentOf.thread) + '" data-tuid="' + escapeHtml(t.agentOf.toolUseId || '') + '"' +
+          ' onclick="return jumpToParent(event, this)"' +
+          ' data-tip="dispatched by a thread in another session\\n---\\n> click to open the parent at its spawn turn">\\u21b0 parent</a>'
+        : '';
       const meta = u.requests + ' req \\u00b7 in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output) +
         (u.cacheRead ? ' \\u00b7 cache ' + fmtCompact(u.cacheRead) : '') +
         (u.cost ? ' \\u00b7 ' + escapeHtml(fmtCost(u.cost)) : '') +
         (errs ? ' \\u00b7 <span class="err" title="' + escapeHtml(errTitle(u)) + '">' + errs + ' err</span>' : '') +
-        (u.rewound ? ' \\u00b7 <span title="exchanges that left the conversation history (/rewind, an edited message, or an ephemeral injected exchange) \\u2014 the wire pairs are kept">' + u.rewound + ' superseded</span>' : '');
+        (u.rewound ? ' \\u00b7 <span title="exchanges that left the conversation history (/rewind, an edited message, or an ephemeral injected exchange) \\u2014 the wire pairs are kept">' + u.rewound + ' superseded</span>' : '') +
+        parent;
       return '<div class="thread-meta">' + meta + '</div>';
     }
 
@@ -3726,14 +3747,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return bits.join('\\n');
     }
 
-    function threadCard(t, selected) {
+    function threadCard(t, selected, nested) {
       return '<div class="thread' + (selected ? ' selected' : '') + '">' +
         '<a class="thread-head" href="' + threadHash(t.key) + '" data-tip="' + escapeHtml(threadTitle(t)) + '">' +
           '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
           '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
           modelChip(t) +
         '</a>' +
-        (selected ? epochTurnList(t) : epochRows(t)) + threadMeta(t) + '</div>';
+        (selected ? epochTurnList(t) : epochRows(t)) + threadMeta(t, nested) + '</div>';
     }
 
     // Per-model breakdown for a thread's tooltip — one line per model when
@@ -3834,22 +3855,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const foldedTurns = {};
 
     function renderThreadsPane(threads, sel) {
-      const card = (t) => {
-        try { return threadCard(t, t.key === sel.key); }
+      const card = (t, nested) => {
+        try { return threadCard(t, t.key === sel.key, nested); }
         catch (e) { return brokenItem('thread', t && t.key, e); }
       };
-      const section = (list) => {
-        // A subagent linked to the SELECTED thread renders as a branch row
-        // inside that thread's outline (session rail) — its detached card
-        // would say the same thing twice. It comes back the moment its
-        // parent isn't the outlined thread (or it is selected itself), so
-        // nothing is ever unreachable.
-        const asBranch = (t) => t.agentOf && t.agentOf.thread === sel.key && t.key !== sel.key &&
-          t.agentOf.toolUseId && agentThreadIndex[t.agentOf.toolUseId] === t.key;
-        const convos = list.filter(t => t.kind !== 'utility' && !asBranch(t));
-        const utils = list.filter(t => t.kind === 'utility');
-        let out = '';
-        for (const t of convos) out += card(t);
+      // Deterministic card order: conversation start time, key as the
+      // tie-break — never wire push order, which shuffles on merged
+      // multi-run traces and long-running subagents.
+      const byStart = (a, b) => (a.firstAt || a.lastAt || 0) - (b.firstAt || b.lastAt || 0) ||
+        (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+      const section = (list, face) => {
+        // A subagent nests under the thread that dispatched it — ALWAYS,
+        // so a card never jumps between "sibling" and "hidden" as the
+        // selection moves (the outline's branch row marks the spawn's
+        // timeline position; the nested card is the thread's home).
+        // face = the absorbed chat whose card is the session header:
+        // its subagents render as the section's first block.
+        const byKey = {};
+        for (const t of list) byKey[t.key] = 1;
+        if (face) byKey[face.key] = 1;
+        const isChild = (t) => t.kind !== 'utility' && t.agentOf &&
+          t.agentOf.thread !== t.key && byKey[t.agentOf.thread];
+        const kids = {};
+        for (const t of list) if (isChild(t)) (kids[t.agentOf.thread] = kids[t.agentOf.thread] || []).push(t);
+        const kidBlock = (key) => {
+          const ch = (kids[key] || []).sort(byStart);
+          if (!ch.length) return '';
+          let inner = '';
+          for (const t of ch) inner += card(t, true);
+          return '<div class="tkids">' + inner + '</div>';
+        };
+        const tops = list.filter(t => t.kind !== 'utility' && !isChild(t)).sort(byStart);
+        const utils = list.filter(t => t.kind === 'utility').sort(byStart);
+        let out = face ? kidBlock(face.key) : '';
+        for (const t of tops) out += card(t) + kidBlock(t.key);
         if (utils.length) {
           let inner = '';
           for (const t of utils) inner += card(t);
@@ -3875,7 +3914,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // header says it better; the absorbed container IS the compact
         // view).
         const lastAt = (g) => Math.max.apply(null, g.map(t => t.lastAt || t.firstAt || 0));
-        sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]));
+        // Newest activity first, sid as the tie-break — ties must not let
+        // two sessions swap places between live re-renders.
+        sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]) || (a < b ? -1 : a > b ? 1 : 0));
         for (let i = 0; i < sids.length; i++) {
           const sid = sids[i];
           const g = bySid[sid];
@@ -3891,7 +3932,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const chats = g.filter(t => t.kind === 'chat');
           const face = chats.length === 1 ? chats[0] : null;
           const body = face
-            ? (face.key === sel.key ? epochTurnList(face) : epochRows(face)) + section(g.filter(t => t !== face))
+            ? (face.key === sel.key ? epochTurnList(face) : epochRows(face)) + section(g.filter(t => t !== face), face)
             : section(g);
           // Selection emphasis lives on the SESSION container — the active
           // conversation's home; the thread inside marks itself quietly.
@@ -3952,6 +3993,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tailPill.classList.remove('show');
       }
     }
+
+    // Reverse of the spawn fold's "open thread →": from a subagent back to
+    // the exact turn in its parent that dispatched it. Falls back to the
+    // parent's head when the spawn tool_use isn't in the reconstruction
+    // (a cross-run merge can lose the dispatching request).
+    window.jumpToParent = function (ev, el) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const key = el.dataset.key || '';
+      const tuid = el.dataset.tuid || '';
+      const parent = getThreads().find(t => t.key === key);
+      if (!parent) return false;
+      let vi = -1;
+      if (tuid) {
+        const vis = (parent.turns || []).filter(x => !x.toolResultsOnly);
+        for (let i = 0; i < vis.length && vi < 0; i++) {
+          for (const b of (vis[i].blocks || [])) {
+            if (b && (b.type === 'tool_use' || b.type === 'server_tool_use') && b.id === tuid) { vi = i; break; }
+          }
+        }
+      }
+      if (vi >= 0) jumpToTurn(key, vi);
+      else { history.replaceState(null, '', threadHash(key)); showSession(key); }
+      return false;
+    };
 
     // Spelled-out hover summary for a session section: full id, when it
     // ran, and totals across its threads.
@@ -4241,7 +4307,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (t.agentOf) {
         parts.push('<div class="agent-note">subagent run' +
           (t.agentOf.agentType ? ' \\u00b7 [' + escapeHtml(t.agentOf.agentType) + '] ' + escapeHtml(t.agentOf.description || '') : '') +
-          ' \\u2014 dispatched by <a href="' + threadHash(t.agentOf.thread) + '">parent thread</a></div>');
+          ' \\u2014 dispatched by <a href="' + threadHash(t.agentOf.thread) + '"' +
+          ' data-key="' + escapeHtml(t.agentOf.thread) + '" data-tuid="' + escapeHtml(t.agentOf.toolUseId || '') + '"' +
+          ' onclick="return jumpToParent(event, this)"' +
+          ' data-tip="back to the dispatching thread\\n---\\n> opens the parent at its spawn turn">parent thread \\u21b0</a></div>');
       }
       if (t.system) parts.push(renderSystem(t.system));
       if (t.tools && t.tools.length) parts.push(renderTools(t.tools));

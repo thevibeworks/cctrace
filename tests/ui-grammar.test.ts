@@ -254,6 +254,89 @@ describe("steps tree (turn → steps → final/recap)", () => {
   });
 });
 
+describe("sessions sidebar: ordering + subagent nesting", () => {
+  const SID_B = JSON.stringify({ session_id: "bbbb2222-cccc-dddd-eeee-ffff00002222" });
+  const agentPrompt = "explore the repo layout and report the entry points";
+
+  // Session A: a main chat that dispatches a Task, plus the subagent run it
+  // spawned. Session B: an unrelated, newer session.
+  const dispatchPair = msgPair("p2", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "please fix the bug" },
+        { role: "assistant", content: [{ type: "tool_use", id: "tu_task", name: "Task", input: { subagent_type: "Explore", description: "explore repo", prompt: agentPrompt } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_task", content: "found them" }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "fixed" }], stop_reason: "end_turn" },
+  });
+  const subagentPair = msgPair("p3", {
+    reqBody: { messages: [{ role: "user", content: agentPrompt }] },
+  });
+  const otherSessionPair = msgPair("p9", {
+    reqBody: {
+      metadata: { user_id: SID_B },
+      messages: [{ role: "user", content: "unrelated newer session" }],
+    },
+  });
+  const PAIRS = [dispatchPair, subagentPair, otherSessionPair];
+
+  function sidebar(pairs: TracePair[]) {
+    const page = bootSnapshotPage(renderSnapshot(pairs));
+    page.goto("#/session");
+    const frag = page.fragments.filter((f) => f.id === "threads").pop();
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+    return { page, html: frag!.html };
+  }
+
+  test("a subagent card nests under its dispatching thread, whatever is selected", () => {
+    const { html } = sidebar(PAIRS);
+    expect(html).toContain('class="tkids"');
+    // the agent card lives inside the nested block, not as a floating sibling
+    const kidsAt = html.indexOf('class="tkids"');
+    const agentAt = html.indexOf("tkind-agent");
+    expect(kidsAt).toBeGreaterThan(-1);
+    expect(agentAt).toBeGreaterThan(kidsAt);
+  });
+
+  test("sessions order newest activity first, deterministically", () => {
+    const { html } = sidebar(PAIRS);
+    const bAt = html.indexOf('data-sid="bbbb2222');
+    const aAt = html.indexOf('data-sid="aaaabbbb');
+    expect(bAt).toBeGreaterThan(-1);
+    expect(aAt).toBeGreaterThan(bAt); // p9 (t=1009) is newer than session A's pairs
+  });
+
+  test("the nested card survives selecting the parent (no jump between sibling and hidden)", () => {
+    const page = bootSnapshotPage(renderSnapshot(PAIRS));
+    page.goto("#/session");
+    const keys = [...page.els["threads"].innerHTML.matchAll(/#\/session\/([^"]+)"/g)].map((m) => m[1]);
+    for (const k of keys) {
+      page.goto("#/session/" + k);
+      const frag = page.fragments.filter((f) => f.id === "threads").pop();
+      expect(frag!.html).toContain('class="tkids"');
+    }
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a subagent's convo pane carries the jump back to the parent's spawn turn", () => {
+    const page = bootSnapshotPage(renderSnapshot(PAIRS));
+    page.goto("#/session");
+    const keys = [...page.els["threads"].innerHTML.matchAll(/#\/session\/([^"]+)"/g)].map((m) => m[1]);
+    let note = "";
+    for (const k of keys) {
+      page.goto("#/session/" + k);
+      const convo = page.els["convo"].innerHTML;
+      if (convo.includes("agent-note")) note = convo;
+    }
+    expect(note).toContain("jumpToParent(event, this)");
+    expect(note).toContain('data-tuid="tu_task"');
+    expect(note).toContain("parent thread");
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("rich tool bodies in the session view", () => {
   test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
     const p = msgPair("p1", {

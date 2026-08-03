@@ -162,9 +162,22 @@ hash-routed:
   reconstructed conversation side by side. Threads are session-scoped
   (thread key = `<sid>|<wire key>`): when a trace holds several wire
   session ids (/clear mid-run, resumed sessions), the threads pane groups
-  them into collapsible per-session sections, newest activity first
+  them into collapsible per-session sections, newest activity first with
+  the sid as tie-break — and inside a section cards order by conversation
+  start time (key tie-break), never wire push order, which shuffled on
+  merged multi-run traces
   (header: short sid click-to-copy, time range, req count, err rollup;
   `[`/`]` switch sessions; fold state survives re-renders, keyed by sid).
+  A subagent card nests under its dispatching thread's card in an
+  indented .tkids block — ALWAYS, whatever is selected (cards must never
+  jump between "sibling" and "hidden" as selection moves; the outline's
+  branch row marks the spawn's timeline position, the nested card is the
+  thread's home). A subagent whose parent lives in another session stays
+  a flat card but its meta line carries "↰ parent". The subagent's convo
+  pane header (agent-note) jumps back to the PARENT AT ITS SPAWN TURN
+  (jumpToParent: resolves the spawn tool_use id to a visible-turn index,
+  falls back to the thread head when a cross-run merge lost the
+  dispatching request).
   A session holding exactly ONE chat absorbs the chat card into its
   header (the common case — /clear rotates the sid; clicking the header
   selects the chat, clicking again folds; the outline and agent/utility

@@ -19,7 +19,9 @@ cctrace view <target> --html               # write a self-contained snapshot .ht
 cctrace clean                              # dry run: lists what would go
 cctrace clean --yes
 
-# Consolidate a session's runs (--continue spans files) into one .jsonl
+# Consolidate a session's runs (--continue spans files) into one .jsonl.
+# Every capture run already does this for its own session at exit
+# (cctrace --no-auto-merge opts out); this is the whole-dir sweep.
 cctrace merge                              # one session-<id>.jsonl per session
 cctrace merge --prune --yes                # also remove fully-merged sources
 

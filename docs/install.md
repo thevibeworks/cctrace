@@ -101,7 +101,8 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 | `--print-ca` | Print the MITM CA cert path and exit |
 | `--log NAME` | Custom log file base name |
 | `--dir PATH` | Log directory (default: `.cctrace`) |
-| `--fresh` | Don't merge prior traces of a continued session |
+| `--fresh` | Don't merge prior traces of a continued session (also skips the exit auto-merge) |
+| `--no-auto-merge` | Don't fold this run's trace into `session-<id>.jsonl` at exit |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
 | `--client-path PATH` | Custom binary path for any client (codex/grok/kimi too) |

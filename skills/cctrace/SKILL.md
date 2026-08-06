@@ -33,6 +33,7 @@ cctrace -s                       # static: no live server, just files
 cctrace --no-open                # don't auto-open the browser
 cctrace --dir path/to/logs       # trace dir (default: ./.cctrace)
 cctrace --fresh                  # don't merge prior traces of a continued session
+cctrace --no-auto-merge          # don't fold this run into session-<id>.jsonl at exit
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
@@ -171,7 +172,10 @@ cctrace view <target> --slice a..b        # narrow to a slice window (the @a..b 
 cctrace view <target> --tail              # follow a RUNNING capture's trace live from
                                           # another terminal/container (tail -f the .jsonl)
 cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
-cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
+cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session —
+                                          # the whole-dir sweep. Every capture run already
+                                          # merges its own session at exit (--no-auto-merge
+                                          # opts out), so a resumed session is one file
 cctrace compress [--older-than N] [--yes] # zstd archive (view reads .zst/.gz directly)
 cctrace purge [--drop CATS] [--yes]       # drop categories (default telemetry,tokens,external)
 cctrace spec [target] [--out F] [--md] [--diff F]  # observed-wire catalog: endpoints, header

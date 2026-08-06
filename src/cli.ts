@@ -23,7 +23,7 @@ import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, purgePairsById, human,
+  planPurge, applyPurge, purgePairsById, human, type MergeProgress,
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
@@ -676,7 +676,8 @@ function runClean(args: string[]) {
 function runMerge(args: string[]) {
   const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR] [--prune] [--yes]");
   const logDir = (v.dir as string) || ".cctrace";
-  const plan = planMerge(logDir);
+  const onProgress = mergeProgressPrinter();
+  const plan = planMerge(logDir, { onProgress });
   for (const b of plan.blocked) {
     log(`Skipped ${b.outName}: ${b.reason} — merge never overwrites what it can't fully read`, C.yellow);
   }
@@ -701,7 +702,7 @@ function runMerge(args: string[]) {
     log(`Would write ${plan.sessions.length} merged file(s)${v.prune ? "" : " (add --prune to also drop merged sources)"}. ${DRY}`, C.yellow);
     return;
   }
-  const res = applyMerge(plan, { prune: !!v.prune });
+  const res = applyMerge(plan, { prune: !!v.prune, onProgress });
   log(`Wrote ${res.written.length} merged session file(s)`, C.green);
   if (res.pruned.length) log(`Pruned ${res.pruned.length} source(s), freed ${human(res.bytes)}`, C.green);
   if (res.skipped.length) {
@@ -1179,6 +1180,32 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
  * at a file that no longer exists. Fail-soft: housekeeping never costs the
  * exit receipt or the exit code.
  */
+/**
+ * Progress printer for the slow merge phases. Silent for small dirs (the
+ * merge finishes before anyone wonders); a sizeable file scan/parse or any
+ * session write prints a line, headed once by what is going on — a huge
+ * session's exit used to sit in planMerge for minutes with zero output,
+ * indistinguishable from a hang.
+ */
+function mergeProgressPrinter(): (ev: MergeProgress) => void {
+  const SIZEABLE = 16 * 1024 * 1024;
+  let announced = false;
+  const announce = () => {
+    if (announced) return;
+    announced = true;
+    log("Consolidating session traces — safe to ctrl-c (atomic writes; sources kept until fully merged):", C.cyan);
+  };
+  return (ev) => {
+    if (ev.phase === "write") {
+      announce();
+      log(`  writing ${ev.name} (${ev.pairs} pairs)`, C.dim);
+    } else if ((ev.bytes ?? 0) >= SIZEABLE) {
+      announce();
+      log(`  ${ev.phase === "scan" ? "scanning" : "reading"} ${ev.name} (${human(ev.bytes!)})`, C.dim);
+    }
+  };
+}
+
 function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): string | null {
   try {
     const wire = wireTables();
@@ -1188,10 +1215,11 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): st
       if (sid) sids.add(sid);
     }
     if (!sids.size) return null;
-    const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true });
+    const onProgress = mergeProgressPrinter();
+    const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true, onProgress });
     for (const b of plan.blocked) log(`Auto-merge skipped ${b.outName}: ${b.reason}`, C.dim);
     if (!plan.sessions.length) return null;
-    const res = applyMerge(plan, { prune: true });
+    const res = applyMerge(plan, { prune: true, onProgress });
     if (!res.written.length) return null;
     const sources = new Set(plan.sessions.flatMap((s) => s.sources));
     log(`Merged ${sources.size} trace file(s) → ${res.written.join(", ")}`, C.cyan);

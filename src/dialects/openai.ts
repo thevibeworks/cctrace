@@ -5,8 +5,11 @@ import { parseSse } from "../summarize";
 // so the session view, folds, replay, and usage chips work unchanged. Wire
 // facts from real traces, 2026-07-14 devlog entry: full-history resend per
 // call (input[] is the conversation), and the final SSE `response.completed`
-// event carries the COMPLETE response object — output blocks and usage — so no
-// delta assembly is needed (output_item.done events remain as the
+// event carries the COMPLETE response object — output blocks and usage.
+// EXCEPT responses-lite (codex >= ~0.146, observed 2026-08-06): completed
+// keeps usage/status but its output is [] — the items stream only as
+// output_item.done events, so openaiCompleted grafts them back in
+// (output_item.done + text-delta assembly also remain as the
 // truncated-stream fallback).
 //
 // TWO SUB-SHAPES share this dialect. Responses (codex/grok): request `input[]`,
@@ -176,12 +179,33 @@ export function openaiCompleted(pair: any): any {
   if (!r.bodyRaw) return null;
   let done: any = null;
   const items: any[] = [];
+  const textById: Record<string, string> = {};
+  const textOrder: string[] = [];
   for (const ev of parseSse(r.bodyRaw)) {
     if (!ev) continue;
     if ((ev.type === "response.completed" || ev.type === "response.failed" || ev.type === "response.incomplete") && ev.response) done = ev.response;
     else if (ev.type === "response.output_item.done" && ev.item) items.push(ev.item);
+    else if (ev.type === "response.output_text.delta" && typeof ev.delta === "string") {
+      const k = String(ev.item_id || "");
+      if (!(k in textById)) textOrder.push(k);
+      textById[k] = (textById[k] || "") + ev.delta;
+    }
   }
+  // responses-lite (codex >= ~0.146, x-openai-internal-codex-responses-lite
+  // header): response.completed carries usage/status but output is [] — the
+  // real items exist only as output_item.done events. Graft them in so the
+  // completed object stays the one complete response every consumer reads.
+  if (done && !(Array.isArray(done.output) && done.output.length) && items.length) done.output = items;
   if (done) return done;
+  // Truncated stream: a message still streaming when the connection died has
+  // no output_item.done — its text exists only in deltas. Synthesize it
+  // (dedup by item id) so partial answers survive, per the guarded-pump
+  // capture promise.
+  for (const k of textOrder) {
+    const text = textById[k];
+    if (!text || items.some((it: any) => it && it.id === k)) continue;
+    items.push({ type: "message", role: "assistant", content: [{ type: "output_text", text }] });
+  }
   return items.length ? { output: items, status: "truncated" } : null;
 }
 
@@ -260,15 +284,18 @@ export function openaiBlocks(item: any): any[] {
  * Flat OpenAI input[] -> turn objects matching normalizeTurns' shape.
  * Consecutive assistant-side items (message, reasoning, tool calls) fold into
  * one assistant turn; tool outputs ride user turns, Anthropic-style, so
- * buildToolResultIndex and the fold renderers work unchanged. The FIRST
- * system/developer message is the thread's system prompt (extracted by
- * openaiSystemText) and is skipped here; later ones are harness context
- * injections and render as user turns.
+ * buildToolResultIndex and the fold renderers work unchanged. The LEADING
+ * RUN of system/developer messages is the thread's system prompt (extracted
+ * by openaiSystemText) and is skipped here — codex 0.146 opens with five
+ * developer messages (identity, memory, permissions, collab mode, plugins)
+ * before the first user item; folding only the first rendered the rest as a
+ * fake user turn that buried the real prompt. Later system/developer
+ * messages are harness context injections and render as user turns.
  */
 export function normalizeOpenaiTurns(input: any[]): any[] {
   const turns: any[] = [];
   let cur: any = null;
-  let sawSystem = false;
+  let inSystemPrefix = true;
   const push = (role: string, blocks: any[]) => {
     if (!blocks.length) return;
     if (!cur || cur.role !== role) {
@@ -279,15 +306,11 @@ export function normalizeOpenaiTurns(input: any[]): any[] {
   };
   for (const item of input || []) {
     if (!item || item.type === "additional_tools") continue;
+    const sysMsg = item.type === "message" && (item.role === "system" || item.role === "developer");
+    if (inSystemPrefix && sysMsg) continue;
+    inSystemPrefix = false;
     if (item.type === "message") {
-      let role = item.role === "assistant" ? "assistant" : "user";
-      if (item.role === "system" || item.role === "developer") {
-        if (!sawSystem) {
-          sawSystem = true;
-          continue;
-        }
-        role = "user";
-      }
+      const role = item.role === "assistant" ? "assistant" : "user";
       push(role, openaiBlocks(item));
     } else if (item.type === "function_call_output" || item.type === "custom_tool_call_output") {
       push("user", openaiBlocks(item));
@@ -301,15 +324,24 @@ export function normalizeOpenaiTurns(input: any[]): any[] {
   return turns;
 }
 
-/** The system prompt: text of the first system/developer message in input[]. */
+/**
+ * The system prompt: text of the LEADING RUN of system/developer messages in
+ * input[] (additional_tools rides along without ending it). Must mirror
+ * normalizeOpenaiTurns' prefix rule exactly — every prefix message folded
+ * here is one normalizeOpenaiTurns skips.
+ */
 export function openaiSystemText(input: any[]): string {
+  const parts: string[] = [];
   for (const item of input || []) {
-    if (item && item.type === "message" && (item.role === "system" || item.role === "developer")) {
-      const blocks = openaiBlocks(item);
-      return blocks.map((b: any) => b.text || "").filter(Boolean).join("\n");
+    if (!item || item.type === "additional_tools") continue;
+    if (item.type === "message" && (item.role === "system" || item.role === "developer")) {
+      const text = openaiBlocks(item).map((b: any) => b.text || "").filter(Boolean).join("\n");
+      if (text) parts.push(text);
+      continue;
     }
+    break;
   }
-  return "";
+  return parts.join("\n\n");
 }
 
 /** All tools a request offers: body.tools plus codex additional_tools items. */
@@ -324,12 +356,21 @@ export function openaiTools(req: any): any[] {
   return out;
 }
 
-/** First real user text in input[] — the sig-fallback key when no thread header. */
+/**
+ * First real user text in input[] — the sig-fallback key when no thread
+ * header, and the human identity of a compacted request. Codex harness
+ * context rides USER messages ahead of the real prompt (AGENTS.md digest,
+ * environment_context) — skip those wrappers; same list as turnSnippet's
+ * codex branch in session.ts.
+ */
 export function openaiFirstUserText(input: any[]): string {
   for (const item of input || []) {
-    if (item && item.type === "message" && item.role === "user") {
-      const blocks = openaiBlocks(item);
-      if (blocks.length && blocks[0].text) return blocks[0].text;
+    if (!item || item.type !== "message" || item.role !== "user") continue;
+    for (const b of openaiBlocks(item)) {
+      const s = b && typeof b.text === "string" ? b.text : "";
+      if (!s) continue;
+      if (/^(# AGENTS\.md instructions|<environment_context>|<user_instructions>)/.test(s)) continue;
+      return s;
     }
   }
   return "";

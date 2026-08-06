@@ -1,4 +1,4 @@
-import { readdirSync, statSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from "fs";
+import { readdirSync, statSync, writeFileSync, appendFileSync, unlinkSync, existsSync, readFileSync, renameSync } from "fs";
 import { join, basename } from "path";
 import { gzipSync } from "zlib";
 import { readTraceText, isTraceFile, parseTraceText, type TraceParseStats } from "./history";
@@ -136,7 +136,8 @@ export interface MergeSession {
 
 export interface MergePlan {
   sessions: MergeSession[];
-  /** Pairs with no session id (OAuth/usage/telemetry), left in place. */
+  /** Pairs with no session id (OAuth/usage/telemetry), left in place. Under a
+   * scoped plan only candidate files are parsed, so this counts those alone. */
   unattributable: number;
   /** Trace files that would be fully consumed by a merged output (prune-able). */
   subsumed: FileEntry[];
@@ -145,22 +146,77 @@ export interface MergePlan {
   blocked: { outName: string; reason: string }[];
 }
 
+/** Progress event for the slow phases of merge — the CLI decides what to print. */
+export interface MergeProgress {
+  phase: "scan" | "read" | "write";
+  name: string;
+  bytes?: number;
+  pairs?: number;
+}
+
 export interface MergeScope {
   /** Merge only these sessions (the exit auto-merge scopes to the run's own). */
   sessionIds?: Set<string>;
   /** Skip a session that lives in one file with no previously merged output —
    * there is nothing to consolidate, so leave its trace untouched. */
   fragmentedOnly?: boolean;
+  /** Called before each slow step (file scan/parse) so a big merge stays
+   * visible instead of looking stuck at exit. */
+  onProgress?: (ev: MergeProgress) => void;
 }
 
 export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   const bySession = new Map<string, { pairs: Map<string, TracePair>; sources: Set<string>; dupes: number }>();
   const fileSessionPairs = new Map<string, { total: number; attributed: number; sids: Set<string> }>();
+  const progress = scope.onProgress ?? (() => {});
   let unattributable = 0;
 
-  for (const path of ls(logDir)) {
-    if (!isTraceFile(path)) continue;
-    if (basename(path).startsWith("session-")) continue; // our own output is an input below, never a source
+  let sources = ls(logDir).filter((p) => isTraceFile(p) && !basename(p).startsWith("session-")); // our own output is an input below, never a source
+
+  // Scoped plans (the exit auto-merge) pre-scan by SUBSTRING before parsing
+  // anything: a wire session id is always a verbatim substring of its pair's
+  // JSON line, so a file whose text never mentions a target id cannot hold a
+  // pair this plan would keep. Two wins over parse-everything: unrelated
+  // traces in a big log dir are never JSON-parsed at all, and fragmentedOnly
+  // can conclude "nothing to consolidate" — the common fresh-single-file
+  // exit — without parsing even this run's own (possibly huge) trace.
+  // Substring hits over-count (an id quoted inside some response body makes
+  // a file a candidate), which is safe: the parse below re-derives the real
+  // attribution; under-counting is impossible.
+  if (scope.sessionIds && scope.sessionIds.size) {
+    const hitFiles: string[] = [];
+    const hitCount = new Map<string, number>();
+    for (const path of sources) {
+      let st;
+      try { st = statSync(path); } catch { continue; }
+      progress({ phase: "scan", name: basename(path), bytes: st.size });
+      let text: string;
+      try { text = readTraceText(path); } catch { continue; }
+      let hit = false;
+      for (const sid of scope.sessionIds) {
+        if (!text.includes(sid)) continue;
+        hit = true;
+        hitCount.set(sid, (hitCount.get(sid) || 0) + 1);
+      }
+      if (hit) hitFiles.push(path);
+    }
+    if (scope.fragmentedOnly) {
+      // A prior output makes a single-source session still worth merging
+      // (the union grows it); its name starts with the sid's 8-hex prefix
+      // whatever collision-extension the writer used.
+      const names = ls(logDir).map((p) => basename(p));
+      const priorFor = (sid: string) => names.some((n) => n.lastIndexOf(`session-${sid.slice(0, 8)}`, 0) === 0);
+      if (![...scope.sessionIds].some((sid) => (hitCount.get(sid) || 0) >= 2 || priorFor(sid))) {
+        return { sessions: [], unattributable: 0, subsumed: [], blocked: [] };
+      }
+    }
+    sources = hitFiles;
+  }
+
+  for (const path of sources) {
+    let size = 0;
+    try { size = statSync(path).size; } catch { /* report 0 */ }
+    progress({ phase: "read", name: basename(path), bytes: size });
     let pairs: TracePair[];
     const damage: TraceParseStats = { torn: 0, invalid: 0 };
     try { pairs = parseTraceText(readTraceText(path), damage); } catch { continue; }
@@ -251,10 +307,34 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   return { sessions, unattributable, subsumed, blocked };
 }
 
-export function applyMerge(plan: MergePlan, opts: { prune: boolean }): { written: string[]; pruned: string[]; skipped: string[]; bytes: number } {
+// Serialize + write pairs in bounded chunks: one giant join() of a multi-GB
+// session doubled peak memory and stalled visibly; 8MB appends keep the write
+// incremental. Still tmp + rename — a torn write never lands on the real name.
+function writePairsAtomic(path: string, pairs: TracePair[]) {
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, "");
+  const CHUNK = 8 * 1024 * 1024;
+  let buf: string[] = [];
+  let len = 0;
+  for (const p of pairs) {
+    const line = JSON.stringify(p) + "\n";
+    buf.push(line);
+    len += line.length;
+    if (len >= CHUNK) {
+      appendFileSync(tmp, buf.join(""));
+      buf = [];
+      len = 0;
+    }
+  }
+  if (buf.length) appendFileSync(tmp, buf.join(""));
+  renameSync(tmp, path);
+}
+
+export function applyMerge(plan: MergePlan, opts: { prune: boolean; onProgress?: (ev: MergeProgress) => void }): { written: string[]; pruned: string[]; skipped: string[]; bytes: number } {
   const written: string[] = [];
   for (const s of plan.sessions) {
-    writeAtomic(s.outPath, serialize(s.pairs));
+    opts.onProgress?.({ phase: "write", name: s.outName, pairs: s.pairCount });
+    writePairsAtomic(s.outPath, s.pairs);
     written.push(s.outName);
   }
   const pruned: string[] = [];

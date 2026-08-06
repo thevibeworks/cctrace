@@ -3,6 +3,7 @@ import type { TracePair } from "./types";
 import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
 import { sliceWindow, pairEndMs } from "./replay";
 import { createSpecAccumulator, renderSpecMarkdown } from "./spec";
+import { renderTranscript } from "./transcript";
 import { planCompact, applyCompact } from "./compact";
 import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
@@ -10,7 +11,9 @@ import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
-import { listLiveInstances, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { listLiveInstances, listPastRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { getDashboardHtml } from "./dashboard";
+import { existsSync } from "fs";
 
 const WIRE = wireTables();
 
@@ -266,6 +269,37 @@ export function createServer(config: ServerConfig) {
           },
         });
       }
+      if (url.pathname === "/api/session.jsonl" || url.pathname === "/api/session.md") {
+        // The session dump: every pair of ONE session — the same set
+        // `cctrace merge` writes to session-<sid8>.jsonl — as raw wire
+        // pairs, or rendered as a markdown transcript. Viewer-only load
+        // markers (prior/speculative) are stripped from the .jsonl: they
+        // describe this server's load path, not the wire.
+        const sid = url.searchParams.get("sid") || "";
+        if (!sid) return Response.json({ error: "sid required" }, { status: 400 });
+        const sel = pairs.filter((p) => extractSessionId(p, WIRE) === sid);
+        if (!sel.length) return Response.json({ error: "unknown session id" }, { status: 404 });
+        const short = sid.slice(0, 8);
+        if (url.pathname.endsWith(".md")) {
+          const body = renderTranscript(sel, WIRE, { project: config.meta?.project, client: config.meta?.client, sid });
+          return new Response(body, {
+            headers: {
+              "content-type": "text/markdown; charset=utf-8",
+              "content-disposition": `attachment; filename="session-${short}.md"`,
+            },
+          });
+        }
+        const lines = sel.map((p) => {
+          const { prior, speculative, ...rest } = p as TracePair & { prior?: string; speculative?: boolean };
+          return JSON.stringify(rest);
+        });
+        return new Response(lines.join("\n") + "\n", {
+          headers: {
+            "content-type": "application/x-ndjson; charset=utf-8",
+            "content-disposition": `attachment; filename="session-${short}.jsonl"`,
+          },
+        });
+      }
       if (url.pathname === "/api/slice.html") {
         // Slice export: a snapshot holding exactly the pairs whose response
         // completed between the two named pairs' ends (inclusive) — the
@@ -303,6 +337,25 @@ export function createServer(config: ServerConfig) {
           ...i,
           self: config.instanceId ? i.id === config.instanceId : i.pid === process.pid,
         })));
+      }
+      if (url.pathname === "/api/runs") {
+        // Finished runs (registry tombstones) for the dashboard — the live
+        // side is /api/instances. traceExists is re-stat'd per request: a
+        // path from another container may not resolve here, and the page
+        // must say so instead of offering a dead view command.
+        const list = config.dataDir ? listPastRuns(config.dataDir) : [];
+        return Response.json(list.map((i) => ({
+          ...i,
+          traceExists: !!(i.logFile && existsSync(i.logFile)),
+        })));
+      }
+      if (url.pathname === "/dashboard") {
+        // The central picture: every live + recent run sharing this data
+        // dir. Any instance's port serves the same page — the registry is
+        // shared, so there is no "main" instance to hunt for.
+        return new Response(getDashboardHtml({ version: config.meta?.version }), {
+          headers: { "Content-Type": "text/html" },
+        });
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
         // The page connects its WebSocket origin-relative, so no port is

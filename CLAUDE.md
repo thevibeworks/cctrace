@@ -74,7 +74,10 @@ credits) independent of `ANTHROPIC_BASE_URL`.
 2. Front door: an http.Server answers `CONNECT` and decides scope on the
    CONNECT line, before any TLS. Include-listed hosts (`buildInterceptSet`
    in src/certs.ts: the client's `firstPartyHosts` + `hostCategories` pins
-   + base-url env hosts + `--intercept-host` extras) are MITM'd — Anthropic
+   + base-url env hosts + `--intercept-host` extras + the client plugin's
+   `configHosts` discoveries — codex reads every `model_providers.*
+   base_url` in `$CODEX_HOME/config.toml`, fail-soft, so a custom provider
+   is captured without flags) are MITM'd — Anthropic
    hosts via the static leaf terminator, others via dynamically generated
    per-host certs signed by the same CA. Every other host is an OPAQUE
    byte-counted tunnel: no forged cert (cert-pinning tools and system-store
@@ -138,467 +141,12 @@ interface Capturer {
 
 ## Web UI
 
-One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
-and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
-The header identifies the run: traced client (icon + name chip — quiet
-generic monograms in `CLIENT_ICONS`, not vendor logos — from
-`PageMeta.client` or the newest labeled pair; absent for pre-0.13 traces),
-the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
-live runs, view serves, and snapshots all name the .jsonl behind the page;
-view resolves the project from the log dir's parent when it's a standard
-./.cctrace, and projectPath is that repo root so tool paths relativize;
-live/tail pages carry a PULSE strip (bottom of the session view, body
-.pulse-on): newest model call's tool labels + age (1s tick — the one
-ticking surface, terminal convention) + the newest request's cache
-deadline (absolute hold-until, amber "expired" past it; the same 1s
-timer re-renders the requests list once when the deadline crosses).
-Boot shows a rotating loading VERB (ccx tradition, #boot-verb) until
-the first render replaces it. The cache "expired" state also renders
-on the detail panel's cache chip and the outline's newest-turn hover
-— newest model call ONLY (later hits refresh the TTL);
-clicking the title copies PageMeta.traceRelPath, the project-relative
-".cctrace/trace-….jsonl" ready for `cctrace view`) and the current session id (extracted
-client-side from pairs, newest live pair wins, click to copy) — the tab
-title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
-opens its WebSocket origin-relative (never a baked port: behind
-container/host port forwards the bound port isn't the browser's port, and a
-baked URL once handed a view page another instance's live stream). The
-right side is trace totals · instance-switcher · live-dot · version · mask/theme/github
-(totals = requests · in/out tokens · est cost across the whole trace,
-live-updating, breakdown in the hover — per-pair call info memoized on the
-pair since extractCallInfo parses SSE):
-the live status sits beside the "⇄ N more" switcher (both are
-instance-level facts), and the cctrace version (+ amber update link) sits
-with the page chrome in its own `#ver` mount, hover = a miniature release
-note (slogan + fresh-features list in renderVer — refresh it when cutting
-a release). Chrome tooltips (toolbar/header/replay bar) all speak the
-designed tip grammar: heading line, `---` divider, `> ` interaction hints.
-In the session view the trace controls (replay, ⌘ actions) right-align via
-margin-left:auto — the requests view's filter input holds that edge, so
-the controls keep one position in both views. A
-mask toggle (eye glyph, persisted in localStorage `cctrace-mask`) blurs
-identity values marked `data-mask` (header session id + trace title,
-per-session sid labels, usage/credits chips) for screen sharing — hover any
-one to reveal it; display-layer only, unrelated to capture-time redaction
-(src/redact.ts). What blurs is a category SET (data-mask="title|sid|usage",
-body.mask-<k> classes, localStorage cctrace-mask-keys, right-click the eye
-for the picker) — session ids are EXCLUDED by default (a local uuid is not
-a credential; the blurred chip read worse than it protected). Served pages
-(live/view/tail — never snapshots) carry an ACTIONS menu (⌘ toolbar
-button, #act-wrap — trace actions live with the trace controls, not the
-header): downloads (/api/snapshot.html, /api/spec.json|.md — CLI
-redaction rules) plus RUNNABLE housekeeping — per-category purge
-(telemetry/tokens/external, live counts, the existing /api/purge path +
-confirm) and compact via POST /api/compact (plan by default →
-{apply:true}; planCompact/applyCompact from src/compact.ts, re-stat
-discipline: a live capture appending mid-flight is skipped). merge/
-compress stay terminal-only (whole-log-dir sweeps). The header totals
-rollup also shows the trace file's on-disk size (traceBytes: baked into
-PageMeta for exports, refreshed on every ws init/pair frame live —
-config.traceSize in src/server.ts). The PULSE (0.28) grew stand-out
-styling: accent wash, spinning/breathing ✻ while fresh (≤30s), a
-rotating verb while in flight, 160ms fade on action change. Wall-clock times render 24h
-(`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
-the trace actually contains (a codex run never shows Count Tokens), the
-active one staying visible even at zero. Live-arrived rows get one 160ms
-opacity fade (the motion budget lives in docs/design/ui.md). Two views,
-hash-routed:
-
-- **Requests** (`#`, `#/p/<id>`): one row per request. The toolbar's Select
-  button enters select-to-purge (hidden on snapshots): rows grow a check
-  gutter, "all shown" selects the filtered list, purge confirms then POSTs
-  `/api/purge {ids}` — the server drops the pairs from memory, calls the
-  CLI's onPurge to rewrite the backing .jsonl(s) (`purgePairsById` in
-  src/storage.ts: atomic, archive-preserving, torn lines kept, skips files
-  changed mid-flight), and broadcasts `purged` so every page removes the
-  rows. Content chips read
-  left-to-right — model · effort · think · in/out · ≡cache · cost — then
-  the wire transport facts sit as right-aligned COLUMNS: ↑req ↓resp sizes ·
-  ttft · duration · time (the flexible gap between chips and columns is
-  structural, `.sum` flex). The chips: model; requested reasoning effort
-  (`extractEffort` in src/summarize.ts, one function for every wire shape:
-  Anthropic `output_config.effort` / transitional `thinking.effort` (kimi
-  too) / classic `thinking.budget_tokens` / bare `thinking.type: adaptive`,
-  OpenAI Responses `reasoning.effort`, Chat Completions `reasoning_effort`
-  — the tooltip names the wire field; also a detail-panel param chip);
-  thinking tokens; in/out tokens; one compact prompt-cache verdict chip
-  prefixed `≡` (the layered-cache glyph, U+2261 — slim, monospace-safe;
-  `summarizeCache` in src/summarize.ts: hit = read > 0, green
-  only when ≥90% of the prompt came from cache — a weaker hit is amber, most
-  of the context was re-billed at full input price;
-  "↓read hit% ↑write" with a 1h-TTL breakdown since 1h bills 2x; cold =
-  write only, amber; miss = cache_control set but nothing read/written;
-  no chip when caching isn't used — tooltips spell the numbers out. With
-  the response timestamp the tooltip adds the ABSOLUTE hold-until
-  wall-clock ("held until ~14:32 (1h)") — absolute so a rendered page can
-  never go stale, and deliberately NOT a ticking countdown: per-request
-  countdowns lie, every later hit refreshes the TTL, so only the newest
-  request's deadline means anything. That newest model-call pair — and only
-  it — renders "· expired" when the page is drawn past its deadline
-  (opts.newest/now into summarizePair; zero timers, computed at render:
-  the useful case is reopening/viewing an idle session, where it says
-  "resuming now re-writes the prefix");
-  estimated cost (src/pricing.ts: the models.dev catalog — refreshed by
-  src/pricing-catalog.ts into <data-dir>/pricing.json, injected as
-  META.pricing/window.__PRICING__ — resolves any model incl. gpt-5.x and
-  grok-4.5 by exact id, date-strip, then trailing-segment fallback
-  (gpt-5.6-sol -> gpt-5.6); the embedded Claude table stays as the offline
-  fallback. Anthropic cache multipliers: 0.1x read, 1.25x 5m write, 2x 1h
-  write, no-TTL writes assumed 5m same as ccusage; a catalog entry without
-  a cache rate means the provider doesn't bill it), count_tokens
-  results, usage window percentages (5h / 7d / per-model), telemetry event
-  counts, error types, a "stopped early" warn chip when the response is
-  truncated (the guarded pump kept capturing the partial reply after a CLI
-  abort — `resp.truncated`). First-token delay is the ttft COLUMN
-  (`firstTokenMs` on the pair, stamped live by the proxy pump in
-  src/stream.ts when the first token event passes through — SSE events
-  carry no timestamps, so it can't be derived from a saved body; the first
-  body byte lands in `firstByteMs` as the detail-panel fallback). The size
-  column is DevTools-style
-  (`extractSizes` in src/summarize.ts: `bodyBytes` wire counts stamped by
-  the proxies at capture time — request as sent, so codex zstd shows the
-  compressed size; response as received (identity encoding). Pre-0.17
-  pairs fall back to an estimate from the decoded trace, tooltip says so;
-  tunnel rows keep their byte-count chip instead). The detail panel adds
-  prompt size, first token / first byte delay with its share of
-  wall-clock, output tok/s (computed over post-first-token streaming time
-  when ttft is known), and a cost tooltip broken down by component; the
-  Sessions view shows per-turn and per-thread cost and ttft, plus error
-  metrics aggregated per thread and per session (buildSession's usage:
-  wireErrors = no response / 4xx-5xx / in-stream error events, truncated
-  streams, toolErrors over toolUses for a rate — reported separately
-  because they mean different failures; red chips in the convo pane, an
-  "N err" badge on thread cards, a rollup line atop the threads pane).
-  Clicking a
-  row opens a split detail panel beside the list (no page jump);
-  prev/next + `j`/`k` walk the FILTERED list; `Esc` closes. The detail
-  toolbar (close/prev/next/position) is sticky, so it stays reachable
-  inside megabyte conversations; the request id in that sticky bar is
-  click-to-copy. Panel order is chips (identity) → Headers →
-  Body → conversation: headers/body are short or collapsed folds, the
-  conversation is the megabyte tail, so it renders LAST (reaching Headers no
-  longer means scrolling past the whole conversation). The DevTools-style
-  Headers section: General (url/method/status/host/timing/sizes — plus a
-  "stopped early" row when the response is truncated) plus request/response
-  headers as parsed k/v tables with a raw toggle and one-click copy. Body
-  payloads stay lazy `<details>` folds, each with a mode toggle — pretty
-  JSON vs as-logged raw text for bodies ("raw" is the decoded trace body
-  re-serialized, not original wire bytes), raw SSE text vs parsed events for
-  the stream. Every fold summary carries a quiet `copy` .fold-btn (copies the
-  fold's body text — pretty JSON, full system prompt, tool input); user and
-  assistant text blocks get a hover copy button. Then the conversation
-  (system prompt, tools, thinking, tool_use collapsed; long texts clamp
-  with a "show all" expander; streamed assistant reply reconstructed from
-  SSE); usage requests render limit bars in its place. A quiet nav rail overlays the detail panel
-  and the session convo (same targets both places): jump top/bottom, prev/
-  next turn, prev/next user prompt, system prompt — in the session view
-  also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
-- **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): wire view +
-  reconstructed conversation side by side. Threads are session-scoped
-  (thread key = `<sid>|<wire key>`): when a trace holds several wire
-  session ids (/clear mid-run, resumed sessions), the threads pane groups
-  them into collapsible per-session sections, newest activity first
-  (header: short sid click-to-copy, time range, req count, err rollup;
-  `[`/`]` switch sessions; fold state survives re-renders, keyed by sid).
-  A session holding exactly ONE chat absorbs the chat card into its
-  header (the common case — /clear rotates the sid; clicking the header
-  selects the chat, clicking again folds; the outline and agent/utility
-  threads hang
-  directly under). EVERY trace renders the sessions layer — a
-  single-session trace is one open absorbed container (the flat
-  "[chat] N turns" card said less than the session header does).
-  Default focus is
-  the newest session's main thread; a NEW sid appearing live follows only
-  while tailing. The SELECTED conversation renders as an outline whose
-  TURN is the working-loop unit — user request → agent work → final
-  response — NOT one wire message (`loopTurns` in src/session.ts groups
-  visible message-turns; a real trace's 213 wire messages read as 3
-  turns). Ordinals number loops — BARE, zero-padded, 1-BASED on the rail
-  ("01"; the word "turn" repeated down the rail is noise, and 1-based
-  makes the last label agree with the "N turns" counts; prose surfaces
-  spell "turn 01"). Each assistant member is a STEP — one iteration of
-  the agentic cycle = one wire request (loopTurns stamps steps/stepCount):
-  mid rows carry a faint sub-ordinal ".2" in the ordinal cell (01 + .2
-  reads 01.2), hovers say "step 2 of 4", the convo role bar gives mids
-  the same "01.2" address, a step whose folded tool_result is_error wears
-  a quiet red "tool err" mark (count in hover), and the final's hover
-  names the wire stop_reason ("stop: end_turn"; tool_use = loop cut
-  mid-work, said honestly). The continuation summary heads its turn as a
-  RECAP node (sys-tag "recap", neutral dot, never the human's ❯ —
-  continuationSummaryTurn in src/session.ts is the one detector shared
-  with the convo's sum-tag, position-at-rewrite-boundary first, preamble
-  string as fallback); a genuine user message heads the ordinal
-  (prompt via `turnSnippet`: caveat/stdout wrappers skipped, a
-  command-only turn previews as "/model"); the agent's intermediate
-  messages indent under it (.tturn-sub/.tturn-mid — narration snippet, or
-  the enriched tool label: `turnToolLabel` names files workspace-relative,
-  "Edit src/ui.ts, Read src/session.ts, +2" — with a toolPreview fallback
-  covering the whole Claude Code tool surface: MultiEdit, SlashCommand,
-  AskUserQuestion, ExitPlanMode, BashOutput/KillShell, Workflow (meta.name
-  pulled from inline scripts), TaskUpdate/Get, MCP resources; task-tracking
-  TaskCreate {subject} never renders as a subagent spawn); the loop's last
-  assistant message is the final response row (↳ marker, reply snippet).
-  Clicking a head's ❯ gutter folds the loop's member rows under the prompt
-  line ("⋯ N" count; state per thread+ordinal in foldedTurns, survives live
-  re-renders; truth markers — compact/superseded/failed rows — never fold).
-  Row tooltips LEAD with the full text the row truncated (user prompt,
-  assistant narration, injected prompt, superseded prompt — 600-char cap),
-  then the metrics; long fold hints get the same treatment (fold() puts
-  hints > 60 chars in data-tip). Harness-
-  authored user-ROLE messages (`harnessPrompt`, precise prefixes only)
-  never read as the human: the away-recap prompt and "Tool loaded."
-  absorb into the open turn wearing a small-caps SYS tag (.sys-tag in the
-  outline, the sum-tag style on the convo role bar — one system-scope
-  marker family with the continuation-summary tag);
-  "[SYSTEM NOTIFICATION" wakeups DO head their turn (they start real
-  agent work) but render as CLI-authored, not with the human's ❯ mark;
-  reminder-only user messages (all text is <system-reminder> nudges —
-  harnessTurnKind, since turnSnippet strips reminders to "") absorb as
-  sys · reminder. Loop
-  counts feed every "N turns" label (thread cards, session headers,
-  spawn-fold stats) and the convo pane's role-bar ordinals (user head +
-  final response carry "turn NN", intermediates none). Row click still jumps
-  by message index. EVERY row LEADS with a dot — a
-  status gutter (user = a ❯ prompt glyph in the accent tint — the shell's
-  own "your turn" marker, and the rail line skips user heads so the rail
-  spans a turn's WORK; assistant = wire verdict dot: green
-  healthy cache hit, amber weak <90%/cold/miss, red failed) — then
-  ordinal + message text, nothing else inline: all metrics live in the
-  hover; user rows read in full text color, finals muted, mids faint.
-  The thread/session model chip wears the identifier color (--text-method,
-  same as METHOD and tool names) and its hover carries the wire facts:
-  exact model id(s), requested effort level(s), 1m-context beta when the
-  anthropic-beta header says so (threadWireFacts); the sid is unbolded —
-  identity, not emphasis. Subagent branch rows name the agent's model
-  ("[general-purpose] map repo · opus-4-6 · 2 turns · $0.0035"). Session headers open with a glyph + accent-tinted small-caps
-  SESSION label (.sico/.klabel); epoch heads a branch glyph + T<n>;
-  the model chip is bare (hover explains). Hover details are near-instant
-  (120ms show delay so mousing across chips doesn't flicker) and
-  structured — a custom page-wide .tip singleton filled from data-tip
-  (first line = heading, "---" line = hairline section divider, "> "
-  prefix = faint interaction hint; the convention reads content →
-  metrics → hints); a
-  plain `title=` anywhere on the page is folded into the same panel on first
-  hover (the attribute is moved to data-tip so the native tooltip never
-  fires). Tips are capped at 320px wide; anchors inside the threads pane
-  fly out to the RIGHT of the pane instead of covering the rows below,
-  and a tip whose anchor a live re-render detached hides itself
-  (tipDetachedGuard). The ❯ fold gutter carries its own tip naming the
-  fold toggle. Kind chips are neutral outlines
-  (ui.md one-accent rule), red/amber reserved for state.
-  `session.ts` groups model-call pairs into threads, one
-  `buildSession(pairs, wire)` entry for BOTH wire dialects (`wireDialect`
-  dispatches per pair). Anthropic: by the `x-claude-code-agent-id` header
-  when present (cc ≥ ~2.1.2xx stamps every sidechain request with it —
-  exact grouping), else by a signature of the first message's USER text
-  (`firstUserText` skips the injected `<system-reminder>` context block —
-  Claude Code prepends the same claudeMd/hook reminder to EVERY thread's
-  first message, so hashing raw content collapses main + all subagents into
-  one thread; that was a real bug). OpenAI Responses (codex/grok,
-  `src/dialects/openai.ts`): by the wire conv header named in the client's
-  wire table (codex `thread-id`, grok `x-grok-conv-id` — grok's parallel
-  conversations split cleanly), sig fallback for header-less calls;
-  `input[]` items normalize into the same turn/block model (message->text,
-  function_call/custom_tool_call->tool_use, `*_output`->tool_result,
-  reasoning->thinking — grok summaries readable, codex encrypted -> a
-  placeholder), the final SSE `response.completed` event carries the whole
-  output + usage (OpenAI input_tokens includes cache, peeled off to match
-  the chips' convention; reasoning_tokens -> thinking), and codex
-  `request_kind:"prewarm"` probes / grok `recap-*` convs classify as
-  utility. OpenAI Chat Completions (kimi,
-  `api.kimi.com/coding/v1/chat/completions`, 2026-07-20) is a THIRD wire
-  sub-shape adapted INTO the Responses model rather than a third dialect:
-  `openaiInput(req)` maps `messages[]` -> the same input items (system/user
-  message, `reasoning_content`->reasoning, `tool_calls`->function_call, a
-  `tool` role msg->function_call_output) and a branch in `openaiCompleted`
-  assembles the streamed `chat.completion.chunk` deltas (content, reasoning,
-  index-buffered tool_calls) + `usage` {prompt_tokens/completion_tokens/
-  prompt_tokens_details.cached_tokens} into the same {output,usage} object —
-  so openaiBlocks / normalizeOpenaiTurns / extractOpenaiInfo / attribution /
-  compaction stay identical and `wireDialect` stays two-valued (callers read
-  the conversation via `openaiInput`, never `req.input`). Chat Completions
-  has no conversation HEADER (x-trace-id is per-request) — kimi threads
-  always take the first-user-text sig fallback — but K3 sends the SESSION id
-  in the request BODY: `prompt_cache_key: "session_<uuid>"`, stable across
-  subagent threads, auto-compaction, and `--resume` across processes
-  (devlog 2026-07-20-kimi-k3-wire-facts). The wire table names it
-  (`sessionBodyField`), extractSessionId reads it (bare uuid), compact
-  stubs preserve it — session identity, never a thread key (subagents
-  share it). Kimi auto-compaction repacks at msgs=4: the original first
-  user message with LATER user text merged in (NOT verbatim — the sig
-  fallback splits here) + the working summary re-sent as a USER message
-  ("The conversation so far has been compacted..."). Reunification for
-  openai threads is marker-gated on that summary preamble (structural
-  signals alone could false-claim a tail subagent — same sid, same system
-  prompt); a marker-merged continuation appends without the 10-turn-drop
-  heuristic since the repack is known, not inferred. Subagent linking has no known OpenAI wire marker yet — those
-  threads list as separate chats. Subagent threads link to the Task/Agent tool_use that spawned them
-  by prompt (the dispatch prompt lands verbatim as the first user text) and
-  are classified `agent` even unlinked via wire markers (agent-id header,
-  `cc_is_subagent=true` billing block, Agent-SDK system prompt) so they
-  never compete with the main chat. Turns rebuild from each thread's longest
-  request + its response; per-turn usage/duration attributes to the wire
-  request that produced it — index-first (index = the request's history
-  length), content-verified against the pair's assembled response
-  (turnContentSig, capped compare), content-scan on mismatch (Claude Code
-  repacks history with ephemeral notice turns, so indices drift).
-  /compact REPACKS history (shorter + rewritten: tool_use turns become
-  text, a recent tail survives verbatim) — two consequences handled in
-  buildSession (2026-07-20): requests FOLLOWING the spine merge in via a
-  context-verified anchor (deepest post-compact turn still in the spine,
-  2 aligned neighbors — boilerplate sigs collide) so post-compact turns
-  append at their timeline position instead of vanishing + flagging; and
-  a 10+ turn drop below the running max marks the repack (notice wobbles
-  are 1-3), gating supersession claims — a pre-compact pair judged
-  against a post-compact spine classifies unattributed, never
-  superseded. A FULL /compact goes further: message[0] becomes the
-  continuation summary, which mints a new sig — that thread REUNIFIES
-  into the same session's deepest-history conversation started before
-  it (the summary even quotes old Task dispatch prompts, which
-  false-claimed it as a subagent), and with no verbatim overlap the
-  whole post-compact packing appends at the timeline tail (the summary
-  turn is a real event). Reunification is STRUCTURAL, not string-gated
-  (round 11): same real sid + same system identity block (first
-  non-billing system block — subagents/utilities differ) + smaller
-  start + a parent quiet forever; the harness preamble text ("This
-  session is being continued...") is one extra vote, so a reworded or
-  customized harness degrades gracefully. A history drop is NOT always a
-  compaction (2026-07-22): a /rewind truncates and regrows on a new
-  branch. The discriminator is index geometry — a fold's surviving tail
-  aligns at SHIFTED indices (the history above it shrank into a
-  summary), a rewind's shared content is a same-index PREFIX; and with
-  no anchor at all, a same-sig thread that was never reunified can't be
-  a real compact (every observed compact shape rewrites msg[0] and
-  splits the sig — merged continuation requests are stamped `_cont`).
-  The degenerate msg[0]-to-msg[0] anchor with zero verified context is
-  rejected outright: msg[0]'s sig is the injected <system-reminder>
-  prefix, identical for every request, and it once claimed a
-  rewind-to-start as a fold. Every boundary is DISPLAYED (t.compactions,
-  modes fold/rewrite/rewind): a break node + "compacted · N → M turns"
-  (or "rewound") row on the rail, a dashed divider in the convo, hover =
-  the context collapse in turns and tokens + what happened, click = the
-  first post-boundary request; a rendered continuation-summary turn is
-  tagged, never shown as user text. Pairs
-  matching nothing classify prefix-divergent (internal field t.rewound)
-  or UNATTRIBUTED (assistant turns without a
-  pair say so quietly, never silently blank). Prefix-divergent pairs
-  DISPLAY as "superseded", never "/rewind" — the detection fires equally
-  for /rewind, edited messages, and ephemeral injected exchanges (the
-  auto recap prompt is injected, answered, then dropped from history —
-  a real false-"rewound" bug, 2026-07-20); they render grey at their
-  timeline position in the outline (same ordinal as the turn that
-  replaced them) and as a grey marker in the convo, wire pair linked.
-  Failed requests (no response / HTTP 4xx-5xx, t.failed) never claim
-  turns; they collapse into ONE row per timeline position — "21 failed
-  requests · 429 engine_overloaded_error" at the exact spot the retry
-  storm hit, red dot on the rail, first wire pair linked, a matching
-  red-edged line in the convo — instead of 21 orphan rows dumped at the
-  thread tail (a real kimi 429 storm, 2026-07-22). A thread's model is a SET
-  (t.models: per-model requests/tokens/cost); the face model is the one
-  with the most output tokens. The label names the conversation ("N
-  turns" / "[type] description"); the model renders as its own
-  right-aligned chip on the thread card ("fable-5 +4", split in the
-  tooltip) — an attribute, never the identity. A /model switch opens an
-  EPOCH, never a thread (`threadEpochs` in src/session.ts: contiguous
-  runs of attributed turns per model): multi-epoch chats list t0/t1/t2
-  rows on their card (short model + turn count, click = jump to where
-  that model takes over) and the convo pane draws a quiet divider at
-  each switch; every attributed assistant turn names its short model
-  id. Selection emphasis is a
-  faint accent wash on the session section and the thread head (no accent
-  edges). tool_results fold into their tool_use by id
-  (ccx convention); result-only user turns are skipped. EVERY tool_use folds
-  to one line (focus hierarchy: user turns get extra space above + a faint
-  accent wash on the role bar (no hard border — accent edges read as
-  chrome), assistant reply text renders best-effort safe-subset markdown
-  (`renderMd`: fenced/inline code, headings, bold, http(s) links —
-  escaped first, so wire content can't smuggle markup), subagent
-  spawns / Skill / MCP calls keep a purple title + glyph (branch / bolt /
-  plug); tool fold previews name what the tool touched in workspace terms
-  (`toolPreview`/`wsPath` in src/session.ts: file paths relativize to the
-  workspace root — "src/ui.ts", "~/.claude/settings.json", full path only
-  when outside both; `wsRelText` relativizes paths INSIDE Bash command
-  text too, so the sidebar reads "$ cd .cctrace && ls" — display-layer
-  only, fold bodies keep the wire text; Read shows its line window, Write
-  its size, Edit flags replace-all, TodoWrite counts done. The root comes from
-  META.projectPath, else `cwdFromText` reads the cwd the traced CLI stated
-  on the wire — codex's <cwd> tag or Claude Code's bulleted
-  " - Primary working directory:" env line, precise shapes only, scanned
-  over the first 3 messages pairs since utility probes carry no env
-  block); tools with a richer shape than JSON open to RICH bodies
-  (richToolBody/diffHunk/escHtml in src/session.ts, inlined + unit-tested:
-  Edit/MultiEdit = git-style hunks — removed block then added block,
-  everything escaped; Write = all-additions; TodoWrite = a checklist with
-  per-status glyphs; AskUserQuestion = questions + options; Workflow =
-  its meta phase titles; ExitPlanMode renders the plan via the page's
-  renderMd) with the raw input JSON one fold deeper (details.rawin);
-  a spawn fold shows the spawned thread's outcome inline
-  ("2 turns · out 50 · $0.0035", agentThreadStats) plus the open-thread
-  link, and a Skill fold names the skill in its title ("skill · ccx")
-  with args as the hint; Read/Bash dumps stay quiet). Every turn's role
-  bar carries the outline's ordinal ("03" on the rail is "turn 03" here —
-  .turn-ord) and its wall-clock at the right edge (.turn-time, 24h, hover =
-  full date; turnTimes in ui.ts — a user turn inherits the timestamp of the
-  request that carried it, and the outline's user/recap/injected hovers name
-  the same moment). Every assistant
-  turn links back to its wire request. The conversation pane
-  tails like tail -f in live mode (open/refresh lands on the newest turn,
-  sticky bottom, "new activity" pill when scrolled up); live re-renders
-  PATCH per top-level node (applyConvoParts: the pane renders as a parts
-  array, only nodes whose html changed are replaced, so an expanded
-  final response / open fold / text selection the user is reading is
-  never rebuilt by a pair landing elsewhere — thread switches and
-  misaligned node counts fall back to the full innerHTML rewrite with
-  positional fold restore); snapshots open at the top.
-- **Replay** (inside the Sessions view): a time cursor over the same data —
-  pairs whose response completed at or before the cursor are visible,
-  everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the
-  session rebuilds from the visible subset via the normal `buildSession`
-  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps turns, shift+←/→
-  steps wire requests, Space plays (setTimeout ladder over response-end
-  boundaries, idle gaps compressed to ≤2s, speeds 1/2/8/60x), Home/End
-  jump, Esc exits. The scrubber doubles as a minimap (turns = tall accent
-  marks, errors red, probes short ticks). Deep links anchor on pair id —
-  `#/session/<key>/@<pair-id>` opens paused at that moment (ids survive
-  cross-run merges; wall-clock offsets wouldn't). SLICES: shift+drag on
-  the track selects a range (`sliceWindow` in src/replay.ts — pairs whose
-  response completed inside it, every category); while set, both panes
-  rebuild from the window only, playback/stepping/scrubbing bound to it,
-  the band + a chip render on the transport bar, and the deep link
-  becomes `@a..b` (the window's edge pair ids by END time —
-  sliceBoundPairs). The chip's "export" downloads `/api/slice.html?from=
-  &to=` — a snapshot holding exactly the window's pairs (~KBs, the
-  honest shareable artifact; whole-session --html pages run 100s of MB);
-  `cctrace view <t> --slice a..b` is the CLI face (applySlice in
-  src/view.ts), composing with --html and serve. A shift-CLICK
-  (zero-width window) clears instead of filtering everything out; ✕ on
-  the chip clears; Esc exits replay and the slice with it. Works
-  identically in snapshots (export hidden — no server); live captures
-  extend the track and "live ⤓" re-attaches the tail. P1+P2+slices
-  shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
-  moments — slices give it endpoints) remain
-  (docs/design/session-replay.md).
-- Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
-  inlined into the page via `Function.prototype.toString()` (same pattern as
-  `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.
-- UI design language and feature designs are written down in `docs/design/`
-  (`ui.md` = the rules; `session-replay.md` = the replay proposal). Read
-  `ui.md` before adding UI.
+The web UI's full behavior spec lives in docs/design/web-ui.md (one
+self-contained page in ui.ts: Requests + Sessions + Replay views).
+Read docs/design/ui.md for the design rules before adding UI.
 
 ## Commands
 
-```bash
-cctrace                       # auto mode (mitm on native), capture everything
-cctrace --mode base-url       # lightweight, messages only, no CA
-cctrace --messages-only       # capture only /v1/messages
-cctrace --print-ca            # print MITM CA cert path
-cctrace -s                    # static mode (files only, no live UI)
-cctrace -- --continue         # everything after -- goes to Claude verbatim
-cctrace -- -p "explain this"  # (-p after -- is Claude's, before it cctrace's)
-cctrace codex -- exec "..."   # trace the OpenAI Codex CLI instead of Claude
-cctrace grok -- -p "..."      # trace the Grok CLI
-cctrace kimi                  # trace the Kimi Code CLI (Moonshot AI)
-```
 
 **Client plugins** (`src/clients/`, #20): a leading client word
 (`claude`|`codex`|`grok`|`kimi`) picks who gets traced; the rest of the grammar is
@@ -644,65 +192,8 @@ Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 Claude spawn. `clean`/`merge`/`compress`/`purge` are dry-run by default;
 `--yes` applies.
 
-```bash
-cctrace view                              # no target: list traces newest-first and
-                                          # pick one (TTY prompt, Enter = newest;
-                                          # non-TTY prints the list and a hint).
-                                          # Rows are IDENTITY-first — client · sid8 ·
-                                          # "first prompt…" · size · age — joined from
-                                          # the registry (firstPrompt stamped at capture
-                                          # time via server onPrompt) with a bounded
-                                          # head-read fallback (peekTrace: head bytes
-                                          # only, small archives decompressed, big ones
-                                          # skipped) for pre-0.25 traces
-cctrace view latest                       # reopen the newest trace directly
-cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves it
-                                          # from the live web server (registers in
-                                          # the instance registry, mode "view").
-                                          # The page reads as a DOCUMENT (PageMeta.mode
-                                          # "view" -> IS_VIEW/IS_READING in ui.ts):
-                                          # status chip says "view" never live/offline,
-                                          # conversation opens at the top, no auto-tail
-                                          # — the WS stays as the data channel only
-                                          # (--port N; --serve = legacy alias)
-cctrace view <target> --html              # write a snapshot .html instead (shareable,
-                                          # but a big session renders 100s of MB)
-cctrace view <target> --slice a..b        # narrow to a slice window first (the @a..b
-                                          # of a slice deep link) — with --html this
-                                          # is the small shareable artifact
-cctrace view <target> --tail              # follow the trace file live (tail -f the
-                                          # .jsonl: poll + complete-lines-only via
-                                          # followTrace in src/view.ts; mode "tail" —
-                                          # live UI behavior + a "tail" status chip;
-                                          # the deva case: a sibling container shares
-                                          # the .jsonl but not the capture's port)
-cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
-cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session
-                                          # (whole-dir sweep; every capture run already
-                                          # merges its OWN session at exit)
-cctrace compress [--older-than N] [--yes] # zstd archive; view reads .zst/.gz directly
-cctrace purge [--drop|--keep CATS] [--yes]# drop categories (default telemetry,tokens,external)
-cctrace compact [--zstd] [--yes]          # fold redundant bodies: superseded messages request
-                                          # bodies -> stubs (longest per thread-epoch kept
-                                          # full; session view renders identically), noise
-                                          # cats -> meta-only except first/last/largest/
-                                          # slowest/errors; never deletes pairs
-cctrace spec [target] [--out F] [--md]    # observed-wire catalog from saved traces: endpoints,
-             [--diff CATALOG.json]        # methods, header NAMES, body field SHAPES (types +
-                                          # presence counts), SSE event types — observations
-                                          # with provenance (samples, first/last seen, client
-                                          # UAs), never inferred truth (no OpenAPI guessing;
-                                          # a projection can derive from the catalog later).
-                                          # Values redacted by design except negotiation
-                                          # headers (content-type, anthropic-version/-beta)
-                                          # and model ids — regression-tested. No target =
-                                          # every trace in the dir. --diff prints what changed
-                                          # vs a saved catalog ("+ request header x-claude-
-                                          # code-agent-id") — the wire changelog behind
-                                          # thevibeworks/claude-code-http-spec
-cctrace ps [--json]                       # live instances (URL, pids, client, project, session)
-cctrace --version                         # print version (+ newer version if known)
-```
+The annotated per-command reference lives in docs/design/cli.md;
+`cctrace --help` and skills/cctrace/SKILL.md cover day-to-day usage.
 
 The `.jsonl` is the deliverable: live runs do NOT write a snapshot `.html` at
 exit anymore (a 2h session produced ~400MB of HTML) — `view --html` renders
@@ -739,7 +230,13 @@ entries for live-but-unregistered instances straight from `/api/self`
 (`src/instances.ts`). `cctrace ps` lists live runs; the server exposes
 `/api/instances` (verified listing) and `/api/self` (identity, from memory —
 never triggers registry reads). The web UI header grows a "⇄ N more"
-switcher when other instances exist. Port allocation walks 9317, 9318, ...
+switcher when other instances exist. EVERY live/view server also serves
+`/dashboard` — the central picture: verified live instances + recent
+tombstones (`/api/runs`, traceExists re-stat'd per request), one page for
+all projects/containers sharing the data dir; any instance's port answers
+the same (`src/dashboard.ts`, values rendered via textContent — first
+prompts are wire-derived). Linked from the switcher menu, the ⌘ actions
+menu, and a `cctrace ps` footer line. Port allocation walks 9317, 9318, ...
 before falling back to an OS-assigned port, so concurrent runs land on
 predictable neighbors — the same walk the discovery sweep covers.
 
@@ -774,12 +271,6 @@ compiles `dist/cctrace` (`bun build --compile`, never `--minify` — the UI
 inlines functions via `toString()`); `make install` puts it in `~/.local/bin`.
 The compiled binary uses `~/.local/share/cctrace/` instead of the repo `.cache/` and
 does not support the legacy node mode (needs repo sources).
-
-```bash
-make help       # list targets
-make install    # compile + install to ~/.local/bin (PREFIX overridable)
-make test       # bun test
-```
 
 ## Key design decisions
 
@@ -881,12 +372,6 @@ make test       # bun test
   instead — nothing points at a path that no longer exists.
 
 ## Testing
-
-```bash
-bun test                                # unit: proxy, certs, tunnel, abstraction
-bun run tests/e2e-live.ts mitm "hi"     # e2e against real claude, all hosts
-bun run tests/e2e-live.ts base-url "hi" # e2e, messages only
-```
 
 Results (incl. real captures) land in `test-output/` — gitignored. Latest run:
 `test-output/SUMMARY.md`.

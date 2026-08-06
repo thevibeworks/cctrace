@@ -1,5 +1,8 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { createServer } from "../src/server";
+import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { TracePair } from "../src/types";
 
 // The live server's ingestion surface. Regression territory (containers
@@ -146,5 +149,85 @@ describe("web compact", () => {
     const res = await (await fetch(`${base}/api/compact`, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"apply":true}' })).json() as any;
     expect(res.applied).toBe(true);
     expect(res.rewritten).toBe(0);
+  });
+});
+
+describe("session dump", () => {
+  const SID = "dddd4444-eeee-ffff-0000-111122223333";
+  const msg = (id: string, ts: number): TracePair => ({
+    id,
+    request: {
+      timestamp: ts, method: "POST", url: "https://api.anthropic.com/v1/messages", headers: {},
+      body: {
+        model: "claude-opus-4-6",
+        metadata: { user_id: JSON.stringify({ session_id: SID }) },
+        messages: [{ role: "user", content: "dump me " + id }],
+      },
+    },
+    response: {
+      timestamp: ts + 1, status: 200, headers: {},
+      body: { model: "claude-opus-4-6", content: [{ type: "text", text: "reply " + id }], usage: { input_tokens: 10, output_tokens: 5 }, stop_reason: "end_turn" },
+    },
+    duration: 1000,
+    loggedAt: "2026-01-01T00:00:00.000Z",
+  });
+
+  test("/api/session.jsonl returns the session's pairs, stripped of viewer markers", async () => {
+    server.ingest(msg("dump1", 100));
+    const withPrior = msg("dump2", 200) as TracePair & { prior?: string };
+    withPrior.prior = "trace-old.jsonl";
+    server.ingest(withPrior);
+    const res = await fetch(`${base}/api/session.jsonl?sid=${SID}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(`session-${SID.slice(0, 8)}.jsonl`);
+    const lines = (await res.text()).trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.map((p) => p.id)).toEqual(["dump1", "dump2"]);
+    expect(lines[1].prior).toBeUndefined();
+  });
+
+  test("/api/session.md renders the transcript", async () => {
+    const res = await fetch(`${base}/api/session.md?sid=${SID}`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-disposition")).toContain(`session-${SID.slice(0, 8)}.md`);
+    const md = await res.text();
+    expect(md).toContain("# session " + SID);
+    expect(md).toContain("> dump me dump2");
+    expect(md).toContain("reply dump2");
+  });
+
+  test("sid is required and must be known", async () => {
+    expect((await fetch(`${base}/api/session.jsonl`)).status).toBe(400);
+    expect((await fetch(`${base}/api/session.jsonl?sid=nope`)).status).toBe(404);
+  });
+});
+
+describe("dashboard", () => {
+  test("/dashboard serves the central page; /api/runs lists tombstones with traceExists", async () => {
+    const html = await (await fetch(`${base}/dashboard`)).text();
+    expect(html).toContain("dashboard");
+    expect(html).toContain("/api/runs");
+    // this file's shared server has no dataDir: runs list is empty
+    expect(await (await fetch(`${base}/api/runs`)).json()).toEqual([]);
+
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dash-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    writeFileSync(join(dataDir, "instances", "t1.json"), JSON.stringify({
+      id: "t1", pid: 1, port: 9999, project: "proj", projectPath: "/x/proj",
+      logFile: join(dataDir, "trace-x.jsonl"), mode: "mitm",
+      startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+      client: "codex", firstPrompt: "hello world",
+    }));
+    const s2 = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const runs = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
+      expect(runs.length).toBe(1);
+      expect(runs[0].client).toBe("codex");
+      expect(runs[0].traceExists).toBe(false); // path not on this host yet
+      writeFileSync(join(dataDir, "trace-x.jsonl"), "");
+      const runs2 = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
+      expect(runs2[0].traceExists).toBe(true);
+    } finally {
+      s2.stop();
+    }
   });
 });

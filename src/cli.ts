@@ -552,6 +552,8 @@ async function runPs(args: string[]) {
     `  ${r.url.padEnd(widths.url)}  ${r.pid.padEnd(widths.pid)}  ${r.agent.padEnd(widths.agent)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.started}`;
   console.log(C.dim + line({ url: "URL", pid: "PID", agent: "AGENT", client: "CLIENT", project: "PROJECT", session: "SESSION", started: "STARTED" }) + C.reset);
   for (const r of rows) console.log(line(r));
+  // Any instance serves the same central picture — the registry is shared.
+  log(`Dashboard (all runs): http://localhost:${list[0]!.port}/dashboard`, C.dim);
 }
 
 /** Parse a storage subcommand's flags; exit(1) with usage on error. */
@@ -1295,7 +1297,13 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // everything else passes through as a byte-counted opaque tunnel.
   const interceptHosts = buildInterceptSet(CLIENT.wire, {
     env: process.env,
-    extraHosts: (values["intercept-host"] as string[] | undefined) || [],
+    extraHosts: [
+      ...((values["intercept-host"] as string[] | undefined) || []),
+      // The client's own config can route model calls to a custom host
+      // (codex model_providers base_url) — enroll those automatically, or
+      // the trace shows an empty Messages view behind a custom provider.
+      ...(CLIENT.configHosts?.(process.env) || []),
+    ],
   });
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,

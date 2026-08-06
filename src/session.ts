@@ -1034,7 +1034,8 @@ export function toolPreview(name: string, input: any, ws?: any): string {
     case "BashOutput": case "TaskOutput": return "shell " + (i.bash_id || i.task_id || i.shell_id || "?") + (i.filter ? " · /" + i.filter + "/" : "");
     case "KillShell": case "KillBash": case "TaskStop": return "shell " + (i.shell_id || i.bash_id || i.task_id || "?");
     case "Read": case "NotebookRead": {
-      let r = wsPath(i.file_path || i.notebook_path, ws);
+      // file_path is Claude Code's key; kimi's Read sends `path`.
+      let r = wsPath(i.file_path || i.notebook_path || i.path || i.file, ws);
       if (typeof i.limit === "number" && typeof i.offset === "number") r += " · " + i.limit + " lines from " + i.offset;
       else if (typeof i.limit === "number") r += " · first " + i.limit + " lines";
       else if (typeof i.offset === "number") r += " · from line " + i.offset;
@@ -1042,10 +1043,10 @@ export function toolPreview(name: string, input: any, ws?: any): string {
     }
     case "Write": {
       const len = typeof i.content === "string" ? i.content.length : 0;
-      return wsPath(i.file_path, ws) + (len ? " · " + fmtCompact(len) + " chars" : "");
+      return wsPath(i.file_path || i.path, ws) + (len ? " · " + fmtCompact(len) + " chars" : "");
     }
     case "Edit": {
-      let r = wsPath(i.file_path, ws);
+      let r = wsPath(i.file_path || i.path, ws);
       if (i.replace_all) r += " · replace all";
       return r;
     }
@@ -1102,7 +1103,26 @@ export function toolPreview(name: string, input: any, ws?: any): string {
       const done = i.todos.filter((t: any) => t && t.status === "completed").length;
       return i.todos.length + " todos" + (done ? " · " + done + " done" : "");
     }
-    default: return "";
+    default: {
+      // Foreign tool surfaces (kimi/codex/grok CLIs, MCP tools) — rather
+      // than enumerate every client, preview the most informative string
+      // argument; the raw JSON stays one fold away. Path-ish keys
+      // relativize like the named cases above.
+      const pathKeys = ["path", "file_path", "file", "filename"];
+      for (const k of pathKeys) {
+        if (typeof i[k] === "string" && i[k]) return wsPath(i[k], ws);
+      }
+      const infoKeys = ["pattern", "query", "command", "cmd", "url", "name", "subject", "description", "message", "prompt", "text", "input"];
+      for (const k of infoKeys) {
+        const v = i[k];
+        if (typeof v === "string" && v) return wsRelText(v, ws).slice(0, 100);
+        // codex shell sends command as an argv array
+        if (Array.isArray(v) && v.length && v.every((x: any) => typeof x === "string")) {
+          return wsRelText(v.join(" "), ws).slice(0, 100);
+        }
+      }
+      return "";
+    }
   }
 }
 

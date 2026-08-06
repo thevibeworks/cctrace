@@ -329,6 +329,19 @@ describe("toolPreview", () => {
     expect(toolPreview("Unknown", { a: 1 })).toBe("");
   });
 
+  test("foreign tool surfaces: alias keys and the informative-argument fallback", () => {
+    // kimi's Read sends `path`, not Claude Code's `file_path`
+    expect(toolPreview("Read", { path: "src/clients/kimi.ts" })).toBe("src/clients/kimi.ts");
+    // codex shell sends command as an argv array — generic fallback joins it
+    expect(toolPreview("shell", { command: ["bash", "-lc", "ls src"] })).toBe("bash -lc ls src");
+    // MCP tools preview their most informative string argument
+    expect(toolPreview("mcp__docs__search", { query: "session id" })).toBe("session id");
+    // path-ish keys relativize like the named cases
+    expect(toolPreview("view_file", { path: "/Users/eric/proj/x.ts" }, "/Users/eric/proj")).toBe("x.ts");
+    // nothing informative: stays empty (raw JSON is one fold away)
+    expect(toolPreview("mystery", { blob: { deep: 1 } })).toBe("");
+  });
+
   test("file tools relativize to the workspace root", () => {
     const ws = "/Users/eric/proj";
     expect(toolPreview("Read", { file_path: "/Users/eric/proj/src/ui.ts" }, ws)).toBe("src/ui.ts");

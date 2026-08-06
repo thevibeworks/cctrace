@@ -100,6 +100,15 @@ instances land on 9318, 9319, ...). Hash-routed views:
   selected pairs from the page AND rewrites the backing `.jsonl` — the web
   face of `cctrace purge`, by hand-picked request (confirmed, no undo;
   hidden on snapshots). Server side it's `POST /api/purge {ids:[...]}`.
+  The **⌘ actions** menu (live/view pages) downloads a snapshot
+  (`/api/snapshot.html`), the wire spec (`/api/spec.json|.md`), and
+  per-session dumps: `GET /api/session.jsonl?sid=<full-sid>` (the
+  session's wire pairs, same set `cctrace merge` writes) and
+  `GET /api/session.md?sid=<full-sid>` (a readable markdown transcript)
+  — handy for agents: fetch the .md to read a traced conversation
+  without parsing SSE. `GET /dashboard` (any live instance) is the
+  central picture: every live + recently finished run across projects
+  (JSON: `/api/instances` live, `/api/runs` finished).
   The header shows the trace's running totals (requests · in/out tokens ·
   est cost, breakdown on hover), and clicking the trace title copies its
   project-relative path (".cctrace/trace-….jsonl") — ready for

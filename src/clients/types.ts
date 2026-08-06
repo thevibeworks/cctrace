@@ -45,6 +45,13 @@ export interface ClientPlugin {
   /** Shown when the binary can't be found. */
   installHint: string;
   wire: ClientWire;
+  /**
+   * Extra hosts to MITM-enroll, discovered from the client's own config
+   * (codex: model_providers base_url in config.toml). Runtime-only — never
+   * part of the JSON-safe wire table. Must be fail-soft: an absent or
+   * broken config returns [].
+   */
+  configHosts?: (env: Record<string, string | undefined>) => string[];
 }
 
 /** Back-compat alias — pre-plugin code imported ClientProfile. */

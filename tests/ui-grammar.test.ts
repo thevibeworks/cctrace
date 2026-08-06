@@ -785,3 +785,20 @@ describe("rewind boundaries and failed-request runs", () => {
     expect(page.errors).toEqual([]);
   });
 });
+
+describe("find in session (toolbar)", () => {
+  test("the session view carries the find group and its keyboard contract", () => {
+    const html = renderSnapshot([msgPair("p1")]);
+    // The static chrome: a find group with the input + count slot, session-only.
+    expect(html).toContain('id="tb-find"');
+    expect(html).toContain('id="sfind"');
+    expect(html).toContain('id="sfind-count"');
+    expect(html).toContain("body.view-session #tb-find { display: flex; }");
+    // The pulse clearance: the last line reads above the strip, not beneath it.
+    expect(html).toContain("body.view-session.pulse-on #convo { padding-bottom: 64px; }");
+    // The page still boots clean with the new script block.
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    expect(page.errors).toEqual([]);
+  });
+});

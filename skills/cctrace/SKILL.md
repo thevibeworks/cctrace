@@ -197,6 +197,9 @@ cctrace compact [--zstd] [--yes]          # fold redundant bodies (-95%+): super
                                           # bodies stub, noise collapses to meta; the session
                                           # view renders identically, no pair is deleted
 cctrace ps [--json]                       # live instances: URL, pids, client, project, session
+cctrace history [--limit N | --all] [--json]  # global run log: every traced run (live +
+                                          # past), newest first, across all projects; dimmed
+                                          # rows are another container's (trace not here)
 ```
 
 Note for agents: plain `cctrace view` (and `view <target>`) starts a server
@@ -217,6 +220,16 @@ registers itself (heartbeat + port-probe verified, works across containers
 sharing a data dir), and the default port walk 9317..9326 is swept for
 instances the registry lost, so the listing reflects what actually serves.
 The UI header shows a "⇄ N more" switcher when siblings exist.
+`cctrace history` answers "what did I trace recently?" — the same registry's
+tombstones as a global timeline; open any row with `cctrace view <SESSION>`.
+
+If you (the agent) are yourself running under cctrace — `CCTRACE_TRACE_FILE`
+/ `CCTRACE_SERVER_PORT` in your env say so — see docs/agent-awareness.md:
+your HTTPS goes through a local tracing proxy, and the one caveat that
+matters is that some tools behave differently behind proxy env vars
+(wrangler swaps undici's dispatcher; its timeout overrides need the proxy
+vars unset too). Bypass for ONE command with
+`env -u HTTPS_PROXY -u https_proxy <cmd>`; never unset globally.
 
 ## Reading a trace programmatically
 

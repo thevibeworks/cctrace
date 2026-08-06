@@ -363,7 +363,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #tb-page, #tb-trace { border-left: 1px solid var(--border); padding-left: 8px; }
     #tb-trace { margin-left: auto; }
     body.view-session #tb-list, body.view-session #tb-page { display: none; }
-    body.view-session #tb-trace { border-left: none; padding-left: 0; }
+    /* find is the session view's list-group counterpart: same slot, same
+       leading position, so tb-trace keeps its hairline at the right edge */
+    #tb-find { flex: 1; display: none; }
+    body.view-session #tb-find { display: flex; }
+    #sfind { max-width: 320px; }
+    #sfind-count { color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
     /* ---- Select-to-purge ---- */
     /* Rows grow a quiet check gutter in selection mode; the purge button
        wears the state color — it deletes trace data permanently. */
@@ -559,6 +564,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #pulse .p-exp { color: var(--amber); flex: none; }
     .p-fade { animation: pfade 160ms ease-out; }
     @keyframes pfade { from { opacity: 0; } }
+    /* the pulse floats over the panes' bottom edge — give both scroll ends
+       clearance so the session's last line reads above it, not beneath it */
+    body.view-session.pulse-on #convo { padding-bottom: 64px; }
+    body.view-session.pulse-on #threads { padding-bottom: 64px; }
+    /* find jump: one amber breath on the landed node, then gone */
+    .find-flash { animation: findflash 1.2s ease-out; }
+    @keyframes findflash { 0% { outline: 2px solid var(--amber); outline-offset: 3px; } 100% { outline: 2px solid transparent; outline-offset: 3px; } }
     #rp-time .rp-skip { color: var(--text-faint); }
     #tail-pill {
       position: absolute; right: 24px; bottom: 16px; z-index: 5;
@@ -1306,6 +1318,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         <button id="sel-purge" title="purge selected&#10;Removes the selected requests from the page AND rewrites the backing .jsonl trace file(s).&#10;---&#10;> no undo — a confirm dialog spells out what gets deleted">purge</button>
       </span>
     </span>
+    <span class="tb-group" id="tb-find">
+      <input type="text" id="sfind" placeholder="find in session…  ( / )" title="find in session&#10;Case-insensitive search over the conversation, folded tool bodies included.&#10;---&#10;> Enter next hit · shift+Enter previous&#10;> hits inside closed folds open on jump · Esc clears">
+      <span id="sfind-count"></span>
+    </span>
     <span class="tb-group" id="tb-page">
       <button id="autoscroll" class="active" title="tail&#10;Stick to the newest request as pairs arrive.&#10;---&#10;> click toggles">tail</button>
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
@@ -1851,11 +1867,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 one file per session \\u2014 a run folds its resumed traces together at exit, losslessly\\n' +
-        '\\u00b7 a sidebar that holds still \\u2014 stable order, nested subagents, a jump back to the parent\\n' +
-        '\\u00b7 session dumps \\u2014 the wire .jsonl or a readable .md transcript, straight from \\u2318\\n' +
+        '\\u00b7 find in session \\u2014 search the conversation, folded tool bodies included; hits open their folds\\n' +
+        '\\u00b7 cctrace history \\u2014 the global run log: every traced run, all projects, newest first\\n' +
+        '\\u00b7 --inform-agent \\u2014 the traced agent learns it runs behind a proxy, and the escape hatch\\n' +
+        '\\u00b7 portless routes \\u2014 env PORT honored, so the UI can live at https://trace.localhost\\n' +
         '\\u00b7 /dashboard \\u2014 every live run and recent trace, all projects, one page\\n' +
-        '\\u00b7 codex custom providers \\u2014 config.toml relays captured with zero flags\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -2372,12 +2388,62 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     window.navDetail = navDetail;
 
+    // ---- Find in session: fold-aware text search over the conversation ----
+    // Hits are top-level conversation nodes containing the query — folded
+    // tool bodies included, since folds are <details> already in the DOM.
+    // Jumping opens exactly the folds that hold the text, which is the one
+    // thing the browser's own Ctrl+F cannot do here.
+    const sfindEl = document.getElementById('sfind');
+    const sfindCount = document.getElementById('sfind-count');
+    let sfindIdx = -1;
+    function sfindHits() {
+      const q = (sfindEl.value || '').trim().toLowerCase();
+      const hits = [];
+      if (q) {
+        for (const node of convoEl.children) {
+          if ((node.textContent || '').toLowerCase().includes(q)) hits.push(node);
+        }
+      }
+      return { q, hits };
+    }
+    function sfindShow(n, total) {
+      sfindCount.textContent = !sfindEl.value.trim() ? ''
+        : !total ? 'no hits'
+        : n ? n + '/' + total
+        : total + ' hit' + (total === 1 ? '' : 's');
+    }
+    function sfindJump(step) {
+      const { q, hits } = sfindHits();
+      if (!hits.length) { sfindIdx = -1; sfindShow(0, 0); return; }
+      sfindIdx = ((sfindIdx + step) % hits.length + hits.length) % hits.length;
+      const node = hits[sfindIdx];
+      for (const d of node.querySelectorAll('details')) {
+        if (!d.open && (d.textContent || '').toLowerCase().includes(q)) d.open = true;
+      }
+      node.scrollIntoView({ block: 'center' });
+      node.classList.remove('find-flash');
+      void node.offsetWidth; // restart the flash animation
+      node.classList.add('find-flash');
+      sfindShow(sfindIdx + 1, hits.length);
+    }
+    if (sfindEl) {
+      sfindEl.addEventListener('input', () => { sfindIdx = -1; sfindShow(0, sfindHits().hits.length); });
+      sfindEl.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { sfindJump(e.shiftKey ? -1 : 1); e.preventDefault(); }
+        else if (e.key === 'Escape') {
+          if (sfindEl.value) { sfindEl.value = ''; sfindIdx = -1; sfindShow(0, 0); }
+          else sfindEl.blur();
+          e.stopPropagation();
+        }
+      });
+    }
+
     document.addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
         if (e.key === 'Escape') e.target.blur();
         return;
       }
-      if (e.key === '/') { filterEl.focus(); e.preventDefault(); return; }
+      if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
       if (view === 'requests' && selMode && !detailId && e.key === 'Escape') { setSelMode(false); return; }
       if (view === 'requests' && detailId) {
         if (e.key === 'Escape') location.hash = '';

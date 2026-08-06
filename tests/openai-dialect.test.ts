@@ -115,6 +115,48 @@ describe("openaiCompleted", () => {
     pair.response = { timestamp: 2, status: 200, headers: {}, body: COMPLETED.response };
     expect(openaiCompleted(pair).usage.output_tokens).toBe(17);
   });
+
+  test("responses-lite: grafts output_item.done items into an empty completed output", () => {
+    // codex >= ~0.146 (x-openai-internal-codex-responses-lite): the completed
+    // event carries usage/status but output: [] — items only stream as
+    // output_item.done events.
+    const pair = codexPair({ input: CODEX_INPUT });
+    const lite = { ...COMPLETED, response: { ...COMPLETED.response, output: [] } };
+    pair.response.bodyRaw = sse([
+      { type: "response.created" },
+      { type: "response.output_item.done", item: { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "gAAA" } },
+      { type: "response.output_item.done", item: { id: "msg_1", type: "message", role: "assistant", content: [{ type: "output_text", text: "## Verdict\nfindings" }] } },
+      lite,
+    ]);
+    const done = openaiCompleted(pair);
+    expect(done.status).toBe("completed");
+    expect(done.usage.input_tokens).toBe(15740);
+    expect(done.output.map((o: any) => o.type)).toEqual(["reasoning", "message"]);
+  });
+
+  test("truncated lite stream: synthesizes the in-flight message from text deltas", () => {
+    const pair = codexPair({ input: CODEX_INPUT });
+    pair.response.bodyRaw = sse([
+      { type: "response.created" },
+      { type: "response.output_item.done", item: { id: "rs_1", type: "reasoning", summary: [], encrypted_content: "gAAA" } },
+      { type: "response.output_text.delta", item_id: "msg_1", delta: "partial " },
+      { type: "response.output_text.delta", item_id: "msg_1", delta: "answer" },
+    ]);
+    const done = openaiCompleted(pair);
+    expect(done.status).toBe("truncated");
+    expect(done.output).toHaveLength(2);
+    expect(done.output[1].content[0].text).toBe("partial answer");
+  });
+
+  test("deltas for a completed item are not double-counted", () => {
+    const pair = codexPair({ input: CODEX_INPUT });
+    pair.response.bodyRaw = sse([
+      { type: "response.output_text.delta", item_id: "msg_1", delta: "done text" },
+      { type: "response.output_item.done", item: { id: "msg_1", type: "message", role: "assistant", content: [{ type: "output_text", text: "done text" }] } },
+    ]);
+    const done = openaiCompleted(pair);
+    expect(done.output).toHaveLength(1);
+  });
 });
 
 describe("openaiBlocks", () => {
@@ -239,6 +281,20 @@ describe("normalizeOpenaiTurns", () => {
     expect(t2.map((t: any) => t.role)).toEqual(["user"]);
     expect(t2[0].blocks).toHaveLength(2);
   });
+
+  test("the whole leading developer run is system, not turns (codex 0.146)", () => {
+    const t3 = normalizeOpenaiTurns([
+      { type: "additional_tools", role: "developer", tools: [] },
+      { type: "message", role: "developer", content: "You are Codex" },
+      { type: "message", role: "developer", content: "## Memory\nguidance" },
+      { type: "message", role: "developer", content: "<multi_agent_mode>off</multi_agent_mode>" },
+      { type: "message", role: "user", content: "real prompt" },
+      { type: "message", role: "developer", content: "mid-session injection" },
+    ]);
+    expect(t3.map((t: any) => t.role)).toEqual(["user"]);
+    const texts = t3[0].blocks.map((b: any) => b.text);
+    expect(texts).toEqual(["real prompt", "mid-session injection"]);
+  });
 });
 
 describe("system/tools/first-user extraction", () => {
@@ -253,8 +309,27 @@ describe("system/tools/first-user extraction", () => {
     expect(openaiTools(req).map((t: any) => t.name)).toEqual(["bash", "exec"]);
   });
 
-  test("openaiFirstUserText returns the first user message text", () => {
-    expect(openaiFirstUserText(CODEX_INPUT)).toContain("AGENTS.md");
+  test("openaiFirstUserText skips codex harness wrappers to the real prompt", () => {
+    expect(openaiFirstUserText(CODEX_INPUT)).toBe("fix the bug please");
+    expect(openaiFirstUserText([
+      { type: "message", role: "user", content: [{ type: "input_text", text: "<environment_context>\n<cwd>/x</cwd>\n</environment_context>" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "real prompt" }] },
+    ])).toBe("real prompt");
+  });
+
+  test("openaiSystemText folds the whole leading developer run (codex 0.146)", () => {
+    const sys = openaiSystemText([
+      { type: "additional_tools", role: "developer", tools: [] },
+      { type: "message", role: "developer", content: "You are Codex, an agent based on GPT-5." },
+      { type: "message", role: "developer", content: "## Memory\nguidance from prior runs" },
+      { type: "message", role: "developer", content: "<collaboration_mode># Collaboration Mode: Default" },
+      { type: "message", role: "user", content: "real prompt" },
+      { type: "message", role: "developer", content: "mid-session injection" },
+    ]);
+    expect(sys).toContain("You are Codex");
+    expect(sys).toContain("## Memory");
+    expect(sys).toContain("Collaboration Mode");
+    expect(sys).not.toContain("mid-session injection");
   });
 });
 

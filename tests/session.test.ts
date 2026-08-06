@@ -573,6 +573,16 @@ describe("turnSnippet", () => {
     expect(turnSnippet([])).toBe("");
   });
 
+  test("codex harness context (AGENTS.md digest, env context, banners) skips to the prompt", () => {
+    expect(turnSnippet([
+      tb("# AGENTS.md instructions for /Users/x/proj\ncontext"),
+      tb("<environment_context>\n<cwd>/Users/x/proj</cwd>\n</environment_context>"),
+      tb("review the retry logic in the sync worker"),
+    ])).toBe("review the retry logic in the sync worker");
+    // a mid-session banner-only harness turn previews as nothing
+    expect(turnSnippet([tb("<collaboration_mode># Collaboration Mode: Default</collaboration_mode>")])).toBe("");
+  });
+
   test("message-first command order and args extract too (wire has both orders)", () => {
     // /codex:status style: <command-message> BEFORE <command-name>
     expect(turnSnippet([

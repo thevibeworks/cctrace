@@ -740,6 +740,11 @@ export function turnSnippet(blocks: any[]): string {
     const s = b.text.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim();
     if (!s) continue;
     if (s.lastIndexOf("<local-command-caveat>", 0) === 0 || s.lastIndexOf("<local-command-stdout>", 0) === 0) continue;
+    // Codex harness context rides user/developer messages ahead of (or
+    // between) the human's prompts: AGENTS.md digest, environment context,
+    // mode banners. Same wrapper list as openaiFirstUserText plus the
+    // developer-side banners that arrive mid-session as harness turns.
+    if (/^(# AGENTS\.md instructions|<environment_context>|<user_instructions>|<permissions instructions>|<collaboration_mode>|<plugins_instructions>|<multi_agent_mode>)/.test(s)) continue;
     // Skill invocations expand to a harness block ("Base directory for
     // this skill: ..."); the human-meaningful preview is the command.
     if (s.lastIndexOf("Base directory for this skill", 0) === 0) continue;

@@ -1875,11 +1875,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 port 8722 \\u2014 the new default: TRAC on a phone keypad (legacy 9317 range still discovered)\\n' +
-        '\\u00b7 real session ids \\u2014 identity uuids no longer masked by default; --redact-ids for shared traces\\n' +
-        '\\u00b7 dashboard v2 \\u2014 past runs open directly, rows carry size/pairs/tokens/cost, group by project or client\\n' +
-        '\\u00b7 final answer unclamped \\u2014 the session view\\u2019s last turn renders in full\\n' +
-        '\\u00b7 --bypass-host \\u2014 exempt one tool from the proxy (NO_PROXY append)\\n' +
+        '\\u00b7 codex responses-lite \\u2014 sessions reconstruct again on codex >= 0.146 (empty completed events, hollow answers fixed)\\n' +
+        '\\u00b7 codex system prompts \\u2014 the leading developer run folds into the system prompt; the real prompt names the session\\n' +
+        '\\u00b7 exit consolidation \\u2014 huge-session exits stopped looking hung: scan-first planning + progress lines\\n' +
+        '\\u00b7 port 8722 \\u2014 the default: TRAC on a phone keypad (legacy 9317 range still discovered)\\n' +
+        '\\u00b7 dashboard v2 \\u2014 past runs open directly, rows carry size/pairs/tokens/cost\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

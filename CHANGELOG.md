@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.0
+
+- Fixed the huge-session exit looking hung: the exit auto-merge parsed every trace file in the log dir with zero output — on a 2.5 GB dir that was ~22 s of silence at 7 GB peak memory before the prompt returned. A scoped merge now substring-scans for the run's session ids first, so unrelated traces are never JSON-parsed and the common nothing-to-consolidate exit concludes from the scan alone (measured 5.9 s, 2.5 GB peak on the same dir); files over 16 MB print scanning/reading progress lines headed by a note that ctrl-c is safe (writes are atomic, sources stay until fully merged), and merged session files write in 8 MB chunks instead of one giant string. cctrace merge gets the same progress lines
+
+- Fixed codex session reconstruction for the responses-lite protocol (codex-tui >= ~0.146, x-openai-internal-codex-responses-lite): response.completed now arrives with an empty output array, which reconstructed every assistant reply as nothing and dropped the session's final answer entirely — the adapter now grafts the output_item.done items back into the completed object, and a stream cut mid-answer assembles the partial text from output_text.delta events (previously lost under lite, where deltas are the only copy)
+- Fixed the codex system prompt and first-prompt identity: the leading run of developer messages (identity, memory, permissions, collaboration mode, plugins — five in codex 0.146) now folds into the system prompt instead of rendering as a fake user turn, and the AGENTS.md digest / environment_context wrappers that ride user messages no longer win the turn snippet, the thread signature, or the registry's first-prompt — the human's actual prompt does
+
 ## 0.36.0
 
 - Changed the default UI port from 9317 to 8722 — TRAC on a phone keypad, so the address is memorable instead of arbitrary; the walk is now 8722..8731 and the discovery sweep still covers the legacy 9317..9326 range, so live instances of older versions keep showing up in ps, the switcher, and the dashboard through the transition (--port and env PORT behavior unchanged)

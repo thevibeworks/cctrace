@@ -382,7 +382,13 @@ does not support the legacy node mode (needs repo sources).
   every pair lands in a session THIS plan writes (a file also holding an
   unmerged session's pairs would otherwise vanish into no output). Everything
   else is the manual command's discipline: atomic writes, union-never-shrink,
-  re-stat before each unlink. Fail-soft and silent when it does nothing;
+  re-stat before each unlink. Scoped plans substring-scan before parsing
+  anything (a wire sid is always a verbatim substring of its pair's JSON
+  line), so unrelated traces are never JSON-parsed and the common
+  nothing-to-consolidate exit concludes from the scan alone — a 2.5GB dir
+  went from ~22s silent at 7GB RSS to ~6s with progress lines (files ≥16MB
+  print scan/read/write steps via `MergeProgress`; merged outputs write in
+  8MB chunks). Fail-soft and silent when it does nothing;
   `--no-auto-merge` opts out, `--fresh` opts out of the whole continuity
   layer. Legacy node mode doesn't do it. When this run's own trace is
   absorbed, the exit receipt and the registry tombstone name the session file

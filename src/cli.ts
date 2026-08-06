@@ -28,10 +28,11 @@ import {
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
 import { traceSummary, type TraceStats } from "./report";
+import { setIdentityRedaction } from "./redact";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
-// Live-UI port: DEFAULT_PORT (9317, avoids Clash/mihomo defaults) lives in
+// Live-UI port: DEFAULT_PORT (8722 — TRAC on a phone keypad) lives in
 // instances.ts so the discovery sweep and the allocation walk stay one list.
 
 // True when running as a `bun build --compile` standalone binary (sources live
@@ -974,6 +975,10 @@ ${C.yellow}OPTIONS:${C.reset}
                      direct with its normal non-proxy behavior. For the
                      rare tool that misbehaves behind a proxy (wrangler).
                      Costs only that host's ~100B tunnel audit line
+  --redact-ids       Also mask identity ids (session/user/device uuids) at
+                     capture time, for traces that will leave the machine
+                     (or set CCTRACE_REDACT_IDS=1). Credentials — tokens,
+                     keys, cookies — are ALWAYS redacted, flag or not
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
@@ -1613,6 +1618,13 @@ async function main() {
   if (values.help) {
     showHelp();
     process.exit(0);
+  }
+
+  // Identity-id masking (session/user/device uuids) is OPT-IN — a local
+  // session uuid is workflow identity, not a credential, and masking it
+  // breaks sid-keyed continuity. Credentials always redact, no opt-out.
+  if (values["redact-ids"] || process.env.CCTRACE_REDACT_IDS === "1") {
+    setIdentityRedaction(true);
   }
 
   if (values["print-ca"]) {

@@ -427,7 +427,7 @@ export function createServer(config: ServerConfig) {
   });
 
   // Try the preferred port, then the next few (so concurrent instances land
-  // on predictable neighbors: 9317, 9318, ... — the same walk SCAN_PORTS
+  // on predictable neighbors: 8722, 8723, ... — the same walk SCAN_PORTS
   // sweeps for discovery), then an OS-assigned free port as the last resort
   // instead of crashing.
   let server;

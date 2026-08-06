@@ -128,7 +128,7 @@ cctrace -- -p "hello"                      # args after -- go to the agent verba
 ```
 
 ```
-[cctrace] Live UI: http://localhost:9317
+[cctrace] Live UI: http://localhost:8722
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 
@@ -158,7 +158,7 @@ guarantees: [docs/traces.md](docs/traces.md).
 | Option | Description |
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
-| `-p, --port PORT` | Live UI port (default: 9317, auto-falls back) |
+| `-p, --port PORT` | Live UI port (default: 8722, auto-falls back) |
 | `--messages-only` | Capture only the model API calls |
 | `--capture-external` | Decrypt every host (bodies over 64KB summarized) |
 | `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers) |
@@ -223,6 +223,10 @@ traffic, so it redacts before writing anything:
   `client_secret`, `api_key`, ...) masked in JSON and form bodies. Your
   conversation content is left intact.
 - **URLs** -- credential-bearing query params (e.g. OAuth `?code=`) masked.
+- **Identity ids** (session/user/device UUIDs) are *not* masked by default --
+  they're workflow identity, not credentials, and session-keyed features
+  depend on them. Sharing a trace outside your machine? `--redact-ids`
+  (or `CCTRACE_REDACT_IDS=1`) masks them too.
 
 Redaction happens at a single choke point, so it applies uniformly to the
 `.jsonl`, the `.html`, and the live WebSocket. `.cctrace/` output is

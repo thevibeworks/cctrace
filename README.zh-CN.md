@@ -115,7 +115,7 @@ cctrace -- -p "hello"                      # -- 之后的参数原样传给 agen
 ```
 
 ```
-[cctrace] Live UI: http://localhost:9317
+[cctrace] Live UI: http://localhost:8722
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 
@@ -143,7 +143,7 @@ cctrace compact                  # 折叠冗余请求体（-95%+），会话视�
 | 选项 | 说明 |
 |--------|-------------|
 | `--mode MODE` | `auto`（默认）、`mitm`、`base-url`、`node` |
-| `-p, --port PORT` | Live UI 端口（默认 9317，被占自动顺延） |
+| `-p, --port PORT` | Live UI 端口（默认 8722，被占自动顺延） |
 | `--messages-only` | 只捕获模型 API 调用 |
 | `--capture-external` | 解密所有 host（超 64KB 的外部 body 只留摘要） |
 | `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器） |
@@ -204,6 +204,9 @@ cctrace 是本地调试工具，但它拦截的是真实的带凭据流量，所
 - **Bodies** -- 凭据字段（`access_token`、`refresh_token`、`client_secret`、
   `api_key` 等）在 JSON 和表单里掩码。对话内容原样保留。
 - **URLs** -- 带凭据的查询参数（如 OAuth `?code=`）掩码。
+- **身份 id**（会话/用户/设备 UUID）默认**不**掩码 -- 它们是工作流身份而非
+  凭据，且会话相关功能依赖真实 id。要把 trace 分享到本机之外？用
+  `--redact-ids`（或 `CCTRACE_REDACT_IDS=1`）连同它们一起掩码。
 
 脱敏发生在唯一的收口点，对 `.jsonl`、`.html`、实时 WebSocket 一视同仁。
 `.cctrace/` 输出默认在 gitignore 里。

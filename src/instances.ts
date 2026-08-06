@@ -74,9 +74,20 @@ export interface InstanceHandle {
 // (server.ts). Also the sweep range for discovering live-but-unregistered
 // instances — a pre-0.10 reader sharing the registry dir GC's entries whose
 // pid it can't see, so the registry alone can't be trusted to be complete.
-export const DEFAULT_PORT = 9317;
+//
+// 8722 spells TRAC on a phone keypad — memorable, IANA-unassigned, outside
+// every OS ephemeral range, and no popular tool squats there (8080/8443/
+// 8888/9090 are proxy-tool territory; the pre-0.36 default 9317 was merely
+// "avoids Clash/mihomo", with no story).
+export const DEFAULT_PORT = 8722;
 export const PORT_WALK = 10;
-export const SCAN_PORTS = Array.from({ length: PORT_WALK }, (_, i) => DEFAULT_PORT + i);
+/** The pre-0.36 default walk (9317..9326) — still swept, so live instances
+ * of older versions stay discoverable across the transition. */
+export const LEGACY_PORTS = Array.from({ length: PORT_WALK }, (_, i) => 9317 + i);
+export const SCAN_PORTS = [
+  ...Array.from({ length: PORT_WALK }, (_, i) => DEFAULT_PORT + i),
+  ...LEGACY_PORTS,
+];
 
 export const HEARTBEAT_MS = 30_000;
 /** Older than this and the entry must prove itself via port probe. */

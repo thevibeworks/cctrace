@@ -77,7 +77,7 @@ with `HTTPS_PROXY="" https_proxy=""` prefixed.
 
 ## The web UI
 
-Prints as `Live UI: http://localhost:<port>` (9317 by default; concurrent
+Prints as `Live UI: http://localhost:<port>` (8722 by default — TRAC on a phone keypad; concurrent
 instances land on 9318, 9319, ...). Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request. Content chips in
@@ -225,7 +225,7 @@ present (wrangler swaps HTTP stacks); costs only that host's audit line.
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers
-sharing a data dir), and the default port walk 9317..9326 is swept for
+sharing a data dir), and the default port walk 8722..8731 (plus the legacy 9317..9326) is swept for
 instances the registry lost, so the listing reflects what actually serves.
 The UI header shows a "⇄ N more" switcher when siblings exist.
 `cctrace history` answers "what did I trace recently?" — the same registry's
@@ -286,8 +286,11 @@ price as estimates at the equivalent pay-per-token (moonshotai) rates.
 ## Privacy — treat traces as sensitive
 
 Every pair is redacted at capture (`src/redact.ts`): auth headers masked to
-first-10/last-4, OAuth tokens/credential fields masked in bodies and URLs,
-session/device UUIDs partially masked. But **conversation content is captured
+first-10/last-4, OAuth tokens/credential fields masked in bodies and URLs.
+Identity ids (session/user/device UUIDs) stay UNMASKED by default — they're
+workflow identity, and sid-keyed features depend on them; `--redact-ids`
+(or CCTRACE_REDACT_IDS=1) masks them for traces that leave the machine.
+But **conversation content is captured
 verbatim** — file contents, secrets pasted into chat, everything Claude saw.
 Never commit `.cctrace/` (the repo's .gitignore already excludes it), and
 review a snapshot before sharing it.

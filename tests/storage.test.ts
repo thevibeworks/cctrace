@@ -157,6 +157,41 @@ describe("merge", () => {
     expect(new Set(names).size).toBe(names.length);
   });
 
+  // Regression: parseTraceText silently skips torn/invalid lines — a file
+  // carrying one must never count as "fully absorbed", or the damaged line's
+  // bytes would vanish with the prune.
+  test("a source with a torn line is never prune-able", () => {
+    appendFileSync(join(dir, "trace-A2.jsonl"), '{"id":"half-written');
+    const plan = planMerge(dir);
+    expect(plan.subsumed.map((f) => f.name)).toEqual(["trace-A1.jsonl"]);
+    const a = plan.sessions.find((s) => s.id === SID_A)!;
+    expect(a.pairs.map((p) => p.id)).toEqual(["a1", "a2", "a3"]); // still merges what parsed
+  });
+
+  // Regression: an existing output the plan can't fully read must block its
+  // session — applyMerge would replace it with only what the parser could see.
+  test("a damaged previous output blocks the merge instead of being overwritten", () => {
+    const out = join(dir, "session-2d5c0d3b.jsonl");
+    writeFileSync(out, jl(convPair("a0", SID_A, 50)) + '{"id":"torn-prior');
+    const plan = planMerge(dir);
+    expect(plan.sessions.map((s) => s.id)).not.toContain(SID_A);
+    expect(plan.blocked).toHaveLength(1);
+    expect(plan.blocked[0]!.outName).toBe("session-2d5c0d3b.jsonl");
+    expect(plan.blocked[0]!.reason).toContain("damaged");
+    expect(plan.subsumed).toHaveLength(0); // A's sources must survive too
+    applyMerge(plan, { prune: true });
+    expect(readFileSync(out, "utf8")).toContain("torn-prior"); // untouched
+    expect(existsSync(join(dir, "trace-A1.jsonl"))).toBe(true);
+  });
+
+  test("an unreadable archived previous output blocks the merge", () => {
+    writeFileSync(join(dir, "session-2d5c0d3b.jsonl.gz"), "not gzip at all");
+    const plan = planMerge(dir);
+    expect(plan.sessions.map((s) => s.id)).not.toContain(SID_A);
+    expect(plan.blocked[0]!.reason).toContain("unreadable");
+    expect(existsSync(join(dir, "trace-A1.jsonl"))).toBe(true);
+  });
+
   // Regression: a live capture may append pairs between plan and apply —
   // those exist in no merged output, so the source must survive --prune.
   test("prune keeps a source that grew since the plan", () => {

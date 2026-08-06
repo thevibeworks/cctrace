@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.32.0
+## 0.33.0
+
+- Added an exit auto-merge: when a run ends, it folds its own session's traces into one session-[sid].jsonl and prunes only sources whose every pair landed in the merged file — a resumed session becomes one file instead of one per run; --no-auto-merge opts out, --fresh already did
+- Hardened merge against two silent-loss edges: a source file holding torn or damaged lines is never pruned (the parser skips those bytes, so no output would hold them), and a session whose existing merged output can't be fully read is skipped and reported instead of overwritten — merge never shrinks anything it couldn't fully see
+- Changed the sessions sidebar to hold still: sessions sort by newest activity, threads by conversation start, and a subagent card always nests under its dispatching thread instead of jumping between renders; the subagent's header grows a "parent thread" jump that lands at its spawn turn
+- Added full session dumps from the actions menu: /api/session.jsonl (the exact pair set cctrace merge writes) and /api/session.md, a readable transcript with full user and assistant text and one line per tool call
+- Added /dashboard on every live and view server: verified live instances on top, recent past runs below, one page for all projects and containers sharing the data dir
+- Added codex custom-provider auto-enroll: every model_providers base_url in $CODEX_HOME/config.toml joins the intercept set, so a custom relay is captured without --intercept-host
+- Fixed tool previews for foreign wire surfaces (kimi's path-style Read arguments, codex argv-array shell commands, MCP tools) that rendered as empty parens, and fixed mitm --messages-only dropping model calls a custom provider mounts at the path root — the filter now shares the page's own predicate
 
 - Added wall-clock timestamps to the session view: every conversation turn's role bar shows its wire time (24h, hover for the full date — user turns inherit the time of the request that carried them), and the outline's user-prompt, recap, and injected-row hovers now name their moment alongside the metrics the step rows already carried
 - Redesigned the toolbar around a left-to-right scope grammar: view tabs, then the list group (filter · prev runs · select), then page behavior (tail · clear — Auto-scroll is now "tail"), then the trace controls (replay · ⌘ actions) holding the right edge in both views; groups separate with hairlines, labels read lowercase, and pressed toggles wear a quiet accent tint instead of a green fill — green stays reserved for state

@@ -55,6 +55,28 @@ export function traceIdentityEnv(
   return env;
 }
 
+/**
+ * `--bypass-host` (#83): the named hosts talk DIRECT, with the tool's normal
+ * non-proxy behavior. Injecting proxy env does not just change the route —
+ * tools behave differently when a proxy is present (wrangler swaps undici's
+ * global dispatcher for its own ProxyAgent and silently discards any
+ * user-installed Agent; diagnosing that cost a traced session 4+ failed
+ * attempts). Appends to the child's NO_PROXY/no_proxy, preserving any
+ * inherited value. For hosts outside the intercept set the only loss is the
+ * ~100-byte tunnel meta pair — they were opaque tunnels anyway.
+ */
+export function bypassHostEnv(
+  hosts: string[],
+  env: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  if (!hosts.length) return {};
+  const inherited = env.NO_PROXY || env.no_proxy || "";
+  const parts = inherited.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const h of hosts) if (!parts.includes(h)) parts.push(h);
+  const merged = parts.join(",");
+  return { NO_PROXY: merged, no_proxy: merged };
+}
+
 export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): Promise<Capturer> {
   if (mode === "mitm") {
     const certs = await ensureCerts(opts.cacheDir, opts.onStatus);

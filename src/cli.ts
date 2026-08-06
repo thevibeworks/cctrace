@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
-import { createCapturer, traceIdentityEnv, type CaptureMode, type Capturer } from "./capture";
+import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
@@ -969,6 +969,11 @@ ${C.yellow}OPTIONS:${C.reset}
                      bodies over 64KB are summarized, not stored
   --intercept-host H Also MITM host H with FULL body capture (repeatable —
                      remote MCP servers, unusual providers)
+  --bypass-host H    Exempt host H from the proxy entirely (repeatable):
+                     appended to the child's NO_PROXY, so the tool talks
+                     direct with its normal non-proxy behavior. For the
+                     rare tool that misbehaves behind a proxy (wrangler).
+                     Costs only that host's ~100B tunnel audit line
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
@@ -1065,6 +1070,8 @@ interface RunOpts {
   withFiles: string[];
   /** Append a trace-awareness note to the agent's system prompt (claude only). */
   informAgent?: boolean;
+  /** Hosts exempted from the proxy via the child's NO_PROXY (#83). */
+  bypassHosts?: string[];
 }
 
 interface LogSink {
@@ -1209,7 +1216,15 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
   log(`Capture: ${capturer.label}`, C.cyan);
   console.log("");
 
-  const childEnv = { ...(process.env as Record<string, string>), ...capturer.env, ...identityEnv };
+  const childEnv = {
+    ...(process.env as Record<string, string>),
+    ...capturer.env,
+    ...bypassHostEnv(opts.bypassHosts ?? []),
+    ...identityEnv,
+  };
+  if (opts.bypassHosts?.length) {
+    log(`Bypassing the proxy (direct, normal non-proxy behavior): ${opts.bypassHosts.join(", ")}`, C.dim);
+  }
   // PORT was consumed for cctrace's own UI (a portless-style route) — don't
   // leak it into the traced app, whose dev servers would bind the same port.
   if (opts.portFromEnv) delete childEnv.PORT;
@@ -1622,6 +1637,7 @@ async function main() {
     noAutoMerge: !!values["no-auto-merge"],
     withFiles: values.with ? [...values.with] : [],
     informAgent: !!values["inform-agent"],
+    bypassHosts: values["bypass-host"] ? [...values["bypass-host"]] : [],
   };
 
   log(`cctrace v${versionWithCommit()}`, C.dim);

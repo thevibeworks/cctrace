@@ -368,7 +368,16 @@ export function createServer(config: ServerConfig) {
           return new Response(`trace not on this host: ${run.logFile}`, { status: 404 });
         }
         try {
-          const result = resolveView(run.sessionId || run.logFile, dirname(run.logFile));
+          // Session-id first (merges every trace of the session), but the
+          // registry's sid can be REDACTED (masked uuid) or purged from the
+          // traces — any resolve failure falls back to the run's own file.
+          let result;
+          try {
+            result = run.sessionId ? resolveView(run.sessionId, dirname(run.logFile)) : null;
+          } catch {
+            result = null;
+          }
+          if (!result) result = resolveView(run.logFile, dirname(run.logFile));
           let traceBytes = 0;
           for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
           const html = renderSnapshot(result.pairs, {

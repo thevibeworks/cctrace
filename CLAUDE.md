@@ -43,6 +43,8 @@ src/
 │                   #   names, body shapes, SSE events — counts + provenance,
 │                   #   values redacted except negotiation headers/model ids;
 │                   #   diff = what changed on the wire between observations)
+├── icons.ts        # Per-client icon glyphs — ONE source for every surface that
+│                   #   labels a CLI (trace view header, dashboard rows)
 ├── ui.ts           # The whole web UI: Requests list + detail panel + Sessions view
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
@@ -106,7 +108,12 @@ credits) independent of `ANTHROPIC_BASE_URL`.
    `CCTRACE_INSTANCE_ID` on live runs — so subprocesses of a traced
    session (statuslines, hooks, nested agents) can KNOW they're captured
    and where the UI serves, without registry heuristics. Node mode has
-   exported these names since day one; the proxy modes agree now
+   exported these names since day one; the proxy modes agree now.
+   `--bypass-host HOST` (repeatable, #83) appends to the child's
+   NO_PROXY/no_proxy (inherited values preserved): the named host talks
+   direct with the tool's normal non-proxy behavior — for tools that swap
+   HTTP stacks when a proxy is present (wrangler); the only capture loss
+   is that host's ~100B tunnel meta pair
 
 Captures `/v1/messages`, `/api/oauth/*` (incl. usage/credits), `/api/claude_cli/*`,
 `/mcp-registry/*`, `/api/event_logging/*`, plus Claude Code's datadog intake
@@ -231,14 +238,24 @@ entries for live-but-unregistered instances straight from `/api/self`
 `/api/instances` (verified listing) and `/api/self` (identity, from memory —
 never triggers registry reads). The web UI header grows a "⇄ N more"
 switcher when other instances exist. EVERY live/view server also serves
-`/dashboard` — the central picture: verified live instances + recent
-tombstones (`/api/runs`, traceExists re-stat'd per request), one page for
-all projects/containers sharing the data dir; any instance's port answers
-the same (`src/dashboard.ts`, values rendered via textContent — first
-prompts are wire-derived). Linked from the switcher menu, the ⌘ actions
-menu, and a `cctrace ps` footer line. Port allocation walks 9317, 9318, ...
-before falling back to an OS-assigned port, so concurrent runs land on
-predictable neighbors — the same walk the discovery sweep covers.
+`/dashboard` — the central picture: verified live instances + finished
+runs (`/api/runs`, traceExists + on-disk size re-stat'd per request),
+groupable by project/client/time with show-more paging, one page for all
+projects/containers sharing the data dir; any instance's port answers the
+same (`src/dashboard.ts`, values rendered via textContent — first prompts
+are wire-derived; icon glyphs come from `src/icons.ts`, the same marks as
+the trace view header). A finished run's row shows the stats its tombstone
+carries — pairs/messages/tokens/est cost, stamped once at exit
+(`TraceStats` from `traceSummary`, cli.ts `onStats`) — and OPENS directly:
+`/view/<run-id>` renders a snapshot on demand from the run's trace, the id
+resolved through the registry server-side (the page never names a file;
+sid-bearing runs merge every trace of that session, same continuity as
+`cctrace view <sid>`). Linked from the switcher menu, the ⌘ actions menu,
+an always-visible ▦ header icon on http-served pages, a startup
+`Dashboard (all runs)` line, and a `cctrace ps` footer line. Port
+allocation walks 9317, 9318, ... before falling back to an OS-assigned
+port, so concurrent runs land on predictable neighbors — the same walk
+the discovery sweep covers.
 
 **Update check** (`src/version.ts`): startup reads only a local cache
 (`<data-dir>/update-check.json`) — never the network — and refreshes it in

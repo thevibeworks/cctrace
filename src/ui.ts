@@ -1875,11 +1875,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 find in session \\u2014 search the conversation, folded tool bodies included; hits open their folds\\n' +
-        '\\u00b7 cctrace history \\u2014 the global run log: every traced run, all projects, newest first\\n' +
-        '\\u00b7 --inform-agent \\u2014 the traced agent learns it runs behind a proxy, and the escape hatch\\n' +
-        '\\u00b7 portless routes \\u2014 env PORT honored, so the UI can live at https://trace.localhost\\n' +
-        '\\u00b7 /dashboard \\u2014 every live run and recent trace, all projects, one page\\n' +
+        '\\u00b7 dashboard v2 \\u2014 past runs open directly, rows carry size/pairs/tokens/cost, group by project or client\\n' +
+        '\\u00b7 the \\u25a6 header icon \\u2014 the dashboard is one click from every page\\n' +
+        '\\u00b7 final answer unclamped \\u2014 the session view\\u2019s last turn renders in full\\n' +
+        '\\u00b7 --bypass-host \\u2014 exempt one tool from the proxy (NO_PROXY append)\\n' +
+        '\\u00b7 CONNECT fixes \\u2014 non-443 ports ride through, IPv6 targets parse, failures answer 502\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

@@ -72,6 +72,10 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   moment.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
+- **One dashboard for everything.** `/dashboard` on any instance shows every
+  live run and every finished trace across all your projects -- grouped by
+  project or client, with size/tokens/cost per run -- and any row opens as
+  a rendered session view in one click.
 - **Zero config.** Auto-generates its CA, auto-detects your install, full
   first-party capture by default.
 - **Scoped by design.** External hosts your agent's subprocesses contact
@@ -139,6 +143,7 @@ Install variants, runtime notes, and the bun `--` caveat:
 cctrace view                     # reopen a saved trace (Enter = newest)
 cctrace view <target> --html     # render a shareable offline snapshot
 cctrace ps                       # live instances: URL, client, project, session
+cctrace history                  # every traced run, all projects, newest first
 cctrace clean|merge|compress     # housekeeping -- dry-run by default, --yes applies
 cctrace purge                    # drop noise categories from saved traces
 cctrace compact                  # fold redundant bodies (-95%+), view unchanged
@@ -157,6 +162,7 @@ guarantees: [docs/traces.md](docs/traces.md).
 | `--messages-only` | Capture only the model API calls |
 | `--capture-external` | Decrypt every host (bodies over 64KB summarized) |
 | `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers) |
+| `--bypass-host H` | Exempt host `H` from the proxy entirely (child `NO_PROXY`) |
 | `--dir PATH` | Log directory (default: `.cctrace`) |
 | `--client-path PATH` | Custom binary path for any client |
 

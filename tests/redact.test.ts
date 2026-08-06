@@ -1,6 +1,40 @@
-import { describe, test, expect } from "bun:test";
-import { redactHeaders, redactBody, redactUrl, redactPair } from "../src/redact";
+import { describe, test, expect, afterEach } from "bun:test";
+import { redactHeaders, redactBody, redactUrl, redactPair, setIdentityRedaction } from "../src/redact";
 import type { TracePair } from "../src/types";
+
+// Identity-id masking is per-run module state — every test here must leave
+// it at the default (off) or unrelated tests inherit the toggle.
+afterEach(() => setIdentityRedaction(false));
+
+// Identity ids (session/user/device uuids) are NOT credentials: unmasked by
+// default so sid-keyed continuity (view-by-sid, registry catalog, cross-run
+// merges) works on real ids; --redact-ids opts in for shareable traces.
+describe("identity ids — opt-in masking", () => {
+  const SID = "8004196c-1234-4abc-9def-0123456789ab";
+  const body = { metadata: { user_id: SID }, session_id: SID };
+
+  test("session/user uuids pass through UNMASKED by default", () => {
+    const out = JSON.stringify(redactBody(body));
+    expect(out).toContain(SID);
+    const hdrs = redactHeaders({ "x-claude-code-session-id": SID });
+    expect(hdrs["x-claude-code-session-id"]).toBe(SID);
+  });
+
+  test("setIdentityRedaction(true) masks identity uuids in bodies and headers", () => {
+    setIdentityRedaction(true);
+    const out = JSON.stringify(redactBody(body));
+    expect(out).not.toContain(SID);
+    expect(out).toContain("8004196c-****");
+    const hdrs = redactHeaders({ "x-claude-code-session-id": SID });
+    expect(hdrs["x-claude-code-session-id"]).toBe("8004196c-****-****-****-************");
+  });
+
+  test("credentials stay redacted with identity masking OFF", () => {
+    const out = JSON.stringify(redactBody({ access_token: "ACCESS_LEAK", session_id: SID }));
+    expect(out).not.toContain("ACCESS_LEAK");
+    expect(out).toContain(SID);
+  });
+});
 
 describe("redactHeaders", () => {
   test("masks authorization with a first-10/last-4 preview", () => {

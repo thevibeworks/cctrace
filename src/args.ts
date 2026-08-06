@@ -18,6 +18,7 @@ export const CLI_OPTIONS = {
   "capture-external": { type: "boolean" },
   "intercept-host": { type: "string", multiple: true },
   "bypass-host": { type: "string", multiple: true },
+  "redact-ids": { type: "boolean" },
   "no-open": { type: "boolean" },
   "print-ca": { type: "boolean" },
   log: { type: "string" },

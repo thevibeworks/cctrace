@@ -232,7 +232,7 @@ where pid checks fail both ways; pre-0.10 readers even deleted other
 namespaces' live entries. Instead: a heartbeat-fresh file counts as alive, a
 stale one must answer a probe of `/api/self` on its port (matched by run id;
 refused/mismatch ⇒ GC, timeout ⇒ hidden but kept, no heartbeat for 24h ⇒
-GC), and the listing also sweeps the port walk (9317..9326) to synthesize
+GC), and the listing also sweeps the port walk (8722..8731, plus the legacy 9317..9326) to synthesize
 entries for live-but-unregistered instances straight from `/api/self`
 (`src/instances.ts`). `cctrace ps` lists live runs; the server exposes
 `/api/instances` (verified listing) and `/api/self` (identity, from memory —
@@ -253,7 +253,7 @@ sid-bearing runs merge every trace of that session, same continuity as
 `cctrace view <sid>`). Linked from the switcher menu, the ⌘ actions menu,
 an always-visible ▦ header icon on http-served pages, a startup
 `Dashboard (all runs)` line, and a `cctrace ps` footer line. Port
-allocation walks 9317, 9318, ... before falling back to an OS-assigned
+allocation walks 8722, 8723, ... before falling back to an OS-assigned
 port, so concurrent runs land on predictable neighbors — the same walk
 the discovery sweep covers.
 

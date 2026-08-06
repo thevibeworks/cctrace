@@ -19,9 +19,20 @@ export const SENSITIVE_HEADERS = ["authorization", "x-api-key", "x-auth-token", 
 // message payloads (whose keys are role/content/system/tools/...) are untouched.
 const CREDENTIAL_KEY = /^(access_token|refresh_token|id_token|client_secret|code|code_verifier|api[-_]?key|apikey|secret|password|session_key|x-api-key)$/i;
 
-// Identity fields: UUIDs, session/device/account IDs. Redacted by default to
-// prevent user fingerprinting in shared traces.
+// Identity fields: UUIDs, session/device/account IDs. NOT masked by default
+// (2026-08-06): a local session uuid is workflow identity, not a credential
+// — masking it broke sid-keyed continuity (view-by-sid, the registry
+// catalog, cross-run merges resolve by these ids), and fingerprinting only
+// matters once a trace LEAVES the machine. Masking is opt-in for shareable
+// captures: --redact-ids / CCTRACE_REDACT_IDS=1. Credentials above are
+// always redacted; there is no opt-out for those.
 const IDENTITY_KEY = /^(device_id|account_uuid|session_id|user_id|machine_id|installation_id|x-claude-code-session-id|x-client-request-id|anthropic-organization-id)$/i;
+
+let REDACT_IDENTITY = false;
+/** Turn capture-time identity masking on (per run — the CLI's --redact-ids). */
+export function setIdentityRedaction(on: boolean): void {
+  REDACT_IDENTITY = on;
+}
 
 const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const HEX_ID_RE = /\b[0-9a-f]{32,64}\b/gi;
@@ -39,7 +50,7 @@ export function redactHeaders(headers: Record<string, string>): Record<string, s
   for (const [key, value] of Object.entries(out)) {
     if (SENSITIVE_HEADERS.some((s) => key.toLowerCase().includes(s))) {
       out[key] = value.length > 14 ? `${value.slice(0, 10)}...${value.slice(-4)}` : MASK;
-    } else if (IDENTITY_KEY.test(key)) {
+    } else if (REDACT_IDENTITY && IDENTITY_KEY.test(key)) {
       out[key] = maskIds(value);
     }
   }
@@ -58,7 +69,7 @@ function maskObject(v: unknown): unknown {
     const out: Record<string, unknown> = {};
     for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
       if (CREDENTIAL_KEY.test(k)) out[k] = MASK;
-      else if (IDENTITY_KEY.test(k) && typeof val === "string") out[k] = maskIds(val);
+      else if (REDACT_IDENTITY && IDENTITY_KEY.test(k) && typeof val === "string") out[k] = maskIds(val);
       else out[k] = maskObject(val);
     }
     return out;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.36.0
+
+- Changed the default UI port from 9317 to 8722 — TRAC on a phone keypad, so the address is memorable instead of arbitrary; the walk is now 8722..8731 and the discovery sweep still covers the legacy 9317..9326 range, so live instances of older versions keep showing up in ps, the switcher, and the dashboard through the transition (--port and env PORT behavior unchanged)
+- Changed capture-time identity masking to opt-in: session/user/device uuids now pass through unmasked by default — they are workflow identity, not credentials, and sid-keyed features (view by session id, the registry catalog, cross-run continuity) work better on real ids; --redact-ids or CCTRACE_REDACT_IDS=1 restores the masking for traces that will leave your machine, and credentials (tokens, keys, cookies) remain always redacted with no opt-out
+
 ## 0.35.0
 
 - Added direct open for finished runs: a dashboard row now opens /view/[run-id], a snapshot the serving instance renders on demand from that run's trace — the id resolves through the registry server-side (the page never names a file), and a run with a known session id merges every trace of that session, the same continuity cctrace view gives; the old copy-view-cmd click became a small copy button on the row

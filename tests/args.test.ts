@@ -80,6 +80,11 @@ describe("parseCliArgs", () => {
     expect(values["no-auto-merge"]).toBe(true);
   });
 
+  test("--inform-agent is cctrace's own boolean flag", () => {
+    const { values } = parseCliArgs(["--inform-agent"]);
+    expect(values["inform-agent"]).toBe(true);
+  });
+
   test("missing option value is a usage error", () => {
     expect(() => parseCliArgs(["--mode"])).toThrow(CliUsageError);
   });

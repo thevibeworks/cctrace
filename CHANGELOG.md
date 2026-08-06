@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.34.0
+
+- Added find in session: a toolbar search field on the sessions view (press /) that matches the conversation's text including folded tool bodies — Enter/shift+Enter cycle hits, the jump opens exactly the folds that hold the match and lands with a one-breath amber flash; the one thing the browser's own Ctrl+F can't do over closed folds
+- Added cctrace history: the global run log — every traced run this data dir knows about (live and past), newest first across all projects and containers; rows whose trace file doesn't resolve locally list dimmed, and any row opens with cctrace view [SESSION]
+- Added --inform-agent: appends a short note to the traced agent's system prompt (claude only) saying it runs under a tracing proxy, where the live UI serves, and how to bypass the proxy for the one command that misbehaves behind one — born from a real session that lost 1.5h to wrangler silently swapping undici's dispatcher because HTTPS_PROXY was set; the equivalent instructions-file snippet for other clients lives in docs/agent-awareness.md
+- Added env PORT honoring when --port is absent, so a portless-style wrapper routes the live UI behind a stable name (portless trace cctrace claude -> https://trace.localhost); the consumed PORT is stripped from the traced child so its own dev servers don't collide with the route
+- Fixed the pulse strip covering the session's last line: both session panes now keep clearance above the strip, so the newest turn reads above it instead of beneath it
+
 ## 0.33.0
 
 - Added an exit auto-merge: when a run ends, it folds its own session's traces into one session-[sid].jsonl and prunes only sources whose every pair landed in the merged file — a resumed session becomes one file instead of one per run; --no-auto-merge opts out, --fresh already did

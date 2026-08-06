@@ -64,7 +64,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
@@ -310,7 +310,7 @@ async function runView(args: string[]): Promise<boolean> {
     refreshPricingCache(DATA_DIR).catch(() => {});
     if (!parsed.values.html) {
       serveView(target, logDir, {
-        port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
+        port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : (envPortOrNull() ?? DEFAULT_PORT),
         noOpen: !!parsed.values["no-open"],
         slice: parsed.values.slice as string | undefined,
         tail: !!(parsed.values.tail || parsed.values.live),
@@ -554,6 +554,69 @@ async function runPs(args: string[]) {
   for (const r of rows) console.log(line(r));
   // Any instance serves the same central picture — the registry is shared.
   log(`Dashboard (all runs): http://localhost:${list[0]!.port}/dashboard`, C.dim);
+}
+
+// `cctrace history` — the global run log: every traced run this data dir
+// knows about (live runs + tombstones), newest first, across all projects
+// and containers sharing the dir. `ps` answers "what's running"; history
+// answers "what ran".
+async function runHistory(args: string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: { json: { type: "boolean" }, all: { type: "boolean" }, limit: { type: "string" }, "data-dir": { type: "string" } },
+      allowPositionals: false,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] history: ${(err as Error).message}\n  usage: cctrace history [--limit N | --all] [--json] [--data-dir PATH]`);
+    process.exit(1);
+  }
+  const dataDir = parsed.values["data-dir"] ? resolve(parsed.values["data-dir"] as string) : DATA_DIR;
+  const live = await listLiveInstances(dataDir, { scanPorts: SCAN_PORTS });
+  const liveIds = new Set(live.map((i) => i.id).filter(Boolean));
+  const past = listPastRuns(dataDir).filter((i) => !liveIds.has(i.id));
+  // Global recency, not the picker's project grouping: "what did I trace
+  // last" is a timeline question. A run's moment is when it was last alive.
+  const seen = (i: InstanceInfo) => i.endedAt || i.startedAt || "";
+  const runs = [...live.map((i) => ({ ...i, live: true })), ...past.map((i) => ({ ...i, live: false }))]
+    .sort((a, b) => seen(b).localeCompare(seen(a)));
+  const limit = parsed.values.all ? runs.length : Math.max(1, parseInt((parsed.values.limit as string) || "30", 10));
+  const shown = runs.slice(0, limit);
+  if (parsed.values.json) {
+    console.log(JSON.stringify(shown.map((r) => ({ ...r, traceHere: existsSync(r.logFile) })), null, 2));
+    return;
+  }
+  if (!shown.length) {
+    log("No traced runs recorded yet", C.dim);
+    return;
+  }
+  const when = (iso: string) => {
+    if (!iso) return "?";
+    const d = new Date(iso);
+    return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  };
+  const rows = shown.map((r) => ({
+    when: when(seen(r)),
+    state: r.live ? "live" : "-",
+    client: r.client || "-",
+    project: r.project || "?",
+    session: r.sessionId ? r.sessionId.slice(0, 8) : "-",
+    prompt: (r.firstPrompt || "").replace(/\s+/g, " ").slice(0, 48),
+    // A tombstone from another container may name a trace that doesn't
+    // resolve here — list it (it happened), but dimmed as not-openable.
+    here: existsSync(r.logFile),
+  }));
+  const w = (k: "when" | "state" | "client" | "project" | "session", h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
+  const widths = { when: w("when", "WHEN"), state: w("state", "STATE"), client: w("client", "CLIENT"), project: w("project", "PROJECT"), session: w("session", "SESSION") };
+  const line = (r: { when: string; state: string; client: string; project: string; session: string; prompt: string }) =>
+    `  ${r.when.padEnd(widths.when)}  ${r.state.padEnd(widths.state)}  ${r.client.padEnd(widths.client)}  ${r.project.padEnd(widths.project)}  ${r.session.padEnd(widths.session)}  ${r.prompt}`;
+  console.log(C.dim + line({ when: "WHEN", state: "STATE", client: "CLIENT", project: "PROJECT", session: "SESSION", prompt: "PROMPT" }) + C.reset);
+  for (const r of rows) console.log(r.here ? line(r) : C.dim + line(r) + C.reset);
+  if (runs.length > shown.length) log(`… ${runs.length - shown.length} older run(s) — --all shows everything`, C.dim);
+  log(`Open one: cctrace view <SESSION>`, C.dim);
+  if (live.length) log(`Dashboard (all runs): http://localhost:${live[0]!.port}/dashboard`, C.dim);
 }
 
 /** Parse a storage subcommand's flags; exit(1) with usage on error. */
@@ -884,13 +947,22 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           on the wire between two observations.
   ${C.cyan}ps${C.reset} [--json]               List live cctrace instances (URL, client, project,
                           session).
+  ${C.cyan}history${C.reset} [--limit N | --all] [--json]
+                          The global run log: every traced run (live + past),
+                          newest first, across all projects sharing the data
+                          dir. ps = what's running; history = what ran.
   ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge/compact${C.reset}
   ${C.dim}are dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
   -s, --static       Static mode: no live server, write .jsonl + snapshot .html
-  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy)
+  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy;
+                     an env PORT is honored when --port is absent, so
+                     ${C.cyan}portless trace cctrace claude${C.reset} routes https://trace.localhost)
+  --inform-agent     Append a note to the agent's system prompt (claude only):
+                     you are traced, the live UI address, and how to bypass the
+                     proxy for the one command that misbehaves behind one
   --messages-only    Only capture model API calls
   --capture-external MITM every host (default: non-first-party hosts pass
                      through as opaque byte-counted tunnels). External
@@ -980,6 +1052,9 @@ async function buildPreload(): Promise<string> {
 
 interface RunOpts {
   port: number;
+  /** The port came from env PORT (portless-style route) — strip PORT from
+   * the traced child so its own dev servers don't bind the route's port. */
+  portFromEnv?: boolean;
   liveMode: boolean;
   logDir: string;
   logName?: string;
@@ -988,6 +1063,8 @@ interface RunOpts {
   fresh: boolean;
   noAutoMerge: boolean;
   withFiles: string[];
+  /** Append a trace-awareness note to the agent's system prompt (claude only). */
+  informAgent?: boolean;
 }
 
 interface LogSink {
@@ -1132,8 +1209,12 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
   log(`Capture: ${capturer.label}`, C.cyan);
   console.log("");
 
+  const childEnv = { ...(process.env as Record<string, string>), ...capturer.env, ...identityEnv };
+  // PORT was consumed for cctrace's own UI (a portless-style route) — don't
+  // leak it into the traced app, whose dev servers would bind the same port.
+  if (opts.portFromEnv) delete childEnv.PORT;
   const child: ChildProcess = spawn(claudePath, claudeArgs, {
-    env: { ...(process.env as Record<string, string>), ...capturer.env, ...identityEnv },
+    env: childEnv,
     stdio: "inherit",
     cwd: process.cwd(),
   });
@@ -1325,12 +1406,26 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     log("Continuing a session — prior turns merge into Session view on Claude's first request", C.dim);
   }
 
+  // --inform-agent: tell the traced agent it runs under a tracing proxy, and
+  // how to bypass it for the rare command that misbehaves behind one (the
+  // wrangler case: proxy-present code paths change tool behavior). Claude
+  // only — the other client CLIs have no system-prompt flag.
+  let childArgs = claudeArgs;
+  if (opts.informAgent) {
+    if (CLIENT.name === "claude") {
+      childArgs = [...claudeArgs, "--append-system-prompt", agentAwarenessNote(liveInstance?.snapshot().port, resolve(logFile))];
+      log("Agent informed of the traced env (--append-system-prompt)", C.dim);
+    } else {
+      log(`--inform-agent supports claude only — for ${CLIENT.name}, put the note in its instructions file (see docs/agent-awareness.md)`, C.yellow);
+    }
+  }
+
   // Live mode: the .jsonl is the deliverable — `cctrace view` rebuilds the UI
   // from it anytime, so don't also write a snapshot .html at exit (on big
   // sessions it runs to hundreds of MB). Static mode's whole point is the
   // self-contained .html, so it keeps the finalize step.
   spawnClaudeWithCapturer(
-    claudePath, claudeArgs, capturer, opts, logFile,
+    claudePath, childArgs, capturer, opts, logFile,
     traceIdentityEnv(resolve(logFile), liveInstance?.snapshot() ?? null),
     opts.liveMode ? undefined : sink.writeHtml,
     (pid) => liveInstance?.update({ agentPid: pid }),
@@ -1445,6 +1540,30 @@ function resolveMode(claudePath: string): { mode: "mitm" | "base-url" | "node"; 
   return { mode: "node", runPath: effectivePath };
 }
 
+/** The --inform-agent note, appended to Claude's system prompt: what the
+ * traced env means and the one escape hatch worth knowing. Kept terse — it
+ * rides every request of the session. */
+function agentAwarenessNote(port: number | undefined, traceFile: string): string {
+  return [
+    "cctrace: this session's HTTPS traffic is traced by a local transparent proxy (HTTPS_PROXY points at it; subprocesses inherit it).",
+    port ? `Live trace UI: http://localhost:${port} — every request, token, and cost this session puts on the wire.` : "",
+    `Trace file: ${traceFile}.`,
+    "Anthropic API calls are captured; other hosts pass through an opaque tunnel (bytes counted, content untouched), so the proxy adds no meaningful latency.",
+    "Caveat: some tools change behavior when proxy env vars are set (wrangler swaps undici's global dispatcher, so its timeout overrides only take effect with the proxy vars unset).",
+    "If a large upload or deploy times out through the proxy, re-run just that one command with the proxy cleared: env -u HTTPS_PROXY -u https_proxy <command> (if the network itself needs a proxy, set HTTPS_PROXY to that real proxy instead).",
+    "Never unset the proxy globally or kill the cctrace process — that severs the whole session's capture.",
+  ].filter(Boolean).join(" ");
+}
+
+/** A usable port from env PORT, or null. The convention portless (and every
+ * PaaS runner) uses: the wrapper assigns the port, the server binds it. */
+function envPortOrNull(): number | null {
+  const raw = process.env.PORT;
+  if (!raw || !/^\d{2,5}$/.test(raw)) return null;
+  const n = parseInt(raw, 10);
+  return n > 0 && n < 65536 ? n : null;
+}
+
 async function main() {
   if (SUBCOMMAND) {
     const rest = RAW_ARGV.slice(1);
@@ -1458,6 +1577,7 @@ async function main() {
     else if (SUBCOMMAND === "compact") runCompact(rest);
     else if (SUBCOMMAND === "spec") runSpec(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
+    else if (SUBCOMMAND === "history") await runHistory(rest);
     process.exit(0);
   }
 
@@ -1486,8 +1606,13 @@ async function main() {
     process.exit(1);
   }
 
+  // No --port but an env PORT (a portless-style wrapper assigning us a
+  // routed port: `portless trace cctrace claude` -> https://trace.localhost)
+  // — bind that. Explicit --port always wins.
+  const envPort = !values.port ? envPortOrNull() : null;
   const opts: RunOpts = {
-    port: parseInt(values.port || String(DEFAULT_PORT), 10),
+    port: values.port ? parseInt(values.port, 10) : (envPort ?? DEFAULT_PORT),
+    portFromEnv: envPort != null,
     liveMode: !values.static,
     logDir: values.dir || ".cctrace",
     logName: values.log,
@@ -1496,9 +1621,11 @@ async function main() {
     fresh: !!values.fresh,
     noAutoMerge: !!values["no-auto-merge"],
     withFiles: values.with ? [...values.with] : [],
+    informAgent: !!values["inform-agent"],
   };
 
   log(`cctrace v${versionWithCommit()}`, C.dim);
+  if (opts.portFromEnv) log(`Using PORT=${opts.port} from env (portless-style route) — --port overrides`, C.dim);
   await maybeOfferUpdate();
   // Refresh the update cache in the background — never blocks the session.
   if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});

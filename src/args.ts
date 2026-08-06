@@ -25,6 +25,8 @@ export const CLI_OPTIONS = {
   "claude-path": { type: "string" },
   "client-path": { type: "string" }, // generic form for codex/grok profiles
 
+  "inform-agent": { type: "boolean" },
+
   "data-dir": { type: "string" },
   "cache-dir": { type: "string" }, // legacy alias for --data-dir (pre-0.6)
   fresh: { type: "boolean" },

@@ -61,5 +61,9 @@ cctrace spec [target] [--out F] [--md]    # observed-wire catalog from saved tra
                                           # code-agent-id") — the wire changelog behind
                                           # thevibeworks/claude-code-http-spec
 cctrace ps [--json]                       # live instances (URL, pids, client, project, session)
+cctrace history [--limit N | --all]       # global run log: every traced run (live + past),
+          [--json]                        # newest first, across all projects sharing the
+                                          # data dir; rows whose trace file doesn't resolve
+                                          # here (another container's) list dimmed
 cctrace --version                         # print version (+ newer version if known)
 ```

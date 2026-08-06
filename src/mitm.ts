@@ -77,6 +77,29 @@ export function parseUpstreamProxy(): { host: string; port: number; auth?: strin
 }
 
 /**
+ * Parse a CONNECT target or Host header ("host:8443", "[::1]:443", bare
+ * host) into host + port. Bracket-aware: "[::1]:443" must yield host "::1",
+ * not "[" (#82). The returned host is unbracketed — what net.connect, cert
+ * SANs, and the include-list match against. A bare IPv6 literal without
+ * brackets is returned whole rather than mangled at its last colon.
+ */
+export function parseConnectTarget(target: string, defaultPort = 443): { host: string; port: number } {
+  const t = (target || "").trim();
+  const v6 = /^\[([^\]]+)\](?::(\d+))?$/.exec(t);
+  if (v6) return { host: v6[1]!, port: v6[2] ? parseInt(v6[2], 10) : defaultPort };
+  const i = t.indexOf(":");
+  if (i > -1 && i === t.lastIndexOf(":") && /^\d+$/.test(t.slice(i + 1))) {
+    return { host: t.slice(0, i), port: parseInt(t.slice(i + 1), 10) };
+  }
+  return { host: t, port: defaultPort };
+}
+
+/** Re-bracket an IPv6 host for URL/authority use. */
+function authorityOf(host: string, port: number): string {
+  return (host.includes(":") ? `[${host}]` : host) + (port === 443 ? "" : `:${port}`);
+}
+
+/**
  * TLS-intercepting HTTP proxy with an SSL-proxying include-list (Charles'
  * model, devlog 2026-07-15).
  *
@@ -106,6 +129,11 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
 
   const interceptSet = config.interceptHosts ?? [];
 
+  // CONNECT-line ports per host: the terminator rebuilds the upstream URL
+  // from the Host header, but some clients omit a non-default port there —
+  // the CONNECT target is the transport truth, so it rides through (#82).
+  const connectPorts = new Map<string, number>();
+
   // Upstream proxy chaining. In environments where the machine reaches the
   // internet ONLY through an HTTP proxy (containers with no direct egress,
   // corporate proxies), a raw net.connect to the origin goes nowhere — the
@@ -132,13 +160,17 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   // and dynamically created per-host TLS servers.
   function interceptFetch(req: Request): Response | Promise<Response> {
     const hostHeader = req.headers.get("host") || "unknown";
-    const targetHost = hostHeader.split(":")[0] || "unknown";
+    const parsedHost = parseConnectTarget(hostHeader, 0); // 0 = no port in the header
+    const targetHost = parsedHost.host || "unknown";
+    // Port precedence: Host header, then the CONNECT line's target (some
+    // clients omit non-default ports from Host), then 443 (#82).
+    const targetPort = parsedHost.port || connectPorts.get(targetHost) || 443;
     // On the include-list = the traced client's own infrastructure or a host
     // the user explicitly enrolled: full-body capture. Anything else is only
     // here because of --capture-external: bodies cap at EXTERNAL_BODY_CAP.
     const enrolled = isInterceptHost(targetHost) || hostInSet(targetHost, interceptSet);
     const path = new URL(req.url).pathname + new URL(req.url).search;
-    const targetUrl = `https://${targetHost}${path}`;
+    const targetUrl = `https://${authorityOf(targetHost, targetPort)}${path}`;
     // --messages-only means "just the model API calls" — the SAME predicate
     // categorize.ts calls "messages", or the filter drops pairs the page
     // would have shown (a custom provider mounting {base}/responses did).
@@ -344,6 +376,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     let bytesUp = head?.length || 0;
     let bytesDown = 0;
     let logged = false;
+    let established = false;
     const finish = () => {
       if (logged || !logAll) return;
       logged = true;
@@ -353,16 +386,18 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         request: {
           timestamp: startTime / 1000,
           method: "CONNECT",
-          url: `https://${host}${port === 443 ? "" : ":" + port}/`,
+          url: `https://${authorityOf(host, port)}/`,
           headers: {},
           body: null,
         },
         response: {
           timestamp: Date.now() / 1000,
-          status: 200,
+          status: established ? 200 : 502,
           headers: {},
           body: {
-            cctrace: "opaque TLS tunnel — payload not captured (tunnel-by-default; --capture-external or --intercept-host " + host + " to decrypt)",
+            cctrace: established
+              ? "opaque TLS tunnel — payload not captured (tunnel-by-default; --capture-external or --intercept-host " + host + " to decrypt)"
+              : "tunnel could not reach " + authorityOf(host, port) + " — origin connect failed or upstream proxy refused",
             tunneled: true,
             bytesUp,
             bytesDown,
@@ -379,6 +414,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     // sends anything. Byte counts stay payload-only: the proxy's CONNECT
     // request/reply is transport overhead, not tunneled bytes.
     const splice = (up: net.Socket, preface: Buffer | null) => {
+      established = true;
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head?.length) up.write(head);
       if (preface?.length) { bytesDown += preface.length; clientSocket.write(preface); }
@@ -394,8 +430,9 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     } else {
       const p = upstreamProxy;
       upstream = net.connect(p.port, p.host, () => {
+        const hostport = (host.includes(":") ? `[${host}]` : host) + ":" + port;
         upstream.write(
-          `CONNECT ${host}:${port} HTTP/1.1\r\nHost: ${host}:${port}\r\n` +
+          `CONNECT ${hostport} HTTP/1.1\r\nHost: ${hostport}\r\n` +
           (p.auth ? `Proxy-Authorization: ${p.auth}\r\n` : "") + "\r\n",
         );
       });
@@ -412,28 +449,38 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         if (status >= 200 && status < 300) {
           splice(upstream, buf.slice(end + 4));
         } else {
-          // Proxy refused (auth, blocklist) — drop like a failed direct connect.
+          // Proxy refused (auth, blocklist) — answer, then close.
           upstream.destroy();
-          clientSocket.destroy();
-          finish();
+          refuse();
         }
       };
       upstream.on("data", onReply);
     }
+    // A connect failure must ANSWER the CONNECT before closing: a bare
+    // socket reset is indistinguishable from cctrace itself dying (#82).
+    const refuse = () => {
+      if (!established && clientSocket.writable) {
+        clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      } else {
+        clientSocket.destroy();
+      }
+      finish();
+    };
     upstream.on("close", finish);
     clientSocket.on("close", finish);
-    upstream.on("error", () => { clientSocket.destroy(); finish(); });
+    upstream.on("error", refuse);
     clientSocket.on("error", () => { upstream.destroy(); finish(); });
   }
 
   proxy.on("connect", async (req, clientSocket: net.Socket, head: Buffer) => {
-    const [reqHost, reqPortStr] = (req.url || "").split(":");
-    const host = reqHost || "api.anthropic.com";
-    const port = parseInt(reqPortStr || "443", 10);
+    const target = parseConnectTarget(req.url || "");
+    const host = target.host || "api.anthropic.com";
+    const port = target.port;
     // Policy gate, decided on the CONNECT line BEFORE any TLS exists: the
     // path is only visible after decryption, so scope must be host-level.
     const wantsMitm = config.captureExternal || isInterceptHost(host) || hostInSet(host, interceptSet);
     if (!wantsMitm) return countingTunnel(host, port, clientSocket, head);
+    connectPorts.set(host, port);
 
     let destPort: number;
     if (isInterceptHost(host)) {
@@ -447,13 +494,19 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       }
     }
 
+    let established = false;
     const upstream = net.connect(destPort, "127.0.0.1", () => {
+      established = true;
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       if (head?.length) upstream.write(head);
       clientSocket.pipe(upstream);
       upstream.pipe(clientSocket);
     });
-    upstream.on("error", () => clientSocket.destroy());
+    upstream.on("error", () => {
+      // Same honesty as the tunnel path: answer the CONNECT, don't reset.
+      if (!established && clientSocket.writable) clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+      else clientSocket.destroy();
+    });
     clientSocket.on("error", () => upstream.destroy());
   });
 

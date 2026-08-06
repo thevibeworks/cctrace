@@ -99,6 +99,16 @@ to protect that feeling.
   ttft · duration · time). The ≡ glyph (U+2261) is the cache mark — slim,
   layered, one monospace cell.
 
+- The dashboard (`src/dashboard.ts`) is part of this design system, not a
+  side page: same variable block, same type scale, same lowercase labels,
+  same small-button grammar for its group-by control, and the same client
+  glyphs as the trace view header (both import `src/icons.ts` — one mark
+  per CLI everywhere; never redraw a client icon locally). Rows follow the
+  one-row-per-fact rule: identity left (dot · client · project · prompt ·
+  sid), numbers right (size · pairs · tokens · when), tabular numerals.
+  A row that can open something IS a link (live instance, rendered run
+  snapshot); a row that can't (trace not on this host) says why, dimmed.
+
 ## When adding UI
 
 Ask, in order: does it help someone read a trace faster? Can it be a chip or

@@ -226,8 +226,40 @@ describe("dashboard", () => {
       writeFileSync(join(dataDir, "trace-x.jsonl"), "");
       const runs2 = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
       expect(runs2[0].traceExists).toBe(true);
+      expect(runs2[0].traceBytes).toBe(0);
     } finally {
       s2.stop();
+    }
+  });
+
+  test("/view/<run-id> renders a past run's snapshot; unknown ids 404", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dashview-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    const trace = join(dataDir, "trace-y.jsonl");
+    writeFileSync(trace, JSON.stringify(pair("vp1")) + "\n");
+    writeFileSync(join(dataDir, "instances", "r1.json"), JSON.stringify({
+      id: "r1", pid: 1, port: 9999, project: "proj", projectPath: "/x/proj",
+      logFile: trace, mode: "mitm",
+      startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+      pairs: 1, tokensIn: 10, tokensOut: 5,
+    }));
+    const s3 = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const res = await fetch(`http://127.0.0.1:${s3.port}/view/r1`);
+      expect(res.status).toBe(200);
+      const html = await res.text();
+      expect(html).toContain("cctrace");
+      expect(html).toContain("vp1"); // the trace's pair made it into the snapshot
+      expect((await fetch(`http://127.0.0.1:${s3.port}/view/nope`)).status).toBe(404);
+      // a registry path that doesn't resolve on this host is a 404, not a crash
+      writeFileSync(join(dataDir, "instances", "r2.json"), JSON.stringify({
+        id: "r2", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
+        logFile: "/not/here.jsonl", mode: "mitm",
+        startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+      }));
+      expect((await fetch(`http://127.0.0.1:${s3.port}/view/r2`)).status).toBe(404);
+    } finally {
+      s3.stop();
     }
   });
 });

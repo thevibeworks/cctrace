@@ -48,6 +48,14 @@ export interface InstanceInfo {
   /** Set = this entry is a tombstone: a finished run, kept as the catalog
    * of past traces (project, client, trace file, session id, time range). */
   endedAt?: string; // ISO
+  /** Exit stats (0.35+), stamped once when the run closes out — the
+   * dashboard's row details without re-reading any trace. Absent on
+   * older tombstones and on entries that died without an exit path. */
+  pairs?: number;
+  messages?: number;
+  tokensIn?: number;
+  tokensOut?: number;
+  costUsd?: number;
 }
 
 export interface InstanceHandle {

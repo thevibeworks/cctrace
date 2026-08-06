@@ -65,6 +65,9 @@ Claude Code 以 Bun 编译的**原生二进制**分发，`node --require` 注入
   外加**回放**：任何已捕获的会话都能逐轮播放，任意时刻可深链。
 - **可重开的 trace。** 每次运行写一份 `.jsonl`；`cctrace view` 随时重开，
   `--html` 按需渲染离线快照发给同事。
+- **一个仪表盘看全部。** 任意实例的 `/dashboard` 汇总所有项目的存活运行与
+  历史 trace -- 按项目或 client 分组，每次运行带体积/token/费用 --
+  任意一行一键打开渲染好的会话视图。
 - **零配置。** 自动生成 CA、自动识别安装，默认捕获完整的第一方全貌。
 - **范围即设计。** agent 子进程碰到的外部 host 以不透明隧道透传（只记 host +
   字节数），`go install` 再也不会往 trace 里塞 53MB 的 tarball。细节见
@@ -126,6 +129,7 @@ cctrace -- -p "hello"                      # -- 之后的参数原样传给 agen
 cctrace view                     # 重开已保存的 trace（回车 = 最新）
 cctrace view <target> --html     # 渲染可分享的离线快照
 cctrace ps                       # 存活实例：URL、client、项目、会话
+cctrace history                  # 所有项目的全部运行记录，最新在前
 cctrace clean|merge|compress     # 清理归档 -- 默认 dry-run，--yes 才执行
 cctrace purge                    # 从已保存 trace 中删除噪音类别
 cctrace compact                  # 折叠冗余请求体（-95%+），会话视图不变
@@ -143,6 +147,7 @@ cctrace compact                  # 折叠冗余请求体（-95%+），会话视�
 | `--messages-only` | 只捕获模型 API 调用 |
 | `--capture-external` | 解密所有 host（超 64KB 的外部 body 只留摘要） |
 | `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器） |
+| `--bypass-host H` | 让 host `H` 完全绕开代理（写入子进程 `NO_PROXY`） |
 | `--dir PATH` | 日志目录（默认 `.cctrace`） |
 | `--client-path PATH` | 任意 client 的自定义二进制路径 |
 

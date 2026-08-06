@@ -17,6 +17,7 @@ export const CLI_OPTIONS = {
   "messages-only": { type: "boolean" },
   "capture-external": { type: "boolean" },
   "intercept-host": { type: "string", multiple: true },
+  "bypass-host": { type: "string", multiple: true },
   "no-open": { type: "boolean" },
   "print-ca": { type: "boolean" },
   log: { type: "string" },

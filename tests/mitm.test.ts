@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach, beforeAll, beforeEach } from "bun:test";
-import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP, parseUpstreamProxy } from "../src/mitm";
+import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP, parseUpstreamProxy, parseConnectTarget } from "../src/mitm";
 import * as http from "http";
 import { ensureCerts, isInterceptHost, migrateCaDir, buildCaBundle, systemCaBundle } from "../src/certs";
 import { createCapturer } from "../src/capture";
@@ -245,6 +245,106 @@ describe("opaque tunnel for non-listed hosts", () => {
     await Bun.sleep(80);
     upstream.stop();
     expect(pairs.length).toBe(0);
+  });
+});
+
+// #82: CONNECT-layer correctness — bracket-aware target parsing, non-443
+// ports riding through to the upstream fetch, and honest 502 replies when
+// a tunnel can't be established (a bare reset looks like cctrace dying).
+describe("parseConnectTarget (#82)", () => {
+  test("host:port, bare host, default port", () => {
+    expect(parseConnectTarget("example.com:8443")).toEqual({ host: "example.com", port: 8443 });
+    expect(parseConnectTarget("example.com")).toEqual({ host: "example.com", port: 443 });
+    expect(parseConnectTarget("127.0.0.1:9000")).toEqual({ host: "127.0.0.1", port: 9000 });
+  });
+
+  test("IPv6 literals parse bracket-aware, never host '['", () => {
+    expect(parseConnectTarget("[::1]:443")).toEqual({ host: "::1", port: 443 });
+    expect(parseConnectTarget("[2001:db8::1]:8443")).toEqual({ host: "2001:db8::1", port: 8443 });
+    expect(parseConnectTarget("[::1]")).toEqual({ host: "::1", port: 443 });
+    // unbracketed v6 is returned whole, not mangled at its last colon
+    expect(parseConnectTarget("::1")).toEqual({ host: "::1", port: 443 });
+  });
+});
+
+describe("CONNECT failure semantics (#82)", () => {
+  test("unreachable tunnel origin answers 502, and the meta pair says 502", async () => {
+    // A freshly bound-then-closed port refuses connections deterministically.
+    const closed = await new Promise<number>((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = (srv.address() as net.AddressInfo).port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p) }));
+    const reply = await new Promise<string>((resolve) => {
+      const sock = net.connect(mitm.port, "127.0.0.1", () => {
+        sock.write(`CONNECT 127.0.0.1:${closed} HTTP/1.1\r\nHost: 127.0.0.1:${closed}\r\n\r\n`);
+      });
+      let buf = "";
+      sock.on("data", (d) => { buf += d.toString("latin1"); });
+      sock.on("close", () => resolve(buf));
+      sock.on("error", () => resolve(buf));
+      setTimeout(() => resolve(buf), 8000);
+    });
+    expect(reply.startsWith("HTTP/1.1 502")).toBe(true);
+    await Bun.sleep(80);
+    expect(pairs.length).toBe(1);
+    expect(pairs[0]!.response?.status).toBe(502);
+  });
+});
+
+describe("non-443 port rides through to the upstream fetch (#82)", () => {
+  // The upstream fetch fails fast (127.0.0.1 on a closed port refuses,
+  // no DNS involved) — that's fine: the error-path pair still records the
+  // URL the terminator fetched, which is exactly what must carry the port.
+  async function mitmFetchUrl(withPortInHost: boolean): Promise<string> {
+    const closed = await new Promise<number>((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = (srv.address() as net.AddressInfo).port;
+        srv.close(() => resolve(port));
+      });
+    });
+    const hostHeader = withPortInHost ? `127.0.0.1:${closed}` : "127.0.0.1";
+    const pairs: TracePair[] = [];
+    const mitm = track(await startMitm({ caDir, onPair: (p) => pairs.push(p), interceptHosts: ["127.0.0.1"] }));
+    await new Promise<void>((resolve) => {
+      const sock = net.connect(mitm.port, "127.0.0.1", () => {
+        sock.write(`CONNECT 127.0.0.1:${closed} HTTP/1.1\r\nHost: 127.0.0.1:${closed}\r\n\r\n`);
+      });
+      let buf = "";
+      let established = false;
+      const onData = (d: Buffer) => {
+        buf += d.toString("latin1");
+        if (!established && buf.includes("\r\n\r\n")) {
+          established = true;
+          sock.removeListener("data", onData);
+          const tlsSock = tls.connect({ socket: sock, rejectUnauthorized: false }, () => {
+            tlsSock.write(`GET /probe HTTP/1.1\r\nHost: ${hostHeader}\r\nConnection: close\r\n\r\n`);
+          });
+          tlsSock.on("data", () => resolve()); // the terminator's 502 arrived
+          tlsSock.on("close", () => resolve());
+          tlsSock.on("error", () => resolve());
+        }
+      };
+      sock.on("data", onData);
+      sock.on("error", () => resolve());
+      setTimeout(() => resolve(), 4000);
+    });
+    await Bun.sleep(150); // capture settles
+    const url = pairs.find((p) => p.request.url.includes("/probe"))?.request.url || "<no pair>";
+    return url.replace(String(closed), "<port>");
+  }
+
+  test("Host header carries the port", async () => {
+    expect(await mitmFetchUrl(true)).toBe("https://127.0.0.1:<port>/probe");
+  });
+
+  test("Host header omits the port — the CONNECT line's port is used", async () => {
+    expect(await mitmFetchUrl(false)).toBe("https://127.0.0.1:<port>/probe");
   });
 });
 

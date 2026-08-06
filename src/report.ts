@@ -35,6 +35,18 @@ export interface TraceSummary {
   session?: string;
   /** "2 failed requests (429, overloaded_error)" — only when something failed. */
   errors?: string;
+  /** The same numbers, machine-readable — stamped into the registry
+   * tombstone so the dashboard shows run stats without reading any trace. */
+  stats: TraceStats;
+}
+
+export interface TraceStats {
+  pairs: number;
+  /** Messages-category pairs (model calls) — the count that means "turns". */
+  messages: number;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
 }
 
 export function traceSummary(pairs: TracePair[], opts: TraceSummaryOpts = {}): TraceSummary {
@@ -95,7 +107,16 @@ export function traceSummary(pairs: TracePair[], opts: TraceSummaryOpts = {}): T
   if (out > 0) parts.push(`out ${fmtCompact(out)}`);
   if (cost > 0) parts.push(`est ${fmtCost(cost)}`);
 
-  const summary: TraceSummary = { traced };
+  const summary: TraceSummary = {
+    traced,
+    stats: {
+      pairs: pairs.length,
+      messages: catCounts.get("messages") || 0,
+      tokensIn: totalIn,
+      tokensOut: out,
+      costUsd: cost,
+    },
+  };
   if (parts.length) summary.session = parts[0] + (parts.length > 1 ? ` — ${parts.slice(1).join(" · ")}` : "");
   if (failed > 0) summary.errors = `${failed} failed request${failed === 1 ? "" : "s"} (${[...failWhy].slice(0, 3).join(", ")})`;
   return summary;

@@ -1,5 +1,35 @@
 import { describe, expect, test } from "bun:test";
-import { traceIdentityEnv } from "../src/capture";
+import { traceIdentityEnv, bypassHostEnv } from "../src/capture";
+
+// #83: --bypass-host — the named hosts talk direct (child NO_PROXY append),
+// with the tool's normal non-proxy behavior. Inherited values must survive.
+describe("bypassHostEnv", () => {
+  test("sets both NO_PROXY spellings for the named hosts", () => {
+    expect(bypassHostEnv(["api.cloudflare.com"], {})).toEqual({
+      NO_PROXY: "api.cloudflare.com",
+      no_proxy: "api.cloudflare.com",
+    });
+  });
+
+  test("appends to an inherited NO_PROXY instead of clobbering it", () => {
+    expect(bypassHostEnv(["b.example"], { NO_PROXY: "a.example" })).toEqual({
+      NO_PROXY: "a.example,b.example",
+      no_proxy: "a.example,b.example",
+    });
+    expect(bypassHostEnv(["b.example"], { no_proxy: "a.example, c.example" })).toEqual({
+      NO_PROXY: "a.example,c.example,b.example",
+      no_proxy: "a.example,c.example,b.example",
+    });
+  });
+
+  test("dedupes an already-present host and no-ops on an empty list", () => {
+    expect(bypassHostEnv(["a.example"], { NO_PROXY: "a.example" })).toEqual({
+      NO_PROXY: "a.example",
+      no_proxy: "a.example",
+    });
+    expect(bypassHostEnv([], { NO_PROXY: "a.example" })).toEqual({});
+  });
+});
 
 describe("traceIdentityEnv", () => {
   test("live run exports file, port, and instance id", () => {

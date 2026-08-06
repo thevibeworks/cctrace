@@ -4,7 +4,7 @@ import { basename, dirname, join, relative, resolve } from "path";
 import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
-import { createCapturer, traceIdentityEnv, type CaptureMode, type Capturer } from "./capture";
+import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
@@ -27,7 +27,7 @@ import {
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
-import { traceSummary } from "./report";
+import { traceSummary, type TraceStats } from "./report";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
@@ -969,6 +969,11 @@ ${C.yellow}OPTIONS:${C.reset}
                      bodies over 64KB are summarized, not stored
   --intercept-host H Also MITM host H with FULL body capture (repeatable —
                      remote MCP servers, unusual providers)
+  --bypass-host H    Exempt host H from the proxy entirely (repeatable):
+                     appended to the child's NO_PROXY, so the tool talks
+                     direct with its normal non-proxy behavior. For the
+                     rare tool that misbehaves behind a proxy (wrangler).
+                     Costs only that host's ~100B tunnel audit line
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
@@ -1065,6 +1070,8 @@ interface RunOpts {
   withFiles: string[];
   /** Append a trace-awareness note to the agent's system prompt (claude only). */
   informAgent?: boolean;
+  /** Hosts exempted from the proxy via the child's NO_PROXY (#83). */
+  bypassHosts?: string[];
 }
 
 interface LogSink {
@@ -1193,7 +1200,7 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): st
   }
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1209,7 +1216,15 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
   log(`Capture: ${capturer.label}`, C.cyan);
   console.log("");
 
-  const childEnv = { ...(process.env as Record<string, string>), ...capturer.env, ...identityEnv };
+  const childEnv = {
+    ...(process.env as Record<string, string>),
+    ...capturer.env,
+    ...bypassHostEnv(opts.bypassHosts ?? []),
+    ...identityEnv,
+  };
+  if (opts.bypassHosts?.length) {
+    log(`Bypassing the proxy (direct, normal non-proxy behavior): ${opts.bypassHosts.join(", ")}`, C.dim);
+  }
   // PORT was consumed for cctrace's own UI (a portless-style route) — don't
   // leak it into the traced app, whose dev servers would bind the same port.
   if (opts.portFromEnv) delete childEnv.PORT;
@@ -1248,6 +1263,10 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
       log(sum.traced, C.green);
       if (sum.session) log(sum.session, C.cyan);
       if (sum.errors) log(sum.errors, C.yellow);
+      // Stamp the numbers into the registry entry BEFORE the tombstone
+      // writes — the dashboard's per-run stats come from here, never from
+      // re-reading traces.
+      onStats?.(sum.stats);
     } else {
       log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     }
@@ -1359,6 +1378,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // findable (view picker's "recent runs elsewhere", future trace library).
     process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${server.port}`, C.green);
+    log(`Dashboard (all runs): http://localhost:${server.port}/dashboard`, C.dim);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${server.port}`), 500);
     }
@@ -1433,6 +1453,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // The tombstone is the cross-project run catalog: point it at the merged
     // session file, not the trace the merge just absorbed.
     (path) => liveInstance?.update({ logFile: path }),
+    (stats) => liveInstance?.update(stats),
   );
 }
 
@@ -1475,6 +1496,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
     });
     process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${livePort}`, C.green);
+    log(`Dashboard (all runs): http://localhost:${livePort}/dashboard`, C.dim);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
     }
@@ -1622,6 +1644,7 @@ async function main() {
     noAutoMerge: !!values["no-auto-merge"],
     withFiles: values.with ? [...values.with] : [],
     informAgent: !!values["inform-agent"],
+    bypassHosts: values["bypass-host"] ? [...values["bypass-host"]] : [],
   };
 
   log(`cctrace v${versionWithCommit()}`, C.dim);

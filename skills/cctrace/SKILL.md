@@ -106,9 +106,13 @@ instances land on 9318, 9319, ...). Hash-routed views:
   session's wire pairs, same set `cctrace merge` writes) and
   `GET /api/session.md?sid=<full-sid>` (a readable markdown transcript)
   — handy for agents: fetch the .md to read a traced conversation
-  without parsing SSE. `GET /dashboard` (any live instance) is the
-  central picture: every live + recently finished run across projects
-  (JSON: `/api/instances` live, `/api/runs` finished).
+  without parsing SSE. `GET /dashboard` (any live instance — also the ▦
+  header icon) is the central picture: every live + recently finished run
+  across projects, groupable by project/client/time, with per-run stats
+  (size · pairs · tokens · est cost) stamped at exit. Past rows open
+  `GET /view/<run-id>` — a snapshot the serving instance renders on
+  demand from that run's trace (JSON: `/api/instances` live, `/api/runs`
+  finished).
   The header shows the trace's running totals (requests · in/out tokens ·
   est cost, breakdown on hover), and clicking the trace title copies its
   project-relative path (".cctrace/trace-….jsonl") — ready for
@@ -214,6 +218,10 @@ tunnel logged as one meta pair (host + byte counts, category External).
 `--capture-external` restores decrypt-everything for debugging (external
 bodies over 64KB are summarized with byte counts, not stored — enroll a
 host with `--intercept-host` for its full payloads).
+`--bypass-host HOST` (repeatable) goes the other way: the host is appended
+to the traced child's NO_PROXY, so that one tool talks direct with its
+normal non-proxy behavior — for tools that misbehave when any proxy is
+present (wrangler swaps HTTP stacks); costs only that host's audit line.
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers

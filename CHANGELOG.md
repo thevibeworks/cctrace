@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.35.0
+
+- Added direct open for finished runs: a dashboard row now opens /view/[run-id], a snapshot the serving instance renders on demand from that run's trace — the id resolves through the registry server-side (the page never names a file), and a run with a known session id merges every trace of that session, the same continuity cctrace view gives; the old copy-view-cmd click became a small copy button on the row
+- Added run stats to the dashboard: on-disk size (re-stat'd per request), pairs and message counts, tokens in/out, and estimated cost — the numbers are stamped into the run's registry tombstone at exit, so the page shows real details without ever reading a trace
+- Added dashboard grouping and paging: group runs by project, by client, or flat by time (remembered per browser), newest first everywhere, and show-more steps of 100 instead of a hard 50-row cap
+- Added a dashboard entry to every page: an always-visible grid icon in the trace view header (on http-served pages), and capture startup now prints the dashboard URL next to the Live UI line
+- Added --bypass-host (#83): appends the named host to the traced child's NO_PROXY (repeatable, inherited values preserved), so a tool that misbehaves whenever a proxy is present — wrangler swaps its HTTP stack and discards custom agents — talks direct with its normal behavior; the only capture loss is that host's ~100-byte tunnel audit line
+- Fixed three CONNECT-layer gaps (#82): a non-443 CONNECT port now rides through to the upstream fetch on the MITM path (an enrolled host on :8443 no longer got re-fetched on :443), IPv6 literal targets like [::1]:443 parse bracket-aware instead of mangling at the first colon, and a tunnel that cannot reach its origin (or a chained proxy that refuses) answers 502 before closing — a bare reset used to be indistinguishable from cctrace dying; the tunnel's meta pair records the 502 too
+- Changed the session view to render the last turn unclamped — the final answer is what you came back to read, so it no longer hides behind a show-all click; your own expand/collapse choices now survive live re-renders
+- Moved the per-client icon glyphs to one shared module (src/icons.ts), so the dashboard rows and the trace view header wear identical marks per CLI
+- Filed the settings-surface design (docs/design/settings.md, #85): a read-only run-config panel first; a defaults file later, with capture-widening flags deliberately excluded
+
 ## 0.34.0
 
 - Added find in session: a toolbar search field on the sessions view (press /) that matches the conversation's text including folded tool bodies — Enter/shift+Enter cycle hits, the jump opens exactly the folds that hold the match and lands with a one-breath amber flash; the one thing the browser's own Ctrl+F can't do over closed folds

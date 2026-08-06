@@ -1,6 +1,7 @@
 import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
 import { wireTables } from "./clients";
+import { CLIENT_ICONS } from "./icons";
 import {
   parseSse,
   fmtCompact,
@@ -82,6 +83,9 @@ const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><style>@media(prefers-color-scheme:dark){.s{stroke:#e6edf3}.f{fill:#e6edf3}}</style><g fill="none" stroke="#0d1117" stroke-linecap="round"><path class="s" stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path class="s" stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line class="s" stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle class="s" stroke-width="9" cx="452" cy="256" r="17"/><circle class="f" fill="#0d1117" stroke="none" cx="250" cy="256" r="12"/></g></svg>`,
 );
 const GITHUB_ICON = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
+
+// Dashboard entry: a 2x2 grid — "all the runs", not just this page's.
+const DASH_ICON = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="1.5" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="1.5" y="9.3" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="9.3" width="5.2" height="5.2" rx="1"/></svg>`;
 
 /** Run identity shown in the page header. All fields optional: `cctrace view`
  * rebuilds from a saved trace where the original cwd is unknown. */
@@ -195,7 +199,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border: 1px solid var(--border); border-radius: 4px;
       padding: 1px 6px; font-size: 11px; color: var(--text-muted); flex: none;
     }
-    .ctx-ico { width: 11px; height: 11px; flex-shrink: 0; }
+    .ctx-client svg { width: 11px; height: 11px; flex-shrink: 0; }
     .ctx-sep { color: var(--text-faint); }
     .ctx-sess {
       font: inherit; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
@@ -1293,6 +1297,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="status disconnected" id="status">offline</span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
+      <a class="icon-btn" id="dash-link" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page.">${DASH_ICON}</a>
       <button class="icon-btn" id="mask-toggle" title="mask identity"></button>
       <button class="icon-btn" id="theme-toggle" title="theme"></button>
       <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
@@ -1541,6 +1546,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const tabRequests = document.getElementById('tab-requests');
     const tabSession = document.getElementById('tab-session');
 
+    // Dashboard link: only meaningful when a server answers /dashboard —
+    // a snapshot opened from disk (file://) has no routes to link to.
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      document.getElementById('dash-link').hidden = false;
+    }
+
     // Theme toggle: system -> light -> dark -> system
     const THEME_ICONS = {
       system: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="9" rx="1"/><line x1="8" y1="12" x2="8" y2="14.5"/><line x1="4.5" y1="14.5" x2="11.5" y2="14.5"/></svg>',
@@ -1752,12 +1763,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Quiet monogram glyphs for the traced client — generic shapes drawn in
     // currentColor (a spark, a hexagon, a slash), not vendor logos, so they
     // read as identity hints without shouting brand.
-    const CLIENT_ICONS = {
-      claude: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
-      codex: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
-      grok: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
-      kimi: '<svg class="ctx-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
-    };
+    // Shared per-client glyphs (src/icons.ts) — the same marks the
+    // dashboard rows use, so a client reads identically everywhere.
+    const CLIENT_ICONS = ${jsonForScript(CLIENT_ICONS)};
 
     // ---- Header trace totals: what this whole trace adds up to ----
     // requests · in/out tokens · est cost, live-updating; the hover carries
@@ -2768,6 +2776,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         btn.textContent = 'collapse';
       }
     };
+
+    // The LAST turn is what the user came back to read — the final answer
+    // renders in full, no "show all" click. Earlier turns keep the clamp
+    // (they're context, and unclamping all of them makes the page a scroll
+    // marathon). Runs after a convo render; a live patch that rebuilds the
+    // tail node re-applies it via the clamp-state carry in applyConvoParts.
+    function unclampLastTurn() {
+      if (!convoEl.querySelectorAll) return; // headless test stub
+      const turns = convoEl.querySelectorAll('.turn');
+      if (!turns.length) return;
+      const last = turns[turns.length - 1];
+      for (const mc of last.querySelectorAll('.msg-clamp.clamped')) {
+        const btn = mc.querySelector(':scope > .msg-more');
+        if (btn) window.toggleClamp(btn);
+      }
+    }
 
     function renderBlock(b, md) {
       if (b == null) return '';
@@ -4519,6 +4543,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           for (let i = 0; i < details.length && i < foldState.length; i++) details[i].open = foldState[i];
         }
         convoParts = parts;
+        unclampLastTurn();
         tipDetachedGuard();
         return;
       }
@@ -4533,8 +4558,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const old = convoEl.children[i];
         const of_ = old.querySelectorAll('details'), nf = nu.querySelectorAll('details');
         for (let j = 0; j < of_.length && j < nf.length; j++) nf[j].open = of_[j].open;
+        // Clamp state rides along too: a final answer the user expanded (or
+        // unclampLastTurn did) must not snap shut when its node re-renders.
+        const oc = old.querySelectorAll('.msg-clamp'), nc = nu.querySelectorAll('.msg-clamp');
+        for (let j = 0; j < oc.length && j < nc.length; j++) {
+          if (!oc[j].classList.contains('clamped') && nc[j].classList.contains('clamped')) {
+            const btn = nc[j].querySelector(':scope > .msg-more');
+            if (btn) window.toggleClamp(btn);
+          }
+        }
         convoEl.replaceChild(nu, old);
       }
+      const grew = parts.length > convoParts.length;
       for (let i = convoParts.length; i < parts.length; i++) {
         const tmp = document.createElement('div');
         tmp.innerHTML = parts[i];
@@ -4542,6 +4577,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       while (convoEl.children.length > parts.length) convoEl.removeChild(convoEl.lastElementChild);
       convoParts = parts;
+      if (grew) unclampLastTurn(); // a new tail turn = a new final answer
       tipDetachedGuard();
     }
 

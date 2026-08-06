@@ -27,7 +27,7 @@ import {
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
-import { traceSummary } from "./report";
+import { traceSummary, type TraceStats } from "./report";
 import { parseArgs } from "util";
 import type { TracePair } from "./types";
 
@@ -1200,7 +1200,7 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): st
   }
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1263,6 +1263,10 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
       log(sum.traced, C.green);
       if (sum.session) log(sum.session, C.cyan);
       if (sum.errors) log(sum.errors, C.yellow);
+      // Stamp the numbers into the registry entry BEFORE the tombstone
+      // writes — the dashboard's per-run stats come from here, never from
+      // re-reading traces.
+      onStats?.(sum.stats);
     } else {
       log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     }
@@ -1374,6 +1378,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // findable (view picker's "recent runs elsewhere", future trace library).
     process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${server.port}`, C.green);
+    log(`Dashboard (all runs): http://localhost:${server.port}/dashboard`, C.dim);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${server.port}`), 500);
     }
@@ -1448,6 +1453,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // The tombstone is the cross-project run catalog: point it at the merged
     // session file, not the trace the merge just absorbed.
     (path) => liveInstance?.update({ logFile: path }),
+    (stats) => liveInstance?.update(stats),
   );
 }
 
@@ -1490,6 +1496,7 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
     });
     process.on("exit", () => instance?.tombstone());
     log(`Live UI: http://localhost:${livePort}`, C.green);
+    log(`Dashboard (all runs): http://localhost:${livePort}/dashboard`, C.dim);
     if (!opts.noOpen) {
       setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
     }

@@ -11,9 +11,11 @@ import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
-import { listLiveInstances, listPastRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
-import { existsSync } from "fs";
+import { resolveView } from "./view";
+import { existsSync, statSync } from "fs";
+import { dirname, basename } from "path";
 
 const WIRE = wireTables();
 
@@ -342,12 +344,48 @@ export function createServer(config: ServerConfig) {
         // Finished runs (registry tombstones) for the dashboard — the live
         // side is /api/instances. traceExists is re-stat'd per request: a
         // path from another container may not resolve here, and the page
-        // must say so instead of offering a dead view command.
+        // must say so instead of offering a dead view command. The same
+        // stat carries the current on-disk size (post-merge/compress, so
+        // fresher than anything stamped at exit).
         const list = config.dataDir ? listPastRuns(config.dataDir) : [];
-        return Response.json(list.map((i) => ({
-          ...i,
-          traceExists: !!(i.logFile && existsSync(i.logFile)),
-        })));
+        return Response.json(list.map((i) => {
+          let traceBytes: number | undefined;
+          try { traceBytes = i.logFile ? statSync(i.logFile).size : undefined; } catch {}
+          return { ...i, traceExists: traceBytes !== undefined, ...(traceBytes !== undefined ? { traceBytes } : {}) };
+        }));
+      }
+      if (url.pathname.startsWith("/view/")) {
+        // Direct-open for a finished run: the dashboard row's click target.
+        // The run id resolves through the REGISTRY — the client never names
+        // a path, so this cannot read arbitrary files. Rendered on demand
+        // from the run's trace (by session id when known, merging every
+        // trace of that session in its log dir — the same continuity the
+        // CLI's `cctrace view <sid>` gets; by file otherwise).
+        const id = decodeURIComponent(url.pathname.slice("/view/".length));
+        const run = config.dataDir ? listAllRuns(config.dataDir).find((r) => r.id === id) : undefined;
+        if (!run?.logFile) return new Response("unknown run id", { status: 404 });
+        if (!existsSync(run.logFile)) {
+          return new Response(`trace not on this host: ${run.logFile}`, { status: 404 });
+        }
+        try {
+          const result = resolveView(run.sessionId || run.logFile, dirname(run.logFile));
+          let traceBytes = 0;
+          for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
+          const html = renderSnapshot(result.pairs, {
+            version: config.meta?.version,
+            pricing: config.meta?.pricing,
+            latestVersion: config.meta?.latestVersion,
+            project: run.project || undefined,
+            projectPath: run.projectPath || undefined,
+            client: run.client,
+            traceFile: basename(run.logFile),
+            traceRelPath: run.logFile,
+            traceBytes,
+          });
+          return new Response(html, { headers: { "Content-Type": "text/html" } });
+        } catch (e) {
+          return new Response(`could not render run: ${e instanceof Error ? e.message : e}`, { status: 500 });
+        }
       }
       if (url.pathname === "/dashboard") {
         // The central picture: every live + recent run sharing this data

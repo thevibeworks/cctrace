@@ -1851,11 +1851,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 wall-clock on every turn \\u2014 role-bar times in the conversation, moments in every hover\\n' +
-        '\\u00b7 a toolbar that reads left to right \\u2014 view, list, page, trace controls at the edge\\n' +
-        '\\u00b7 an exit receipt \\u2014 pairs, tokens, cache share, est cost when a traced session ends\\n' +
-        '\\u00b7 trace actions run on the page \\u2014 purge categories, compact, download the wire spec\\n' +
-        '\\u00b7 session replay + slices \\u2014 scrub time, share exactly the window that matters\\n' +
+        '\\u00b7 one file per session \\u2014 a run folds its resumed traces together at exit, losslessly\\n' +
+        '\\u00b7 a sidebar that holds still \\u2014 stable order, nested subagents, a jump back to the parent\\n' +
+        '\\u00b7 session dumps \\u2014 the wire .jsonl or a readable .md transcript, straight from \\u2318\\n' +
+        '\\u00b7 /dashboard \\u2014 every live run and recent trace, all projects, one page\\n' +
+        '\\u00b7 codex custom providers \\u2014 config.toml relays captured with zero flags\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

@@ -1,7 +1,7 @@
 import { readdirSync, statSync, writeFileSync, unlinkSync, existsSync, readFileSync, renameSync } from "fs";
 import { join, basename } from "path";
 import { gzipSync } from "zlib";
-import { readTraceText, isTraceFile, parseTraceText } from "./history";
+import { readTraceText, isTraceFile, parseTraceText, type TraceParseStats } from "./history";
 import { extractSessionId } from "./summarize";
 import { wireTables } from "./clients";
 import type { TracePair } from "./types";
@@ -140,6 +140,9 @@ export interface MergePlan {
   unattributable: number;
   /** Trace files that would be fully consumed by a merged output (prune-able). */
   subsumed: FileEntry[];
+  /** Sessions left unmerged because an existing output couldn't be fully read
+   * — writing over it could shrink it, the one thing merge must never do. */
+  blocked: { outName: string; reason: string }[];
 }
 
 export interface MergeScope {
@@ -159,9 +162,10 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
     if (!isTraceFile(path)) continue;
     if (basename(path).startsWith("session-")) continue; // our own output is an input below, never a source
     let pairs: TracePair[];
-    try { pairs = parseTraceText(readTraceText(path)); } catch { continue; }
+    const damage: TraceParseStats = { torn: 0, invalid: 0 };
+    try { pairs = parseTraceText(readTraceText(path), damage); } catch { continue; }
     const name = basename(path);
-    const stat = { total: pairs.length, attributed: 0, sids: new Set<string>() };
+    const stat = { total: pairs.length, attributed: 0, sids: new Set<string>(), damaged: damage.torn + damage.invalid };
     for (const p of pairs) {
       const sid = extractSessionId(p, WIRE);
       if (!sid) { unattributable++; continue; }
@@ -191,6 +195,7 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   };
 
   const sessions: MergeSession[] = [];
+  const blocked: MergePlan["blocked"] = [];
   for (const [id, g] of bySession) {
     if (scope.sessionIds && !scope.sessionIds.has(id)) continue;
     const shortId = shortFor(id);
@@ -200,15 +205,21 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
     // A previous merge's output is an INPUT: --prune may have deleted its
     // sources, so union with it — a re-run can only grow the merged file,
     // never shrink it back to whatever the current sources happen to hold.
+    // A prior we can't fully read blocks the whole session: applyMerge would
+    // replace outPath with only what we could see — merge must never shrink.
     let existing = 0;
+    let priorDamage: string | null = null;
     for (const prev of priors) {
       let prevPairs: TracePair[];
-      try { prevPairs = parseTraceText(readTraceText(prev)); } catch { continue; }
+      const pd: TraceParseStats = { torn: 0, invalid: 0 };
+      try { prevPairs = parseTraceText(readTraceText(prev), pd); } catch { priorDamage = `${basename(prev)} is unreadable`; break; }
+      if (pd.torn + pd.invalid > 0) { priorDamage = `${basename(prev)} holds ${pd.torn + pd.invalid} damaged line(s)`; break; }
       for (const p of prevPairs) {
         const key = pairKey(p);
         if (!g.pairs.has(key)) { g.pairs.set(key, p); existing++; }
       }
     }
+    if (priorDamage) { blocked.push({ outName: `session-${shortId}.jsonl`, reason: priorDamage }); continue; }
     const pairs = [...g.pairs.values()].sort(byTimestamp);
     sessions.push({
       id, shortId,
@@ -226,16 +237,18 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   // A source is prune-able only if every one of its pairs lands in a session
   // this plan actually WRITES (nothing unique would be lost). Utility traces
   // never qualify — and under a scoped plan neither does a file holding a
-  // session we're not merging: those pairs would exist in no output.
+  // session we're not merging: those pairs would exist in no output. A file
+  // with damaged lines (torn tail from a killed run) never qualifies either:
+  // the parser skipped those bytes, so no output holds them.
   const written = new Set(sessions.map((s) => s.id));
   const subsumed: FileEntry[] = [];
   for (const [name, stat] of fileSessionPairs) {
-    if (stat.total > 0 && stat.attributed === stat.total && [...stat.sids].every((id) => written.has(id))) {
+    if (stat.total > 0 && stat.damaged === 0 && stat.attributed === stat.total && [...stat.sids].every((id) => written.has(id))) {
       const path = join(logDir, name);
       try { subsumed.push(entry(path)); } catch { /* skip */ }
     }
   }
-  return { sessions, unattributable, subsumed };
+  return { sessions, unattributable, subsumed, blocked };
 }
 
 export function applyMerge(plan: MergePlan, opts: { prune: boolean }): { written: string[]; pruned: string[]; skipped: string[]; bytes: number } {

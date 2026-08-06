@@ -613,6 +613,9 @@ function runMerge(args: string[]) {
   const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR] [--prune] [--yes]");
   const logDir = (v.dir as string) || ".cctrace";
   const plan = planMerge(logDir);
+  for (const b of plan.blocked) {
+    log(`Skipped ${b.outName}: ${b.reason} — merge never overwrites what it can't fully read`, C.yellow);
+  }
   if (!plan.sessions.length) {
     log(`No session traces to merge in ${logDir}`, C.green);
     return;
@@ -1097,6 +1100,7 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): st
     }
     if (!sids.size) return null;
     const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true });
+    for (const b of plan.blocked) log(`Auto-merge skipped ${b.outName}: ${b.reason}`, C.dim);
     if (!plan.sessions.length) return null;
     const res = applyMerge(plan, { prune: true });
     if (!res.written.length) return null;

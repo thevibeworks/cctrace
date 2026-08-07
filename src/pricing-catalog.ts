@@ -11,8 +11,15 @@ import { join } from "path";
 // everything still renders offline — just without costs for foreign models.
 
 const MODELS_DEV_URL = "https://models.dev/api.json";
-/** Providers whose models cctrace can actually meet on the wire. */
-export const PRICING_PROVIDERS = ["anthropic", "openai", "xai", "moonshotai"];
+/**
+ * Providers whose models cctrace can actually meet on the wire. Order is
+ * trust order (first repeat of an id wins in filterCatalog): "opencode"
+ * (the OpenCode Zen gateway, #89) goes LAST — zen resells claude/gpt/grok
+ * models under their original ids, so the originating provider's rates win
+ * and only zen-exclusive ids (deepseek-v4-flash-free, big-pickle, ...) are
+ * added at zen's own prices.
+ */
+export const PRICING_PROVIDERS = ["anthropic", "openai", "xai", "moonshotai", "opencode"];
 
 /**
  * Coding-plan wire ids -> the models.dev id carrying real per-token rates.

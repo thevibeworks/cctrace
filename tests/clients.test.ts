@@ -4,10 +4,11 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { CLIENTS, findClientBinary, wireTables } from "../src/clients";
 import { codexProviderHosts } from "../src/clients/codex";
+import { opencodeConfigHosts } from "../src/clients/opencode";
 
 describe("client profiles (#20)", () => {
-  test("claude, codex, grok, and kimi are registered", () => {
-    for (const name of ["claude", "codex", "grok", "kimi"]) {
+  test("claude, codex, grok, kimi, and opencode are registered", () => {
+    for (const name of ["claude", "codex", "grok", "kimi", "opencode"]) {
       const p = CLIENTS[name]!;
       expect(p.name).toBe(name);
       expect(p.candidates("/home/x").length).toBeGreaterThan(0);
@@ -31,7 +32,7 @@ describe("client profiles (#20)", () => {
   test("wireTables() is JSON-safe and drops discovery fields", () => {
     const w = wireTables();
     expect(JSON.parse(JSON.stringify(w))).toEqual(w);
-    expect(Object.keys(w).sort()).toEqual(["claude", "codex", "grok", "kimi"]);
+    expect(Object.keys(w).sort()).toEqual(["claude", "codex", "grok", "kimi", "opencode"]);
     expect((w.claude as any).candidates).toBeUndefined();
   });
 
@@ -95,5 +96,35 @@ describe("codex custom provider hosts (config.toml)", () => {
     // absent config: empty, never a throw
     expect(CLIENTS.codex!.configHosts!({ CODEX_HOME: join(dir, "nope") })).toEqual([]);
     expect(CLIENTS.codex!.configHosts!({})).toEqual(expect.any(Array));
+  });
+});
+
+describe("opencode custom provider hosts (#89)", () => {
+  test("every baseURL enrolls; JSONC comments and broken URLs don't break the scan", () => {
+    const jsonc = [
+      "{",
+      '  // custom gateway with an https:// url in a comment: https://not-parsed.example',
+      '  "provider": {',
+      '    "zenmux": { "options": { "baseURL": "https://zenmux.ai/api/v1", }, },', // trailing commas
+      '    "corp": { "options": { "baseURL": "https://gw.corp.example:8443/anthropic" } },',
+      '    "broken": { "options": { "baseURL": "not a url" } }',
+      "  }",
+      "}",
+    ].join("\n");
+    expect(opencodeConfigHosts(jsonc).sort()).toEqual(["gw.corp.example", "zenmux.ai"]);
+  });
+
+  test("configHosts unions global + $OPENCODE_CONFIG files, fail-soft", () => {
+    const home = mkdtempSync(join(tmpdir(), "cctrace-opencode-home-"));
+    const cfgDir = join(home, ".config", "opencode");
+    mkdirSync(cfgDir, { recursive: true });
+    writeFileSync(join(cfgDir, "opencode.json"), '{"provider":{"a":{"options":{"baseURL":"https://global.provider.test/v1"}}}}');
+    const explicit = join(home, "explicit.jsonc");
+    writeFileSync(explicit, '{"provider":{"b":{"options":{"baseURL":"https://explicit.provider.test/v1"}}}}');
+    const hosts = CLIENTS.opencode!.configHosts!({ HOME: home, OPENCODE_CONFIG: explicit });
+    expect(hosts).toContain("global.provider.test");
+    expect(hosts).toContain("explicit.provider.test");
+    // absent config: empty, never a throw
+    expect(CLIENTS.opencode!.configHosts!({ HOME: join(home, "nope") })).toEqual(expect.any(Array));
   });
 });

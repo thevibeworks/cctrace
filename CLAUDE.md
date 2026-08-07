@@ -17,8 +17,9 @@ src/
 ├── loader.cjs      # CJS loader for --require (legacy)
 ├── preload.ts      # Built to .cache/preload.cjs (legacy)
 ├── clients/        # Client plugins: binary discovery + declarative wire tables
-│                   #   (claude/codex/grok/kimi — dialect, firstPartyHosts, category
-│                   #   pins, session/thread headers; JSON-safe, embedded into
+│                   #   (claude/codex/grok/kimi/opencode — dialect, firstPartyHosts,
+│                   #   category pins, session/thread headers, providerHosts for
+│                   #   multi-provider clients; JSON-safe, embedded into
 │                   #   the page as CLIENT_WIRE; adding a client = one file)
 ├── dialects/
 │   └── openai.ts   # OpenAI adapters. Responses (codex/grok): response.completed
@@ -156,7 +157,7 @@ Read docs/design/ui.md for the design rules before adding UI.
 
 
 **Client plugins** (`src/clients/`, #20): a leading client word
-(`claude`|`codex`|`grok`|`kimi`) picks who gets traced; the rest of the grammar is
+(`claude`|`codex`|`grok`|`kimi`|`opencode`) picks who gets traced; the rest of the grammar is
 unchanged. Non-Claude clients always run mitm — HTTPS_PROXY + the combined
 CA bundle (#17) cover their Rust/Go/native TLS stacks; `--client-path`
 overrides discovery for any client. Each plugin is one self-describing
@@ -182,7 +183,7 @@ External. Unlabeled pre-0.13 pairs categorize exactly as before
 `src/dialects/openai.ts` (see the Sessions view above); wire session ids
 come from headers — or a body field the wire table names
 (`sessionBodyField`) — via `extractSessionId(pair, wire)`, so cross-run
-continuity works for codex/grok/kimi too. Kimi Code's coding-plan calls are
+continuity works for codex/grok/kimi/opencode too. Kimi Code's coding-plan calls are
 OpenAI Chat Completions (`.../chat/completions`, matched by the same path
 tail) — categorized as Messages, reconstructed via the `openaiInput` adapter
 (above); its host pins (`api.kimi.com/coding/v1/{usages,models,feedback}`,
@@ -193,6 +194,25 @@ pay-per-token rates (`CATALOG_ALIASES` in src/pricing-catalog.ts: wire
 `k3` -> models.dev `moonshotai/kimi-k3` — models.dev's own kimi-for-coding
 provider lists $0 subscription prices, and the cost chip estimates spend
 the same way it does for Claude Max OAuth traffic).
+
+opencode (#89) is the multi-provider client: the chosen model decides which
+provider gets the call (OpenCode Zen gateway at `opencode.ai/zen`, BYO
+Anthropic/OpenAI, copilot, openrouter, ...), and zen itself mounts BOTH
+dialects (`/zen/v1/messages` + `/zen/v1/responses|chat/completions`) — no
+per-host dialect machinery needed because `wireDialect(pair)` already picks
+anthropic vs openai PER PAIR from the path shape; the client-level `dialect:
+"openai"` only steers categorizeUrl's fallback. Interception scope comes
+from `wire.providerHosts` (new in 0.38: single-purpose LLM API hosts a
+multi-provider client can route to, enrolled unconditionally by
+`buildInterceptSet` — safe because decrypting a model-API host can only
+capture model traffic; shared hosts like github.com/googleapis.com stay
+opaque tunnels on purpose) plus `configHosts` scanning `"baseURL"` values
+in every opencode.json(c) the client would read ($OPENCODE_CONFIG, global
+config dir, cwd). Zen calls carry the sqlite session id on the wire
+(`x-opencode-session: ses_…`), so cross-run continuity + exit auto-merge
+work unchanged; zen-only models price via the models.dev `opencode`
+provider, appended LAST in PRICING_PROVIDERS so resold claude/gpt ids keep
+the originating provider's rates.
 
 Trace-management subcommands bypass the OPTIONS/`--` grammar (dispatched in
 `cli.ts` before the strict parser). They read saved traces only — no proxy, no

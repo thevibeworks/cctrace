@@ -1872,14 +1872,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // reads like the CHANGELOG's top, not a museum plaque.
       const about = 'cctrace v' + META.version + '\\n' +
         'X-ray vision for coding agents \\u2014 every request, token, and dollar on the wire.\\n' +
-        'Traces Claude Code, Codex, Grok, and Kimi at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
+        'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 codex responses-lite \\u2014 sessions reconstruct again on codex >= 0.146 (empty completed events, hollow answers fixed)\\n' +
-        '\\u00b7 codex system prompts \\u2014 the leading developer run folds into the system prompt; the real prompt names the session\\n' +
-        '\\u00b7 exit consolidation \\u2014 huge-session exits stopped looking hung: scan-first planning + progress lines\\n' +
-        '\\u00b7 port 8722 \\u2014 the default: TRAC on a phone keypad (legacy 9317 range still discovered)\\n' +
-        '\\u00b7 dashboard v2 \\u2014 past runs open directly, rows carry size/pairs/tokens/cost\\n' +
+        '\\u00b7 cctrace opencode \\u2014 the multi-provider client traced: zen gateway, BYO keys, copilot; dialect detected per request\\n' +
+        '\\u00b7 provider enrollment \\u2014 popular LLM API hosts intercept out of the box; custom baseURLs auto-enroll from opencode.json\\n' +
+        '\\u00b7 zen continuity \\u2014 x-opencode-session on the wire: resumed runs merge into one session file\\n' +
+        '\\u00b7 zen pricing \\u2014 gateway-only models cost-chip from the models.dev opencode catalog\\n' +
+        '\\u00b7 codex responses-lite \\u2014 sessions reconstruct again on codex >= 0.146\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

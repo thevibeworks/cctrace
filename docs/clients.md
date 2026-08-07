@@ -1,4 +1,4 @@
-# Beyond Claude: Codex, Grok, Kimi Code, and compat providers
+# Beyond Claude: Codex, Grok, Kimi Code, opencode, and compat providers
 
 The capture core is client-agnostic -- it's a TLS-intercepting proxy, and any
 CLI that honors `HTTPS_PROXY` plus the standard cert env vars gets traced.
@@ -11,6 +11,7 @@ A leading client word picks who runs:
 cctrace codex -- exec "fix the failing tests"   # OpenAI Codex CLI
 cctrace grok -- -p "explain this stack trace"   # Grok CLI
 cctrace kimi                                    # Kimi Code CLI (Moonshot AI)
+cctrace opencode -- run "add tests"             # opencode (any provider)
 ```
 
 Non-Claude clients always use mitm capture, and get the full treatment:
@@ -36,6 +37,17 @@ Client notes:
   estimates at the equivalent pay-per-token rates (`k3` at
   `moonshotai/kimi-k3` rates) -- the cost chip is an estimate, not a bill,
   the same convention that prices Claude Max OAuth traffic.
+- **opencode** -- multi-provider: the model you pick decides where the
+  calls go, and the dialect is detected per request from the wire shape,
+  so Anthropic- and OpenAI-shaped calls in one session both reconstruct.
+  The OpenCode Zen gateway (`opencode.ai/zen`) and the popular direct
+  provider hosts (Anthropic, OpenAI, OpenRouter, Copilot, Gemini, xAI,
+  DeepSeek, Groq, Mistral) are intercepted out of the box; custom
+  providers enroll automatically from `opencode.json(c)` `baseURL`s, or
+  manually with `--intercept-host`. Zen model calls carry the session id
+  in the `x-opencode-session` header, so cross-run continuity and the
+  session file consolidation work like they do for Claude; zen-only
+  models price from the models.dev OpenCode Zen catalog.
 
 ## Third-party Anthropic-compatible providers
 

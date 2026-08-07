@@ -11,7 +11,7 @@ description: >
   traces (view, clean, merge, compress), or find which port a running cctrace
   instance is on. Also use it when the user mentions cctrace, trace files in
   a .cctrace/ directory, MITM-capturing Claude traffic, tracing a third-party
-  ANTHROPIC_BASE_URL provider, or tracing the codex / grok / kimi CLIs.
+  ANTHROPIC_BASE_URL provider, or tracing the codex / grok / kimi / opencode CLIs.
 ---
 
 # cctrace — trace Claude Code's HTTP traffic
@@ -39,6 +39,7 @@ cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
 cctrace grok -- -p "..."         # trace the Grok CLI
 cctrace kimi                     # trace the Kimi Code CLI (all non-Claude use mitm)
+cctrace opencode -- run "..."    # trace opencode across all its providers
 ```
 
 A traced session tells its child processes where the capture lives: the
@@ -254,7 +255,7 @@ One JSON object per line, schema (`src/types.ts`):
                 "truncated": true // present iff upstream died mid-stream
               },                  // null when no response arrived
   "duration": 1234,               // ms
-  "client": "claude",             // who produced it: claude|codex|grok|kimi (0.13+)
+  "client": "claude",             // who produced it: claude|codex|grok|kimi|opencode (0.13+)
   "prior": "trace-…jsonl"         // present iff merged from a previous run
 }
 ```
@@ -282,6 +283,12 @@ prompt's signature — but K3 sends the session id in the request body
 `--resume`), so cross-run continuity and the Session view work the same;
 its auto-compactions render as boundary markers, and coding-plan models
 price as estimates at the equivalent pay-per-token (moonshotai) rates.
+opencode is multi-provider — the wire shape of each request picks its
+dialect, so Anthropic- and OpenAI-shaped calls in one session both
+reconstruct; OpenCode Zen gateway calls (`opencode.ai/zen`) carry the
+session id in the `x-opencode-session` header (`ses_…`), giving the same
+cross-run continuity, and custom provider hosts enroll automatically from
+`opencode.json(c)` `baseURL` entries.
 
 ## Privacy — treat traces as sensitive
 

@@ -63,6 +63,32 @@ describe("intercept include-list", () => {
     expect(hostInSet("example.com", set)).toBe(false);
   });
 
+  // opencode is multi-provider (#89): the catalog routes model calls to
+  // whichever provider the chosen model belongs to, so the wire table
+  // enumerates the popular single-purpose LLM API hosts for enrollment.
+  test("opencode: provider hosts (and their subdomains) are intercepted", () => {
+    const set = buildInterceptSet(CLIENTS.opencode!.wire);
+    for (const h of [
+      "api.anthropic.com", // BYO key / Claude Pro-Max oauth
+      "api.openai.com",
+      "openrouter.ai",
+      "api.githubcopilot.com", // suffix match on githubcopilot.com
+      "api.business.githubcopilot.com",
+      "generativelanguage.googleapis.com",
+      "opencode.ai", // the zen gateway is first-party
+      "console.opencode.ai",
+      "models.dev", // catalog pin
+    ]) {
+      expect(hostInSet(h, set)).toBe(true);
+    }
+    // The copilot token mints at api.github.com — a shared host that also
+    // carries the user's gh traffic. It must stay an opaque tunnel, along
+    // with everything else multi-purpose.
+    for (const h of ["api.github.com", "github.com", "googleapis.com", "storage.googleapis.com"]) {
+      expect(hostInSet(h, set)).toBe(false);
+    }
+  });
+
   test("hostInSet is suffix-safe: evil-anthropic.com does not match anthropic.com", () => {
     const set = buildInterceptSet(CLIENTS.claude!.wire);
     expect(hostInSet("evil-anthropic.com", set)).toBe(false);

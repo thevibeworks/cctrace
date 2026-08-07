@@ -22,8 +22,10 @@
 Runs on Bun. `cctrace` wraps the client transparently: `cctrace -- --continue`
 passes everything after `--` to the Claude CLI verbatim; a leading client
 word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`,
-`cctrace kimi`). Codex/Grok speak OpenAI Responses; Kimi Code speaks OpenAI
-Chat Completions — both reconstruct into the same sessions view. Traces
+`cctrace kimi`, `cctrace opencode`). Codex/Grok speak OpenAI Responses;
+Kimi Code speaks OpenAI Chat Completions; opencode is multi-provider (each
+request's dialect is detected from its wire shape) — all reconstruct into
+the same sessions view. Traces
 land in `.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair
 per line) — the .jsonl IS the trace; snapshots render on demand. Capture
 modes: `mitm` (default, full first-party picture via HTTPS_PROXY +
@@ -51,7 +53,7 @@ Key commands:
 - [Capture modes](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/capture-modes.md): mitm/base-url/node, tunnel scope model, proxy internals, output format
 - [Web UI](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/web-ui.md): row chips, sessions view, replay, cost, continuity, multi-instance
 - [Saved traces](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/traces.md): view/clean/merge/compress/purge/compact + housekeeping guarantees
-- [Clients](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/clients.md): codex/grok/kimi wire notes, third-party Anthropic-compatible providers
+- [Clients](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/clients.md): codex/grok/kimi/opencode wire notes, third-party Anthropic-compatible providers
 - [CHANGELOG](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CHANGELOG.md): released changes
 - [CLAUDE.md](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CLAUDE.md): architecture and design decisions (agent-oriented)
 - [SECURITY](https://raw.githubusercontent.com/thevibeworks/cctrace/main/SECURITY.md): redaction guarantees, reporting
@@ -62,6 +64,7 @@ Key commands:
 - The trace .jsonl is machine-readable: one JSON pair per line with request,
   response, timing, and the session id on the wire — Claude inside
   `request.body.metadata.user_id`, codex/grok in request headers, kimi in
-  `request.body.prompt_cache_key`.
+  `request.body.prompt_cache_key`, opencode gateway calls in the
+  `x-opencode-session` header.
 - A trace records a real session — treat saved traces as sensitive; review
   before sharing.

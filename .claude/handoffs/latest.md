@@ -1,57 +1,57 @@
-# Handoff: 0.35.0 + 0.36.0 shipped, idle
+# Handoff: 0.38.0 — opencode client shipped (#89)
 
-> 2026-08-06 · main @ 0d92df9 · 0 dirty files
+> 2026-08-07 · release PR in flight from main @ 39de9cb
 
 ## Goal
 
-Ship Eric's 2026-08-06 feedback batch (14 numbered items on the 0.34.0 test)
-plus his two follow-ups. All done and released; session is idle awaiting his
-return ("keep ship and release, be back later").
+Eric: "our deva framework just supported the opencode agent... add support
+for tracing opencode in cctrace" (issue #89). Done, released as 0.38.0.
 
 ## State
 
-Everything committed, released, published, verified. No work in flight.
-
-- v0.35.0 (PR #86): dashboard v2 — past runs open via /view/<run-id>
-  (server-rendered, registry-resolved), exit stats stamped into tombstones,
-  group-by + paging, shared icons (src/icons.ts), header ▦ dashboard icon,
-  last session turn unclamped; #82 CONNECT fixes; #83 --bypass-host.
-  npm shasum 29a39041...
-- v0.36.0 (PR #87): DEFAULT_PORT 9317 -> 8722 (TRAC on phone keypad; legacy
-  9317..9326 still swept), capture-time identity masking now opt-in via
-  --redact-ids / CCTRACE_REDACT_IDS=1. npm shasum 6d6ea0d9...
-- Repo description rewritten (item 3). Settings proposal filed as #85 +
-  docs/design/settings.md. Issues #82/#83 closed by #86.
-- Tests: bun test -> 613 pass, 0 fail. Local binary: cctrace v0.36.0.
-- Memory updated: cctrace-release-flow.md carries both release records.
+- src/clients/opencode.ts: plugin with wire table + opencodeConfigHosts
+  (regex over "baseURL" in opencode.json(c): $OPENCODE_CONFIG, XDG global,
+  cwd). sessionHeader x-opencode-session (ses_... rides zen calls — live
+  verified). dialect "openai" is categorize-fallback only; wireDialect
+  picks per pair (zen mounts /zen/v1/messages AND /responses|/chat/
+  completions — the per-host dialect worry in #89 was already solved by
+  shape-first design).
+- ClientWire.providerHosts (new field, src/clients/types.ts) + one
+  buildInterceptSet hunk (src/certs.ts): single-purpose LLM API hosts
+  enrolled unconditionally (anthropic/openai/openrouter/githubcopilot/
+  generativelanguage/x.ai/deepseek/groq/mistral). github.com +
+  googleapis.com deliberately NOT enrolled (shared hosts; the existing
+  api.github.com-never-intercepted test guards this).
+- Pricing: "opencode" appended LAST to PRICING_PROVIDERS — zen resale ids
+  lose to originating providers, zen-only ids priced.
+- Icon glyph (terminal prompt), help text, docs (clients.md, README,
+  SKILL.md, CLAUDE.md, llms.txt, index.html en+zh), CHANGELOG 0.38.0,
+  renderVer highlights refreshed.
+- Live-verified against the zen gateway with OPENCODE_API_KEY from .env:
+  capture, categorization, reconstruction (4-turn cross-process continued
+  session, thinking blocks), auto-merge to session-<sid>.jsonl, snapshot.
+- Tests: 643 pass. Devlog:
+  docs/devlog/2026-08-07-opencode-multi-provider-client.org.
 
 ## Next
 
-1. Nothing queued. When Eric returns, likely follow-ups: his verdict on
-   port 8722 vs his floated 9417 (one-constant change in src/instances.ts
-   DEFAULT_PORT if he prefers), and settings panel phase 1 (#85,
-   docs/design/settings.md — /api/config + gear icon).
+1. Standing candidate: settings panel phase 1 (#85).
+2. opencode phase 2 when real traces exist: exotic providers (bedrock/
+   vertex/azure), subagent session linking (ses_ parent lives in sqlite,
+   not on the wire), copilot /models External-vs-bootstrap call.
+3. BYO-Anthropic leg still untested live (no ANTHROPIC_API_KEY here).
 
 ## Don't repeat
 
-- Portless-by-default: VETOED (item 14) — Node-24+ labs dep, breaks port-walk
-  discovery. Convention (honor $PORT) is the integration.
-- Sid-masking at capture: removed by default per Eric's explicit insistence —
-  do not re-add; credentials-always-redact stays non-configurable.
-- /view/<id> must keep the sid -> file fallback: pre-0.36 traces/registry
-  entries carry REDACTED sids (94f19c3d-****) that can't resolve as sessions.
-- Dashboard settings page editing capture behavior: rejected in #85 design
-  (hostile-data UI must not gain write access to capture config).
-
-## Read first
-
-1. CHANGELOG.md (0.35.0 + 0.36.0 entries) — what shipped
-2. docs/design/settings.md — the next likely feature's design
-3. memory/cctrace-release-flow.md — release mechanics + gotchas
+- providerHosts must stay single-purpose model hosts ONLY — enrolling a
+  shared host (github.com) decrypts unrelated authed traffic (0.16 scar).
+- opencode config scan is a one-key regex on purpose — JSONC comment
+  stripping breaks on URLs ("//").
+- reference/ + live-trace strings never land in tracked files.
 
 ## Verify
 
-git rev-parse --short HEAD          # expect 0d92df9
-git status --porcelain | wc -l      # expect 0
-bun test 2>&1 | tail -3             # expect 613 pass, 0 fail
-npm view @thevibeworks/cctrace version  # expect 0.36.0
+git log --oneline -2                    # release commit on main
+bun test 2>&1 | tail -3                 # 643 pass
+cctrace opencode -- run -m opencode/deepseek-v4-flash-free "hi"
+npm view @thevibeworks/cctrace version  # 0.38.0

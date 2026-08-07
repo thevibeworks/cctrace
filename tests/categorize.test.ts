@@ -130,6 +130,36 @@ describe("categorizeUrl — client-scoped wire tables", () => {
     });
   }
 
+  // opencode (#89) is multi-provider: model calls categorize by wire shape
+  // on WHATEVER host the catalog routed to — Anthropic- and OpenAI-shaped
+  // calls in the same session — while opencode's own infra pins/falls
+  // through like any other non-anthropic client.
+  const opencodeCases: Array<[string, string]> = [
+    ["https://opencode.ai/zen/v1/messages?beta=true", "messages"], // zen gateway, anthropic-shaped
+    ["https://opencode.ai/zen/v1/chat/completions", "messages"], // zen gateway, openai-shaped
+    ["https://api.anthropic.com/v1/messages", "messages"], // BYO Anthropic key
+    ["https://api.githubcopilot.com/chat/completions", "messages"], // copilot provider
+    ["https://openrouter.ai/api/v1/chat/completions", "messages"],
+    ["https://console.opencode.ai/auth/device/code", "oauth"],
+    ["https://console.opencode.ai/auth/device/token", "oauth"],
+    ["https://console.anthropic.com/v1/oauth/token", "oauth"], // Claude Pro/Max refresh
+    ["https://models.dev/api.json", "bootstrap"], // provider/model catalog
+    ["https://models.opencode.ai/api.json", "bootstrap"],
+    // first-party but unpinned: honestly "other", never the Anthropic keywords
+    ["https://api.opencode.ai/get_github_app_installation", "other"],
+    ["https://opencode.ai/config.json", "other"],
+    // provider infra that is NOT a model call stays external — the taxonomy
+    // has no honest first-party category for someone else's endpoints
+    ["https://api.githubcopilot.com/models", "external"],
+    ["https://api.github.com/copilot_internal/v2/token", "external"],
+    ["https://registry.npmjs.org/opencode-ai", "external"],
+  ];
+  for (const [url, expected] of opencodeCases) {
+    test(`opencode: ${url.replace(/^https:\/\//, "")} -> ${expected}`, () => {
+      expect(cat(url, "opencode")).toBe(expected);
+    });
+  }
+
   test("claude wire falls through to the Anthropic keyword taxonomy", () => {
     expect(cat("https://api.anthropic.com/api/oauth/usage", "claude")).toBe("usage");
     expect(cat("https://api.anthropic.com/api/event_logging/v2/batch", "claude")).toBe("telemetry");

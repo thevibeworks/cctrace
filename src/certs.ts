@@ -238,11 +238,14 @@ export function isInterceptHost(host: string): boolean {
  * the spawn env, and --intercept-host extras.
  */
 export function buildInterceptSet(
-  wire: { firstPartyHosts: string[]; hostCategories: Array<[string, string]> },
+  wire: { firstPartyHosts: string[]; hostCategories: Array<[string, string]>; providerHosts?: string[] },
   opts: { env?: Record<string, string | undefined>; extraHosts?: string[] } = {},
 ): string[] {
   const suffixes = new Set<string>();
   for (const h of wire.firstPartyHosts) suffixes.add(h.toLowerCase());
+  // Multi-provider clients (opencode) enumerate the model-API hosts their
+  // catalog can route to — single-purpose hosts, safe to always enroll.
+  for (const h of wire.providerHosts || []) suffixes.add(h.toLowerCase());
   for (const [hostPath] of wire.hostCategories) {
     const host = hostPath.split("/")[0];
     if (host) suffixes.add(host.toLowerCase());

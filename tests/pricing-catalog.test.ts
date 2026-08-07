@@ -44,6 +44,15 @@ const API = {
   "kimi-for-coding": {
     models: { k3: { cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 } } },
   },
+  // The OpenCode Zen gateway (#89): resells claude/gpt models under their
+  // original ids (originating provider's rates must win) + zen-only ids.
+  opencode: {
+    models: {
+      "claude-opus-4-5": { cost: { input: 99, output: 99 } },
+      "deepseek-v4-flash-free": { cost: { input: 0, output: 0, cache_read: 0 } },
+      "big-pickle": { cost: { input: 0.4, output: 1.2, cache_read: 0.04 } },
+    },
+  },
   "some-reseller": {
     models: { "gpt-5.6": { cost: { input: 99, output: 99 } } },
   },
@@ -54,7 +63,9 @@ const CATALOG = filterCatalog(API);
 describe("filterCatalog", () => {
   test("keeps only priced models from the trusted providers", () => {
     expect(Object.keys(CATALOG).sort()).toEqual([
+      "big-pickle",
       "claude-opus-4-5",
+      "deepseek-v4-flash-free",
       "gpt-5.6",
       "grok-4.5",
       "k3",
@@ -68,6 +79,9 @@ describe("filterCatalog", () => {
 
   test("reseller providers never override the trusted price", () => {
     expect(CATALOG["gpt-5.6"].input).toBe(2);
+    // zen is trusted for its own ids but its claude resale loses to anthropic
+    expect(CATALOG["claude-opus-4-5"].input).toBe(5);
+    expect(CATALOG["big-pickle"]).toEqual({ input: 0.4, output: 1.2, cacheRead: 0.04 });
   });
 
   test("kimi coding-plan wire ids estimate at moonshotai per-token rates", () => {

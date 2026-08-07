@@ -31,6 +31,7 @@ cctrace                # trace Claude Code
 cctrace codex          # or the OpenAI Codex CLI
 cctrace grok           # or the Grok CLI
 cctrace kimi           # or the Kimi Code CLI (Moonshot AI)
+cctrace opencode       # or opencode (any provider it routes to)
 ```
 
 That's it. The agent launches normally. You get a browser tab showing
@@ -241,7 +242,7 @@ sharing. Never paste raw output into a public issue. Seriously.
 |---|---|
 | [Install & options](docs/install.md) | [Capture modes & proxy internals](docs/capture-modes.md) |
 | [The web UI tour](docs/web-ui.md) | [Saved traces & housekeeping](docs/traces.md) |
-| [Codex / Grok / Kimi / providers](docs/clients.md) | [Agent skill](skills/cctrace/SKILL.md) · [CHANGELOG](CHANGELOG.md) |
+| [Codex / Grok / Kimi / opencode / providers](docs/clients.md) | [Agent skill](skills/cctrace/SKILL.md) · [CHANGELOG](CHANGELOG.md) |
 
 ## Roadmap
 

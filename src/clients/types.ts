@@ -33,6 +33,16 @@ export interface ClientWire {
   sessionBodyField?: string;
   /** Request header carrying the thread/conversation id. */
   threadHeader: string;
+  /**
+   * Model-provider host suffixes a MULTI-PROVIDER client routes model calls
+   * to (opencode: the catalog fans out to whichever provider the chosen
+   * model belongs to). Enrolled for interception like firstPartyHosts, but
+   * NOT first-party for categorization — their model calls categorize by
+   * wire shape, everything else follows the normal rules. List only
+   * single-purpose LLM API hosts: decrypting one can only capture model
+   * traffic, so unconditional enrollment can't over-capture.
+   */
+  providerHosts?: string[];
 }
 
 export interface ClientPlugin {

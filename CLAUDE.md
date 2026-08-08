@@ -54,6 +54,8 @@ src/
 │                   #   the data dir, filtered to anthropic/openai/xai
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
+├── vendor/
+│   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 ├── html.ts         # Static HTML generator (legacy node mode only)
 └── types.ts        # Shared types
 ```

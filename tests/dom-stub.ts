@@ -1,6 +1,7 @@
 // Minimal DOM stub for executing the inline page script outside a browser.
 // Enough surface for boot + route rendering; innerHTML writes are recorded so
 // tests can grammar-check every fragment the page generates.
+import markedSrc from "../src/vendor/marked.umd.js" with { type: "text" };
 
 export type Listener = (e: unknown) => void;
 
@@ -138,6 +139,8 @@ export function bootPage(snapshotHtml: string): StubPage {
   if (!scriptMatch) throw new Error("page script not found in snapshot html");
 
   const errors: string[] = [];
+  // Eval vendored libraries the page loads in earlier <script> tags (marked.js)
+  new Function(markedSrc)();
   const run = new Function(
     "window", "document", "localStorage", "location", "history", "navigator", "WebSocket", "fetch",
     scriptMatch[1],

@@ -56,6 +56,7 @@ import {
   richToolBody,
 } from "./session";
 import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
+import markedSrc from "./vendor/marked.umd.js" with { type: "text" };
 import {
   pairStartMs,
   pairEndMs,
@@ -822,15 +823,69 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       line-height: 1.5;
     }
     .msg-text.think { color: var(--text-muted); font-style: italic; }
-    /* Markdown subset inside assistant text (renderMd). Same type scale,
-       no new colors: emphasis comes from weight and hairline boxes. */
+    /* Inline code + code blocks (shared by old snapshots and marked output) */
     .msg-text code {
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: 3px; padding: 0 4px; font-size: 11px;
     }
     .msg-text .md-code { margin: 6px 0; font-size: 11px; }
+    .msg-text .md-code code {
+      background: none; border: none; border-radius: 0; padding: 0;
+    }
     .msg-text .md-h { font-weight: 600; color: var(--text); margin: 8px 0 2px; }
     .msg-text a { color: var(--accent); }
+    /* ---- Full markdown (marked.js GFM) ---- */
+    .msg-md { white-space: normal; }
+    .msg-md p { margin: 0 0 8px; }
+    .msg-md p:last-child { margin-bottom: 0; }
+    .msg-md > :first-child { margin-top: 0; }
+    .msg-md > :last-child { margin-bottom: 0; }
+    .msg-md h1, .msg-md h2, .msg-md h3,
+    .msg-md h4, .msg-md h5, .msg-md h6 {
+      font-weight: 600; color: var(--text);
+      margin: 14px 0 6px; line-height: 1.3;
+    }
+    .msg-md h1 { font-size: 15px; }
+    .msg-md h2 { font-size: 14px; }
+    .msg-md h3 { font-size: 13px; }
+    .msg-md h4, .msg-md h5, .msg-md h6 { font-size: 12px; }
+    .msg-md ul, .msg-md ol {
+      margin: 4px 0 8px; padding-left: 22px;
+    }
+    .msg-md li { margin: 2px 0; }
+    .msg-md li > p { margin: 2px 0; }
+    .msg-md li > ul, .msg-md li > ol { margin: 2px 0 2px; }
+    .msg-md input[type="checkbox"] {
+      margin: 0 6px 0 -18px; vertical-align: middle;
+      pointer-events: none;
+    }
+    .msg-md table {
+      border-collapse: collapse; margin: 8px 0;
+      font-size: 11px; width: auto; max-width: 100%;
+      display: block; overflow-x: auto;
+    }
+    .msg-md th, .msg-md td {
+      border: 1px solid var(--border); padding: 4px 10px;
+      text-align: left; white-space: nowrap;
+    }
+    .msg-md th {
+      background: var(--bg-surface); font-weight: 600; color: var(--text);
+    }
+    .msg-md td { white-space: normal; }
+    .msg-md tr:nth-child(even) td {
+      background: color-mix(in srgb, var(--bg-surface) 30%, var(--bg));
+    }
+    .msg-md blockquote {
+      margin: 8px 0; padding: 2px 12px;
+      border-left: 3px solid var(--border); color: var(--text-muted);
+    }
+    .msg-md blockquote p { margin: 4px 0; }
+    .msg-md hr {
+      border: none; border-top: 1px solid var(--border); margin: 12px 0;
+    }
+    .msg-md strong { font-weight: 600; color: var(--text); }
+    .msg-md del { color: var(--text-muted); }
+    .msg-md img { max-width: 100%; }
     /* Long texts clamp with an explicit expander instead of an inner scrollbar,
        so the mouse wheel never gets trapped inside a turn. */
     .msg-clamp.clamped .msg-text {
@@ -1371,6 +1426,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <div id="pulse"></div>
   </div>
 
+  <script>${markedSrc}</script>
   <script>
     const pairs = [];
     // Snapshot pages embed their pairs in <head>; live pages stream over WS.
@@ -1875,10 +1931,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 cctrace opencode \\u2014 the multi-provider client traced: zen gateway, BYO keys, copilot; dialect detected per request\\n' +
-        '\\u00b7 provider enrollment \\u2014 popular LLM API hosts intercept out of the box; custom baseURLs auto-enroll from opencode.json\\n' +
-        '\\u00b7 zen continuity \\u2014 x-opencode-session on the wire: resumed runs merge into one session file\\n' +
-        '\\u00b7 zen pricing \\u2014 gateway-only models cost-chip from the models.dev opencode catalog\\n' +
+        '\\u00b7 full markdown in sessions \\u2014 tables, lists, task lists, blockquotes, code blocks via marked.js GFM\\n' +
+        '\\u00b7 cctrace opencode \\u2014 the multi-provider client traced: zen gateway, BYO keys, copilot\\n' +
+        '\\u00b7 provider enrollment \\u2014 popular LLM API hosts intercept out of the box\\n' +
         '\\u00b7 codex responses-lite \\u2014 sessions reconstruct again on codex >= 0.146\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
@@ -2723,39 +2778,39 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return s.length > n ? s.slice(0, n) + '...' : s;
     }
 
-    // Best-effort markdown for assistant reply text — a safe subset only:
-    // fenced code, inline code, headings, bold, bare http(s) links. The text
-    // is HTML-escaped FIRST; the transform emits nothing but our own tags,
-    // so wire content can never smuggle markup in. Everything else renders
-    // as-is (the container is pre-wrap, lists already read fine).
+    // Full GFM markdown via marked.js — tables, lists, task lists, code
+    // blocks, blockquotes, strikethrough, and everything the old regex
+    // renderer missed. Raw HTML in model output is escaped (same security
+    // posture as before). Links open in a new tab.
+    marked.use({
+      gfm: true,
+      breaks: true,
+      renderer: {
+        html({ text }) { return escapeHtml(text); },
+        link({ href, title, tokens }) {
+          const t = this.parser.parseInline(tokens);
+          return '<a href="' + href + '" target="_blank" rel="noopener"' +
+            (title ? ' title="' + title + '"' : '') + '>' + t + '</a>';
+        },
+        code({ text, lang }) {
+          const cls = lang ? ' class="language-' + escapeHtml(lang) + '"' : '';
+          return '<pre class="md-code"><code' + cls + '>' + text + '</code></pre>';
+        },
+      },
+    });
     function renderMd(text) {
-      const lines = escapeHtml(String(text == null ? '' : text)).split('\\n');
-      const inline = (s) => s
-        .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-        .replace(/\\*\\*([^*]+)\\*\\*/g, '<b>$1</b>')
-        .replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^)\\s]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-      let out = '';
-      let code = null; // non-null while inside a code fence
-      for (const ln of lines) {
-        if (/^\\s*\`\`\`/.test(ln)) {
-          if (code === null) code = [];
-          else { out += '<pre class="md-code">' + code.join('\\n') + '</pre>'; code = null; }
-          continue;
-        }
-        if (code !== null) { code.push(ln); continue; }
-        const h = ln.match(/^(#{1,4})\\s+(.*)$/);
-        if (h) { out += '<div class="md-h">' + inline(h[2]) + '</div>'; continue; }
-        out += inline(ln) + '\\n';
-      }
-      if (code !== null) out += '<pre class="md-code">' + code.join('\\n') + '</pre>'; // unclosed fence
-      return out;
+      let t = String(text == null ? '' : text);
+      t = t.replace(/\\u001b\\[[0-9;:?]*[a-zA-Z]/g, '')
+           .replace(/[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]/g, '');
+      return marked.parse(t);
     }
 
     // Long texts render clamped with a "show all" expander; short ones inline.
-    // md renders assistant reply text as markdown (safe subset, renderMd).
+    // md renders assistant reply text as markdown (marked.js GFM).
     function textBlock(text, cls, md, copy) {
       const t = String(text == null ? '' : text);
-      const inner = '<div class="msg-text' + (cls ? ' ' + cls : '') + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
+      const mcls = 'msg-text' + (md ? ' msg-md' : '') + (cls ? ' ' + cls : '');
+      const inner = '<div class="' + mcls + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
       // copy: a hover copy button for standalone user/assistant text (thinking
       // and tool_result text live inside folds that already carry copy). The
       // button copies the block's full text even when it renders clamped.
@@ -4242,7 +4297,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         let body = '';
         const rich = b.name === 'ExitPlanMode' && b.input && typeof b.input.plan === 'string'
-          ? '<div class="mdplan">' + renderMd(b.input.plan) + '</div>'
+          ? '<div class="mdplan msg-md">' + renderMd(b.input.plan) + '</div>'
           : richToolBody(b.name, b.input);
         if (rich) {
           body = rich + '<details class="rawin"><summary>raw input</summary>' + preBlock(formatJson(b.input)) + '</details>';

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.38.1
+
+- Replaced the hand-rolled markdown renderer with marked.js (GFM): assistant text in the session view now renders tables, ordered/unordered lists, task lists, blockquotes, horizontal rules, strikethrough, and nested formatting instead of just fenced code + bold + headings. The marked UMD bundle is vendored at src/vendor/marked.umd.js and embedded in the page at serve time, so snapshots and compiled binaries stay self-contained with no CDN dependency. Raw HTML in model output is escaped (same security posture as before)
+
 ## 0.38.0
 
 - Added opencode as a traced client (#89): cctrace opencode wraps opencode.ai's multi-provider CLI with the same mitm front door. There is no single wire for opencode — the model you pick decides which provider gets the call — so the dialect is detected per request from the wire shape: the OpenCode Zen gateway mounts Anthropic and OpenAI endpoints side by side (opencode.ai/zen/v1/messages and /responses|/chat/completions) and both reconstruct into one session. Zen model calls carry the session id in the x-opencode-session header, so cross-run continuity, view-by-session-id, and the exit consolidation into session-[sid].jsonl all work like they do for Claude; verified live against the zen gateway, including a two-process continued session merging into one 4-turn conversation

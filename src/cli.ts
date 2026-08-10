@@ -505,8 +505,8 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   process.on("exit", () => instance?.unregister());
   process.on("SIGINT", () => process.exit(0));
   process.on("SIGTERM", () => process.exit(0));
-  log(`Serving ${result.sources.join(", ")} at http://localhost:${server.port}${tailing ? " — tailing live" : ""} — Ctrl-C to stop`, C.green);
-  if (!opts.noOpen) setTimeout(() => openBrowser(`http://localhost:${server.port}`), 300);
+  log(`Serving ${result.sources.join(", ")} at http://localhost:${server.port}/trace${tailing ? " — tailing live" : ""} — Ctrl-C to stop`, C.green);
+  if (!opts.noOpen) setTimeout(() => openBrowser(`http://localhost:${server.port}/trace`), 300);
 }
 
 // `cctrace ps` — list live cctrace instances from the registry. Every
@@ -539,7 +539,7 @@ async function runPs(args: string[]) {
   // Pids are namespace-local: they identify/kill runs in YOUR namespace but
   // mean nothing across containers — liveness stays heartbeat+probe.
   const rows = list.map((i) => ({
-    url: `http://localhost:${i.port}`,
+    url: `http://localhost:${i.port}/trace`,
     pid: String(i.pid),
     agent: i.agentPid ? String(i.agentPid) : "-",
     client: i.client || "-",
@@ -1411,10 +1411,10 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // Capture runs leave a tombstone, not a deletion: the finished run stays
     // findable (view picker's "recent runs elsewhere", future trace library).
     process.on("exit", () => instance?.tombstone());
-    log(`Live UI: http://localhost:${server.port}`, C.green);
+    log(`Live UI: http://localhost:${server.port}/trace`, C.green);
     log(`Dashboard (all runs): http://localhost:${server.port}/dashboard`, C.dim);
     if (!opts.noOpen) {
-      setTimeout(() => openBrowser(`http://localhost:${server.port}`), 500);
+      setTimeout(() => openBrowser(`http://localhost:${server.port}/trace`), 500);
     }
   }
 
@@ -1529,10 +1529,10 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       startedAt: new Date().toISOString(),
     });
     process.on("exit", () => instance?.tombstone());
-    log(`Live UI: http://localhost:${livePort}`, C.green);
+    log(`Live UI: http://localhost:${livePort}/trace`, C.green);
     log(`Dashboard (all runs): http://localhost:${livePort}/dashboard`, C.dim);
     if (!opts.noOpen) {
-      setTimeout(() => openBrowser(`http://localhost:${livePort}`), 500);
+      setTimeout(() => openBrowser(`http://localhost:${livePort}/trace`), 500);
     }
   }
 
@@ -1602,7 +1602,7 @@ function resolveMode(claudePath: string): { mode: "mitm" | "base-url" | "node"; 
 function agentAwarenessNote(port: number | undefined, traceFile: string): string {
   return [
     "cctrace: this session's HTTPS traffic is traced by a local transparent proxy (HTTPS_PROXY points at it; subprocesses inherit it).",
-    port ? `Live trace UI: http://localhost:${port} — every request, token, and cost this session puts on the wire.` : "",
+    port ? `Live trace UI: http://localhost:${port}/trace — every request, token, and cost this session puts on the wire.` : "",
     `Trace file: ${traceFile}.`,
     "Anthropic API calls are captured; other hosts pass through an opaque tunnel (bytes counted, content untouched), so the proxy adds no meaningful latency.",
     "Caveat: some tools change behavior when proxy env vars are set (wrangler swaps undici's global dispatcher, so its timeout overrides only take effect with the proxy vars unset).",

@@ -30,8 +30,14 @@ const base = `http://127.0.0.1:${server.port}`;
 afterAll(() => server.stop());
 
 describe("live server ingestion", () => {
+  test("/ redirects to /dashboard", async () => {
+    const res = await fetch(`${base}/`, { redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(new URL(res.headers.get("location")!).pathname).toBe("/dashboard");
+  });
+
   test("the page wires its WebSocket origin-relative — no baked port", async () => {
-    const html = await (await fetch(`${base}/`)).text();
+    const html = await (await fetch(`${base}/trace`)).text();
     expect(html).toContain("location.host");
     expect(html).not.toContain("ws://localhost:");
   });

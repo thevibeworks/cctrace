@@ -47,7 +47,7 @@ spawned CLI (and its statuslines, hooks, and nested agents) sees
 `CCTRACE_TRACE_FILE` (the .jsonl being written), plus `CCTRACE_SERVER_PORT`
 and `CCTRACE_INSTANCE_ID` when a live server is running. An agent that finds
 these in its environment is running under cctrace and can open its own live
-UI at `http://localhost:$CCTRACE_SERVER_PORT/`.
+UI at `http://localhost:$CCTRACE_SERVER_PORT/trace`.
 
 Two gotchas worth knowing before suggesting commands:
 
@@ -78,7 +78,7 @@ with `HTTPS_PROXY="" https_proxy=""` prefixed.
 
 ## The web UI
 
-Prints as `Live UI: http://localhost:<port>` (8722 by default — TRAC on a phone keypad; concurrent
+Prints as `Live UI: http://localhost:<port>/trace` (8722 by default — TRAC on a phone keypad; concurrent
 instances land on 9318, 9319, ...). Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request. Content chips in

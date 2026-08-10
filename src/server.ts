@@ -405,6 +405,12 @@ export function createServer(config: ServerConfig) {
         });
       }
       if (url.pathname === "/" || url.pathname === "/index.html") {
+        // Root redirects to the dashboard — the right landing page when
+        // arriving via a hostname (cctrace.localhost) or a bookmark. The
+        // live trace lives at /trace; openBrowser links there directly.
+        return Response.redirect(new URL("/dashboard", req.url).href, 302);
+      }
+      if (url.pathname === "/trace") {
         // The page connects its WebSocket origin-relative, so no port is
         // baked in — behind container/host port forwards the bound port is
         // not the port the browser sees.

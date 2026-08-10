@@ -191,7 +191,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     for (var k = 0; k < list.length; k++) {
       var i = list[k];
       var row = baseRow(i, true);
-      row.href = 'http://' + location.hostname + ':' + Number(i.port) + '/';
+      row.href = 'http://' + location.hostname + ':' + Number(i.port) + '/trace';
       if (i.self) row.appendChild(el('span', 'self', 'this server'));
       row.appendChild(el('span', 'mode', i.mode || ''));
       row.appendChild(el('span', 'when', hm(i.startedAt)));

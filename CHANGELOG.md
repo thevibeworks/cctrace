@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.0
+
+- Changed root URL (/) to redirect to the dashboard instead of showing a single instance's live trace. Navigating to cctrace.localhost (or any bookmark of the root) now lands on the all-runs overview; the live trace moved to /trace. Auto-open from the CLI, dashboard live-instance links, instance switcher links, and cctrace ps all point to /trace directly. The WebSocket connects origin-relative, so no plumbing changed
+
 ## 0.38.1
 
 - Replaced the hand-rolled markdown renderer with marked.js (GFM): assistant text in the session view now renders tables, ordered/unordered lists, task lists, blockquotes, horizontal rules, strikethrough, and nested formatting instead of just fenced code + bold + headings. The marked UMD bundle is vendored at src/vendor/marked.umd.js and embedded in the page at serve time, so snapshots and compiled binaries stay self-contained with no CDN dependency. Raw HTML in model output is escaped (same security posture as before)

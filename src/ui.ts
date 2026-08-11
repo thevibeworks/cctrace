@@ -1931,10 +1931,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
+        '\\u00b7 / lands on the dashboard \\u2014 every run in one place; the live trace moved to /trace\\n' +
         '\\u00b7 full markdown in sessions \\u2014 tables, lists, task lists, blockquotes, code blocks via marked.js GFM\\n' +
         '\\u00b7 cctrace opencode \\u2014 the multi-provider client traced: zen gateway, BYO keys, copilot\\n' +
         '\\u00b7 provider enrollment \\u2014 popular LLM API hosts intercept out of the box\\n' +
-        '\\u00b7 codex responses-lite \\u2014 sessions reconstruct again on codex >= 0.146\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

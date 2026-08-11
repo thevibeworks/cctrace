@@ -82,6 +82,17 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
   return el;
 }
 
+export interface BootOpts {
+  /**
+   * Answer the page's fetch calls (default: a promise that never settles,
+   * so pollInstances stays parked). Resolve `/api/instances` here to render
+   * the switcher.
+   */
+  fetch?: (url: string) => Promise<unknown>;
+  /** location.hostname the page reads — sibling instance hrefs are built from it. */
+  hostname?: string;
+}
+
 /**
  * Boot the page script against the stub DOM. Works for both page kinds:
  * a snapshot rides its pairs in via window.__PAIRS__; a live/view page
@@ -91,7 +102,7 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
  * short-circuits guard it, so snapshot boots alone leave it untested
  * (the 0.25.0 META temporal-dead-zone shipped exactly that way).
  */
-export function bootPage(snapshotHtml: string): StubPage {
+export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
   const fragments: Fragment[] = [];
   const routeRef = { current: "(boot)" };
   const docListeners: Record<string, Listener[]> = {};
@@ -108,7 +119,7 @@ export function bootPage(snapshotHtml: string): StubPage {
     addEventListener: (t: string, f: Listener) => { (docListeners[t] ||= []).push(f); },
     title: "",
   };
-  const locationStub = { hash: "" };
+  const locationStub = { hash: "", hostname: opts.hostname ?? "127.0.0.1" };
   const historyStub = { replaceState: () => {} };
   const windowStub: Record<string, unknown> = {
     addEventListener: (t: string, f: Listener) => { (winListeners[t] ||= []).push(f); },
@@ -129,7 +140,7 @@ export function bootPage(snapshotHtml: string): StubPage {
   }
   // Never resolves: pollInstances stays parked instead of rescheduling
   // itself on a rejection during the test run.
-  const fetchStub = () => new Promise(() => {});
+  const fetchStub = opts.fetch ?? (() => new Promise(() => {}));
 
   // Pull __PAIRS__ out of the snapshot's own embed so the test exercises the
   // real serialization path, then run the page script.

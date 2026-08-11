@@ -135,9 +135,12 @@ describe("tombstones", () => {
       e.endedAt = endedAt;
       writeFileSync(file, JSON.stringify(e));
     };
-    mk("b-old", "/w/beta", "2026-07-10T01:00:00Z");
-    mk("a-new", "/w/alpha", "2026-07-12T01:00:00Z");
-    mk("a-old", "/w/alpha", "2026-07-11T01:00:00Z");
+    // Relative dates: hardcoded ones age past TOMBSTONE_TTL_MS and get
+    // pruned at register time, failing the test once the calendar catches up.
+    const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+    mk("b-old", "/w/beta", daysAgo(3));
+    mk("a-new", "/w/alpha", daysAgo(1));
+    mk("a-old", "/w/alpha", daysAgo(2));
     expect(listPastRuns(dir).map((i) => i.id)).toEqual(["a-new", "a-old", "b-old"]);
   });
 });

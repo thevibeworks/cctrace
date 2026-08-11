@@ -122,6 +122,26 @@ describe("live page boot", () => {
     expect(page.els["threads"].innerHTML).toMatch(/user prompt\n\d{4}-\d{2}-\d{2} /);
   });
 
+  // 0.39.0 moved the live trace to /trace and turned the root into a
+  // redirect to the dashboard: a switcher row still pointing at the sibling's
+  // root would bounce you off the trace view you just clicked toward.
+  test("the instance switcher links siblings at their /trace", async () => {
+    const others = [{ id: "b", port: 8723, project: "other", client: "codex", pid: 42, sessionId: "abcdef01-2222-3333-4444-555555555555" }];
+    const page = bootPage(getLiveHtml({}), {
+      hostname: "host.example",
+      fetch: (url) => url === "/api/instances"
+        ? Promise.resolve({ json: () => Promise.resolve(others) })
+        : new Promise(() => {}),
+    });
+    await new Promise((r) => setTimeout(r, 0)); // let the poll's promise chain settle
+    const html = page.els["inst"].innerHTML;
+    expect(html).toContain('href="http://host.example:8723/trace"');
+    expect(html).not.toContain('href="http://host.example:8723/"');
+    expect(html).toContain('href="/dashboard"'); // the menu's all-runs row
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
   test("a view page boots as a document: status view, no auto-tail", () => {
     const page = bootPage(getLiveHtml({ mode: "view" }));
     expect(page.errors).toEqual([]);

@@ -30,7 +30,7 @@ when the session isn't traced, because it keys off the env vars:
 
 If CCTRACE_TRACE_FILE is in your env, this session's HTTPS traffic runs
 through a local tracing proxy (cctrace). Live trace UI:
-http://localhost:$CCTRACE_SERVER_PORT. Anthropic/model API calls are
+http://localhost:$CCTRACE_SERVER_PORT/trace. Anthropic/model API calls are
 captured; other hosts pass through an opaque tunnel — the proxy adds no
 meaningful latency.
 

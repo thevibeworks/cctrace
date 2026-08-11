@@ -30,10 +30,26 @@ const base = `http://127.0.0.1:${server.port}`;
 afterAll(() => server.stop());
 
 describe("live server ingestion", () => {
-  test("/ redirects to /dashboard", async () => {
-    const res = await fetch(`${base}/`, { redirect: "manual" });
-    expect(res.status).toBe(302);
-    expect(new URL(res.headers.get("location")!).pathname).toBe("/dashboard");
+  // 0.39.0: the root is a bookmark/hostname entry point (cctrace.localhost),
+  // so it hands over the all-runs dashboard; the live trace moved to /trace.
+  test("/ and /index.html redirect to /dashboard on the host the request arrived at", async () => {
+    for (const path of ["/", "/index.html"]) {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      // Built from req.url, never a hardcoded localhost: behind a container
+      // or host port forward the bound host:port is not the browser's.
+      expect(res.headers.get("location")).toBe(`${base}/dashboard`);
+    }
+  });
+
+  test("/trace serves the live page; unknown paths still 404", async () => {
+    const res = await fetch(`${base}/trace`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain('id="inst"');
+    expect(html).toContain("const IS_SNAPSHOT");
+    expect((await fetch(`${base}/nope`)).status).toBe(404);
   });
 
   test("the page wires its WebSocket origin-relative — no baked port", async () => {
@@ -236,6 +252,13 @@ describe("dashboard", () => {
     } finally {
       s2.stop();
     }
+  });
+
+  // Sibling links must name the trace view: the root would redirect the
+  // click straight back to a dashboard (this one, or the sibling's).
+  test("live-instance rows link to the sibling's /trace, not its root", async () => {
+    const html = await (await fetch(`${base}/dashboard`)).text();
+    expect(html).toContain("Number(i.port) + '/trace'");
   });
 
   test("/view/<run-id> renders a past run's snapshot; unknown ids 404", async () => {

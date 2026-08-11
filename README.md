@@ -129,7 +129,7 @@ cctrace -- -p "hello"                      # args after -- go to the agent verba
 ```
 
 ```
-[cctrace] Live UI: http://localhost:8722
+[cctrace] Live UI: http://localhost:8722/trace
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 

@@ -115,7 +115,7 @@ cctrace -- -p "hello"                      # -- 之后的参数原样传给 agen
 ```
 
 ```
-[cctrace] Live UI: http://localhost:8722
+[cctrace] Live UI: http://localhost:8722/trace
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 

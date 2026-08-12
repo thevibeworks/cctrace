@@ -67,6 +67,32 @@ function htmlSibling(tracePath: string): string {
   return tracePath.replace(/\.jsonl(\.zst|\.gz)?$/, "") + ".html";
 }
 
+/**
+ * Where a tombstone's trace actually lives NOW. A registry logFile stops
+ * resolving for benign local reasons — `compress` renamed it to .zst/.gz,
+ * or a later run's auto-merge absorbed it into session-<sid8>.jsonl and
+ * pruned the source — so callers must not conclude "gone" from one stat.
+ * Returns the first candidate that exists, or null when the trace truly
+ * isn't reachable here (deleted, or written by another container/host).
+ */
+export function findTraceCarrier(
+  logFile: string,
+  sessionId?: string,
+): { path: string; bytes: number } | null {
+  const candidates = [logFile, `${logFile}.zst`, `${logFile}.gz`];
+  if (sessionId) {
+    const stem = join(dirname(logFile), `session-${sessionId.slice(0, 8)}.jsonl`);
+    candidates.push(stem, `${stem}.zst`, `${stem}.gz`);
+  }
+  for (const path of candidates) {
+    try {
+      const st = statSync(path);
+      if (st.isFile()) return { path, bytes: st.size };
+    } catch {}
+  }
+  return null;
+}
+
 export interface TracePeek {
   client?: string;
   sessionId?: string;

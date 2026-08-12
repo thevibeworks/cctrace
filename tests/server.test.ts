@@ -244,13 +244,48 @@ describe("dashboard", () => {
       const runs = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
       expect(runs.length).toBe(1);
       expect(runs[0].client).toBe("codex");
-      expect(runs[0].traceExists).toBe(false); // path not on this host yet
+      expect(runs[0].traceExists).toBe(false); // nothing carries the trace yet
       writeFileSync(join(dataDir, "trace-x.jsonl"), "");
       const runs2 = (await (await fetch(`http://127.0.0.1:${s2.port}/api/runs`)).json()) as any[];
       expect(runs2[0].traceExists).toBe(true);
       expect(runs2[0].traceBytes).toBe(0);
+      expect(runs2[0].traceCarrier).toBeUndefined(); // the logFile itself
     } finally {
       s2.stop();
+    }
+  });
+
+  // Regression (0.39.1): compress renames the trace and a later run's
+  // auto-merge absorbs it into session-<sid8>.jsonl — the tombstone's
+  // logFile no longer stats, but the run is still viewable HERE. The old
+  // single-stat check greyed these out as "trace not on this host".
+  test("/api/runs resolves compressed and session-merged carriers", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-carrier-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    const sid = "aabbccdd-0000-1111-2222-333344445555";
+    writeFileSync(join(dataDir, "instances", "c1.json"), JSON.stringify({
+      id: "c1", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
+      logFile: join(dataDir, "trace-c1.jsonl"), mode: "mitm",
+      startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+    }));
+    writeFileSync(join(dataDir, "instances", "c2.json"), JSON.stringify({
+      id: "c2", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
+      logFile: join(dataDir, "trace-c2.jsonl"), mode: "mitm", sessionId: sid,
+      startedAt: "2026-08-02T00:00:00.000Z", endedAt: "2026-08-02T01:00:00.000Z",
+    }));
+    // c1's trace was compressed; c2's was merged into the session file.
+    writeFileSync(join(dataDir, "trace-c1.jsonl.zst"), "z");
+    writeFileSync(join(dataDir, `session-${sid.slice(0, 8)}.jsonl`), "s");
+    const s = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const runs = (await (await fetch(`http://127.0.0.1:${s.port}/api/runs`)).json()) as any[];
+      const byId = Object.fromEntries(runs.map((r) => [r.id, r]));
+      expect(byId.c1.traceExists).toBe(true);
+      expect(byId.c1.traceCarrier).toBe(join(dataDir, "trace-c1.jsonl.zst"));
+      expect(byId.c2.traceExists).toBe(true);
+      expect(byId.c2.traceCarrier).toBe(join(dataDir, `session-${sid.slice(0, 8)}.jsonl`));
+    } finally {
+      s.stop();
     }
   });
 
@@ -280,13 +315,26 @@ describe("dashboard", () => {
       expect(html).toContain("cctrace");
       expect(html).toContain("vp1"); // the trace's pair made it into the snapshot
       expect((await fetch(`http://127.0.0.1:${s3.port}/view/nope`)).status).toBe(404);
-      // a registry path that doesn't resolve on this host is a 404, not a crash
+      // a registry path that resolves nowhere is a 404, not a crash
       writeFileSync(join(dataDir, "instances", "r2.json"), JSON.stringify({
         id: "r2", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
         logFile: "/not/here.jsonl", mode: "mitm",
         startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
       }));
-      expect((await fetch(`http://127.0.0.1:${s3.port}/view/r2`)).status).toBe(404);
+      const gone = await fetch(`http://127.0.0.1:${s3.port}/view/r2`);
+      expect(gone.status).toBe(404);
+      expect(await gone.text()).toContain("trace missing");
+      // a pruned logFile whose pairs live on in the session file still opens
+      const sid = "ffeeddcc-0000-1111-2222-333344445555";
+      writeFileSync(join(dataDir, `session-${sid.slice(0, 8)}.jsonl`), JSON.stringify(pair("vp2")) + "\n");
+      writeFileSync(join(dataDir, "instances", "r3.json"), JSON.stringify({
+        id: "r3", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
+        logFile: join(dataDir, "trace-pruned.jsonl"), mode: "mitm", sessionId: sid,
+        startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+      }));
+      const merged = await fetch(`http://127.0.0.1:${s3.port}/view/r3`);
+      expect(merged.status).toBe(200);
+      expect(await merged.text()).toContain("vp2");
     } finally {
       s3.stop();
     }

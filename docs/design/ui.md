@@ -107,7 +107,9 @@ to protect that feeling.
   one-row-per-fact rule: identity left (dot · client · project · prompt ·
   sid), numbers right (size · pairs · tokens · when), tabular numerals.
   A row that can open something IS a link (live instance, rendered run
-  snapshot); a row that can't (trace not on this host) says why, dimmed.
+  snapshot); a row that can't (trace missing) says why, dimmed. "Missing"
+  is decided by findTraceCarrier, not a single stat: a compressed or
+  session-merged trace still opens.
 
 ## When adding UI
 

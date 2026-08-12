@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.39.1
+
+- Fixed finished runs wrongly dimming as "trace not on this host": the dashboard and /view/[run-id] judged a run by a single stat of the tombstone's recorded path, but that path routinely stops being the trace's real name on the same machine — cctrace compress renames it to .jsonl.zst (or legacy .gz), and a later run's exit auto-merge absorbs earlier traces of the session into session-[sid].jsonl and prunes the source. Both surfaces now resolve the actual carrier (the file itself, its compressed sibling, or the session file the run's id points into), so those rows keep opening and the copy button names a path that exists; only a trace that truly is not reachable (deleted, or recorded by another machine) dims, with the honest label "trace missing"
+
 ## 0.39.0
 
 - Changed root URL (/) to redirect to the dashboard instead of showing a single instance's live trace. Navigating to cctrace.localhost (or any bookmark of the root) now lands on the all-runs overview; the live trace moved to /trace. Auto-open from the CLI, dashboard live-instance links, instance switcher links, and cctrace ps all point to /trace directly. The WebSocket connects origin-relative, so no plumbing changed

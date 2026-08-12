@@ -216,20 +216,21 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     if (i.costUsd > 0.005) stats.push('$' + i.costUsd.toFixed(2));
     if (stats.length) row.appendChild(el('span', 'stat', stats.join(' · ')));
     row.appendChild(el('span', 'when', hm(i.endedAt)));
-    row.title = (i.projectPath || '') + (i.logFile ? '\\n' + i.logFile : '');
+    var tracePath = i.traceCarrier || i.logFile;
+    row.title = (i.projectPath || '') + (tracePath ? '\\n' + tracePath : '');
     if (i.traceExists !== false && i.id) {
       row.href = '/view/' + encodeURIComponent(i.id);
       row.target = '_blank';
       row.rel = 'noopener';
     } else {
-      row.appendChild(el('span', 'mode', 'trace not on this host'));
+      row.appendChild(el('span', 'mode', 'trace missing'));
     }
-    if (i.logFile && i.traceExists !== false) {
+    if (tracePath && i.traceExists !== false) {
       var cp = el('button', 'cp', '⧉');
-      cp.title = 'copy: cctrace view ' + i.logFile;
+      cp.title = 'copy: cctrace view ' + tracePath;
       cp.onclick = function (ev) {
         ev.preventDefault(); ev.stopPropagation();
-        navigator.clipboard.writeText('cctrace view ' + i.logFile).then(function () {
+        navigator.clipboard.writeText('cctrace view ' + tracePath).then(function () {
           cp.textContent = '✓'; cp.className = 'cp copied';
           setTimeout(function () { cp.textContent = '⧉'; cp.className = 'cp'; }, 1200);
         });

@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { resolveView, applySlice, ViewError } from "../src/view";
+import { resolveView, applySlice, findTraceCarrier, ViewError } from "../src/view";
 
 const SID_A = "4f9a2c1e-1111-2222-3333-444444444444";
 const SID_B = "9e8d7c6b-aaaa-bbbb-cccc-dddddddddddd";
@@ -111,5 +111,43 @@ describe("followTrace", () => {
     await new Promise((r) => setTimeout(r, 60));
     expect(got).toContain("t4");
     h.stop();
+  });
+});
+
+// A tombstone's logFile stops resolving for benign local reasons (compress
+// renamed it, auto-merge absorbed it into the session file). findTraceCarrier
+// is what stands between those and a wrong "trace missing" verdict.
+describe("findTraceCarrier", () => {
+  test("literal path wins when it exists", () => {
+    const f = join(dir, "trace-A.jsonl");
+    const c = findTraceCarrier(f, SID_A);
+    expect(c?.path).toBe(f);
+    expect(c!.bytes).toBeGreaterThan(0);
+  });
+
+  test("compressed sibling: .zst and legacy .gz", () => {
+    const f = join(dir, "trace-gone.jsonl");
+    writeFileSync(f + ".zst", "z");
+    expect(findTraceCarrier(f)?.path).toBe(f + ".zst");
+    rmSync(f + ".zst");
+    writeFileSync(f + ".gz", "g");
+    expect(findTraceCarrier(f)?.path).toBe(f + ".gz");
+  });
+
+  test("session file absorbs a pruned trace when the sid is known", () => {
+    const f = join(dir, "trace-pruned.jsonl"); // never written — auto-merge pruned it
+    const session = join(dir, `session-${SID_A.slice(0, 8)}.jsonl`);
+    writeFileSync(session, "s");
+    expect(findTraceCarrier(f, SID_A)?.path).toBe(session);
+    // compressed session archives count too
+    rmSync(session);
+    writeFileSync(session + ".zst", "s");
+    expect(findTraceCarrier(f, SID_A)?.path).toBe(session + ".zst");
+    // without a sid there is nothing to find
+    expect(findTraceCarrier(f)).toBeNull();
+  });
+
+  test("truly absent trace returns null", () => {
+    expect(findTraceCarrier(join(dir, "trace-nope.jsonl"), SID_B.replace(/9e8d7c6b/, "00000000"))).toBeNull();
   });
 });

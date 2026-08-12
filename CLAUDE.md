@@ -261,7 +261,10 @@ entries for live-but-unregistered instances straight from `/api/self`
 never triggers registry reads). The web UI header grows a "⇄ N more"
 switcher when other instances exist. EVERY live/view server also serves
 `/dashboard` — the central picture: verified live instances + finished
-runs (`/api/runs`, traceExists + on-disk size re-stat'd per request),
+runs (`/api/runs`, traceExists + on-disk size re-resolved per request via
+`findTraceCarrier` in src/view.ts — the tombstone's logFile, its .zst/.gz
+sibling, or the session-<sid8> file auto-merge absorbed it into, so
+compressed/merged traces still open; only a truly absent trace dims),
 groupable by project/client/time with show-more paging, one page for all
 projects/containers sharing the data dir; any instance's port answers the
 same (`src/dashboard.ts`, values rendered via textContent — first prompts

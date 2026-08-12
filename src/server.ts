@@ -13,8 +13,8 @@ import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
-import { resolveView } from "./view";
-import { existsSync, statSync } from "fs";
+import { resolveView, findTraceCarrier } from "./view";
+import { statSync } from "fs";
 import { dirname, basename } from "path";
 
 const WIRE = wireTables();
@@ -342,16 +342,22 @@ export function createServer(config: ServerConfig) {
       }
       if (url.pathname === "/api/runs") {
         // Finished runs (registry tombstones) for the dashboard — the live
-        // side is /api/instances. traceExists is re-stat'd per request: a
-        // path from another container may not resolve here, and the page
-        // must say so instead of offering a dead view command. The same
-        // stat carries the current on-disk size (post-merge/compress, so
-        // fresher than anything stamped at exit).
+        // side is /api/instances. The trace is re-resolved per request via
+        // findTraceCarrier: the tombstone's logFile routinely stops being
+        // the trace's real name on THIS host (compress renamed it .zst/.gz,
+        // a later run's auto-merge absorbed it into session-<sid8>.jsonl),
+        // so a single stat would grey out perfectly viewable runs. The
+        // carrier's stat also carries the current on-disk size (post-
+        // merge/compress, so fresher than anything stamped at exit).
         const list = config.dataDir ? listPastRuns(config.dataDir) : [];
         return Response.json(list.map((i) => {
-          let traceBytes: number | undefined;
-          try { traceBytes = i.logFile ? statSync(i.logFile).size : undefined; } catch {}
-          return { ...i, traceExists: traceBytes !== undefined, ...(traceBytes !== undefined ? { traceBytes } : {}) };
+          const carrier = i.logFile ? findTraceCarrier(i.logFile, i.sessionId) : null;
+          return {
+            ...i,
+            traceExists: carrier !== null,
+            ...(carrier ? { traceBytes: carrier.bytes } : {}),
+            ...(carrier && carrier.path !== i.logFile ? { traceCarrier: carrier.path } : {}),
+          };
         }));
       }
       if (url.pathname.startsWith("/view/")) {
@@ -364,20 +370,28 @@ export function createServer(config: ServerConfig) {
         const id = decodeURIComponent(url.pathname.slice("/view/".length));
         const run = config.dataDir ? listAllRuns(config.dataDir).find((r) => r.id === id) : undefined;
         if (!run?.logFile) return new Response("unknown run id", { status: 404 });
-        if (!existsSync(run.logFile)) {
-          return new Response(`trace not on this host: ${run.logFile}`, { status: 404 });
-        }
         try {
           // Session-id first (merges every trace of the session), but the
           // registry's sid can be REDACTED (masked uuid) or purged from the
-          // traces — any resolve failure falls back to the run's own file.
+          // traces — any resolve failure falls back to the trace file, via
+          // findTraceCarrier because the tombstone's logFile may have been
+          // renamed by compress or absorbed into a session file since.
           let result;
           try {
             result = run.sessionId ? resolveView(run.sessionId, dirname(run.logFile)) : null;
           } catch {
             result = null;
           }
-          if (!result) result = resolveView(run.logFile, dirname(run.logFile));
+          if (!result) {
+            const carrier = findTraceCarrier(run.logFile, run.sessionId);
+            if (!carrier) {
+              return new Response(
+                `trace missing: ${run.logFile} (deleted, or recorded by another machine)`,
+                { status: 404 },
+              );
+            }
+            result = resolveView(carrier.path, dirname(run.logFile));
+          }
           let traceBytes = 0;
           for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
           const html = renderSnapshot(result.pairs, {

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.40.0
 
 - Added GET /s/[sid-prefix] — the short session jump: a redirect to /trace#/session/[sid-prefix], which lands on that session's conversation (live pages enter scrolled to the newest turn); /s alone means the newest session. Resolution stays the page's job — sid8 prefix match, graceful fallback to the newest thread — so the server holds no state and the browser bar keeps the self-describing hash URL. This is the link a statusline can afford to print: claude-code-statusline's trace chip now emits [base]/s/[sid8] instead of the generic /trace landing page
 

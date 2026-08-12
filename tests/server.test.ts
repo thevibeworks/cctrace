@@ -52,6 +52,25 @@ describe("live server ingestion", () => {
     expect((await fetch(`${base}/nope`)).status).toBe(404);
   });
 
+  // The statusline-affordable session link: /s/<sid8> is a pure rewrite to
+  // the self-describing hash route — resolution (prefix match, fallback to
+  // the newest thread) is the page's job, so the server holds no state.
+  test("/s and /s/<sid-prefix> redirect to the sessions hash route", async () => {
+    const cases: Array<[string, string]> = [
+      ["/s", `${base}/trace#/session`],
+      ["/s/", `${base}/trace#/session`],
+      ["/s/c3a6e0f3", `${base}/trace#/session/c3a6e0f3`],
+      ["/s/c3a6e0f3/agent-1", `${base}/trace#/session/c3a6e0f3/agent-1`],
+    ];
+    for (const [path, location] of cases) {
+      const res = await fetch(`${base}${path}`, { redirect: "manual" });
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location")).toBe(location);
+    }
+    // /self-alikes must not be swallowed by the jump route.
+    expect((await fetch(`${base}/sx`)).status).toBe(404);
+  });
+
   test("the page wires its WebSocket origin-relative — no baked port", async () => {
     const html = await (await fetch(`${base}/trace`)).text();
     expect(html).toContain("location.host");

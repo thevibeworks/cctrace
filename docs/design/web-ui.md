@@ -168,7 +168,11 @@ hash-routed:
   next turn, prev/next user prompt, system prompt — in the session view
   also on keys `g`/`G`, `j`/`k`, `p`/`u`, `s`.
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): wire view +
-  reconstructed conversation side by side. Threads are session-scoped
+  reconstructed conversation side by side.
+  `GET /s[/<sid-prefix>]` is the printable short form (0.40): a server-side
+  302 to this hash route, so a statusline chip can link straight to the
+  current session's conversation — live entry lands at the newest turn —
+  while the browser bar keeps the self-describing `/trace#/session/<sid8>`. Threads are session-scoped
   (thread key = `<sid>|<wire key>`): when a trace holds several wire
   session ids (/clear mid-run, resumed sessions), the threads pane groups
   them into collapsible per-session sections, newest activity first with

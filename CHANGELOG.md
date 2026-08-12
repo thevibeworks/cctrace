@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added GET /s/[sid-prefix] — the short session jump: a redirect to /trace#/session/[sid-prefix], which lands on that session's conversation (live pages enter scrolled to the newest turn); /s alone means the newest session. Resolution stays the page's job — sid8 prefix match, graceful fallback to the newest thread — so the server holds no state and the browser bar keeps the self-describing hash URL. This is the link a statusline can afford to print: claude-code-statusline's trace chip now emits [base]/s/[sid8] instead of the generic /trace landing page
+
 ## 0.39.1
 
 - Fixed finished runs wrongly dimming as "trace not on this host": the dashboard and /view/[run-id] judged a run by a single stat of the tombstone's recorded path, but that path routinely stops being the trace's real name on the same machine — cctrace compress renames it to .jsonl.zst (or legacy .gz), and a later run's exit auto-merge absorbs earlier traces of the session into session-[sid].jsonl and prunes the source. Both surfaces now resolve the actual carrier (the file itself, its compressed sibling, or the session file the run's id points into), so those rows keep opening and the copy button names a path that exists; only a trace that truly is not reachable (deleted, or recorded by another machine) dims, with the honest label "trace missing"

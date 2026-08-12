@@ -432,6 +432,20 @@ export function createServer(config: ServerConfig) {
           headers: { "Content-Type": "text/html" },
         });
       }
+      if (url.pathname === "/s" || url.pathname.startsWith("/s/")) {
+        // Short session jump — the URL a statusline can afford to print:
+        // /s/<sid-prefix> lands on that session's conversation, /s on the
+        // newest one. A pure rewrite to the hash route: the page already
+        // resolves sid prefixes (falling back to the newest thread) and
+        // enters the live sessions view scrolled to the newest turn, so
+        // the server adds no state — and the self-describing /trace#…
+        // URL is what the browser bar, history, and bookmarks keep.
+        const rest = url.pathname.slice(3);
+        return Response.redirect(
+          new URL(`/trace#/session${rest ? `/${rest}` : ""}`, req.url).href,
+          302,
+        );
+      }
       return new Response("Not found", { status: 404 });
     },
     websocket: {

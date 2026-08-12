@@ -79,7 +79,10 @@ with `HTTPS_PROXY="" https_proxy=""` prefixed.
 ## The web UI
 
 Prints as `Live UI: http://localhost:<port>/trace` (8722 by default — TRAC on a phone keypad; concurrent
-instances land on 9318, 9319, ...). Hash-routed views:
+instances land on 9318, 9319, ...). `GET /s/<sid8>` (0.40+) is the short
+session jump — a redirect to `/trace#/session/<sid8>` that lands on that
+session's conversation scrolled to the newest turn (`/s` alone: the newest
+session) — the link a statusline can afford to print. Hash-routed views:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request. Content chips in
   reading order — model · effort (high/xhigh/adaptive/token budget, all

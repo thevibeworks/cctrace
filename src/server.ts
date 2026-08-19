@@ -14,16 +14,27 @@ import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier } from "./view";
-import { statSync } from "fs";
-import { dirname, basename } from "path";
+import { projectTraceDir } from "./store";
+import { statSync, existsSync } from "fs";
+import { dirname, basename, resolve } from "path";
 
 const WIRE = wireTables();
 
 export { renderSnapshot, verifySnapshot } from "./ui";
 
+/** The project's store dir for a registry entry — findTraceCarrier's last
+ * place to look (an adopted trace, or one another container captured
+ * straight into the shared store). */
+const storeDirFor = (dataDir: string | undefined, i: InstanceInfo): string | undefined =>
+  dataDir && i.projectPath ? projectTraceDir(dataDir, i.projectPath) : undefined;
+
 interface ServerConfig {
   port: number;
+  /** The run's log dir — where housekeeping (web compact) acts. */
   logDir: string;
+  /** Dirs continuity readers scan for prior traces (the store dir first,
+   * then a legacy ./.cctrace); defaults to [logDir]. */
+  readDirs?: string[];
   /** The current run's log file — excluded from prior-trace scans. */
   logFile?: string;
   /** Current trace file size on disk — the header's .jsonl metric. */
@@ -98,8 +109,14 @@ function mergePairs(incoming: TracePair[]): TracePair[] {
 export function createServer(config: ServerConfig) {
   if (config.initialPairs?.length) mergePairs(config.initialPairs);
   if (config.withFiles?.length) {
-    const merged = mergePairs(loadTraceFiles(config.withFiles));
-    if (merged.length) termWrite(`[cctrace] merged ${merged.length} pairs from --with`);
+    // Streamed reads are async; the page that connects first sees them land
+    // as a "history" push, exactly like a continuity merge.
+    loadTraceFiles(config.withFiles).then((loaded) => {
+      const merged = mergePairs(loaded);
+      if (!merged.length) return;
+      termWrite(`[cctrace] merged ${merged.length} pairs from --with`);
+      broadcast({ type: "history", pairs: merged });
+    }).catch(() => {});
   }
 
   // Speculative continuity: --continue can't reveal its session until the
@@ -108,14 +125,19 @@ export function createServer(config: ServerConfig) {
   // session id confirms the guess or evicts the preload.
   let speculativeSid: string | null = null;
   let promptStamped = false;
+  // The preload arrives async (streamed from disk); until it lands, or if
+  // the first live request beats it, the guess is simply not made.
   if (config.speculate && !config.noHistory) {
-    const prior = loadPriorPairs(config.logDir, config.logFile || "", new Set([config.speculate]));
-    if (prior.length) {
+    const guess = config.speculate;
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess])).then((prior) => {
+      if (!prior.length || seenSessions.size) return; // a real session already spoke
       for (const p of prior) (p as TracePair & { speculative?: boolean }).speculative = true;
-      mergePairs(prior);
-      speculativeSid = config.speculate;
-      termWrite(`[cctrace] preloaded ${prior.length} pairs from session ${config.speculate.slice(0, 8)} — confirming on first request`);
-    }
+      const merged = mergePairs(prior);
+      if (!merged.length) return;
+      speculativeSid = guess;
+      termWrite(`[cctrace] preloaded ${merged.length} pairs from session ${guess.slice(0, 8)} — confirming on first request`);
+      broadcast({ type: "history", pairs: merged });
+    }).catch(() => {});
   }
 
   const resolveSpeculation = (sid: string) => {
@@ -166,12 +188,13 @@ export function createServer(config: ServerConfig) {
     seenSessions.add(sid);
     config.onSession?.(sid);
     if (config.noHistory) return;
-    const prior = mergePairs(loadPriorPairs(config.logDir, config.logFile || "", new Set([sid])));
-    if (prior.length) {
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([sid])).then((loaded) => {
+      const prior = mergePairs(loaded);
+      if (!prior.length) return;
       const files = [...new Set(prior.map((p) => p.prior))].join(", ");
       termWrite(`[cctrace] session ${sid.slice(0, 8)} continued — merged ${prior.length} prior pairs from ${files}`);
       broadcast({ type: "history", pairs: prior });
-    }
+    }).catch(() => {});
   };
 
   const serveOn = (port: number) => Bun.serve({
@@ -351,7 +374,7 @@ export function createServer(config: ServerConfig) {
         // merge/compress, so fresher than anything stamped at exit).
         const list = config.dataDir ? listPastRuns(config.dataDir) : [];
         return Response.json(list.map((i) => {
-          const carrier = i.logFile ? findTraceCarrier(i.logFile, i.sessionId) : null;
+          const carrier = i.logFile ? findTraceCarrier(i.logFile, i.sessionId, storeDirFor(config.dataDir, i)) : null;
           return {
             ...i,
             traceExists: carrier !== null,
@@ -376,22 +399,29 @@ export function createServer(config: ServerConfig) {
           // traces — any resolve failure falls back to the trace file, via
           // findTraceCarrier because the tombstone's logFile may have been
           // renamed by compress or absorbed into a session file since.
+          // The carrier decides WHERE the session's traces live now (the
+          // recorded dir, or the project's store dir after an adopt), then
+          // every trace of the session in that dir merges in.
+          const carrier = findTraceCarrier(run.logFile, run.sessionId, storeDirFor(config.dataDir, run));
+          if (!carrier) {
+            return new Response(
+              `trace missing: ${run.logFile} (deleted, or recorded by another machine and not adopted into the store)`,
+              { status: 404 },
+            );
+          }
+          // Both the carrier's dir and the project's store dir: a session
+          // that spans the upgrade has traces in a legacy ./.cctrace AND
+          // the store, and `cctrace view <sid>` in the project reads both.
+          const storeDir = storeDirFor(config.dataDir, run);
+          const viewDirs = [dirname(carrier.path)];
+          if (storeDir && existsSync(storeDir) && resolve(storeDir) !== resolve(viewDirs[0]!)) viewDirs.push(storeDir);
           let result;
           try {
-            result = run.sessionId ? resolveView(run.sessionId, dirname(run.logFile)) : null;
+            result = run.sessionId ? await resolveView(run.sessionId, viewDirs) : null;
           } catch {
             result = null;
           }
-          if (!result) {
-            const carrier = findTraceCarrier(run.logFile, run.sessionId);
-            if (!carrier) {
-              return new Response(
-                `trace missing: ${run.logFile} (deleted, or recorded by another machine)`,
-                { status: 404 },
-              );
-            }
-            result = resolveView(carrier.path, dirname(run.logFile));
-          }
+          if (!result) result = await resolveView(carrier.path, viewDirs);
           let traceBytes = 0;
           for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
           const html = renderSnapshot(result.pairs, {
@@ -401,8 +431,8 @@ export function createServer(config: ServerConfig) {
             project: run.project || undefined,
             projectPath: run.projectPath || undefined,
             client: run.client,
-            traceFile: basename(run.logFile),
-            traceRelPath: run.logFile,
+            traceFile: basename(carrier.path),
+            traceRelPath: carrier.path,
             traceBytes,
           });
           return new Response(html, { headers: { "Content-Type": "text/html" } });

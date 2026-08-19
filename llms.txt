@@ -26,8 +26,11 @@ word picks who runs (`cctrace codex -- ...`, `cctrace grok -- ...`,
 Kimi Code speaks OpenAI Chat Completions; opencode is multi-provider (each
 request's dialect is detected from its wire shape) — all reconstruct into
 the same sessions view. Traces
-land in `.cctrace/` as `trace-<timestamp>.jsonl` (one request/response pair
-per line) — the .jsonl IS the trace; snapshots render on demand. Capture
+land in the store — `~/.local/share/cctrace/traces/<project-key>/`, one dir
+per project — as `trace-<timestamp>.jsonl` (one request/response pair per
+line, archived to `.jsonl.zst` at exit) — the .jsonl IS the trace;
+snapshots render on demand; `cctrace store` shows the store, `cctrace
+adopt` moves legacy `./.cctrace/` dirs in. Capture
 modes: `mitm` (default, full first-party picture via HTTPS_PROXY +
 NODE_EXTRA_CA_CERTS; `--capture-external` decrypts everything with
 external bodies capped at 64KB,

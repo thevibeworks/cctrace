@@ -134,7 +134,9 @@ cctrace -- -p "hello"                      # args after -- go to the agent verba
 ```
 
 Open the Live UI and watch requests stream in. Ctrl-C when done -- the
-`.jsonl` stays in `.cctrace/`; reopen anytime with `cctrace view`.
+trace lands in the store (`~/.local/share/cctrace/traces/<project>/`, one
+dir per project, archived to `.jsonl.zst` at exit); reopen anytime with
+`cctrace view`, see what the store holds with `cctrace store`.
 Install variants, runtime notes, and the bun `--` caveat:
 [docs/install.md](docs/install.md).
 
@@ -159,12 +161,12 @@ guarantees: [docs/traces.md](docs/traces.md).
 | Option | Description |
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
-| `-p, --port PORT` | Live UI port (default: 8722, auto-falls back) |
+| `-p, --port PORT` | Live UI port (default: 8722, walks 8722..8821 when busy) |
 | `--messages-only` | Capture only the model API calls |
 | `--capture-external` | Decrypt every host (bodies over 64KB summarized) |
 | `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers) |
 | `--bypass-host H` | Exempt host `H` from the proxy entirely (child `NO_PROXY`) |
-| `--dir PATH` | Log directory (default: `.cctrace`) |
+| `--dir PATH` | Log directory (default: the project's dir in the store) |
 | `--client-path PATH` | Custom binary path for any client |
 
 Full table incl. `--fresh`, `--with`, `--data-dir`, `--print-ca`:
@@ -185,7 +187,7 @@ flowchart LR
     TEE(["tee response"])
     RD["redact<br/>headers · bodies · URLs"]
     UI["live UI<br/>(categorized)"]
-    OUT[[".cctrace/ · jsonl"]]
+    OUT[["store · jsonl.zst"]]
 
     CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
     FD -- "Anthropic host" --> TLS
@@ -230,8 +232,9 @@ traffic, so it redacts before writing anything:
   (or `CCTRACE_REDACT_IDS=1`) masks them too.
 
 Redaction happens at a single choke point, so it applies uniformly to the
-`.jsonl`, the `.html`, and the live WebSocket. `.cctrace/` output is
-gitignored by default.
+`.jsonl`, the `.html`, and the live WebSocket. Traces live outside the
+project tree (the store under `~/.local/share/cctrace/`), so nothing lands
+in your repo by accident.
 
 **Still:** a trace is a record of your real session. Review it before
 sharing. Never paste raw output into a public issue. Seriously.

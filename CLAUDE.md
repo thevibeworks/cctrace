@@ -28,7 +28,9 @@ src/
 │                   #   (chunk deltas + prompt_tokens), so both fold into the SAME
 │                   #   turn/usage model; usage mapping (inlined into UI)
 ├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
-├── history.ts      # Cross-run session continuity: find prior traces by session_id; gz-aware reads;
+├── history.ts      # Streaming trace readers (traceLines/readTracePairs: plain/.zst/.gz, line
+│                   #   by line, tail budget TAIL_BYTES = newest 256 MB) + cross-run session
+│                   #   continuity: find prior traces by session_id, newest first, one budget;
 │                   #   newest-prior-session guess for --continue preload
 ├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
 ├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
@@ -36,8 +38,14 @@ src/
 │                   #   est cost — this run's pairs only, prior merges excluded)
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
 ├── version.ts      # CCTRACE_VERSION (+ commit hash: build --define, git fallback on source runs) + daily npm update check (cached in data dir, fail-soft)
-├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment)
-├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply)
+├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment);
+│                   #   streams from the tail (--full = everything), reports what it left out
+├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply);
+│                   #   the zstd codec (streamed, L9 + 128MB window) + the exit-time
+│                   #   archive/stale-sweep helpers
+├── store.ts        # The trace store: <data-dir>/traces/<project-key>/ layout, project
+│                   #   marker, legacy ./.cctrace detection, `cctrace store` listing,
+│                   #   `cctrace adopt` (docs/design/store.md)
 ├── compact.ts      # `cctrace compact`: supersede-stub messages bodies + exemplar
 │                   #   retention for noise categories (-95%+, body-level only)
 ├── spec.ts         # `cctrace spec`: observed-wire catalog (endpoints, header
@@ -231,6 +239,35 @@ captured pair is labeled with the producing client (`pair.client`, set in the
 cli.ts log sink), which feeds the UI header chip/title, `ps`'s CLIENT column,
 and the instance registry.
 
+**The trace store** (0.41, `src/store.ts`, docs/design/store.md): traces
+live in `<data-dir>/traces/<project-key>/` — one dir per project cwd, keyed
+the way Claude Code keys `~/.claude/projects/` (path with non-[A-Za-z0-9-]
+→ `-`), a `project.json` marker holding the exact path — never in the
+project tree. The data dir is what containers sharing `$HOME` already
+share (the registry lives there), so a run traced in one container opens
+from any other; `--dir DIR` still overrides (write there, read only there).
+A live run writes plain `.jsonl`; at exit it archives its trace and every
+session file the auto-merge wrote to `.jsonl.zst` (`restTracesOnExit` in
+cli.ts → `archiveTrace`/`applyCompress`: streamed, decode-verified before
+the plain source is unlinked, two attempts because a tunnel closing as the
+child dies can log its meta pair mid-compress) and sweeps the dir for
+plain leftovers of killed runs (`planStaleSweep`: minted `trace-*`/
+`session-*` names only, idle > 24h, not this run's file, not any
+heartbeat-fresh registry logFile — matched as recorded AND as mapped into
+this side's store dir, `liveLogFiles` in store.ts). The supersedes
+overwrite is stamped (`ArchiveStamp` from planMerge: overwrite only while
+the archive on disk is the one the plan saw), the union path is
+damage-aware, temp names carry the pid. `--no-compress` opts out. Legacy `./.cctrace` dirs are read for continuity
+(`resolveTraceDirs` → `readDirs`, threaded through history/view/server)
+and print a one-line `cctrace adopt` hint; `adopt` moves them in
+(rename / EXDEV copy+verify, skips live + fresh + name-collisions, re-points
+registry entries; `--rebase FROM=TO` keys dirs mounted from another machine
+by that machine's project paths, which is what the shared registry
+records; `--copy --zst` builds a verified compressed mirror without
+touching the sources). Every trace-reading subcommand defaults to the
+project's store dir; the housekeeping five take `--all`. `cctrace store`
+is the size picture.
+
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
 <run-id>.json` (unique run id, port, project, session id once seen on the
 wire, the human's first real prompt (`firstPrompt`, stamped once via the
@@ -275,12 +312,16 @@ carries — pairs/messages/tokens/est cost, stamped once at exit
 `/view/<run-id>` renders a snapshot on demand from the run's trace, the id
 resolved through the registry server-side (the page never names a file;
 sid-bearing runs merge every trace of that session, same continuity as
-`cctrace view <sid>`). Linked from the switcher menu, the ⌘ actions menu,
-an always-visible ▦ header icon on http-served pages, a startup
-`Dashboard (all runs)` line, and a `cctrace ps` footer line. Port
-allocation walks 8722, 8723, ... before falling back to an OS-assigned
-port, so concurrent runs land on predictable neighbors — the same walk
-the discovery sweep covers.
+`cctrace view <sid>`; `findTraceCarrier` tries the recorded path, its
+.zst/.gz and session-file forms, then the same names in the project's
+STORE dir — so an adopted or store-native trace opens even from a
+tombstone that named the legacy path). Linked from the switcher menu, the
+⌘ actions menu, an always-visible ▦ header icon on http-served pages, a
+startup `Dashboard (all runs)` line, and a `cctrace ps` footer line. Port
+allocation walks 8722..8821 (`PORT_WALK` = 100) before falling back to an
+OS-assigned port, so concurrent runs land on predictable neighbors — the
+same walk the discovery sweep covers. Env `PORT` is not honored (0.41):
+the fixed range is the whole port story.
 
 **Update check** (`src/version.ts`): startup reads only a local cache
 (`<data-dir>/update-check.json`) — never the network — and refreshes it in
@@ -336,15 +377,39 @@ does not support the legacy node mode (needs repo sources).
   existing `session-*.jsonl` / `.gz` instead of overwriting; `clean` verifies
   an `.html` has a source trace before calling it regenerable; every unlink
   re-stats first so a live capture appending between plan and apply is skipped,
-  not truncated (`src/storage.ts`, regression-tested).
+  not truncated (`src/storage.ts`, regression-tested). The one sanctioned
+  overwrite: the exit archive of a session file the auto-merge JUST wrote
+  (`supersedesArchive`) — planMerge unioned the prior archive into it or
+  blocked, so the plain file is a verified superset.
+- **Central store, compressed at rest (0.41)**: per-project `./.cctrace/`
+  was the right first move and the wrong steady state — 73 GB across ~50
+  dirs nobody could `du`, and 255/272 dashboard runs unopenable from any
+  container but the one that wrote them. The store rides the data dir
+  (already shared), stays per-project inside it (housekeeping scans one
+  project's worth, `rm -rf` one dir reclaims one project), and archives at
+  exit because the measurement said so: zstd L9 with a 128 MB window is 87x
+  at ~1 GB/s on a real session trace (L19: same 87x at 53 MB/s; L3 default
+  window: 33x — the redundancy is one request body apart, so the window is
+  what matters). Capture itself stays plain: tail-able, torn-line
+  recoverable, and the compressed form is verified before the plain one
+  goes. Streaming compression of the LIVE file was rejected — every reader
+  would need frame-aware tailing for a peak-disk win that only matters in
+  the multi-GB-single-run case `compact` addresses better.
 - **compact folds bodies, never deletes pairs** (`src/compact.ts`, measured
   on 4.3GB of real traces): ~79% of trace bytes are messages request bodies
   re-sending the whole conversation. Per thread-EPOCH (a history-length drop
   = compaction/clear closed an epoch) the longest request stays full; the
   rest become stubs carrying model/metadata/historyLen/firstUserText/
   keptPairId, so grouping, per-turn attribution, and continuity all still
-  work (`session.ts` is stub-aware; regression: buildSession output is
-  identical pre/post compact). Noise categories (telemetry/external/
+  work (`session.ts` is stub-aware; regression: thread set, turn count,
+  per-turn pairId attribution and token totals are identical pre/post
+  compact — NOT the whole buildSession object: a stubbed turn's request
+  meta — stream/max_tokens/temperature/tool count/system-block count —
+  reads as absent, and `spec` sees the stub as a request-body shape).
+  Measured 2026-08-18 on real ~215MB traces: after zstd-at-rest (0.41)
+  compact saves 0.5-1.4MB more per trace, and files >=2GB can't be
+  compacted at all (whole-file string read; JSC's 2^31-1 cap) — so it is
+  a niche tool now, not a step in the store migration. Noise categories (telemetry/external/
   bootstrap) get exemplar retention per (host, path): first/last/largest/
   slowest/every-error keep bodies, the rest go meta-only — deterministic,
   unlike sampling. Responses are never touched (each exists once). Post-hoc

@@ -78,16 +78,14 @@ export interface InstanceHandle {
 // 8722 spells TRAC on a phone keypad — memorable, IANA-unassigned, outside
 // every OS ephemeral range, and no popular tool squats there (8080/8443/
 // 8888/9090 are proxy-tool territory; the pre-0.36 default 9317 was merely
-// "avoids Clash/mihomo", with no story).
+// "avoids Clash/mihomo", with no story). The walk is 100 wide (8722..8821):
+// a fixed range is the whole port story — many concurrent runs across
+// containers sharing localhost land on predictable neighbors, and the sweep
+// (100 concurrent localhost probes, 800ms cap) stays instant. Env PORT /
+// portless-style routing was dropped in 0.41 for the same reason.
 export const DEFAULT_PORT = 8722;
-export const PORT_WALK = 10;
-/** The pre-0.36 default walk (9317..9326) — still swept, so live instances
- * of older versions stay discoverable across the transition. */
-export const LEGACY_PORTS = Array.from({ length: PORT_WALK }, (_, i) => 9317 + i);
-export const SCAN_PORTS = [
-  ...Array.from({ length: PORT_WALK }, (_, i) => DEFAULT_PORT + i),
-  ...LEGACY_PORTS,
-];
+export const PORT_WALK = 100;
+export const SCAN_PORTS = Array.from({ length: PORT_WALK }, (_, i) => DEFAULT_PORT + i);
 
 export const HEARTBEAT_MS = 30_000;
 /** Older than this and the entry must prove itself via port probe. */

@@ -97,8 +97,9 @@ export interface PageMeta {
   projectPath?: string;
   /** Basename of the trace file behind this page (live log or view source). */
   traceFile?: string;
-  /** That file's path relative to the project dir (".cctrace/trace-….jsonl")
-   * — the header title's click-to-copy value, ready for `cctrace view`. */
+  /** That file's path — relative to the project dir for a legacy ./.cctrace
+   * trace, absolute into the store otherwise — the header title's
+   * click-to-copy value, ready for `cctrace view`. */
   traceRelPath?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
@@ -190,8 +191,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
     .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
     .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The trace title copies its project-relative path (.cctrace/…jsonl) —
-       the string you paste into "cctrace view" or hand to an agent. */
+    /* The trace title copies its path (into the store, or project-relative
+       for a legacy trace) — the string you paste into "cctrace view" or
+       hand to an agent. */
     .ctx-proj.ctx-copy { cursor: pointer; }
     .ctx-proj.ctx-copy:hover { color: var(--accent); }
     .ctx-proj.copied { color: var(--green); }
@@ -1931,10 +1933,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 dashboard rows stay openable \\u2014 compressed or session-merged traces resolve instead of dimming\\n' +
-        '\\u00b7 / lands on the dashboard \\u2014 every run in one place; the live trace moved to /trace\\n' +
-        '\\u00b7 full markdown in sessions \\u2014 tables, lists, task lists, blockquotes, code blocks via marked.js GFM\\n' +
-        '\\u00b7 cctrace opencode \\u2014 the multi-provider client traced: zen gateway, BYO keys, copilot\\n' +
+        '\\u00b7 the trace store \\u2014 traces live in ~/.local/share/cctrace/traces/<project>/, shared across containers; cctrace adopt moves legacy ./.cctrace dirs in\\n' +
+        '\\u00b7 zstd at rest \\u2014 a run archives its trace at exit (30-180x smaller); view reads .zst directly\\n' +
+        '\\u00b7 streaming reads from the tail \\u2014 multi-GB traces open in seconds to their newest turns; --full for everything\\n' +
+        '\\u00b7 dashboard rows stay openable \\u2014 compressed, merged or adopted traces resolve from any container\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

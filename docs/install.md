@@ -93,16 +93,17 @@ cctrace [CLIENT] [OPTIONS] [-- CLIENT_ARGS...]
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
 | `-s, --static` | Static mode (no live server; writes the `.jsonl` + a snapshot `.html`) |
-| `-p, --port PORT` | Live UI port (default: 9317; auto-falls back if busy) |
+| `-p, --port PORT` | Live UI port (default: 8722; walks 8722..8821 when busy, then an OS-assigned port) |
 | `--messages-only` | Capture only the model API calls (`/v1/messages` and friends) |
 | `--capture-external` | Decrypt every host (default: non-first-party hosts tunnel opaquely with byte counts); external bodies over 64KB are summarized, not stored |
 | `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers, unusual providers) |
 | `--no-open` | Don't auto-open the browser |
 | `--print-ca` | Print the MITM CA cert path and exit |
 | `--log NAME` | Custom log file base name |
-| `--dir PATH` | Log directory (default: `.cctrace`) |
+| `--dir PATH` | Log directory (default: the project's dir in the store, `~/.local/share/cctrace/traces/<project-key>/`) |
 | `--fresh` | Don't merge prior traces of a continued session (also skips the exit auto-merge) |
 | `--no-auto-merge` | Don't fold this run's trace into `session-<id>.jsonl` at exit |
+| `--no-compress` | Leave the trace as plain `.jsonl` at exit (default: archived to `.jsonl.zst`) |
 | `--with FILE` | Merge a specific trace file into the view (repeatable) |
 | `--claude-path PATH` | Custom Claude binary path |
 | `--client-path PATH` | Custom binary path for any client (codex/grok/kimi too) |

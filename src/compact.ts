@@ -2,6 +2,7 @@ import { statSync, readdirSync, writeFileSync, renameSync } from "fs";
 import { join, basename } from "path";
 import { gzipSync } from "zlib";
 import { readTraceText, isTraceFile } from "./history";
+import { zstd } from "./storage";
 import { extractSessionId } from "./summarize";
 import { threadSig, firstUserText } from "./session";
 import { wireDialect, openaiInput, normalizeOpenaiTurns, openaiFirstUserText } from "./dialects/openai";
@@ -349,7 +350,6 @@ export function planCompact(logDir: string, categorize: Categorize, wire?: any):
   return { files, stubbed, collapsed, savedBytes };
 }
 
-const zstd = (data: string): Buffer => Buffer.from(Bun.zstdCompressSync(Buffer.from(data), { level: 19 }));
 
 function writeAtomic(path: string, data: string | Uint8Array) {
   const tmp = `${path}.tmp`;

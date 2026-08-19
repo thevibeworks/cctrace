@@ -9,7 +9,7 @@ cctrace configuration today lives in three places with no shared view:
 
 1. CLI flags per run (`--capture-external`, `--intercept-host`,
    `--bypass-host`, `--messages-only`, `--fresh`, ...)
-2. Env vars (`CCTRACE_DATA_DIR`, `CCTRACE_NO_UPDATE_CHECK`, `PORT`)
+2. Env vars (`CCTRACE_DATA_DIR`, `CCTRACE_NO_UPDATE_CHECK`)
 3. Browser localStorage per UI concern (theme, mask categories, dashboard
    grouping, fold defaults)
 

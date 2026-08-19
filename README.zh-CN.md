@@ -119,8 +119,9 @@ cctrace -- -p "hello"                      # -- 之后的参数原样传给 agen
 [cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
 ```
 
-打开 Live UI 看请求流入。结束按 Ctrl-C -- `.jsonl` 留在 `.cctrace/`，随时
-`cctrace view` 重开。安装变体、运行时说明和 bun 的 `--` 坑见
+打开 Live UI 看请求流入。结束按 Ctrl-C -- trace 落在 store 里
+（`~/.local/share/cctrace/traces/<project>/`，每个项目一个目录，退出时归档为
+`.jsonl.zst`），随时 `cctrace view` 重开，`cctrace store` 看占用。安装变体、运行时说明和 bun 的 `--` 坑见
 [docs/install.md](docs/install.md)。
 
 ## 常用命令
@@ -148,7 +149,7 @@ cctrace compact                  # 折叠冗余请求体（-95%+），会话视�
 | `--capture-external` | 解密所有 host（超 64KB 的外部 body 只留摘要） |
 | `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器） |
 | `--bypass-host H` | 让 host `H` 完全绕开代理（写入子进程 `NO_PROXY`） |
-| `--dir PATH` | 日志目录（默认 `.cctrace`） |
+| `--dir PATH` | 日志目录（默认：store 里该项目的目录） |
 | `--client-path PATH` | 任意 client 的自定义二进制路径 |
 
 完整表格（含 `--fresh`、`--with`、`--data-dir`、`--print-ca`）：
@@ -169,7 +170,7 @@ flowchart LR
     TEE(["tee 响应流"])
     RD["脱敏<br/>headers · bodies · URLs"]
     UI["实时界面<br/>(分类)"]
-    OUT[[".cctrace/ · jsonl"]]
+    OUT[["store · jsonl.zst"]]
 
     CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
     FD -- "Anthropic host" --> TLS
@@ -209,7 +210,7 @@ cctrace 是本地调试工具，但它拦截的是真实的带凭据流量，所
   `--redact-ids`（或 `CCTRACE_REDACT_IDS=1`）连同它们一起掩码。
 
 脱敏发生在唯一的收口点，对 `.jsonl`、`.html`、实时 WebSocket 一视同仁。
-`.cctrace/` 输出默认在 gitignore 里。
+trace 存在项目树之外（`~/.local/share/cctrace/` 下的 store），不会误入仓库。
 
 **但是：** trace 是你真实会话的记录。分享前先自查。永远不要把原始输出贴进
 公开 issue。真的。

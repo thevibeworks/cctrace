@@ -8,12 +8,16 @@ import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
-import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, parseTraceText, readTraceText } from "./history";
+import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, readTracePairs } from "./history";
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, ViewError } from "./view";
-import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, type InstanceHandle, type InstanceInfo } from "./instances";
+import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, ViewError } from "./view";
+import {
+  resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
+  registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, LEGACY_DIRNAME, type TraceDirs, type Rebase,
+} from "./store";
+import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, PORT_WALK, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
@@ -23,7 +27,7 @@ import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, purgePairsById, human, type MergeProgress,
+  planPurge, applyPurge, purgePairsById, human, archiveTrace, planStaleSweep, type MergeProgress, type ArchiveStamp,
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
@@ -65,7 +69,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
@@ -211,7 +215,7 @@ function openBrowser(url: string) {
 // no-op. No proxy, no Claude spawn either way. Returns true when a server
 // was started and the process must stay alive.
 async function runView(args: string[]): Promise<boolean> {
-  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--tail] [--html] [--slice a..b] [--port N] [--dir DIR] [--no-open]";
+  const usage = "usage: cctrace view [file.jsonl[.zst|.gz] | session-id | latest] [--tail] [--full] [--html] [--slice a..b] [--port N] [--dir DIR] [--no-open]";
   let parsed;
   try {
     parsed = parseArgs({
@@ -224,6 +228,7 @@ async function runView(args: string[]): Promise<boolean> {
         tail: { type: "boolean" },  // follow the trace file live (tail -f the .jsonl)
         live: { type: "boolean" },  // alias of --tail
         slice: { type: "string" },  // pair-id window: the @a..b of a slice deep link
+        full: { type: "boolean" },  // every pair, not just the newest 256 MB of lines
         port: { type: "string" },
       },
       allowPositionals: true,
@@ -233,7 +238,8 @@ async function runView(args: string[]): Promise<boolean> {
     console.error(`[cctrace] view: ${(err as Error).message}\n  ${usage}`);
     process.exit(1);
   }
-  const logDir = (parsed.values.dir as string) || ".cctrace";
+  const dirs = traceDirsFor(parsed.values.dir as string | undefined);
+  const logDir = dirs.readDirs;
   let target = parsed.positionals[0];
   // No target: show what's viewable instead of demanding a filename the
   // user has no way to know. On a TTY, let them pick; Enter opens the
@@ -242,18 +248,20 @@ async function runView(args: string[]): Promise<boolean> {
     const infos = listTraceInfos(logDir);
     // The run catalog (registry tombstones) knows about traces in OTHER
     // projects — list recent ones after this dir's, resolvable by number.
-    // Re-stat before offering: a tombstone written in another container may
-    // name a path that doesn't resolve here (list nothing, never error).
-    const localDir = resolve(logDir);
+    // Re-resolve before offering: a tombstone written in another container
+    // may name a path that doesn't resolve here (list nothing, never error).
+    const localDirs = new Set(logDir.map((d) => resolve(d)));
     const seen = new Set<string>();
-    const elsewhere = listPastRuns(DATA_DIR).filter((r) => {
-      if (!r.logFile || resolve(dirname(r.logFile)) === localDir) return false;
-      if (seen.has(r.logFile)) return false;
+    const elsewhere: (InstanceInfo & { carrier: string })[] = [];
+    for (const r of listPastRuns(DATA_DIR)) {
+      if (elsewhere.length >= 8) break;
+      if (!r.logFile || localDirs.has(resolve(dirname(r.logFile))) || seen.has(r.logFile)) continue;
       seen.add(r.logFile);
-      try { return statSync(r.logFile).isFile(); } catch { return false; }
-    }).slice(0, 8);
+      const carrier = findTraceCarrier(r.logFile, r.sessionId, r.projectPath ? projectTraceDir(DATA_DIR, r.projectPath) : undefined);
+      if (carrier && !localDirs.has(resolve(dirname(carrier.path)))) elsewhere.push({ ...r, carrier: carrier.path });
+    }
     if (!infos.length && !elsewhere.length) {
-      console.error(`[cctrace] view: no .jsonl traces in ${logDir}\n  ${usage}`);
+      console.error(`[cctrace] view: no .jsonl traces in ${logDir.join(", ")}\n  ${usage}`);
       process.exit(1);
     }
     const shown = infos.slice(0, 15);
@@ -269,10 +277,10 @@ async function runView(args: string[]): Promise<boolean> {
         const prev = byLog.get(key);
         if (!prev || (!prev.firstPrompt && r.firstPrompt)) byLog.set(key, r);
       }
-      log(`traces in ${logDir} (newest first):`, C.cyan);
-      shown.forEach((t, i) => {
+      log(`traces in ${logDir.join(" + ")} (newest first):`, C.cyan);
+      for (const [i, t] of shown.entries()) {
         const reg = byLog.get(resolve(t.path));
-        const peek = reg?.client && reg?.sessionId && reg?.firstPrompt ? {} : peekTrace(t.path);
+        const peek = reg?.client && reg?.sessionId && reg?.firstPrompt ? {} : await peekTrace(t.path);
         const client = reg?.client || peek.client || "";
         const sid = (reg?.sessionId || peek.sessionId || "").slice(0, 8);
         const prompt = reg?.firstPrompt || peek.prompt || "";
@@ -281,7 +289,7 @@ async function runView(args: string[]): Promise<boolean> {
           `  ${String(i + 1).padStart(2)}  ${client.padEnd(6)} ${(sid || "-").padEnd(8)} ` +
           `${who.padEnd(48)} ${human(t.size).padStart(8)}  ${ago(t.mtimeMs)}`,
         );
-      });
+      }
       if (infos.length > shown.length) console.log(`      ... ${infos.length - shown.length} more`);
     }
     if (elsewhere.length) {
@@ -303,23 +311,26 @@ async function runView(args: string[]): Promise<boolean> {
     if (/^q(uit)?$/i.test(answer)) return false;
     const n = /^\d+$/.test(answer) ? parseInt(answer, 10) : answer === "" ? 1 : 0;
     if (n > 0 && n <= shown.length) target = shown[n - 1]!.path;
-    else if (n > shown.length && n <= shown.length + elsewhere.length) target = elsewhere[n - shown.length - 1]!.logFile;
+    else if (n > shown.length && n <= shown.length + elsewhere.length) target = elsewhere[n - shown.length - 1]!.carrier;
     else if (n > 0) { console.error(`[cctrace] view: no trace #${n}`); process.exit(1); }
     else target = answer; // free-form: fragment / session id / path
   }
   try {
     refreshPricingCache(DATA_DIR).catch(() => {});
+    const tailBytes = parsed.values.full ? Infinity : undefined;
     if (!parsed.values.html) {
-      serveView(target, logDir, {
-        port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : (envPortOrNull() ?? DEFAULT_PORT),
+      await serveView(target, dirs, {
+        port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
         noOpen: !!parsed.values["no-open"],
         slice: parsed.values.slice as string | undefined,
         tail: !!(parsed.values.tail || parsed.values.live),
+        tailBytes,
       });
       return true;
     }
-    const result = writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) }, { slice: parsed.values.slice as string | undefined });
+    const result = await writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) }, { slice: parsed.values.slice as string | undefined, projectPath: viewProjectRoot(dirs), tailBytes });
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
+    if (result.truncated) log(truncationNotice(result), C.yellow);
     for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
     const mb = statSync(result.htmlPath).size / (1024 * 1024);
@@ -345,7 +356,7 @@ async function runView(args: string[]): Promise<boolean> {
 // model ids. No target = every trace in the log dir (the catalog gets
 // better with more observations). --diff compares against a previously
 // written catalog and prints what changed — the changelog of the wire.
-function runSpec(args: string[]) {
+async function runSpec(args: string[]) {
   const usage =
     "usage: cctrace spec [file.jsonl[.zst|.gz] | session-id | latest] [--dir DIR] [--out FILE] [--md] [--diff CATALOG.json]";
   let parsed;
@@ -365,7 +376,7 @@ function runSpec(args: string[]) {
     console.error(`[cctrace] spec: ${(err as Error).message}\n  ${usage}`);
     process.exit(1);
   }
-  const logDir = (parsed.values.dir as string) || ".cctrace";
+  const logDir = traceDirsFor(parsed.values.dir as string | undefined).readDirs;
   const target = parsed.positionals[0];
   // Fold traces into the catalog ONE FILE AT A TIME — a log dir of multi-GB
   // session traces cannot be held as pairs all at once (a real dir OOM'd
@@ -374,18 +385,18 @@ function runSpec(args: string[]) {
   let sourceCount = 0;
   try {
     if (target) {
-      const result = resolveView(target, logDir);
+      const result = await resolveView(target, logDir, { tailBytes: Infinity });
       acc.add(result.pairs);
       sourceCount = result.sources.length;
     } else {
       const infos = listTraceInfos(logDir);
       if (!infos.length) {
-        console.error(`[cctrace] spec: no .jsonl traces in ${logDir}\n  ${usage}`);
+        console.error(`[cctrace] spec: no .jsonl traces in ${logDir.join(", ")}\n  ${usage}`);
         process.exit(1);
       }
       for (const t of infos) {
         try {
-          acc.add(parseTraceText(readTraceText(t.path), { torn: 0, invalid: 0 }));
+          acc.add((await readTracePairs(t.path, { tailBytes: Infinity })).pairs);
           sourceCount++;
         } catch {
           // unreadable trace: the catalog is built from what opens
@@ -429,8 +440,9 @@ function runSpec(args: string[]) {
 // are seeded into the live web server instead of embedded in a file. The run
 // registers in the instance registry like any live capture (mode "view"), so
 // `cctrace ps` and the header switcher see it. Ctrl-C stops it.
-function serveView(target: string, logDir: string, opts: { port: number; noOpen: boolean; slice?: string; tail?: boolean }) {
-  const result = resolveView(target, logDir);
+async function serveView(target: string, dirs: TraceDirs, opts: { port: number; noOpen: boolean; slice?: string; tail?: boolean; tailBytes?: number }) {
+  const logDir = dirs.writeDir;
+  const result = await resolveView(target, dirs.readDirs, { tailBytes: opts.tailBytes });
   if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
   // --tail follows plain .jsonl files only: archives can't grow, and a
   // slice is a closed window — both quietly fall back to a static view.
@@ -441,17 +453,18 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
   if (opts.tail && !tailing) log("--tail: no plain .jsonl source to follow (archive or slice) — serving static view", C.yellow);
   log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}` +
     (opts.slice ? ` (slice ${opts.slice})` : ""), C.cyan);
+  if (result.truncated) log(truncationNotice(result), C.yellow);
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
   // The header shows <project>/<trace-file>: the project is the traced
-  // repo, i.e. the log dir's parent when it's a standard ./.cctrace.
-  // projectPath must be that repo root too — the UI relativizes tool-call
-  // file paths against it (wsRoot), and .cctrace itself contains nothing.
-  const viewDir = resolve(logDir);
-  const projectRoot = basename(viewDir) === ".cctrace" ? dirname(viewDir) : viewDir;
+  // repo — the cwd (whose store dir this is), a legacy ./.cctrace's parent,
+  // or the marker of an explicit --dir. projectPath must be that repo root
+  // too — the UI relativizes tool-call file paths against it (wsRoot).
+  const projectRoot = viewProjectRoot(dirs);
   const viewProject = basename(projectRoot);
   const viewTrace = basename(result.sources[0] || target);
+  const viewTracePath = result.sourcePaths[0] || join(logDir, viewTrace);
   // The rebuilt pairs know who produced them (0.13+ traces); older traces
   // carry no label and the header degrades to project-only.
   const client = result.pairs.findLast((p) => p.client)?.client;
@@ -462,7 +475,7 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     logDir,
     meta: {
       ...pageMeta(client), project: viewProject, projectPath: projectRoot,
-      traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, join(viewDir, viewTrace)),
+      traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, viewTracePath),
       mode: tailing ? "tail" : "view",
     },
     dataDir: DATA_DIR,
@@ -487,8 +500,8 @@ function serveView(target: string, logDir: string, opts: { port: number; noOpen:
     pid: process.pid,
     port: server.port,
     project: traceName,
-    projectPath: resolve(logDir),
-    logFile: resolve(logDir, result.sources[0] || ""),
+    projectPath: projectRoot,
+    logFile: resolve(viewTracePath),
     mode: "view",
     client,
     startedAt: new Date().toISOString(),
@@ -561,6 +574,11 @@ async function runPs(args: string[]) {
 // knows about (live runs + tombstones), newest first, across all projects
 // and containers sharing the dir. `ps` answers "what's running"; history
 // answers "what ran".
+/** Where a registry entry's trace lives now, store fallback included. */
+function carrierOf(r: InstanceInfo) {
+  return r.logFile ? findTraceCarrier(r.logFile, r.sessionId, r.projectPath ? projectTraceDir(DATA_DIR, r.projectPath) : undefined) : null;
+}
+
 async function runHistory(args: string[]) {
   let parsed;
   try {
@@ -586,7 +604,7 @@ async function runHistory(args: string[]) {
   const limit = parsed.values.all ? runs.length : Math.max(1, parseInt((parsed.values.limit as string) || "30", 10));
   const shown = runs.slice(0, limit);
   if (parsed.values.json) {
-    console.log(JSON.stringify(shown.map((r) => ({ ...r, traceHere: existsSync(r.logFile) })), null, 2));
+    console.log(JSON.stringify(shown.map((r) => ({ ...r, traceHere: !!carrierOf(r) })), null, 2));
     return;
   }
   if (!shown.length) {
@@ -607,7 +625,7 @@ async function runHistory(args: string[]) {
     prompt: (r.firstPrompt || "").replace(/\s+/g, " ").slice(0, 48),
     // A tombstone from another container may name a trace that doesn't
     // resolve here — list it (it happened), but dimmed as not-openable.
-    here: existsSync(r.logFile),
+    here: !!carrierOf(r),
   }));
   const w = (k: "when" | "state" | "client" | "project" | "session", h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
   const widths = { when: w("when", "WHEN"), state: w("state", "STATE"), client: w("client", "CLIENT"), project: w("project", "PROJECT"), session: w("session", "SESSION") };
@@ -620,6 +638,114 @@ async function runHistory(args: string[]) {
   if (live.length) log(`Dashboard (all runs): http://localhost:${live[0]!.port}/dashboard`, C.dim);
 }
 
+// `cctrace store` — where traces live and what they cost: the store root,
+// one row per project (biggest first), plain-vs-archived counts, the total.
+// The answer to "where did 73 GB go" in one screen (docs/design/store.md).
+function runStore(args: string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({ args, options: { json: { type: "boolean" }, "data-dir": { type: "string" } }, allowPositionals: false, strict: true });
+  } catch (err) {
+    console.error(`[cctrace] store: ${(err as Error).message}\n  usage: cctrace store [--json] [--data-dir PATH]`);
+    process.exit(1);
+  }
+  const dataDir = parsed.values["data-dir"] ? resolve(parsed.values["data-dir"] as string) : DATA_DIR;
+  const projects = listStoreProjects(dataDir);
+  const total = projects.reduce((n, p) => n + p.bytes, 0);
+  const raw = projects.reduce((n, p) => n + p.raw, 0);
+  if (parsed.values.json) {
+    console.log(JSON.stringify({ root: storeRoot(dataDir), bytes: total, projects }, null, 2));
+    return;
+  }
+  log(`Store: ${storeRoot(dataDir)}`, C.cyan);
+  if (!projects.length) {
+    log(`Empty — the next traced run writes here. Legacy ./.cctrace dirs move in with: cctrace adopt`, C.dim);
+    return;
+  }
+  const rows = projects.map((p) => ({
+    size: human(p.bytes),
+    traces: String(p.traces) + (p.raw ? ` (${p.raw} raw)` : ""),
+    when: p.newestMs ? ago(p.newestMs) : "-",
+    project: p.projectPath ?? p.key,
+  }));
+  const w = (k: "size" | "traces" | "when", h: string) => Math.max(h.length, ...rows.map((r) => r[k].length));
+  const widths = { size: w("size", "SIZE"), traces: w("traces", "TRACES"), when: w("when", "NEWEST") };
+  const line = (r: { size: string; traces: string; when: string; project: string }) =>
+    `  ${r.size.padStart(widths.size)}  ${r.traces.padEnd(widths.traces)}  ${r.when.padEnd(widths.when)}  ${r.project}`;
+  console.log(C.dim + line({ size: "SIZE", traces: "TRACES", when: "NEWEST", project: "PROJECT" }) + C.reset);
+  for (const r of rows) console.log(line(r));
+  log(`${human(total)} across ${projects.length} project(s)` + (raw ? ` — ${raw} plain .jsonl not yet archived: cctrace compress --all` : ""), C.cyan);
+  log(`Reclaim: cctrace clean --all · cctrace compress --all · rm -rf <a project dir above>`, C.dim);
+}
+
+// `cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
+// [--yes]` — move legacy ./.cctrace dirs into the store. No DIR = the cwd's
+// plus every legacy dir the registry knows that resolves here; --scan walks
+// a tree; --rebase names legacy dirs mounted from another machine by that
+// machine's paths; --copy leaves the sources; --zst archives plain traces on
+// the way in (streamed, decode-verified). Dry-run by default.
+async function runAdopt(args: string[]) {
+  const usage = "cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]";
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: { scan: { type: "string", multiple: true }, rebase: { type: "string" }, copy: { type: "boolean" }, zst: { type: "boolean" }, yes: { type: "boolean" } },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] adopt: ${(err as Error).message}\n  usage: ${usage}`);
+    process.exit(1);
+  }
+  let rebase: Rebase | null = null;
+  if (parsed.values.rebase != null) {
+    rebase = parseRebase(parsed.values.rebase as string);
+    if (!rebase) {
+      console.error(`[cctrace] adopt: --rebase wants FROM=TO (e.g. --rebase ./mounts=/Users/me/wrk)\n  usage: ${usage}`);
+      process.exit(1);
+    }
+    log(`Rebase: ${rebase.from} → ${rebase.to} (project paths + store keys as that host names them)`, C.dim);
+  }
+  const candidates = new Set<string>();
+  for (const d of parsed.positionals) candidates.add(resolve(d));
+  for (const root of (parsed.values.scan as string[] | undefined) ?? []) {
+    log(`Scanning ${resolve(root)} for ${LEGACY_DIRNAME}/ dirs…`, C.dim);
+    for (const d of scanLegacyDirs(root)) candidates.add(d);
+  }
+  if (!parsed.positionals.length && !parsed.values.scan) {
+    candidates.add(join(process.cwd(), LEGACY_DIRNAME));
+    for (const d of registryLegacyDirs(DATA_DIR)) candidates.add(d);
+  }
+  const plan = await planAdopt(DATA_DIR, [...candidates], { rebase, copy: !!parsed.values.copy, archive: !!parsed.values.zst });
+  const verb = plan.copy ? "copy" : "move";
+  if (!plan.dirs.length) {
+    log(`Nothing to adopt — no legacy ${LEGACY_DIRNAME}/ dir with traces resolves here` +
+      (plan.absent.length && parsed.positionals.length ? ` (checked ${plan.absent.length})` : "") +
+      `. Name dirs, or --scan ROOT to walk a tree.`, C.green);
+    return;
+  }
+  log(`${plan.dirs.length} legacy dir(s), ${plan.files} file(s), ${human(plan.bytes)} → ${storeRoot(DATA_DIR)}:`, C.cyan);
+  for (const d of plan.dirs) {
+    console.log(`    ${d.legacyDir}  ${C.dim}${d.moves.length} file(s), ${human(d.bytes)} → ${basename(d.targetDir)}/${C.reset}`);
+    for (const sk of d.skipped) console.log(`      ${C.dim}keep ${sk.name} — ${sk.reason}${C.reset}`);
+  }
+  if (!parsed.values.yes) {
+    log(`Would ${verb} ${plan.files} file(s) (${human(plan.bytes)})` +
+      (parsed.values.zst ? "; plain traces arrive as verified .zst (30-180x smaller)" : plan.copy ? "" : "; same-disk moves are instant renames") + `. ${DRY}`, C.yellow);
+    return;
+  }
+  const res = await applyAdopt(DATA_DIR, plan, (m, i, n) => {
+    if (m.size >= 16 * 1024 * 1024) console.log(`    ${C.dim}[${i}/${n}] ${m.archive ? "archiving" : verb + "ing"} ${m.name} (${human(m.size)})${C.reset}`);
+  });
+  log(`${plan.copy ? "Copied" : "Moved"} ${res.moved.length} file(s), ${human(res.bytes)}` +
+    (res.storedBytes !== res.bytes ? ` → ${human(res.storedBytes)} on disk (${(res.bytes / Math.max(res.storedBytes, 1)).toFixed(0)}x)` : "") +
+    (res.removedDirs.length ? `; removed ${res.removedDirs.length} empty legacy dir(s)` : "") +
+    (res.repointed ? `; re-pointed ${res.repointed} registry entr${res.repointed === 1 ? "y" : "ies"}` : ""), C.green);
+  if (res.skipped.length) log(`Kept ${res.skipped.length} file(s): ${res.skipped.map((k) => `${k.name} (${k.reason})`).join(", ")}`, C.yellow);
+  log(`Next: cctrace compress --all --yes  (archives plain traces 40-90x)`, C.dim);
+}
+
 /** Parse a storage subcommand's flags; exit(1) with usage on error. */
 function parseStorageArgs(
   cmd: string,
@@ -628,7 +754,7 @@ function parseStorageArgs(
   usage: string,
 ) {
   try {
-    return parseArgs({ args, options: { dir: { type: "string" }, yes: { type: "boolean" }, ...options }, allowPositionals: true, strict: true });
+    return parseArgs({ args, options: { dir: { type: "string" }, all: { type: "boolean" }, yes: { type: "boolean" }, ...options }, allowPositionals: true, strict: true });
   } catch (err) {
     console.error(`[cctrace] ${cmd}: ${(err as Error).message}\n  usage: ${usage}`);
     process.exit(1);
@@ -637,188 +763,220 @@ function parseStorageArgs(
 
 const DRY = `${C.yellow}dry run${C.reset} — re-run with ${C.cyan}--yes${C.reset} to apply`;
 
+/**
+ * The dir(s) a housekeeping command acts on: --dir DIR as given; --all =
+ * every project dir in the store (headed per dir so the output stays
+ * attributable); default = this project's store dir, plus a legacy
+ * ./.cctrace when one still holds traces (headed the same way).
+ */
+async function forStorageDirs(v: { dir?: string; all?: boolean }, fn: (logDir: string) => void | Promise<void>): Promise<void> {
+  let dirs: string[];
+  if (v.all) {
+    dirs = listStoreProjects(DATA_DIR).map((p) => p.dir);
+    if (!dirs.length) { log(`Store is empty: ${storeRoot(DATA_DIR)}`, C.dim); return; }
+  } else {
+    dirs = traceDirsFor(v.dir).readDirs;
+  }
+  for (const d of dirs) {
+    if (dirs.length > 1) log(`== ${projectPathOf(d) ?? d}`, C.cyan);
+    await fn(d);
+  }
+}
+
 // `cctrace clean` — delete regenerable .html snapshots and 0-byte aborted
 // traces. Never touches conversation data.
-function runClean(args: string[]) {
-  const { values: v } = parseStorageArgs("clean", args, {}, "cctrace clean [--dir DIR] [--yes]");
-  const logDir = (v.dir as string) || ".cctrace";
-  const plan = planClean(logDir);
-  if (!plan.htmls.length && !plan.empties.length) {
-    log(`Nothing to clean in ${logDir} (no .html snapshots, no empty traces)`, C.green);
-    return;
-  }
-  if (plan.htmls.length) {
-    log(`${plan.htmls.length} regenerable HTML snapshot(s), ${human(plan.htmls.reduce((s, f) => s + f.size, 0))} — rebuild any with 'cctrace view':`, C.cyan);
-    for (const f of plan.htmls) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
-  }
-  if (plan.empties.length) {
-    log(`${plan.empties.length} empty/aborted trace(s):`, C.cyan);
-    for (const f of plan.empties) console.log(`    ${f.name}  ${C.dim}0 B${C.reset}`);
-  }
-  if (plan.kept.length) {
-    log(`${plan.kept.length} .html kept — no source trace left to rebuild from:`, C.dim);
-    for (const f of plan.kept) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
-  }
-  if (!v.yes) {
-    log(`Would free ${human(plan.bytes)}. ${DRY}`, C.yellow);
-    return;
-  }
-  const res = applyClean(plan);
-  log(`Deleted ${res.removed.length} file(s), freed ${human(res.bytes)}`, C.green);
-  if (res.skipped.length) {
-    log(`Skipped ${res.skipped.length} file(s) that changed since the plan: ${res.skipped.join(", ")}`, C.yellow);
-  }
+async function runClean(args: string[]) {
+  const { values: v } = parseStorageArgs("clean", args, {}, "cctrace clean [--dir DIR | --all] [--yes]");
+  await forStorageDirs(v, async (logDir) => {
+    const plan = planClean(logDir);
+    if (!plan.htmls.length && !plan.empties.length && !plan.tmps.length) {
+      log(`Nothing to clean in ${logDir} (no .html snapshots, no empty traces, no orphaned .tmp)`, C.green);
+      return;
+    }
+    if (plan.htmls.length) {
+      log(`${plan.htmls.length} regenerable HTML snapshot(s), ${human(plan.htmls.reduce((s, f) => s + f.size, 0))} — rebuild any with 'cctrace view':`, C.cyan);
+      for (const f of plan.htmls) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (plan.empties.length) {
+      log(`${plan.empties.length} empty/aborted trace(s):`, C.cyan);
+      for (const f of plan.empties) console.log(`    ${f.name}  ${C.dim}0 B${C.reset}`);
+    }
+    if (plan.tmps.length) {
+      log(`${plan.tmps.length} orphaned .tmp file(s) from an interrupted merge/compress (idle > 1h):`, C.cyan);
+      for (const f of plan.tmps) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (plan.kept.length) {
+      log(`${plan.kept.length} .html kept — no source trace left to rebuild from:`, C.dim);
+      for (const f of plan.kept) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (!v.yes) {
+      log(`Would free ${human(plan.bytes)}. ${DRY}`, C.yellow);
+      return;
+    }
+    const res = applyClean(plan);
+    log(`Deleted ${res.removed.length} file(s), freed ${human(res.bytes)}`, C.green);
+    if (res.skipped.length) {
+      log(`Skipped ${res.skipped.length} file(s) that changed since the plan: ${res.skipped.join(", ")}`, C.yellow);
+    }
+  });
 }
 
 // `cctrace merge` — consolidate each session's pairs (across --continue runs)
 // into one deduped session-<id>.jsonl. --prune also removes fully-merged
 // source traces (never one carrying un-attributable utility pairs).
-function runMerge(args: string[]) {
-  const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR] [--prune] [--yes]");
-  const logDir = (v.dir as string) || ".cctrace";
-  const onProgress = mergeProgressPrinter();
-  const plan = planMerge(logDir, { onProgress });
-  for (const b of plan.blocked) {
-    log(`Skipped ${b.outName}: ${b.reason} — merge never overwrites what it can't fully read`, C.yellow);
-  }
-  if (!plan.sessions.length) {
-    log(`No session traces to merge in ${logDir}`, C.green);
-    return;
-  }
-  log(`${plan.sessions.length} session(s) across ${logDir}:`, C.cyan);
-  for (const s of plan.sessions) {
-    const dup = s.dupes ? `, ${s.dupes} dupe(s) dropped` : "";
-    const prev = s.existing ? `, ${s.existing} kept from a previous merge` : "";
-    console.log(`    ${s.outName}  ${C.dim}${s.pairCount} pairs${dup}${prev} — from ${s.sources.join(", ")}${C.reset}`);
-  }
-  if (plan.unattributable) {
-    log(`${plan.unattributable} utility pair(s) with no session id left in place`, C.dim);
-  }
-  if (v.prune && plan.subsumed.length) {
-    log(`--prune would remove ${plan.subsumed.length} fully-merged source(s), freeing ${human(plan.subsumed.reduce((s, f) => s + f.size, 0))}:`, C.cyan);
-    for (const f of plan.subsumed) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
-  }
-  if (!v.yes) {
-    log(`Would write ${plan.sessions.length} merged file(s)${v.prune ? "" : " (add --prune to also drop merged sources)"}. ${DRY}`, C.yellow);
-    return;
-  }
-  const res = applyMerge(plan, { prune: !!v.prune, onProgress });
-  log(`Wrote ${res.written.length} merged session file(s)`, C.green);
-  if (res.pruned.length) log(`Pruned ${res.pruned.length} source(s), freed ${human(res.bytes)}`, C.green);
-  if (res.skipped.length) {
-    log(`Kept ${res.skipped.length} source(s) that grew since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
-  }
+async function runMerge(args: string[]) {
+  const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR | --all] [--prune] [--yes]");
+  await forStorageDirs(v, async (logDir) => {
+    const onProgress = mergeProgressPrinter();
+    const plan = planMerge(logDir, { onProgress });
+    for (const b of plan.blocked) {
+      log(`Skipped ${b.outName}: ${b.reason} — merge never overwrites what it can't fully read`, C.yellow);
+    }
+    if (!plan.sessions.length) {
+      log(`No session traces to merge in ${logDir}`, C.green);
+      return;
+    }
+    log(`${plan.sessions.length} session(s) across ${logDir}:`, C.cyan);
+    for (const s of plan.sessions) {
+      const dup = s.dupes ? `, ${s.dupes} dupe(s) dropped` : "";
+      const prev = s.existing ? `, ${s.existing} kept from a previous merge` : "";
+      console.log(`    ${s.outName}  ${C.dim}${s.pairCount} pairs${dup}${prev} — from ${s.sources.join(", ")}${C.reset}`);
+    }
+    if (plan.unattributable) {
+      log(`${plan.unattributable} utility pair(s) with no session id left in place`, C.dim);
+    }
+    if (v.prune && plan.subsumed.length) {
+      log(`--prune would remove ${plan.subsumed.length} fully-merged source(s), freeing ${human(plan.subsumed.reduce((s, f) => s + f.size, 0))}:`, C.cyan);
+      for (const f of plan.subsumed) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (!v.yes) {
+      log(`Would write ${plan.sessions.length} merged file(s)${v.prune ? "" : " (add --prune to also drop merged sources)"}. ${DRY}`, C.yellow);
+      return;
+    }
+    const res = applyMerge(plan, { prune: !!v.prune, onProgress });
+    log(`Wrote ${res.written.length} merged session file(s)`, C.green);
+    if (res.pruned.length) log(`Pruned ${res.pruned.length} source(s), freed ${human(res.bytes)}`, C.green);
+    if (res.skipped.length) {
+      log(`Kept ${res.skipped.length} source(s) that grew since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+    }
+  });
 }
 
 // `cctrace compress` — zstd-archive .jsonl traces; view reads .zst (and
 // legacy .gz) transparently. Session traces are mostly re-sent conversation
 // prefixes, which zstd's long window compresses 40-60x where gzip got 3x.
 // --older-than N limits to traces older than N days.
-function runCompress(args: string[]) {
+async function runCompress(args: string[]) {
   const { values: v } = parseStorageArgs(
     "compress", args,
     { "older-than": { type: "string" }, "keep-jsonl": { type: "boolean" } },
-    "cctrace compress [--dir DIR] [--older-than DAYS] [--keep-jsonl] [--yes]",
+    "cctrace compress [--dir DIR | --all] [--older-than DAYS] [--keep-jsonl] [--yes]",
   );
-  const logDir = (v.dir as string) || ".cctrace";
-  const olderThan = v["older-than"] != null ? parseInt(v["older-than"] as string, 10) : undefined;
-  if (olderThan != null && (isNaN(olderThan) || olderThan < 0)) {
-    console.error("[cctrace] compress: --older-than needs a non-negative number of days");
-    process.exit(1);
-  }
-  const plan = planCompress(logDir, Date.now(), olderThan);
-  if (!plan.files.length && !plan.upgrades.length) {
-    log(`No .jsonl traces to compress in ${logDir}${olderThan != null ? ` older than ${olderThan}d` : ""}`, C.green);
-    return;
-  }
-  if (plan.files.length) {
-    log(`${plan.files.length} trace(s), ${human(plan.bytes)} to archive as .zst:`, C.cyan);
-    for (const f of plan.files) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
-  }
-  if (plan.upgrades.length) {
-    log(`${plan.upgrades.length} legacy .gz archive(s) to re-encode as .zst (long-window: typically 10-20x smaller):`, C.cyan);
-    for (const f of plan.upgrades) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
-  }
-  if (!v.yes) {
-    log(`Would archive ${human(plan.bytes)} (session traces compress 40-60x)${v["keep-jsonl"] ? "" : "; originals removed after"}. ${DRY}`, C.yellow);
-    return;
-  }
-  const res = applyCompress(plan, { keepJsonl: !!v["keep-jsonl"] });
-  for (const a of res.archived) {
-    console.log(`    ${a.name.replace(/\.gz$/, "")}.zst  ${C.dim}${human(a.before)} → ${human(a.after)}${C.reset}`);
-  }
-  const ratio = res.before > 0 ? (res.before / Math.max(res.after, 1)).toFixed(1) : "0";
-  log(`Archived ${res.archived.length} trace(s): ${human(res.before)} → ${human(res.after)} (${ratio}x), saved ${human(res.before - res.after)}`, C.green);
-  if (res.skipped.length) {
-    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
-  }
+  await forStorageDirs(v, async (logDir) => {
+    const olderThan = v["older-than"] != null ? parseInt(v["older-than"] as string, 10) : undefined;
+    if (olderThan != null && (isNaN(olderThan) || olderThan < 0)) {
+      console.error("[cctrace] compress: --older-than needs a non-negative number of days");
+      process.exit(1);
+    }
+    // Live runs' files (heartbeat-fresh registry entries) are never planned:
+    // an idle-but-live session's trace would otherwise archive and unlink
+    // under it (safe — the next append recreates it and exit unions — but
+    // pointless churn, and worse with --all sweeping every project).
+    const plan = planCompress(logDir, Date.now(), olderThan, liveLogFiles(DATA_DIR));
+    if (!plan.files.length && !plan.upgrades.length) {
+      log(`No .jsonl traces to compress in ${logDir}${olderThan != null ? ` older than ${olderThan}d` : ""}`, C.green);
+      return;
+    }
+    if (plan.files.length) {
+      log(`${plan.files.length} trace(s), ${human(plan.bytes)} to archive as .zst:`, C.cyan);
+      for (const f of plan.files) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (plan.upgrades.length) {
+      log(`${plan.upgrades.length} legacy .gz archive(s) to re-encode as .zst (long-window: typically 10-20x smaller):`, C.cyan);
+      for (const f of plan.upgrades) console.log(`    ${f.name}  ${C.dim}${human(f.size)}${C.reset}`);
+    }
+    if (!v.yes) {
+      log(`Would archive ${human(plan.bytes)} (session traces compress 40-60x)${v["keep-jsonl"] ? "" : "; originals removed after"}. ${DRY}`, C.yellow);
+      return;
+    }
+    const res = await applyCompress(plan, { keepJsonl: !!v["keep-jsonl"], onProgress: compressProgressPrinter() });
+    for (const a of res.archived) {
+      console.log(`    ${a.name.replace(/\.gz$/, "")}.zst  ${C.dim}${human(a.before)} → ${human(a.after)}${C.reset}`);
+    }
+    const ratio = res.before > 0 ? (res.before / Math.max(res.after, 1)).toFixed(1) : "0";
+    log(`Archived ${res.archived.length} trace(s): ${human(res.before)} → ${human(res.after)} (${ratio}x), saved ${human(res.before - res.after)}`, C.green);
+    if (res.skipped.length) {
+      log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+    }
+  });
 }
 
 // `cctrace purge` — drop whole categories of pairs from saved traces. The
 // default set (telemetry + count_tokens) is the noise: on a real large trace
 // it's ~45% of rows but only ~9% of bytes, so the summary is explicit about
 // rows vs disk — `compress` is the space tool, purge is the noise tool.
-function runPurge(args: string[]) {
-  const usage = "cctrace purge [--dir DIR] [--drop CATS] [--keep CATS] [--yes]";
+async function runPurge(args: string[]) {
+  const usage = "cctrace purge [--dir DIR | --all] [--drop CATS] [--keep CATS] [--yes]";
   const { values: v } = parseStorageArgs(
     "purge", args,
     { drop: { type: "string" }, keep: { type: "string" } },
     usage,
   );
-  const logDir = (v.dir as string) || ".cctrace";
-  const ids = new Set(CATEGORIES.map((c) => c.id));
-  const parseCats = (flag: string, raw: string): Set<string> => {
-    const cats = new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-    for (const c of cats) {
-      if (!ids.has(c)) {
-        console.error(`[cctrace] purge: unknown category "${c}" for ${flag}\n  categories: ${[...ids].join(", ")}`);
-        process.exit(1);
+  await forStorageDirs(v, async (logDir) => {
+    const ids = new Set(CATEGORIES.map((c) => c.id));
+    const parseCats = (flag: string, raw: string): Set<string> => {
+      const cats = new Set(raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+      for (const c of cats) {
+        if (!ids.has(c)) {
+          console.error(`[cctrace] purge: unknown category "${c}" for ${flag}\n  categories: ${[...ids].join(", ")}`);
+          process.exit(1);
+        }
       }
+      return cats;
+    };
+    if (v.drop && v.keep) {
+      console.error(`[cctrace] purge: --drop and --keep are mutually exclusive\n  ${usage}`);
+      process.exit(1);
     }
-    return cats;
-  };
-  if (v.drop && v.keep) {
-    console.error(`[cctrace] purge: --drop and --keep are mutually exclusive\n  ${usage}`);
-    process.exit(1);
-  }
-  let drop: Set<string>;
-  if (v.keep) {
-    const keep = parseCats("--keep", v.keep as string);
-    drop = new Set([...ids].filter((c) => !keep.has(c)));
-  } else {
-    // Default drop: the non-valuable bulk. external joined in 0.16 — old
-    // traces carry decoded third-party payloads (npm tarballs, gh API
-    // bodies); new tunnel-by-default traces only lose ~100-byte meta rows.
-    drop = v.drop ? parseCats("--drop", v.drop as string) : new Set(["telemetry", "tokens", "external"]);
-  }
-  if (drop.has("messages")) {
-    log(`dropping "messages" deletes the conversations themselves — that's the 87% of bytes the other tools preserve`, C.yellow);
-  }
+    let drop: Set<string>;
+    if (v.keep) {
+      const keep = parseCats("--keep", v.keep as string);
+      drop = new Set([...ids].filter((c) => !keep.has(c)));
+    } else {
+      // Default drop: the non-valuable bulk. external joined in 0.16 — old
+      // traces carry decoded third-party payloads (npm tarballs, gh API
+      // bodies); new tunnel-by-default traces only lose ~100-byte meta rows.
+      drop = v.drop ? parseCats("--drop", v.drop as string) : new Set(["telemetry", "tokens", "external"]);
+    }
+    if (drop.has("messages")) {
+      log(`dropping "messages" deletes the conversations themselves — that's the 87% of bytes the other tools preserve`, C.yellow);
+    }
 
-  const wire = wireTables();
-  const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
-  const plan = planPurge(logDir, drop, categorize);
-  if (!plan.files.length) {
-    log(`Nothing to purge in ${logDir} (no pairs in: ${[...drop].join(", ")})`, C.green);
-    return;
-  }
-  log(`Dropping categories: ${[...drop].join(", ")}`, C.cyan);
-  for (const f of plan.files) {
-    const cats = Object.entries(f.dropped).map(([c, n]) => `${n} ${c}`).join(", ");
-    const fate = f.empty ? "→ empty, file removed" : `keep ${f.kept}`;
-    console.log(`    ${f.name}  ${C.dim}drop ${cats} (${human(f.droppedBytes)}), ${fate}${C.reset}`);
-  }
-  log(`${plan.droppedCount} pair(s) / ${human(plan.droppedBytes)} of raw trace lines; ${plan.keptCount} pair(s) stay`, C.cyan);
-  log(`purge trims rows, not disk — messages dominate trace bytes; for space use 'cctrace compress' (40-60x)`, C.dim);
-  if (!v.yes) {
-    log(DRY, C.yellow);
-    return;
-  }
-  const res = applyPurge(plan, categorize, drop);
-  log(`Rewrote ${res.rewritten.length} trace(s), removed ${res.removed.length}, freed ${human(res.bytes)}`, C.green);
-  if (res.skipped.length) {
-    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
-  }
+    const wire = wireTables();
+    const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
+    const plan = planPurge(logDir, drop, categorize);
+    if (!plan.files.length) {
+      log(`Nothing to purge in ${logDir} (no pairs in: ${[...drop].join(", ")})`, C.green);
+      return;
+    }
+    log(`Dropping categories: ${[...drop].join(", ")}`, C.cyan);
+    for (const f of plan.files) {
+      const cats = Object.entries(f.dropped).map(([c, n]) => `${n} ${c}`).join(", ");
+      const fate = f.empty ? "→ empty, file removed" : `keep ${f.kept}`;
+      console.log(`    ${f.name}  ${C.dim}drop ${cats} (${human(f.droppedBytes)}), ${fate}${C.reset}`);
+    }
+    log(`${plan.droppedCount} pair(s) / ${human(plan.droppedBytes)} of raw trace lines; ${plan.keptCount} pair(s) stay`, C.cyan);
+    log(`purge trims rows, not disk — messages dominate trace bytes; for space use 'cctrace compress' (40-60x)`, C.dim);
+    if (!v.yes) {
+      log(DRY, C.yellow);
+      return;
+    }
+    const res = applyPurge(plan, categorize, drop);
+    log(`Rewrote ${res.rewritten.length} trace(s), removed ${res.removed.length}, freed ${human(res.bytes)}`, C.green);
+    if (res.skipped.length) {
+      log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+    }
+  });
 }
 
 // `cctrace compact` — aggressive post-hoc shrinking, body-level only (never
@@ -826,44 +984,46 @@ function runPurge(args: string[]) {
 // Measured design (docs/design/ideas.md #9): ~79% of trace bytes are
 // messages request bodies re-sending the conversation; keeping one full
 // request per thread-epoch retains everything the session view renders.
-function runCompact(args: string[]) {
-  const usage = "cctrace compact [--dir DIR] [--zstd] [--yes]";
+async function runCompact(args: string[]) {
+  const usage = "cctrace compact [--dir DIR | --all] [--zstd] [--yes]";
   const { values: v } = parseStorageArgs("compact", args, { zstd: { type: "boolean" } }, usage);
-  const logDir = (v.dir as string) || ".cctrace";
-  const wire = wireTables();
-  const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
-  const plan = planCompact(logDir, categorize, wire);
-  if (!plan.files.length) {
-    log(`Nothing to compact in ${logDir} (no superseded request bodies, no collapsible noise)`, C.green);
-    return;
-  }
-  log(`Compacting ${plan.files.length} trace(s) in ${logDir}:`, C.cyan);
-  for (const f of plan.files) {
-    const bits = [];
-    if (f.stubbed) bits.push(`stub ${f.stubbed} superseded request bodies`);
-    if (f.collapsed) bits.push(`collapse ${f.collapsed} noise bodies to meta`);
-    console.log(`    ${f.name}  ${C.dim}${bits.join(", ")} — saves ~${human(f.savedBytes)} of ${human(f.size)}${C.reset}`);
-  }
-  log(`${plan.stubbed} request bodies stubbed (longest per thread-epoch kept full), ${plan.collapsed} noise bodies collapsed (first/last/largest/slowest/errors kept)`, C.cyan);
-  log(`known loss: exact wire bytes of superseded requests — mid-epoch system-prompt/tool changes keep only the kept request's version; rewound/edited branch tips are detected and kept full`, C.dim);
-  if (!v.yes) {
-    log(`Would save ~${human(plan.savedBytes)} of raw trace lines${v.zstd ? ", then zstd-archive" : " (add --zstd to also archive)"}. ${DRY}`, C.yellow);
-    return;
-  }
-  const res = applyCompact(plan, categorize, wire);
-  log(`Rewrote ${res.rewritten.length} trace(s), saved ${human(res.bytes)}`, C.green);
-  if (res.skipped.length) {
-    log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
-  }
-  if (v.zstd) {
-    const cplan = planCompress(logDir, Date.now(), undefined);
-    if (cplan.files.length || cplan.upgrades.length) {
-      const cres = applyCompress(cplan, { keepJsonl: false });
-      const ratio = cres.before > 0 ? (cres.before / Math.max(cres.after, 1)).toFixed(1) : "0";
-      log(`Archived ${cres.archived.length} trace(s): ${human(cres.before)} → ${human(cres.after)} (${ratio}x)`, C.green);
-      if (cres.skipped.length) log(`Skipped ${cres.skipped.length} live trace(s): ${cres.skipped.join(", ")}`, C.yellow);
+  await forStorageDirs(v, async (logDir) => {
+    const wire = wireTables();
+    const categorize = (url: string, client?: string) => categorizeUrl(url, client, wire);
+    const plan = planCompact(logDir, categorize, wire);
+    if (!plan.files.length) {
+      log(`Nothing to compact in ${logDir} (no superseded request bodies, no collapsible noise)`, C.green);
+      return;
     }
-  }
+    log(`Compacting ${plan.files.length} trace(s) in ${logDir}:`, C.cyan);
+    for (const f of plan.files) {
+      const bits = [];
+      if (f.stubbed) bits.push(`stub ${f.stubbed} superseded request bodies`);
+      if (f.collapsed) bits.push(`collapse ${f.collapsed} noise bodies to meta`);
+      console.log(`    ${f.name}  ${C.dim}${bits.join(", ")} — saves ~${human(f.savedBytes)} of ${human(f.size)}${C.reset}`);
+    }
+    log(`${plan.stubbed} request bodies stubbed (longest per thread-epoch kept full), ${plan.collapsed} noise bodies collapsed (first/last/largest/slowest/errors kept)`, C.cyan);
+    log(`known loss: exact wire bytes of superseded requests — mid-epoch system-prompt/tool changes keep only the kept request's version, and a stubbed turn's request meta (stream/max_tokens/temperature/tools/system counts) is gone from the Sessions view + spec; rewound/edited branch tips are detected and kept full`, C.dim);
+    log(`note: traces archived as .zst already compress this redundancy 30-180x — compact rarely earns its loss on an archived store`, C.dim);
+    if (!v.yes) {
+      log(`Would save ~${human(plan.savedBytes)} of raw trace lines${v.zstd ? ", then zstd-archive" : " (add --zstd to also archive)"}. ${DRY}`, C.yellow);
+      return;
+    }
+    const res = applyCompact(plan, categorize, wire);
+    log(`Rewrote ${res.rewritten.length} trace(s), saved ${human(res.bytes)}`, C.green);
+    if (res.skipped.length) {
+      log(`Skipped ${res.skipped.length} trace(s) that changed since the plan (live run?): ${res.skipped.join(", ")}`, C.yellow);
+    }
+    if (v.zstd) {
+      const cplan = planCompress(logDir, Date.now(), undefined, liveLogFiles(DATA_DIR));
+      if (cplan.files.length || cplan.upgrades.length) {
+        const cres = await applyCompress(cplan, { keepJsonl: false, onProgress: compressProgressPrinter() });
+        const ratio = cres.before > 0 ? (cres.before / Math.max(cres.after, 1)).toFixed(1) : "0";
+        log(`Archived ${cres.archived.length} trace(s): ${human(cres.before)} → ${human(cres.after)} (${ratio}x)`, C.green);
+        if (cres.skipped.length) log(`Skipped ${cres.skipped.length} live trace(s): ${cres.skipped.join(", ")}`, C.yellow);
+      }
+    }
+  });
 }
 
 // One stable data dir for every install method (source, bun link, compiled
@@ -883,6 +1043,27 @@ function resolveDataDir(): string {
 }
 const DATA_DIR = resolveDataDir();
 const MITM_CA_DIR = join(DATA_DIR, "mitm");
+
+/** The trace dirs for this cwd (docs/design/store.md): --dir as given, else
+ * the project's store dir to write + a legacy ./.cctrace to read. */
+function traceDirsFor(dirFlag?: string): TraceDirs {
+  return resolveTraceDirs({ dataDir: DATA_DIR, cwd: process.cwd(), dirFlag });
+}
+
+/** The project a view/serve of these dirs belongs to: the cwd when the
+ * store is in charge; an explicit --dir's marker, its parent when it is a
+ * legacy ./.cctrace, else the dir itself. */
+function viewProjectRoot(dirs: TraceDirs): string {
+  const d = dirs.writeDir;
+  if (resolve(d) === projectTraceDir(DATA_DIR, process.cwd())) return process.cwd();
+  return projectPathOf(d) ?? (basename(d) === LEGACY_DIRNAME ? dirname(d) : d);
+}
+
+/** Progress line for a big archive step — silent for small files. */
+function compressProgressPrinter(): (ev: { name: string; bytes: number }) => void {
+  const SIZEABLE = 64 * 1024 * 1024;
+  return (ev) => { if (ev.bytes >= SIZEABLE) log(`  compressing ${ev.name} (${human(ev.bytes)})`, C.dim); };
+}
 
 // Pre-0.6 the CA lived in XDG cache; move it once, preserving CA identity.
 function migrateLegacyCa() {
@@ -907,18 +1088,21 @@ ${C.yellow}USAGE:${C.reset}
   Everything after ${C.cyan}--${C.reset} is passed to the traced CLI verbatim.
   CLIENT picks who gets traced: ${C.cyan}claude${C.reset} (default), ${C.cyan}codex${C.reset}, ${C.cyan}grok${C.reset}, ${C.cyan}kimi${C.reset}, ${C.cyan}opencode${C.reset}.
   Non-Claude clients always use mitm capture.
-  Every run writes .cctrace/trace-<ts>.jsonl — that file IS the trace;
-  reopen it anytime with ${C.cyan}cctrace view${C.reset}.
+  Every run writes trace-<ts>.jsonl into the store — one dir per project
+  under ~/.local/share/cctrace/traces/ (archived to .zst at exit); that file
+  IS the trace; reopen it anytime with ${C.cyan}cctrace view${C.reset}.
 
 ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no client spawn)${C.reset}
-  ${C.cyan}view${C.reset} [target] [--html] [--port N]
+  ${C.cyan}view${C.reset} [target] [--html] [--full] [--port N]
                           Reopen a saved trace in the web UI (serves it from
                           a local server; Ctrl-C stops). No target lists the
                           traces and lets you pick (Enter = newest). Target is
                           ${C.cyan}latest${C.reset}, a .jsonl[.zst|.gz] path, a session id, or a
-                          trace filename fragment. ${C.cyan}--html${C.reset} writes a self-contained
-                          snapshot .html instead (shareable, but huge traces
-                          choke browsers).
+                          trace filename fragment. Traces stream in from the
+                          tail: the newest 256 MB of lines open, older ones
+                          are noted (${C.cyan}--full${C.reset} loads everything). ${C.cyan}--html${C.reset} writes
+                          a self-contained snapshot .html instead (shareable,
+                          but huge traces choke browsers).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset} [--prune]           Consolidate each session's pairs into one deduped
                           session-<id>.jsonl; --prune drops merged sources.
@@ -953,15 +1137,27 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           The global run log: every traced run (live + past),
                           newest first, across all projects sharing the data
                           dir. ps = what's running; history = what ran.
-  ${C.dim}All take --dir DIR (default .cctrace). clean/merge/compress/purge/compact${C.reset}
-  ${C.dim}are dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
+  ${C.cyan}store${C.reset} [--json]            Where traces live and what they cost: the store
+                          root, one row per project (size, traces, newest),
+                          the total — and the commands that reclaim space.
+  ${C.cyan}adopt${C.reset} [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
+                          Move legacy ./.cctrace dirs into the store. No DIR:
+                          this project's + every one the run registry knows;
+                          --scan walks a tree. Same-disk moves are renames.
+                          --rebase: dirs mounted from another machine under
+                          FROM belong to projects at TO there (keys, markers
+                          and live checks use that machine's paths).
+                          --copy keeps the sources; --zst archives plain
+                          traces on the way in (streamed, decode-verified).
+  ${C.dim}view/spec/clean/merge/compress/purge/compact take --dir DIR (default: this${C.reset}
+  ${C.dim}project's store dir); the housekeeping five also take --all (every project${C.reset}
+  ${C.dim}in the store) and are dry-run by default; add ${C.reset}${C.cyan}--yes${C.reset}${C.dim} to apply.${C.reset}
 
 ${C.yellow}OPTIONS:${C.reset}
   --mode MODE        Capture mode: auto (default), mitm, base-url, node
   -s, --static       Static mode: no live server, write .jsonl + snapshot .html
-  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}, walks up if busy;
-                     an env PORT is honored when --port is absent, so
-                     ${C.cyan}portless trace cctrace claude${C.reset} routes https://trace.localhost)
+  -p, --port PORT    Live UI port (default: ${DEFAULT_PORT}; walks ${DEFAULT_PORT}..${DEFAULT_PORT + PORT_WALK - 1}
+                     when busy, then an OS-assigned port)
   --inform-agent     Append a note to the agent's system prompt (claude only):
                      you are traced, the live UI address, and how to bypass the
                      proxy for the one command that misbehaves behind one
@@ -983,11 +1179,14 @@ ${C.yellow}OPTIONS:${C.reset}
   --no-open          Don't auto-open browser
   --print-ca         Print the MITM CA cert path and exit
   --log NAME         Custom log file base name
-  --dir PATH         Log directory (default: .cctrace)
+  --dir PATH         Log directory (default: the project's dir in the store,
+                     ~/.local/share/cctrace/traces/<project-key>/)
   --fresh            Don't merge prior traces of a continued session
                      (also skips the exit auto-merge)
   --no-auto-merge    Don't consolidate this run's session into
                      session-<id>.jsonl at exit (see the merge subcommand)
+  --no-compress      Leave the trace as plain .jsonl at exit (default:
+                     archived to .jsonl.zst, 40-90x smaller; view reads both)
   --with FILE        Merge a specific trace file into the view (repeatable)
   --claude-path PATH Custom Claude binary path
   --client-path PATH Custom binary path for any client (codex/grok/kimi/opencode too)
@@ -1064,11 +1263,13 @@ async function buildPreload(): Promise<string> {
 
 interface RunOpts {
   port: number;
-  /** The port came from env PORT (portless-style route) — strip PORT from
-   * the traced child so its own dev servers don't bind the route's port. */
-  portFromEnv?: boolean;
   liveMode: boolean;
+  /** Where this run writes: the project's store dir, or --dir. */
   logDir: string;
+  /** Where continuity readers look: logDir, then a legacy ./.cctrace. */
+  readDirs: string[];
+  /** Leave the trace as plain .jsonl at exit (default: archive to .zst). */
+  noCompress: boolean;
   logName?: string;
   logAll: boolean;
   noOpen: boolean;
@@ -1084,7 +1285,7 @@ interface RunOpts {
 interface LogSink {
   onPair: (pair: TracePair) => void;
   /** Write the categorized HTML report from everything collected. */
-  writeHtml: () => string;
+  writeHtml: () => Promise<string>;
   /** This run's pairs (no prior-run merges) — feeds the exit summary. */
   pairs: () => TracePair[];
 }
@@ -1123,7 +1324,8 @@ function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
 }
 
 function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: (pair: TracePair) => void): LogSink {
-  if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
+  if (resolve(opts.logDir) === projectTraceDir(DATA_DIR, process.cwd())) ensureProjectDir(DATA_DIR, process.cwd());
+  else if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
   writeFileSync(logFile, "");
   log(`Log: ${logFile}`, C.blue);
 
@@ -1140,12 +1342,12 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
     },
     // The snapshot merges prior-run pairs of the same Claude session (and any
     // --with files) so a --continue'd session's .html is complete on its own.
-    writeHtml: () => {
+    writeHtml: async () => {
       let all = collected;
-      const extra: TracePair[] = opts.withFiles.length ? loadTraceFiles(opts.withFiles) : [];
+      const extra: TracePair[] = opts.withFiles.length ? await loadTraceFiles(opts.withFiles) : [];
       if (!opts.fresh) {
         const sids = new Set(collected.map((p) => extractSessionId(p, wireTables())).filter(Boolean));
-        extra.push(...loadPriorPairs(opts.logDir, logFile, sids));
+        extra.push(...await loadPriorPairs(opts.readDirs, logFile, sids));
       }
       if (extra.length) {
         // known also dedupes within extra: --with files and prior-run scans
@@ -1207,7 +1409,18 @@ function mergeProgressPrinter(): (ev: MergeProgress) => void {
   };
 }
 
-function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): string | null {
+interface AutoMergeOutcome {
+  /** The session file this run's own trace was absorbed into (and pruned
+   * from), if any — the receipt/tombstone must point there instead. */
+  absorbedInto: string | null;
+  /** Every session file the merge wrote, with the archive the plan saw
+   * (null = none) — each plain file is a verified union of THAT archive, so
+   * the exit archive step may overwrite it while it is still that one. */
+  written: { path: string; priorArchive: ArchiveStamp | null }[];
+}
+
+function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): AutoMergeOutcome {
+  const none: AutoMergeOutcome = { absorbedInto: null, written: [] };
   try {
     const wire = wireTables();
     const sids = new Set<string>();
@@ -1215,26 +1428,77 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): st
       const sid = extractSessionId(p, wire);
       if (sid) sids.add(sid);
     }
-    if (!sids.size) return null;
+    if (!sids.size) return none;
     const onProgress = mergeProgressPrinter();
     const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true, onProgress });
     for (const b of plan.blocked) log(`Auto-merge skipped ${b.outName}: ${b.reason}`, C.dim);
-    if (!plan.sessions.length) return null;
+    if (!plan.sessions.length) return none;
     const res = applyMerge(plan, { prune: true, onProgress });
-    if (!res.written.length) return null;
+    if (!res.written.length) return none;
     const sources = new Set(plan.sessions.flatMap((s) => s.sources));
     log(`Merged ${sources.size} trace file(s) → ${res.written.join(", ")}`, C.cyan);
     if (res.skipped.length) log(`Kept ${res.skipped.length} source(s) that grew mid-merge: ${res.skipped.join(", ")}`, C.dim);
-    if (!res.pruned.includes(basename(logFile))) return null;
+    const written = plan.sessions.filter((s) => res.written.includes(s.outName)).map((s) => ({ path: s.outPath, priorArchive: s.priorArchive }));
+    if (!res.pruned.includes(basename(logFile))) return { absorbedInto: null, written };
     const absorbed = plan.sessions.find((s) => s.sources.includes(basename(logFile)));
-    return absorbed ? absorbed.outPath : null;
+    return { absorbedInto: absorbed ? absorbed.outPath : null, written };
   } catch (err) {
     log(`Auto-merge skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
-    return null;
+    return none;
   }
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => string, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void) {
+/**
+ * Archive this run's final trace file plus every session file the merge
+ * wrote, then sweep the dir for plain traces a killed run left behind.
+ * Returns the archive path of `traceFile` when it was archived (so the
+ * receipt/tombstone can point at it), else null.
+ */
+async function restTracesOnExit(opts: RunOpts, traceFile: string, mergeWritten: AutoMergeOutcome["written"]): Promise<string | null> {
+  const onProgress = compressProgressPrinter();
+  const rest = async (path: string, supersedesArchive: ArchiveStamp | null | undefined): Promise<string | null> => {
+    // Two attempts: a pair can still land during the first pass (a tunnel
+    // closing as the child dies logs its meta pair late), which the archive
+    // step detects and refuses to seal; by the second pass the writers are
+    // done.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await archiveTrace(path, { supersedesArchive, onProgress });
+      if (res.archived.length) {
+        const a = res.archived[0]!;
+        log(`Archived ${basename(path)} → ${basename(path)}.zst (${human(a.before)} → ${human(a.after)})`, C.dim);
+        return `${path}.zst`;
+      }
+      if (!res.skipped.length) return null; // nothing to do (empty / not a .jsonl)
+      if (attempt === 1) log(`Left ${basename(path)} uncompressed (still being written, or an archive that can't be unioned) — cctrace compress catches it`, C.dim);
+    }
+    return null;
+  };
+  let rested: string | null = null;
+  try {
+    const written = new Map(mergeWritten.map((w) => [resolve(w.path), w.priorArchive]));
+    for (const [p, stamp] of written) {
+      const out = await rest(p, stamp);
+      if (p === resolve(traceFile)) rested = out;
+    }
+    if (!written.has(resolve(traceFile))) rested = await rest(traceFile, undefined);
+  } catch (err) {
+    log(`Archive skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
+  }
+  try {
+    const exclude = liveLogFiles(DATA_DIR);
+    exclude.add(resolve(traceFile));
+    const plan = planStaleSweep(opts.logDir, exclude);
+    if (plan.files.length) {
+      const res = await applyCompress(plan, { keepJsonl: false, onProgress });
+      if (res.archived.length) log(`Archived ${res.archived.length} leftover trace(s) from earlier runs (${human(res.before)} → ${human(res.after)})`, C.dim);
+    }
+  } catch (err) {
+    log(`Leftover sweep skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
+  }
+  return rested;
+}
+
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1259,9 +1523,6 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
   if (opts.bypassHosts?.length) {
     log(`Bypassing the proxy (direct, normal non-proxy behavior): ${opts.bypassHosts.join(", ")}`, C.dim);
   }
-  // PORT was consumed for cctrace's own UI (a portless-style route) — don't
-  // leak it into the traced app, whose dev servers would bind the same port.
-  if (opts.portFromEnv) delete childEnv.PORT;
   const child: ChildProcess = spawn(claudePath, claudeArgs, {
     env: childEnv,
     stdio: "inherit",
@@ -1310,16 +1571,31 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     // where the pairs actually live now. --fresh opts out along with the
     // viewer-side merge; --no-auto-merge opts out of just this.
     let traceFile = logFile;
+    let mergeWritten: AutoMergeOutcome["written"] = [];
     if (!opts.fresh && !opts.noAutoMerge) {
       const merged = autoMergeOnExit(opts, logFile, getPairs?.() ?? []);
-      if (merged) {
-        traceFile = merged;
-        onTraceMoved?.(resolve(merged));
+      mergeWritten = merged.written;
+      if (merged.absorbedInto) {
+        traceFile = merged.absorbedInto;
+        onTraceMoved?.(resolve(merged.absorbedInto));
+      }
+    }
+    // Everything this run touched goes to rest as .zst (docs/design/
+    // store.md): the merged session file(s) were just written as verified
+    // unions of any prior archive, so they may overwrite one; the run's own
+    // trace never has one unless a sweep raced us, in which case the union
+    // path runs. Then the leftovers of killed runs in this dir. All fail-
+    // soft — housekeeping never costs the exit code.
+    if (!opts.noCompress) {
+      const rested = await restTracesOnExit(opts, traceFile, mergeWritten);
+      if (rested) {
+        traceFile = rested;
+        onTraceMoved?.(resolve(rested));
       }
     }
     if (onFinalize) {
       // Static mode: the self-contained snapshot is the deliverable.
-      const htmlFile = onFinalize();
+      const htmlFile = await onFinalize();
       log(`HTML: ${htmlFile}`, C.green);
       if (!opts.noOpen) openBrowser(htmlFile);
     } else {
@@ -1354,7 +1630,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     const ri = claudeArgs.findIndex((a) => a === "--resume" || a === "-r");
     const resumeArg = ri >= 0 ? claudeArgs[ri + 1] : undefined;
     if (resumeArg && /^[0-9a-f][0-9a-f-]{6,}$/i.test(resumeArg)) speculateSid = resumeArg;
-    else speculateSid = newestPriorSessionId(opts.logDir, logFile)?.sid;
+    else speculateSid = (await newestPriorSessionId(opts.readDirs, logFile))?.sid;
   }
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
@@ -1367,6 +1643,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     const server = createServer({
       port: opts.port,
       logDir: opts.logDir,
+      readDirs: opts.readDirs,
       logFile,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
@@ -1383,9 +1660,12 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
         // prior trace (pair.prior = basename in the log dir) or an explicit
         // --with file (basename of an arbitrary path).
         const withByBase = new Map(opts.withFiles.map((f) => [basename(f), resolve(f)]));
+        // A prior basename lives in whichever read dir holds it (the store
+        // dir, or a legacy ./.cctrace) — first hit wins, store first.
+        const priorPath = (name: string) => opts.readDirs.map((d) => join(d, name)).find((f) => existsSync(f)) ?? join(opts.logDir, name);
         const files = new Set<string>();
         for (const p of removed) {
-          files.add(p.prior ? withByBase.get(p.prior) ?? join(opts.logDir, p.prior) : logFile);
+          files.add(p.prior ? withByBase.get(p.prior) ?? priorPath(p.prior) : logFile);
         }
         const res = purgePairsById([...files], new Set(removed.map((p) => p.id)));
         const touched = res.rewritten.concat(res.removed);
@@ -1611,29 +1891,22 @@ function agentAwarenessNote(port: number | undefined, traceFile: string): string
   ].filter(Boolean).join(" ");
 }
 
-/** A usable port from env PORT, or null. The convention portless (and every
- * PaaS runner) uses: the wrapper assigns the port, the server binds it. */
-function envPortOrNull(): number | null {
-  const raw = process.env.PORT;
-  if (!raw || !/^\d{2,5}$/.test(raw)) return null;
-  const n = parseInt(raw, 10);
-  return n > 0 && n < 65536 ? n : null;
-}
-
 async function main() {
   if (SUBCOMMAND) {
     const rest = RAW_ARGV.slice(1);
     if (SUBCOMMAND === "view") {
       if (await runView(rest)) return; // serving: the web server keeps us alive
     }
-    else if (SUBCOMMAND === "clean") runClean(rest);
-    else if (SUBCOMMAND === "merge") runMerge(rest);
-    else if (SUBCOMMAND === "compress") runCompress(rest);
-    else if (SUBCOMMAND === "purge") runPurge(rest);
-    else if (SUBCOMMAND === "compact") runCompact(rest);
-    else if (SUBCOMMAND === "spec") runSpec(rest);
+    else if (SUBCOMMAND === "clean") await runClean(rest);
+    else if (SUBCOMMAND === "merge") await runMerge(rest);
+    else if (SUBCOMMAND === "compress") await runCompress(rest);
+    else if (SUBCOMMAND === "purge") await runPurge(rest);
+    else if (SUBCOMMAND === "compact") await runCompact(rest);
+    else if (SUBCOMMAND === "spec") await runSpec(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
     else if (SUBCOMMAND === "history") await runHistory(rest);
+    else if (SUBCOMMAND === "store") runStore(rest);
+    else if (SUBCOMMAND === "adopt") await runAdopt(rest);
     process.exit(0);
   }
 
@@ -1669,15 +1942,13 @@ async function main() {
     process.exit(1);
   }
 
-  // No --port but an env PORT (a portless-style wrapper assigning us a
-  // routed port: `portless trace cctrace claude` -> https://trace.localhost)
-  // — bind that. Explicit --port always wins.
-  const envPort = !values.port ? envPortOrNull() : null;
+  const dirs = traceDirsFor(values.dir);
   const opts: RunOpts = {
-    port: values.port ? parseInt(values.port, 10) : (envPort ?? DEFAULT_PORT),
-    portFromEnv: envPort != null,
+    port: values.port ? parseInt(values.port, 10) : DEFAULT_PORT,
     liveMode: !values.static,
-    logDir: values.dir || ".cctrace",
+    logDir: dirs.writeDir,
+    readDirs: dirs.readDirs,
+    noCompress: !!values["no-compress"],
     logName: values.log,
     logAll: !values["messages-only"],
     noOpen: !!values["no-open"],
@@ -1689,7 +1960,11 @@ async function main() {
   };
 
   log(`cctrace v${versionWithCommit()}`, C.dim);
-  if (opts.portFromEnv) log(`Using PORT=${opts.port} from env (portless-style route) — --port overrides`, C.dim);
+  if (dirs.legacy) {
+    // Read for continuity, never written: one line so the user knows where
+    // new traces go and how to bring the old ones along.
+    log(`Legacy ${relative(process.cwd(), dirs.legacy) || dirs.legacy} still holds traces — new traces go to the store; move them: cctrace adopt`, C.yellow);
+  }
   await maybeOfferUpdate();
   // Refresh the update cache in the background — never blocks the session.
   if (!NO_UPDATE_CHECK) refreshUpdateCache(DATA_DIR).catch(() => {});

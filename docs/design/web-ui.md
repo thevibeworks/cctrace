@@ -10,8 +10,9 @@ generic monograms in `CLIENT_ICONS`, not vendor logos — from
 `PageMeta.client` or the newest labeled pair; absent for pre-0.13 traces),
 the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
 live runs, view serves, and snapshots all name the .jsonl behind the page;
-view resolves the project from the log dir's parent when it's a standard
-./.cctrace, and projectPath is that repo root so tool paths relativize;
+view resolves the project from the cwd whose store dir it serves (or a
+legacy ./.cctrace's parent, or an explicit --dir's project.json marker),
+and projectPath is that repo root so tool paths relativize;
 live/tail pages carry a PULSE strip (bottom of the session view, body
 .pulse-on): newest model call's tool labels + age (1s tick — the one
 ticking surface, terminal convention) + the newest request's cache
@@ -21,8 +22,8 @@ Boot shows a rotating loading VERB (ccx tradition, #boot-verb) until
 the first render replaces it. The cache "expired" state also renders
 on the detail panel's cache chip and the outline's newest-turn hover
 — newest model call ONLY (later hits refresh the TTL);
-clicking the title copies PageMeta.traceRelPath, the project-relative
-".cctrace/trace-….jsonl" ready for `cctrace view`) and the current session id (extracted
+clicking the title copies PageMeta.traceRelPath — absolute into the store,
+project-relative for a legacy trace — ready for `cctrace view`) and the current session id (extracted
 client-side from pairs, newest live pair wins, click to copy) — the tab
 title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
 opens its WebSocket origin-relative (never a baked port: behind

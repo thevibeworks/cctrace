@@ -33,6 +33,7 @@ export const CLI_OPTIONS = {
   "cache-dir": { type: "string" }, // legacy alias for --data-dir (pre-0.6)
   fresh: { type: "boolean" },
   "no-auto-merge": { type: "boolean" },
+  "no-compress": { type: "boolean" },
   with: { type: "string", multiple: true },
 } as const;
 

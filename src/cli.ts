@@ -1763,13 +1763,17 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     if (resumeArg && /^[0-9a-f][0-9a-f-]{6,}$/i.test(resumeArg)) speculateSid = resumeArg;
     else speculateSid = (await newestPriorSessionId(opts.readDirs, logFile))?.sid;
   }
+  // The run's identity: the live-instance registry entry, the /api/pair
+  // auth token, and the id the background seal job patches at exit. Declared
+  // outside the live block on purpose — the spawn call below needs it too
+  // (0.42.0 shadowed it inside the block: ReferenceError on every live run).
+  const instanceId = crypto.randomUUID();
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
     // entry once Claude's first request reveals it on the wire. The id is
     // the run's identity for cross-instance probes — pids can't be, they
     // collide across containers sharing the data dir.
-    const instanceId = crypto.randomUUID();
     let instance: InstanceHandle | null = null;
     const server = createServer({
       port: opts.port,
@@ -1899,7 +1903,9 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // session file, not the trace the merge just absorbed.
     (path) => liveInstance?.update({ logFile: path }),
     (stats) => liveInstance?.update(stats),
-    instanceId,
+    // Static mode has no registry entry to patch; the seal job keys its
+    // file by pid then.
+    opts.liveMode ? instanceId : undefined,
   );
 }
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.43.1
+
+- Fixed every proxy-capture run (`cctrace claude`, `codex`, `grok`, `kimi`, `opencode`, live or `-s`) dying right after "MITM proxy listening" with `Error: instanceId is not defined`: 0.42.0's background exit seal passed the run id into the spawn, but the id was declared inside the live-mode block. Hoisted; `tsc` flagged it (the repo's typecheck is not gated — 47 pre-existing errors — so it shipped in 0.42.0 and 0.43.0)
+
 ## 0.43.0
 
 - Reworked cctrace title: cctrace no longer calls a model itself (0.42.0 shelled out to claude -p). It is now the DATA layer — it extracts each session's spine (your prompts + the agent's final answers, no tool calls, no sub-agent context) into a digest and stores/serves the titles a namer hands back — and the naming is an agent skill, cctrace-title, that fans the digests out across Claude Code's own subagents and writes each result back. cctrace title / --all / --json lists the sessions that still need a name with their digests; cctrace title set <id> "<title>" [--dir DIR] records one. The dashboard, history, view picker and header show titles exactly as before. Rationale: naming is a concurrent model workflow, and Claude Code already runs those well — a skill that uses subagents beats a CLI subprocess fan-out, and keeps cctrace free of a model dependency

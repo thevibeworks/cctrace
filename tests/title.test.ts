@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import {
   sessionSpine, renderDigest, cleanTitle, titleKey, titleFor, readTitles, writeTitles,
-  planTitles, applyTitles, titleLookup, DIGEST_CHARS,
+  planTitles, setTitle, titleLookup, DIGEST_CHARS,
 } from "../src/title";
 import { wireTables } from "../src/clients";
 
@@ -97,28 +97,21 @@ describe("titles.json store", () => {
     expect(titleFor(dir, "unknown", "trace-z.jsonl")).toBe("");
   });
 
-  test("plan skips named sessions unless force; apply writes via the runner", async () => {
+  test("plan lists untitled sessions with their digest; setTitle names one; then it drops off the list unless force", async () => {
     seq = 0;
     const trace = join(dir, "trace-t.jsonl");
     writeFileSync(trace, [chatPair([["do the thing", ""]], "Thing done")].map((p) => JSON.stringify(p)).join("\n") + "\n");
     const plan1 = await planTitles(dir, dir, WIRE);
     expect(plan1.jobs.length).toBe(1);
-    const runner = async () => "A Clear Title";
-    const res = await applyTitles(dir, plan1.jobs, { runner });
-    expect(res.titled).toBe(1);
-    expect(readTitles(dir)[SID]!.title).toBe("A Clear Title");
-    // second plan: already named -> skipped, force re-plans
+    expect(plan1.jobs[0]!.sid).toBe(SID);
+    expect(plan1.jobs[0]!.digest).toContain("do the thing");
+    // the namer writes back
+    setTitle(dir, plan1.jobs[0]!.key, "A Clear Title", { model: "sonnet", source: plan1.jobs[0]!.source, nowIso: "2026-08-19T00:00:00Z" });
+    const rec = readTitles(dir)[SID]!;
+    expect(rec.title).toBe("A Clear Title");
+    expect(rec.model).toBe("sonnet");
+    // named -> off the list; force re-lists
     expect((await planTitles(dir, dir, WIRE)).jobs.length).toBe(0);
     expect((await planTitles(dir, dir, WIRE, { force: true })).jobs.length).toBe(1);
-  });
-
-  test("applyTitles counts a runner failure without writing", async () => {
-    seq = 0;
-    const trace = join(dir, "trace-f.jsonl");
-    writeFileSync(trace, [chatPair([["hello", ""]], "Hi")].map((p) => JSON.stringify(p)).join("\n") + "\n");
-    const { jobs } = await planTitles(dir, dir, WIRE);
-    const res = await applyTitles(dir, jobs, { runner: async () => { throw new Error("boom"); } });
-    expect(res).toEqual({ titled: 0, failed: 1 });
-    expect(readTitles(dir)[SID]).toBeUndefined();
   });
 });

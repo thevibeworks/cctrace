@@ -13,7 +13,7 @@ import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMark
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
 import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError } from "./view";
-import { planTitles, applyTitles, titleFor, titleLookup, mainSessionId, DEFAULT_TITLE_MODEL } from "./title";
+import { planTitles, setTitle, cleanTitle, titleFor, titleLookup, mainSessionId, type TitleJob } from "./title";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
   registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, LEGACY_DIRNAME, type TraceDirs, type Rebase,
@@ -690,44 +690,57 @@ function runStore(args: string[]) {
   log(`Reclaim: cctrace clean --all · cctrace compress --all · rm -rf <a project dir above>`, C.dim);
 }
 
-// `cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N]
-// [--yes]` — name sessions with a model. Dry-run lists the sessions that
-// would be titled (each is one `claude -p` call on the user's quota); --yes
-// runs them, --force re-titles ones that have a name.
+// `cctrace title` — the DATA side of session naming (the model work is the
+// `cctrace-title` skill). No args / --json: list sessions that still need a
+// title, each with its digest, for the skill to name. `set KEY "TITLE"`:
+// record one. cctrace never calls a model here.
 async function runTitle(args: string[]) {
-  const usage = `cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N] [--yes]`;
-  const { values: v, positionals } = parseStorageArgs("title", args, { model: { type: "string" }, force: { type: "boolean" }, jobs: { type: "string" } }, usage);
-  const model = (v.model as string | undefined) || DEFAULT_TITLE_MODEL;
-  const jobsN = v.jobs ? parseInt(v.jobs as string, 10) : 4;
+  const usage = `cctrace title [target] [--dir DIR | --all] [--force] [--json]\n         cctrace title set <session-id|key> "<title>" [--dir DIR]`;
+
+  // ---- set: write one title ----
+  if (args[0] === "set") {
+    const rest = args.slice(1);
+    let dirFlag: string | undefined;
+    const di = rest.indexOf("--dir");
+    if (di !== -1) { dirFlag = rest[di + 1]; rest.splice(di, 2); }
+    const key = rest[0];
+    const title = cleanTitle(rest.slice(1).join(" "));
+    if (!key || !title) {
+      console.error(`[cctrace] title set: need a session id/key and a title\n  usage: cctrace title set <session-id|key> "<title>" [--dir DIR]`);
+      process.exit(1);
+    }
+    const dir = traceDirsFor(dirFlag).writeDir;
+    setTitle(dir, key, title, { nowIso: new Date().toISOString() });
+    log(`Titled ${key.length > 12 ? key.slice(0, 8) : key}: ${title}`, C.green);
+    return;
+  }
+
+  const { values: v, positionals } = parseStorageArgs("title", args, { force: { type: "boolean" }, json: { type: "boolean" } }, usage);
   const wire = wireTables();
   const target = positionals[0];
-  let planned = 0, titled = 0, failed = 0;
+  const all: { key: string; sid: string; source: string; storeDir: string; project: string; loops: number; digest: string }[] = [];
+  let skippedTotal = 0;
   await forStorageDirs(v as { dir?: string; all?: boolean }, async (logDir) => {
-    // Titles are stored in the dir being scanned (the project's store dir,
-    // or the named --dir); a legacy read dir keeps its own titles.json.
     const project = projectPathOf(logDir) ?? viewProjectRoot(traceDirsFor(v.dir as string | undefined));
     const { jobs, skipped } = await planTitles(logDir, logDir, wire, { force: !!v.force, onlyFile: target ? resolve(target) : undefined });
-    if (!jobs.length) {
-      log(`Nothing to title in ${logDir}` + (skipped ? ` (${skipped} session${skipped > 1 ? "s" : ""} already named; --force re-titles)` : ""), C.green);
-      return;
-    }
-    planned += jobs.length;
-    log(`${jobs.length} session(s) to title in ${logDir}` + (skipped ? ` (${skipped} already named)` : "") + `:`, C.cyan);
-    for (const j of jobs) console.log(`    ${j.sid ? j.sid.slice(0, 8) : j.key}  ${C.dim}${j.loops} exchange(s), ${human(j.digest.length)} digest — from ${j.source}${C.reset}`);
-    if (!v.yes) return;
-    log(`Naming with claude -p --model ${model} (${Math.min(jobsN, jobs.length)} at a time)…`, C.dim);
-    const res = await applyTitles(logDir, jobs, {
-      model, concurrency: jobsN, project: basename(project),
-      onDone: (job, title, err) => {
-        const who = job.sid ? job.sid.slice(0, 8) : job.key;
-        if (title) console.log(`    ${who}  ${title}`);
-        else console.log(`    ${who}  ${C.yellow}failed — ${err}${C.reset}`);
-      },
-    });
-    titled += res.titled; failed += res.failed;
+    skippedTotal += skipped;
+    for (const j of jobs) all.push({ key: j.key, sid: j.sid, source: j.source, storeDir: logDir, project: basename(project), loops: j.loops, digest: j.digest });
   });
-  if (!v.yes && planned) log(`Would name ${planned} session(s) with claude -p --model ${model} — one model call each. ${DRY}`, C.yellow);
-  else if (v.yes) log(`Named ${titled} session(s)` + (failed ? `, ${failed} failed` : "") + ` — titles.json in each store dir; the dashboard, history, view picker and headers show them`, failed ? C.yellow : C.green);
+
+  if (v.json) {
+    // The skill's input: everything it needs to name each session and write
+    // the result back (cctrace title set <key> "<title>" --dir <storeDir>).
+    process.stdout.write(JSON.stringify(all, null, 2) + "\n");
+    return;
+  }
+
+  if (!all.length) {
+    log(`Nothing to title` + (skippedTotal ? ` (${skippedTotal} session${skippedTotal > 1 ? "s" : ""} already named; --force re-lists)` : "") + `.`, C.green);
+    return;
+  }
+  log(`${all.length} session(s) need a title` + (skippedTotal ? ` (${skippedTotal} already named)` : "") + `:`, C.cyan);
+  for (const j of all) console.log(`    ${j.sid ? j.sid.slice(0, 8) : j.key}  ${C.dim}${j.loops} exchange(s), ${human(j.digest.length)} digest — ${j.project}/${j.source}${C.reset}`);
+  log(`Name them with the cctrace-title skill (fans out across subagents), or --json to drive it yourself; write back with: cctrace title set <id> "<title>" --dir <store dir>`, C.dim);
 }
 
 // `cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
@@ -1192,14 +1205,13 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
   ${C.cyan}store${C.reset} [--json]            Where traces live and what they cost: the store
                           root, one row per project (size, traces, newest),
                           the total — and the commands that reclaim space.
-  ${C.cyan}title${C.reset} [target] [--model M] [--force] [--jobs N]
-                          Name sessions with a model: the human's prompts +
-                          the agent's final answers (no tool calls, no
-                          sub-agents) go to your own \`claude -p\` (sonnet by
-                          default); titles land in the store's titles.json
-                          and show in the dashboard, history, picker, header.
-                          Dry-run lists the sessions; --yes runs (one model
-                          call each); --force re-names.
+  ${C.cyan}title${C.reset} [--force] [--json] · title set <id> "<title>"
+                          List sessions that need a name (the spine — your
+                          prompts + the agent's final answers, no tool calls,
+                          no sub-agents — with each digest), for the
+                          ${C.cyan}cctrace-title${C.reset} skill to name across subagents;
+                          --json feeds it, title set writes one back. Titles
+                          show in the dashboard, history, picker and header.
   ${C.cyan}adopt${C.reset} [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
                           Move legacy ./.cctrace dirs into the store. No DIR:
                           this project's + every one the run registry knows;

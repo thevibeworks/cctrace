@@ -99,16 +99,18 @@ cctrace store [--json]                    # the store: root, one row per project
                                           # traces + plain count, newest, path from the
                                           # project.json marker), total, and the reclaim
                                           # commands — "where did 73 GB go" in one screen
-cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N] [--yes]
-                                          # name sessions with a model: the spine
-                                          # (human prompts + agent FINAL answers, main
-                                          # chat only — no tool calls, no sub-agents) is
-                                          # capped + front/back weighted and sent to the
-                                          # user's own `claude -p` (sonnet default);
-                                          # titles.json per store dir, keyed by session
-                                          # id, shown in dashboard/history/picker/header.
-                                          # Dry-run lists; --yes runs (one call each,
-                                          # --jobs N in parallel); --force re-names
+cctrace title [target] [--dir DIR | --all] [--force] [--json]
+                                          # the DATA side of session naming: list the
+                                          # sessions that still need a name, each with
+                                          # its spine digest (human prompts + agent FINAL
+                                          # answers, main chat only — no tool calls, no
+                                          # sub-agents). --json is the cctrace-title
+                                          # skill's input; the model work is that skill
+                                          # (subagent fan-out), never cctrace
+cctrace title set <session-id|key> "<title>" [--dir DIR]
+                                          # record one title (atomic); titles.json per
+                                          # store dir, shown in dashboard/history/picker/
+                                          # header
 cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
                                           # move legacy ./.cctrace dirs into the store: no
                                           # DIR = cwd's + every legacy dir the registry

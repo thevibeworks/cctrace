@@ -1955,7 +1955,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 cctrace title \\u2014 a model names every session from its spine (your prompts + the agent\\u2019s answers); shown in the dashboard, history and header\\n' +
+        '\\u00b7 session titles \\u2014 the cctrace-title skill names every session from its spine (your prompts + the agent\\u2019s answers) across subagents; shown in the dashboard, history and header\\n' +
         '\\u00b7 the trace store \\u2014 traces live in ~/.local/share/cctrace/traces/<project>/, shared across containers; cctrace adopt moves legacy ./.cctrace dirs in\\n' +
         '\\u00b7 zstd at rest \\u2014 a run archives its trace at exit (30-180x smaller, in the background now); view reads .zst directly\\n' +
         '\\u00b7 streaming reads from the tail \\u2014 multi-GB traces open in seconds to their newest turns; --full for everything\\n' +

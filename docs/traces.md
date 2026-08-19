@@ -33,19 +33,23 @@ cctrace compress --all --yes               # then archive whatever is still plai
 
 ## Naming sessions
 
-`cctrace title` gives every session a human name. It builds the session's
-spine -- the human's prompts and the agent's final answers per turn, main
-chat threads only (no tool calls, no sub-agent context) -- and sends a
-capped, front/back-weighted digest to your own `claude -p` (sonnet by
-default). Titles land in `titles.json` in each project's store dir and show
-in the dashboard, `cctrace history`, the view picker and the trace header.
+Every session can carry a human name. cctrace is the data layer: it builds
+the session's spine -- the human's prompts and the agent's final answers per
+turn, main chat threads only (no tool calls, no sub-agent context) -- and
+stores/serves the titles a namer hands back. The naming is the
+`cctrace-title` agent skill, which fans the digests out across Claude Code's
+own subagents. cctrace never calls a model itself.
 
 ```bash
-cctrace title                              # dry run: list sessions that would be named
-cctrace title --yes                        # name them (one model call each; --jobs N parallel)
-cctrace title --all --yes                  # every project in the store
-cctrace title --model opus --force --yes   # re-name with a different model
+cctrace title                              # list sessions that still need a name (+ digests)
+cctrace title --all --json                 # every project, machine-readable (the skill's input)
+cctrace title set <id> "<title>" --dir DIR # record one title
 ```
+
+Ask an agent to "title my cctrace sessions" and the `cctrace-title` skill
+runs the loop: `cctrace title --json` -> name each with subagents ->
+`cctrace title set`. Titles show in the dashboard, `cctrace history`, the
+view picker and the trace header.
 
 ## Subcommands
 

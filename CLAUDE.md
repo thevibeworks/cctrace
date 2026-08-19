@@ -33,10 +33,13 @@ src/
 │                   #   continuity: find prior traces by session_id, newest first, one budget;
 │                   #   newest-prior-session guess for --continue preload
 ├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
-├── title.ts        # `cctrace title`: name a session from its SPINE (human prompts +
-│                   #   agent final answers, main chat only — no tools, no sub-agents)
-│                   #   via the user's own `claude -p`; titles.json per store dir,
-│                   #   surfaced in dashboard/history/picker/header
+├── title.ts        # `cctrace title`: the DATA layer for session naming — extract a
+│                   #   session's SPINE (human prompts + agent final answers, main chat
+│                   #   only, no tools/sub-agents) into a digest, store/serve titles
+│                   #   (titles.json per store dir, shown in dashboard/history/picker/
+│                   #   header). The namer is the cctrace-title skill (subagent fan-out);
+│                   #   cctrace itself never calls a model. `title --json` lists digests,
+│                   #   `title set <id> "<title>"` writes one
 ├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
 │                   #   category, wall-clock, on-disk size, sids, tokens+cache%,
 │                   #   est cost — this run's pairs only, prior merges excluded)

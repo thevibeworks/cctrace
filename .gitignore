@@ -54,3 +54,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # local reference checkouts (not part of this repo)
 reference/
+cctrace-mounts/
+

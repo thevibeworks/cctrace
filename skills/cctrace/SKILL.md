@@ -10,15 +10,17 @@ description: >
   bug report, replay or share a captured session, work with saved .jsonl
   traces (view, clean, merge, compress), or find which port a running cctrace
   instance is on. Also use it when the user mentions cctrace, trace files in
-  a .cctrace/ directory, MITM-capturing Claude traffic, tracing a third-party
+  the trace store (or a legacy .cctrace/ dir), MITM-capturing Claude traffic, tracing a third-party
   ANTHROPIC_BASE_URL provider, or tracing the codex / grok / kimi / opencode CLIs.
 ---
 
 # cctrace — trace Claude Code's HTTP traffic
 
 cctrace wraps the Claude Code CLI, captures every request/response pair to
-`.cctrace/trace-<ts>.jsonl`, and serves a live web UI (requests list,
-reconstructed conversation, session replay, cost estimates).
+`trace-<ts>.jsonl` in the trace store (`~/.local/share/cctrace/traces/<project-key>/`,
+one dir per project cwd, archived to `.jsonl.zst` at exit), and serves a
+live web UI (requests list, reconstructed conversation, session replay,
+cost estimates).
 
 Repo: https://github.com/thevibeworks/cctrace · npm: `@thevibeworks/cctrace`
 
@@ -31,9 +33,10 @@ cctrace -- -p "explain this"     # traced print-mode run
 cctrace --mode base-url          # lightweight: /v1/messages only, no CA setup
 cctrace -s                       # static: no live server, just files
 cctrace --no-open                # don't auto-open the browser
-cctrace --dir path/to/logs       # trace dir (default: ./.cctrace)
+cctrace --dir path/to/logs       # trace dir (default: the project's store dir)
 cctrace --fresh                  # don't merge prior traces of a continued session
 cctrace --no-auto-merge          # don't fold this run into session-<id>.jsonl at exit
+cctrace --no-compress            # leave the trace plain .jsonl at exit (default: .jsonl.zst)
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
@@ -119,8 +122,8 @@ session) — the link a statusline can afford to print. Hash-routed views:
   finished).
   The header shows the trace's running totals (requests · in/out tokens ·
   est cost, breakdown on hover), and clicking the trace title copies its
-  project-relative path (".cctrace/trace-….jsonl") — ready for
-  `cctrace view`.
+  path (absolute into the store, or project-relative for a legacy
+  ./.cctrace trace) — ready for `cctrace view`.
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
   conversation (main chat, subagent runs linked to the Task call that
   spawned them, utility probes as separate threads) beside the wire
@@ -172,8 +175,11 @@ what did the model actually send?".
 
 ## Saved traces
 
-Subcommands read traces on disk — no proxy, no Claude spawn. The housekeeping
-commands (clean/merge/compress/purge) are **dry-run by default**; add `--yes`
+Subcommands read traces on disk — no proxy, no Claude spawn. They default to
+the current project's store dir (`--dir DIR` names another; the housekeeping
+five also take `--all` = every project in the store); a legacy `./.cctrace`
+that still holds traces is read alongside. The housekeeping commands
+(clean/merge/compress/purge/compact) are **dry-run by default**; add `--yes`
 to apply.
 
 ```bash
@@ -182,13 +188,15 @@ cctrace view                              # list traces newest-first, pick one
 cctrace view latest                       # reopen the newest trace directly
 cctrace view <file|session-id|fragment>   # reopen a trace in the web UI (serves
                                           # it locally; Ctrl-C stops; --port N)
+cctrace view <target> --full              # every pair (default: the newest 256 MB of
+                                          # lines stream in from the tail + a notice)
 cctrace view <target> --html              # write a snapshot .html instead
                                           # (shareable; huge traces choke browsers)
 cctrace view <target> --slice a..b        # narrow to a slice window (the @a..b of a
                                           # slice deep link); with --html = small artifact
 cctrace view <target> --tail              # follow a RUNNING capture's trace live from
                                           # another terminal/container (tail -f the .jsonl)
-cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces
+cctrace clean [--yes]                     # rm regenerable .html + 0-byte traces + orphaned .tmp
 cctrace merge [--prune] [--yes]           # one deduped session-<id>.jsonl per session —
                                           # the whole-dir sweep. Every capture run already
                                           # merges its own session at exit (--no-auto-merge
@@ -208,7 +216,25 @@ cctrace ps [--json]                       # live instances: URL, pids, client, p
 cctrace history [--limit N | --all] [--json]  # global run log: every traced run (live +
                                           # past), newest first, across all projects; dimmed
                                           # rows are another container's (trace not here)
+cctrace store [--json]                    # the store: root path, one row per project (size,
+                                          # traces, newest), total — where the disk went
+cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
+                                          # move legacy ./.cctrace dirs into the store
+                                          # (no DIR: this project's + every one the registry
+                                          # knows; --scan walks a tree; --rebase keys dirs
+                                          # mounted from another machine by that machine's
+                                          # paths; --copy keeps sources, --zst archives on
+                                          # the way in; dry-run by default)
 ```
+
+Where traces live (0.41+): `~/.local/share/cctrace/traces/<project-key>/`
+(`CCTRACE_DATA_DIR` / `--data-dir` moves the whole data dir), one dir per
+project cwd named the way Claude Code names `~/.claude/projects/` entries,
+with a `project.json` marker holding the exact path. Live runs write plain
+`.jsonl`; at exit the run archives it (and any `session-<sid8>.jsonl` it
+merged) to `.jsonl.zst` — every reader opens both. Reclaim space with
+`cctrace clean --all`, `cctrace compress --all`, or by deleting a project's
+dir. Design: docs/design/store.md.
 
 Note for agents: plain `cctrace view` (and `view <target>`) starts a server
 and blocks — run it in the background, pass an explicit target (non-TTY
@@ -229,7 +255,7 @@ present (wrangler swaps HTTP stacks); costs only that host's audit line.
 
 `cctrace ps` answers "which port is my other session on?" — every live run
 registers itself (heartbeat + port-probe verified, works across containers
-sharing a data dir), and the default port walk 8722..8731 (plus the legacy 9317..9326) is swept for
+sharing a data dir), and the default port walk 8722..8821 is swept for
 instances the registry lost, so the listing reflects what actually serves.
 The UI header shows a "⇄ N more" switcher when siblings exist.
 `cctrace history` answers "what did I trace recently?" — the same registry's
@@ -302,5 +328,6 @@ workflow identity, and sid-keyed features depend on them; `--redact-ids`
 (or CCTRACE_REDACT_IDS=1) masks them for traces that leave the machine.
 But **conversation content is captured
 verbatim** — file contents, secrets pasted into chat, everything Claude saw.
-Never commit `.cctrace/` (the repo's .gitignore already excludes it), and
-review a snapshot before sharing it.
+Traces live outside the repo (the store under `~/.local/share/cctrace/`);
+never commit a legacy `.cctrace/` dir (the repo's .gitignore already excludes
+it), and review a snapshot before sharing it.

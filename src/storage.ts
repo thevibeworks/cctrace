@@ -1,6 +1,7 @@
-import { readdirSync, statSync, writeFileSync, appendFileSync, unlinkSync, existsSync, readFileSync, renameSync } from "fs";
-import { join, basename } from "path";
-import { gzipSync } from "zlib";
+import { readdirSync, statSync, writeFileSync, appendFileSync, unlinkSync, existsSync, readFileSync, renameSync, createReadStream, createWriteStream } from "fs";
+import { join, basename, resolve } from "path";
+import zlib, { gzipSync } from "zlib";
+import { pipeline } from "stream/promises";
 import { readTraceText, isTraceFile, parseTraceText, type TraceParseStats } from "./history";
 import { extractSessionId } from "./summarize";
 import { wireTables } from "./clients";
@@ -53,12 +54,18 @@ function pairKey(p: TracePair): string {
 }
 
 // tmp + rename so a torn write never leaves a half-written file where a later
-// run (or this run's --prune) expects a complete one.
-function writeAtomic(path: string, data: string | Uint8Array) {
-  const tmp = `${path}.tmp`;
+// run (or this run's --prune) expects a complete one. The tmp name carries
+// the pid: two runs exiting together in one dir must not truncate each
+// other's in-flight write.
+export const tmpNameFor = (path: string) => `${path}.${process.pid}.tmp`;
+export function writeAtomic(path: string, data: string | Uint8Array) {
+  const tmp = tmpNameFor(path);
   writeFileSync(tmp, data);
   renameSync(tmp, path);
 }
+/** A `.tmp` cctrace minted: `<trace>.jsonl[.zst|.gz][.<pid>].tmp` — the
+ * only tmp names housekeeping may ever remove. */
+export const isOurTmp = (name: string) => /\.jsonl(\.zst|\.gz)?(\.\d+)?\.tmp$/.test(name);
 
 function serialize(pairs: TracePair[]): string {
   return pairs.map((p) => JSON.stringify(p)).join("\n") + "\n";
@@ -71,20 +78,31 @@ const byTimestamp = (a: TracePair, b: TracePair) => (a.request?.timestamp || 0) 
 export interface CleanPlan {
   htmls: FileEntry[];
   empties: FileEntry[];
+  /** Orphaned `.tmp` files of an interrupted atomic write (merge/compress/
+   * compact/purge write `<name>.tmp` then rename) — only when idle long
+   * enough that no live housekeeping can still be writing them. */
+  tmps: FileEntry[];
   /** .html files with no source trace left to rebuild from — never deleted. */
   kept: FileEntry[];
   bytes: number;
 }
 
-export function planClean(logDir: string): CleanPlan {
+/** A `.tmp` younger than this may belong to a housekeeping step in flight. */
+export const TMP_ORPHAN_MS = 60 * 60_000;
+
+export function planClean(logDir: string, nowMs = Date.now()): CleanPlan {
   const htmls: FileEntry[] = [];
   const empties: FileEntry[] = [];
+  const tmps: FileEntry[] = [];
   const kept: FileEntry[] = [];
   for (const path of ls(logDir)) {
     let st;
     try { st = statSync(path); } catch { continue; }
     if (!st.isFile()) continue;
-    if (path.endsWith(".html")) {
+    if (path.endsWith(".tmp")) {
+      // Only names cctrace mints — a user's notes.tmp under --dir is theirs.
+      if (isOurTmp(basename(path)) && nowMs - st.mtimeMs >= TMP_ORPHAN_MS) tmps.push({ path, name: basename(path), size: st.size });
+    } else if (path.endsWith(".html")) {
       // "Regenerable" is checked, not assumed: an .html is only disposable
       // while a sibling .jsonl(.gz) exists for `cctrace view` to rebuild from.
       const stem = path.slice(0, -".html".length);
@@ -95,8 +113,8 @@ export function planClean(logDir: string): CleanPlan {
       empties.push({ path, name: basename(path), size: 0 });
     }
   }
-  const bytes = [...htmls, ...empties].reduce((s, f) => s + f.size, 0);
-  return { htmls, empties, kept, bytes };
+  const bytes = [...htmls, ...empties, ...tmps].reduce((s, f) => s + f.size, 0);
+  return { htmls, empties, tmps, kept, bytes };
 }
 
 export function applyClean(plan: CleanPlan): { removed: string[]; skipped: string[]; bytes: number } {
@@ -105,6 +123,15 @@ export function applyClean(plan: CleanPlan): { removed: string[]; skipped: strin
   let bytes = 0;
   for (const f of plan.htmls) {
     try { unlinkSync(f.path); removed.push(f.name); bytes += f.size; } catch { skipped.push(f.name); }
+  }
+  for (const f of plan.tmps) {
+    // Re-stat: a .tmp that changed since the plan is being written right now.
+    try {
+      if (statSync(f.path).size !== f.size) { skipped.push(f.name); continue; }
+      unlinkSync(f.path);
+      removed.push(f.name);
+      bytes += f.size;
+    } catch { /* already gone */ }
   }
   for (const f of plan.empties) {
     // Re-stat: a 0-byte file at plan time may be a live run's sink that has
@@ -131,6 +158,10 @@ export interface MergeSession {
   dupes: number;
   /** Pairs carried over from a previous merge's output (sources may be pruned). */
   existing: number;
+  /** The `.zst` archive of this session as the plan saw it (size + mtime),
+   * or null when there was none — the exit archive step may overwrite an
+   * archive only while it is still exactly this one. */
+  priorArchive: ArchiveStamp | null;
   pairs: TracePair[];
 }
 
@@ -277,6 +308,11 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
     }
     if (priorDamage) { blocked.push({ outName: `session-${shortId}.jsonl`, reason: priorDamage }); continue; }
     const pairs = [...g.pairs.values()].sort(byTimestamp);
+    let priorArchive: ArchiveStamp | null = null;
+    try {
+      const st = statSync(`${outPath}.zst`);
+      priorArchive = { size: st.size, mtimeMs: st.mtimeMs };
+    } catch { /* none */ }
     sessions.push({
       id, shortId,
       outName: `session-${shortId}.jsonl`,
@@ -285,6 +321,7 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
       pairCount: pairs.length,
       dupes: g.dupes,
       existing,
+      priorArchive,
       pairs,
     });
   }
@@ -311,7 +348,7 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
 // session doubled peak memory and stalled visibly; 8MB appends keep the write
 // incremental. Still tmp + rename — a torn write never lands on the real name.
 function writePairsAtomic(path: string, pairs: TracePair[]) {
-  const tmp = `${path}.tmp`;
+  const tmp = tmpNameFor(path);
   writeFileSync(tmp, "");
   const CHUNK = 8 * 1024 * 1024;
   let buf: string[] = [];
@@ -357,19 +394,55 @@ export function applyMerge(plan: MergePlan, opts: { prune: boolean; onProgress?:
   return { written, pruned, skipped, bytes };
 }
 
-// ---- compress: zstd archive .jsonl traces for backup ----
+// ---- compress: zstd archive .jsonl traces ----
 //
-// Codec: Bun's built-in zstd at level 19. Traces are dominated by re-sent
-// conversation prefixes — long-range redundancy far beyond gzip's 32KB
-// window. Single-shot zstd windows the whole input, so it sees every
-// repeated prefix: measured on a real 375MB session trace, gzip -9 got 2.8x
-// while zstd-19 got 63x (5.7MB), byte-identical round trip, 6.7s. The codec
-// ships inside the Bun runtime (and thus the compiled binary) — no external
-// dependency, nothing to fall back from. Legacy .jsonl.gz archives written
-// by older versions stay readable everywhere and are upgraded to .zst here.
+// Codec: zstd, shipped inside the runtime (and thus the compiled binary) —
+// no external dependency, nothing to fall back from. Traces are dominated
+// by re-sent conversation prefixes: long-range redundancy far beyond gzip's
+// 32KB window, one request body apart. So the WINDOW is what matters, not
+// the search effort. Measured on a real 119MB session trace (2026-08-18):
+// level 3 default window 33x; level 9 with a 128MB window (windowLog 27,
+// the largest a default decoder accepts) 87x at ~1GB/s; level 19 the same
+// 87x at 53MB/s. Streaming file-to-file keeps a multi-GB trace at ~250MB
+// RSS. The in-memory path (unions, rewrites) uses the same params. Legacy
+// .jsonl.gz archives written by older versions stay readable everywhere and
+// are upgraded to .zst here.
 
-const zstd = (data: Uint8Array | string): Buffer =>
-  Buffer.from(Bun.zstdCompressSync(typeof data === "string" ? Buffer.from(data) : data, { level: 19 }));
+const ZSTD_PARAMS = {
+  [zlib.constants.ZSTD_c_compressionLevel]: 9,
+  [zlib.constants.ZSTD_c_windowLog]: 27,
+  [zlib.constants.ZSTD_c_checksumFlag]: 1, // 4 bytes/frame: on-disk corruption is detected by every reader
+};
+
+/** In-memory zstd with the store's params — for rewrites (unions, purge,
+ * compact) that already hold the whole trace as pairs. */
+export const zstd = (data: Uint8Array | string): Buffer =>
+  zlib.zstdCompressSync(typeof data === "string" ? Buffer.from(data) : data, { params: ZSTD_PARAMS });
+
+/** Stream-compress `from` to `to` (tmp + rename). Returns compressed bytes. */
+export async function zstdFile(from: string, to: string): Promise<number> {
+  const tmp = tmpNameFor(to);
+  await pipeline(
+    createReadStream(from, { highWaterMark: 1 << 20 }),
+    zlib.createZstdCompress({ params: ZSTD_PARAMS, chunkSize: 1 << 20 }),
+    createWriteStream(tmp),
+  );
+  const size = statSync(tmp).size;
+  renameSync(tmp, to);
+  return size;
+}
+
+/** Decode `zstPath` end to end and count the bytes — the proof that lets an
+ * archive's source be unlinked. Streaming, so it costs time, not memory. */
+export async function zstdDecodedBytes(zstPath: string): Promise<number> {
+  let n = 0;
+  await pipeline(
+    createReadStream(zstPath, { highWaterMark: 1 << 20 }),
+    zlib.createZstdDecompress({ chunkSize: 1 << 20 }),
+    async function* (src) { for await (const c of src) n += (c as Buffer).length; },
+  );
+  return n;
+}
 
 export interface CompressEntry extends FileEntry {
   mtimeMs: number;
@@ -382,11 +455,14 @@ export interface CompressPlan {
   bytes: number;
 }
 
-/** Plan archiving raw .jsonl traces + upgrading legacy .gz, age-filterable. */
-export function planCompress(logDir: string, nowMs: number, olderThanDays?: number): CompressPlan {
+/** Plan archiving raw .jsonl traces + upgrading legacy .gz, age-filterable.
+ * `exclude` (absolute paths) skips files a live run is writing — the
+ * registry's heartbeat-fresh logFiles (`liveLogFiles` in store.ts). */
+export function planCompress(logDir: string, nowMs: number, olderThanDays?: number, exclude: Set<string> = new Set()): CompressPlan {
   const files: CompressEntry[] = [];
   const upgrades: FileEntry[] = [];
   for (const path of ls(logDir)) {
+    if (exclude.has(resolve(path))) continue;
     let st;
     try { st = statSync(path); } catch { continue; }
     if (!st.isFile() || st.size === 0) continue;
@@ -408,7 +484,52 @@ export function planCompress(logDir: string, nowMs: number, olderThanDays?: numb
  * was recreated after an earlier compress, or a legacy .gz holds pairs),
  * union with it instead of overwriting — an archive never loses pairs.
  */
-export function applyCompress(plan: CompressPlan, opts: { keepJsonl: boolean }): { archived: { name: string; before: number; after: number }[]; skipped: string[]; before: number; after: number } {
+export interface CompressResult {
+  archived: { name: string; before: number; after: number }[];
+  skipped: string[];
+  before: number;
+  after: number;
+}
+
+/** What the merge plan saw of a prior archive — the proof that the plain
+ * file written after it is a superset of THAT archive and no other. */
+export interface ArchiveStamp {
+  size: number;
+  mtimeMs: number;
+}
+
+export interface CompressOpts {
+  keepJsonl: boolean;
+  /** The archive at `<file>.zst` is known to hold a SUBSET of the file: the
+   * exit auto-merge just wrote the file as a verified union of the archive
+   * it saw at plan time — described by this stamp (null = the plan saw no
+   * archive). Overwrite is allowed only while the archive on disk is still
+   * that one (same size + mtime; absent when null); anything else falls
+   * back to the parse-and-union path. Never set this for a file whose
+   * relation to its archive is unknown. */
+  supersedesArchive?: ArchiveStamp | null;
+  onProgress?: (ev: { name: string; bytes: number }) => void;
+}
+
+/** True when the archive on disk is exactly what the plan saw (or absent,
+ * when the plan saw none) — a concurrent exit of the same session may have
+ * written a fresh archive in between, which the plain file does not hold. */
+function archiveUnchanged(outPath: string, stamp: ArchiveStamp | null | undefined): boolean {
+  if (stamp === undefined) return false;
+  let st;
+  try { st = statSync(outPath); } catch { return stamp === null; }
+  return stamp !== null && st.size === stamp.size && st.mtimeMs === stamp.mtimeMs;
+}
+
+/**
+ * Archive to `<name>.jsonl.zst`. If an archive already exists (the trace file
+ * was recreated after an earlier compress, or a legacy .gz holds pairs),
+ * union with it instead of overwriting — an archive never loses pairs.
+ * The plain source is unlinked only after the archive decodes back to the
+ * source's exact byte count (verbatim path) or was built from parsed pairs
+ * (union path — the parse is the check).
+ */
+export async function applyCompress(plan: CompressPlan, opts: CompressOpts): Promise<CompressResult> {
   const archived: { name: string; before: number; after: number }[] = [];
   const skipped: string[] = [];
   let before = 0, after = 0;
@@ -418,25 +539,47 @@ export function applyCompress(plan: CompressPlan, opts: { keepJsonl: boolean }):
     let st;
     try { st = statSync(f.path); } catch { skipped.push(f.name); continue; }
     if (st.size !== f.size) { skipped.push(f.name); continue; }
-    let raw: Buffer;
-    try { raw = readFileSync(f.path); } catch { skipped.push(f.name); continue; }
+    opts.onProgress?.({ name: f.name, bytes: f.size });
     const outPath = `${f.path}.zst`;
     const legacyGz = `${f.path}.gz`;
-    let out: Buffer;
     const priors = [outPath, legacyGz].filter(existsSync);
-    if (priors.length) {
+    let outSize: number;
+    const supersedes = priors.length === 1 && priors[0] === outPath && archiveUnchanged(outPath, opts.supersedesArchive);
+    if (priors.length && !supersedes) {
+      let out: Buffer;
       try {
+        // Damage-aware, like merge's prune rule: a torn/invalid line in
+        // either input means bytes no output would hold — keep the plain
+        // file, don't seal.
+        const damage: TraceParseStats = { torn: 0, invalid: 0 };
         const merged = new Map<string, TracePair>();
         for (const prev of priors) {
-          for (const p of parseTraceText(readTraceText(prev))) merged.set(pairKey(p), p);
+          for (const p of parseTraceText(readTraceText(prev), damage)) merged.set(pairKey(p), p);
         }
-        for (const p of parseTraceText(raw.toString("utf8"))) merged.set(pairKey(p), p);
+        for (const p of parseTraceText(readFileSync(f.path, "utf8"), damage)) merged.set(pairKey(p), p);
+        if (damage.torn + damage.invalid > 0) { skipped.push(f.name); continue; }
         out = zstd(serialize([...merged.values()].sort(byTimestamp)));
       } catch { skipped.push(f.name); continue; }
+      writeAtomic(outPath, out);
+      outSize = out.length;
     } else {
-      out = zstd(raw); // verbatim bytes — archives stay exact
+      // Verbatim bytes — archives stay exact — streamed, then decoded back
+      // and counted before the source may go.
+      const hadPrior = priors.includes(outPath);
+      try {
+        outSize = await zstdFile(f.path, outPath);
+        if (await zstdDecodedBytes(outPath) !== f.size) {
+          // The file grew while we streamed it (a late pair at exit): the
+          // archive is a valid superset of the plan but not what we
+          // promised. Keep the plain file; drop an archive WE created so
+          // the caller's retry takes the fast path again (one that
+          // pre-existed stays — the plain file is its superset either way).
+          if (!hadPrior) { try { unlinkSync(outPath); } catch { /* keep */ } }
+          skipped.push(f.name);
+          continue;
+        }
+      } catch { skipped.push(f.name); continue; }
     }
-    writeAtomic(outPath, out);
     // The legacy .gz's pairs are now unioned into the .zst — drop it.
     if (priors.includes(legacyGz)) { try { unlinkSync(legacyGz); } catch { /* keep */ } }
     if (!opts.keepJsonl) {
@@ -444,9 +587,9 @@ export function applyCompress(plan: CompressPlan, opts: { keepJsonl: boolean }):
       // read and now, keep it — the next compress unions the tail in.
       try { if (statSync(f.path).size === f.size) unlinkSync(f.path); } catch { /* keep */ }
     }
-    archived.push({ name: f.name, before: f.size, after: out.length });
+    archived.push({ name: f.name, before: f.size, after: outSize });
     before += f.size;
-    after += out.length;
+    after += outSize;
   }
 
   for (const f of plan.upgrades) {
@@ -475,6 +618,50 @@ export function applyCompress(plan: CompressPlan, opts: { keepJsonl: boolean }):
   }
 
   return { archived, skipped, before, after };
+}
+
+// ---- rest: a finished run's trace goes to .zst at exit ----
+//
+// Capture writes plain .jsonl (tail-able, torn-line recoverable); the
+// compressed form is the REST state (docs/design/store.md). archiveTrace is
+// applyCompress for one named file, and sweepStaleTraces catches what a
+// killed run left plain: any .jsonl in the dir that no live run claims and
+// that nobody has written for a while.
+
+export async function archiveTrace(path: string, opts: { supersedesArchive?: ArchiveStamp | null; onProgress?: CompressOpts["onProgress"] } = {}): Promise<CompressResult> {
+  let st;
+  try { st = statSync(path); } catch { return { archived: [], skipped: [basename(path)], before: 0, after: 0 }; }
+  if (!path.endsWith(".jsonl") || st.size === 0) return { archived: [], skipped: [], before: 0, after: 0 };
+  const plan: CompressPlan = { files: [{ path, name: basename(path), size: st.size, mtimeMs: st.mtimeMs }], upgrades: [], bytes: st.size };
+  return applyCompress(plan, { keepJsonl: false, supersedesArchive: opts.supersedesArchive, onProgress: opts.onProgress });
+}
+
+/** A day: static (-s) and legacy node runs don't register, so "no live
+ * entry claims it" is not proof — a plain trace nobody wrote to for this
+ * long is what a killed run leaves, not what an open session looks like. */
+export const STALE_TRACE_IDLE_MS = 24 * 60 * 60_000;
+
+/** A plain trace name cctrace itself mints — the only files the exit sweep
+ * may touch (a `train.jsonl` under --dir is the user's). */
+export const isMintedTrace = (name: string) => /^(trace|session)-.*\.jsonl$/.test(name);
+
+/**
+ * Plain .jsonl traces in `dir` that look abandoned: names cctrace minted,
+ * not in `exclude` (this run's file, every live-registered logFile) and
+ * idle longer than `idleMs`. Returned as a compress plan so the caller
+ * applies it with the usual re-stat discipline.
+ */
+export function planStaleSweep(dir: string, exclude: Set<string>, nowMs = Date.now(), idleMs = STALE_TRACE_IDLE_MS): CompressPlan {
+  const files: CompressEntry[] = [];
+  for (const path of ls(dir)) {
+    if (!isMintedTrace(basename(path)) || exclude.has(resolve(path))) continue;
+    let st;
+    try { st = statSync(path); } catch { continue; }
+    if (!st.isFile() || st.size === 0 || nowMs - st.mtimeMs < idleMs) continue;
+    files.push({ path, name: basename(path), size: st.size, mtimeMs: st.mtimeMs });
+  }
+  files.sort((a, b) => b.size - a.size);
+  return { files, upgrades: [], bytes: files.reduce((s, f) => s + f.size, 0) };
 }
 
 // ---- purge: drop whole categories of pairs from saved traces ----

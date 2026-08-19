@@ -1,9 +1,44 @@
 # Working with saved traces
 
+## Where traces live
+
+Every run writes into the **store**: `~/.local/share/cctrace/traces/<project-key>/`
+(the data dir, `--data-dir` / `CCTRACE_DATA_DIR`), one dir per project cwd,
+named the way Claude Code names its `~/.claude/projects/` entries, with a
+`project.json` marker holding the exact path. A live run writes plain
+`trace-<ts>.jsonl`; at exit it archives that (and any `session-<sid8>.jsonl`
+it consolidated) to `.jsonl.zst` -- 40-90x smaller, every reader opens both.
+`--dir DIR` writes somewhere else; `--no-compress` leaves the plain file.
+One shared dir means the dashboard opens any run from any container that
+mounts your home, `du -sh ~/.local/share/cctrace/traces` is the whole bill,
+and `cctrace store` itemizes it. Design notes: [design/store.md](design/store.md).
+
+Traces from before 0.41 sit in per-project `./.cctrace/` dirs. They are
+still read for continuity (a resumed session finds its prior turns) and
+`cctrace adopt` moves them into the store.
+
+```bash
+cctrace store                              # root, per-project sizes, total, reclaim hints
+cctrace adopt                              # dry run: this project's ./.cctrace + every
+                                           # legacy dir the run registry knows about
+cctrace adopt --scan ~/wrk --yes           # walk a tree for .cctrace/ dirs and move them
+cctrace adopt --scan ./mounts --rebase ./mounts=/Users/me/wrk
+                                           # dirs mounted from another machine: key them by
+                                           # that machine's project paths (dry run)
+cctrace --data-dir /new/share adopt --scan ./mounts --rebase ./mounts=/Users/me/wrk --copy --zst --yes
+                                           # compressed mirror of every legacy dir into a
+                                           # fresh data dir; sources untouched
+cctrace compress --all --yes               # then archive whatever is still plain
+```
+
+## Subcommands
+
 Subcommands operate on traces already on disk -- no proxy, no Claude spawn.
-The housekeeping commands (`clean`/`merge`/`compress`/`purge`) are **dry-run
-by default** (they print an itemized plan and touch nothing); add `--yes` to
-apply.
+They default to the current project's store dir (`--dir DIR` names another;
+the housekeeping ones also take `--all` for every project in the store). The
+housekeeping commands (`clean`/`merge`/`compress`/`purge`/`compact`) are
+**dry-run by default** (they print an itemized plan and touch nothing); add
+`--yes` to apply.
 
 ```bash
 # Reopen a saved trace in the web UI -- no target needed
@@ -15,7 +50,8 @@ cctrace view <target> --html               # write a self-contained snapshot .ht
                                            # instead (shareable; huge traces choke
                                            # browsers -- the default serve doesn't)
 
-# Reclaim space: drop regenerable .html snapshots + 0-byte aborted traces
+# Reclaim space: drop regenerable .html snapshots, 0-byte aborted traces,
+# orphaned .tmp files of an interrupted merge/compress (idle > 1h)
 cctrace clean                              # dry run: lists what would go
 cctrace clean --yes
 
@@ -25,8 +61,10 @@ cctrace clean --yes
 cctrace merge                              # one session-<id>.jsonl per session
 cctrace merge --prune --yes                # also remove fully-merged sources
 
-# Archive for backup: zstd (view reads .jsonl.zst / legacy .gz directly)
+# Archive: zstd (view reads .jsonl.zst / legacy .gz directly). Every run
+# archives its own trace at exit; this catches killed runs and old dirs
 cctrace compress --older-than 7 --yes      # only traces older than 7 days
+cctrace compress --all --yes               # every project in the store
 
 # Drop noise categories (telemetry, count_tokens, external) from saved traces
 cctrace purge --yes                        # rows, not disk -- compress is for space

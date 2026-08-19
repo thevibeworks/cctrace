@@ -56,5 +56,5 @@ Open an issue with:
 3. The mode you ran (`--mode`) and the full `[cctrace]` startup lines.
 4. What you expected to be captured vs. what showed up in the UI.
 
-Never paste a raw `.cctrace/*.jsonl` or exported `.html` into a public issue —
+Never paste a raw trace `.jsonl` (from the store or a legacy `.cctrace/`) or exported `.html` into a public issue —
 it contains your real request/response traffic.

@@ -55,7 +55,7 @@ offline snapshots -- same UI, three ways in.
   read/write TTLs priced separately), with per-turn and per-thread totals
   in the Sessions view. Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
-  gets lost: ports allocate predictably (9317, 9318, ...), `cctrace ps`
+  gets lost: ports allocate predictably (8722, 8723, ...), `cctrace ps`
   lists every live instance with its URL and session, and the web UI header
   grows a switcher to jump between them.
 - **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up

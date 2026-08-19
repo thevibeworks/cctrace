@@ -55,10 +55,18 @@ bug that makes you question your life choices at 2 AM.
 
 ## Output
 
-Every run writes to `.cctrace/` (or `--dir`):
+Every run writes into the store -- `~/.local/share/cctrace/traces/<project-key>/`,
+one dir per project cwd (or `--dir`); see [docs/design/store.md](design/store.md):
 
 - `trace-<timestamp>.jsonl` -- one request/response pair per line
-  (machine-readable). That file IS the trace: `cctrace view` reopens it in
-  the web UI anytime, `cctrace view <target> --html` renders a shareable
-  self-contained snapshot on demand (live runs stopped writing one at exit
-  in 0.13 -- a 2-hour session rendered 400MB of HTML).
+  (machine-readable), plain while the run is live and archived to
+  `.jsonl.zst` at exit (40-90x smaller; `--no-compress` keeps it plain).
+  That file IS the trace: `cctrace view` reopens it in the web UI anytime
+  (it reads `.jsonl`, `.jsonl.zst`, and legacy `.jsonl.gz` alike),
+  `cctrace view <target> --html` renders a shareable self-contained snapshot
+  on demand (live runs stopped writing one at exit in 0.13 -- a 2-hour
+  session rendered 400MB of HTML).
+- `session-<sid8>.jsonl.zst` -- a session consolidated across runs by the
+  exit auto-merge.
+- Legacy `./.cctrace/` dirs from before 0.41 are still read for continuity
+  and move into the store with `cctrace adopt`.

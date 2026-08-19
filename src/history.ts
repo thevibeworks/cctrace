@@ -127,7 +127,7 @@ export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Pr
       const pair = parseUsable(line);
       if (!pair || !opts.filter(pair)) continue;
     }
-    seenBytes += line.length;
+    seenBytes += line.length + 1; // + its newline
     ring.push(line);
     keptBytes += line.length;
     while (keptBytes > budget && head < ring.length - 1) {

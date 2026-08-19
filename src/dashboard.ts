@@ -210,7 +210,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     // stat cluster: size · pairs (msgs) · tokens · cost — whatever the
     // tombstone knows; old tombstones just show less.
     var stats = [];
-    if (i.traceBytes > 0) stats.push(bytes(i.traceBytes));
+    if (i.traceBytes > 0) stats.push(bytes(i.traceBytes) + (/\\.(zst|gz)$/.test(i.traceCarrier || i.logFile || '') ? ' on disk (zst)' : ''));
     if (i.pairs > 0) stats.push(i.pairs + ' pairs' + (i.messages > 0 ? ' (' + i.messages + ' msg)' : ''));
     if (i.tokensIn > 0 || i.tokensOut > 0) stats.push(tok(i.tokensIn) + ' in / ' + tok(i.tokensOut) + ' out');
     if (i.costUsd > 0.005) stats.push('$' + i.costUsd.toFixed(2));

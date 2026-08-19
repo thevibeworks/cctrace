@@ -31,6 +31,10 @@ export interface ViewResult {
   /** Set when the tail budget left older pairs behind: how many lines and
    * how many decoded bytes were skipped, so the caller can say so. */
   truncated?: { droppedLines: number; droppedBytes: number; keptBytes: number; olderFiles?: number };
+  /** Decoded .jsonl bytes the sources hold for this view (every line seen
+   * while streaming, budget or not) — the trace's real size, which an
+   * archived source's file size understates 30-180x. */
+  decodedBytes: number;
 }
 
 export interface ViewOpts {
@@ -233,7 +237,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   // A whole-file read, budgeted: the newest `tailBytes` of decoded lines.
   const readOne = async (path: string, stats: TraceParseStats) => {
     const read = await readTracePairs(path, { tailBytes, stats });
-    return { pairs: read.pairs, truncated: truncationOf(read) };
+    return { pairs: read.pairs, truncated: truncationOf(read), decodedBytes: read.seenBytes };
   };
   // 0. "latest" — the newest trace in the log dir, no name gymnastics.
   if (target === "latest") {
@@ -254,7 +258,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   }
   if (existsSync(target) && statSync(target).isFile()) {
     const stats: TraceParseStats = { torn: 0, invalid: 0 };
-    const { pairs, truncated } = await readOne(target, stats);
+    const { pairs, truncated, decodedBytes } = await readOne(target, stats);
     if (!pairs.length) throw new ViewError(`${target} has no trace pairs`);
     return {
       pairs,
@@ -264,6 +268,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       matchedBy: "file",
       warnings: damageWarnings(basename(target), stats),
       truncated,
+      decodedBytes,
     };
   }
 
@@ -286,7 +291,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
     // One budget across the session's files, newest first: the newest
     // turns are what a view opens for, so the oldest files fall off.
     let remaining = tailBytes;
-    let droppedLines = 0, droppedBytes = 0, keptBytes = 0, olderFiles = 0;
+    let droppedLines = 0, droppedBytes = 0, keptBytes = 0, olderFiles = 0, decodedBytes = 0;
     for (const path of newestFirst(traces)) {
       if (remaining <= 0) {
         // Budget spent on newer files: an older file's every line is older
@@ -301,6 +306,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       // Once a file was cut, everything older is out too.
       remaining = read.dropped ? 0 : remaining - read.keptBytes;
       keptBytes += read.keptBytes;
+      decodedBytes += read.seenBytes;
       droppedLines += read.dropped;
       droppedBytes += read.seenBytes - read.keptBytes;
       for (const pair of read.pairs) {
@@ -322,6 +328,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
         matchedBy: "session",
         warnings: [],
         truncated: droppedLines || olderFiles ? { droppedLines, droppedBytes, keptBytes, olderFiles } : undefined,
+        decodedBytes,
       };
     }
   }
@@ -330,7 +337,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   const byName = traces.filter((p) => basename(p).includes(target));
   if (byName.length === 1) {
     const stats: TraceParseStats = { torn: 0, invalid: 0 };
-    const { pairs, truncated } = await readOne(byName[0]!, stats);
+    const { pairs, truncated, decodedBytes } = await readOne(byName[0]!, stats);
     if (!pairs.length) throw new ViewError(`${basename(byName[0])} has no trace pairs`);
     return {
       pairs,
@@ -340,6 +347,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       matchedBy: "filename",
       warnings: damageWarnings(basename(byName[0]), stats),
       truncated,
+      decodedBytes,
     };
   }
 
@@ -354,6 +362,18 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       `  recent traces:\n` +
       traces.slice(-6).map((p) => `  ${basename(p)}`).join("\n"),
   );
+}
+
+/** The two sizes a page shows: the trace (decoded bytes) and, when the
+ * sources are archives, what they occupy on disk. */
+export function traceSizes(result: ViewResult): { traceBytes: number; traceDiskBytes?: number } {
+  let disk = 0;
+  for (const p of result.sourcePaths) { try { disk += statSync(p).size; } catch {} }
+  // Plain sources: the file IS the trace (decodedBytes counts UTF-16 units,
+  // an approximation). Archived sources: the decoded count is the trace.
+  const archived = result.sourcePaths.some((p) => /\.(zst|gz)$/.test(p));
+  if (!archived || result.decodedBytes <= 0) return { traceBytes: disk };
+  return { traceBytes: result.decodedBytes, traceDiskBytes: disk };
 }
 
 function truncationOf(read: ReadTraceResult): ViewResult["truncated"] {
@@ -401,10 +421,10 @@ export async function writeView(target: string, logDir: TraceDirArg, meta: PageM
   const viewDir = resolve(primaryDir(logDir));
   const projectRoot = opts.projectPath ?? (basename(viewDir) === ".cctrace" ? dirname(viewDir) : viewDir);
   const rel = relative(projectRoot, join(viewDir, traceFile));
-  let traceBytes = 0;
-  for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
+  const { traceBytes, traceDiskBytes } = traceSizes(result);
   const html = renderSnapshot(result.pairs, {
     traceBytes,
+    traceDiskBytes,
     project: basename(projectRoot),
     projectPath: projectRoot,
     traceRelPath: rel && !rel.startsWith("..") ? rel : join(viewDir, traceFile),

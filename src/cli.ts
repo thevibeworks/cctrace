@@ -12,7 +12,7 @@ import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, readTracePairs } 
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, ViewError } from "./view";
+import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError } from "./view";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
   registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, LEGACY_DIRNAME, type TraceDirs, type Rebase,
@@ -477,11 +477,15 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
       ...pageMeta(client), project: viewProject, projectPath: projectRoot,
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, viewTracePath),
       mode: tailing ? "tail" : "view",
+      traceDiskBytes: traceSizes(result).traceDiskBytes,
     },
     dataDir: DATA_DIR,
     instanceId,
     initialPairs: result.pairs,
+    // The trace's size is its decoded bytes; a tailed plain file grows, so
+    // re-stat those, and an archived source keeps the decoded count.
     traceSize: () => {
+      if (!tailing) return traceSizes(result).traceBytes;
       let n = 0;
       for (const p of result.sourcePaths) { try { n += statSync(p).size; } catch {} }
       return n;

@@ -103,9 +103,12 @@ export interface PageMeta {
   traceRelPath?: string;
   /** CLI being traced: claude | codex | grok. */
   client?: string;
-  /** Trace file size on disk at render time (snapshots/view exports);
-   * live pages get the growing number over the WebSocket instead. */
+  /** Trace size — the decoded .jsonl bytes — at render time (snapshots/
+   * view exports); live pages get the growing number over the WebSocket. */
   traceBytes?: number;
+  /** What the trace occupies on disk when that differs from traceBytes: an
+   * archived (.zst/.gz) source. The chip shows the trace, the tip the disk. */
+  traceDiskBytes?: number;
   /** "view" when the page serves a saved trace (cctrace view) — the UI
    * reads as a document (no live/offline framing, opens at the top). */
   mode?: string;
@@ -1845,19 +1848,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (p._cost === undefined) { const c = pairCost(m); p._cost = c ? c.total : 0; }
         cost += p._cost;
       }
+      // "in" is TOTAL input — uncached + cache read + cache written — the
+      // same number the exit report and the dashboard call in; the tip
+      // breaks it down. (Uncached alone read as "2.1k in, $5.62" nonsense.)
+      const totalIn = inTok + cr + cw;
       let t = pairs.length + ' req';
       if (calls) {
-        t += ' \\u00b7 in ' + fmtCompact(inTok) + ' \\u00b7 out ' + fmtCompact(outTok);
+        t += ' \\u00b7 in ' + fmtCompact(totalIn) + ' \\u00b7 out ' + fmtCompact(outTok);
         if (cost > 0) t += ' \\u00b7 ' + fmtCost(cost);
       }
       if (traceBytes > 0) t += ' \\u00b7 ' + fmtBytes(traceBytes);
       const tip = ['trace totals'];
       tip.push(pairs.length + ' requests \\u00b7 ' + calls + ' model calls' + (errs ? ' \\u00b7 ' + errs + ' failed' : ''));
-      if (traceBytes > 0) tip.push('trace file: ' + fmtBytes(traceBytes) + ' on disk (.jsonl' + (IS_SNAPSHOT || IS_VIEW ? ', at export/serve time' : ', growing live') + ') \\u2014 cctrace compact folds redundant bodies');
+      const diskBytes = META.traceDiskBytes || 0;
+      if (traceBytes > 0) {
+        tip.push('trace: ' + fmtBytes(traceBytes) + ' of .jsonl' +
+          (diskBytes > 0 && diskBytes !== traceBytes ? ' \\u00b7 ' + fmtBytes(diskBytes) + ' on disk (archived)' : IS_SNAPSHOT || IS_VIEW ? ' at export/serve time' : ', growing live') +
+          ' \\u2014 cctrace compact folds redundant bodies');
+      }
       if (calls) {
-        tip.push('input ' + inTok.toLocaleString() + ' (uncached) \\u00b7 output ' + outTok.toLocaleString() +
-          (think ? ' \\u00b7 thinking ' + think.toLocaleString() : ''));
-        if (cr || cw) tip.push('cache read ' + cr.toLocaleString() + ' \\u00b7 written ' + cw.toLocaleString());
+        tip.push('input ' + totalIn.toLocaleString() + ' total \\u2014 ' + inTok.toLocaleString() + ' uncached' +
+          (cr || cw ? ' \\u00b7 cache read ' + cr.toLocaleString() + ' \\u00b7 written ' + cw.toLocaleString() : '') +
+          ' \\u00b7 output ' + outTok.toLocaleString() + (think ? ' \\u00b7 thinking ' + think.toLocaleString() : ''));
         if (cost > 0) tip.push('est. cost ' + fmtCost(cost) + ' \\u2014 sticker pricing over every model call');
       }
       if (t0 !== Infinity && t1 > t0) {

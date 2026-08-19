@@ -235,3 +235,24 @@ describe("view tail budget", () => {
     rmSync(d, { recursive: true, force: true });
   });
 });
+
+describe("trace sizes", () => {
+  test("an archived source reports decoded bytes as the trace and its file size as disk", async () => {
+    const { traceSizes } = require("../src/view");
+    const d = mkdtempSync(join(tmpdir(), "cctrace-view-sizes-"));
+    const text = Array.from({ length: 50 }, (_, i) => JSON.stringify(pair(`z${i}`, SID_A, 100 + i))).join("\n") + "\n";
+    const plain = join(d, "trace-p.jsonl");
+    writeFileSync(plain, text);
+    writeFileSync(join(d, "trace-z.jsonl.zst"), Bun.zstdCompressSync(Buffer.from(text)));
+    const rp = await resolveView(plain, d);
+    expect(rp.decodedBytes).toBe(text.length);
+    expect(traceSizes(rp)).toEqual({ traceBytes: text.length }); // plain: the file is the trace
+    const rz = await resolveView(join(d, "trace-z.jsonl.zst"), d);
+    expect(rz.decodedBytes).toBe(rp.decodedBytes);
+    const s = traceSizes(rz);
+    expect(s.traceBytes).toBe(rz.decodedBytes);
+    expect(s.traceDiskBytes).toBeGreaterThan(0);
+    expect(s.traceDiskBytes!).toBeLessThan(s.traceBytes);
+    rmSync(d, { recursive: true, force: true });
+  });
+});

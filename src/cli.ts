@@ -725,12 +725,15 @@ async function runTitle(args: string[]) {
     const { jobs, skipped } = await planTitles(logDir, logDir, wire, { force: !!v.force, onlyFile: target ? resolve(target) : undefined });
     skippedTotal += skipped;
     for (const j of jobs) all.push({ key: j.key, sid: j.sid, source: j.source, storeDir: logDir, project: basename(project), loops: j.loops, digest: j.digest });
-  });
+  }, { quiet: !!v.json });
 
   if (v.json) {
     // The skill's input: everything it needs to name each session and write
     // the result back (cctrace title set <key> "<title>" --dir <storeDir>).
-    process.stdout.write(JSON.stringify(all, null, 2) + "\n");
+    // Bun.write awaits the full drain — process.stdout.write() of a big
+    // payload to a PIPE returns on backpressure and the tail is lost when
+    // the process exits (a 243 KB list truncated at the 64 KB pipe buffer).
+    await Bun.write(Bun.stdout, JSON.stringify(all, null, 2) + "\n");
     return;
   }
 
@@ -834,16 +837,18 @@ const DRY = `${C.yellow}dry run${C.reset} — re-run with ${C.cyan}--yes${C.rese
  * attributable); default = this project's store dir, plus a legacy
  * ./.cctrace when one still holds traces (headed the same way).
  */
-async function forStorageDirs(v: { dir?: string; all?: boolean }, fn: (logDir: string) => void | Promise<void>): Promise<void> {
+async function forStorageDirs(v: { dir?: string; all?: boolean }, fn: (logDir: string) => void | Promise<void>, opts: { quiet?: boolean } = {}): Promise<void> {
   let dirs: string[];
   if (v.all) {
     dirs = listStoreProjects(DATA_DIR).map((p) => p.dir);
-    if (!dirs.length) { log(`Store is empty: ${storeRoot(DATA_DIR)}`, C.dim); return; }
+    if (!dirs.length) { if (!opts.quiet) log(`Store is empty: ${storeRoot(DATA_DIR)}`, C.dim); return; }
   } else {
     dirs = traceDirsFor(v.dir).readDirs;
   }
   for (const d of dirs) {
-    if (dirs.length > 1) log(`== ${projectPathOf(d) ?? d}`, C.cyan);
+    // The per-project header would corrupt a --json stdout; callers that
+    // emit JSON pass quiet and print their own machine-readable output.
+    if (dirs.length > 1 && !opts.quiet) log(`== ${projectPathOf(d) ?? d}`, C.cyan);
     await fn(d);
   }
 }

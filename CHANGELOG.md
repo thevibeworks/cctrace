@@ -3,6 +3,7 @@
 ## 0.43.1
 
 - Fixed every proxy-capture run (`cctrace claude`, `codex`, `grok`, `kimi`, `opencode`, live or `-s`) dying right after "MITM proxy listening" with `Error: instanceId is not defined`: 0.42.0's background exit seal passed the run id into the spawn, but the id was declared inside the live-mode block. Hoisted; `tsc` flagged it (the repo's typecheck is not gated — 47 pre-existing errors — so it shipped in 0.42.0 and 0.43.0)
+- Fixed `cctrace title --json`: the `--all` per-project `==` headers went to stdout and corrupted the JSON, and a big list (243 KB) was truncated at the 64 KB pipe buffer because `process.stdout.write` returns on backpressure at exit — now quiet under `--json` and written with `Bun.write`, which drains fully. (The cctrace-title skill's work list)
 
 ## 0.43.0
 

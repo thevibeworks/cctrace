@@ -2,6 +2,7 @@ import { existsSync, statSync, writeFileSync, openSync, readSync, closeSync } fr
 import { join, basename, dirname, relative, resolve } from "path";
 import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { readTracePairs, traceLines, listTraceEntries, TAIL_BYTES, type TraceParseStats, type TraceDirArg, type ReadTraceResult } from "./history";
+import { titleFor, mainSessionId } from "./title";
 import { CCTRACE_VERSION } from "./version";
 import { sliceWindow, pairEndMs } from "./replay";
 import { extractSessionId } from "./summarize";
@@ -425,6 +426,7 @@ export async function writeView(target: string, logDir: TraceDirArg, meta: PageM
   const html = renderSnapshot(result.pairs, {
     traceBytes,
     traceDiskBytes,
+    sessionTitle: titleFor(result.sourcePaths[0] ? dirname(result.sourcePaths[0]) : viewDir, mainSessionId(result.pairs), traceFile) || undefined,
     project: basename(projectRoot),
     projectPath: projectRoot,
     traceRelPath: rel && !rel.startsWith("..") ? rel : join(viewDir, traceFile),

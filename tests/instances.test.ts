@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, unlinkSyn
 import { join } from "path";
 import { tmpdir } from "os";
 import {
-  registerInstance, listInstances, listLiveInstances, listPastRuns, probeInstance, instancesDir,
+  registerInstance, patchEntry, listInstances, listLiveInstances, listPastRuns, probeInstance, instancesDir,
   STALE_MS, ABANDONED_MS, TOMBSTONE_TTL_MS, type InstanceInfo, type ProbeVerdict, type SelfProbe,
 } from "../src/instances";
 
@@ -299,5 +299,18 @@ describe("probeInstance", () => {
     try {
       expect(await probeInstance(info({ port: s.port, id: undefined }))).toBe("alive");
     } finally { s.stop(); }
+  });
+});
+
+describe("patchEntry", () => {
+  test("merges a patch atomically; preserves other fields; no-op on a missing entry", () => {
+    registerInstance(dir, info({ id: "run-p", logFile: "/x/trace.jsonl", endedAt: "2026-08-19T00:00:00Z", sessionId: "sid-1" }));
+    expect(patchEntry(dir, "run-p", { logFile: "/x/trace.jsonl.zst" })).toBe(true);
+    const j = JSON.parse(readFileSync(join(instancesDir(dir), "run-p.json"), "utf8"));
+    expect(j.logFile).toBe("/x/trace.jsonl.zst");
+    expect(j.sessionId).toBe("sid-1"); // untouched
+    expect(j.endedAt).toBe("2026-08-19T00:00:00Z");
+    expect(patchEntry(dir, "nope", { logFile: "/y" })).toBe(false);
+    expect(readdirSync(instancesDir(dir)).some((f) => f.endsWith(".tmp"))).toBe(false);
   });
 });

@@ -33,6 +33,10 @@ src/
 │                   #   continuity: find prior traces by session_id, newest first, one budget;
 │                   #   newest-prior-session guess for --continue preload
 ├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
+├── title.ts        # `cctrace title`: name a session from its SPINE (human prompts +
+│                   #   agent final answers, main chat only — no tools, no sub-agents)
+│                   #   via the user's own `claude -p`; titles.json per store dir,
+│                   #   surfaced in dashboard/history/picker/header
 ├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
 │                   #   category, wall-clock, on-disk size, sids, tokens+cache%,
 │                   #   est cost — this run's pairs only, prior merges excluded)
@@ -257,7 +261,12 @@ heartbeat-fresh registry logFile — matched as recorded AND as mapped into
 this side's store dir, `liveLogFiles` in store.ts). The supersedes
 overwrite is stamped (`ArchiveStamp` from planMerge: overwrite only while
 the archive on disk is the one the plan saw), the union path is
-damage-aware, temp names carry the pid. `--no-compress` opts out. Legacy `./.cctrace` dirs are read for continuity
+damage-aware, temp names carry the pid. `--no-compress` opts out. The exit
+seal (merge + archive + stale sweep) runs in a DETACHED helper
+(`cctrace __seal <job>`, `sealTrace` in cli.ts) so the shell returns the
+moment the plain trace is safe; the helper re-points the run's tombstone at
+the archive when done (`patchEntry`). `CCTRACE_SYNC_SEAL=1` forces inline;
+static mode seals inline (its snapshot needs the pairs). Legacy `./.cctrace` dirs are read for continuity
 (`resolveTraceDirs` → `readDirs`, threaded through history/view/server)
 and print a one-line `cctrace adopt` hint; `adopt` moves them in
 (rename / EXDEV copy+verify, skips live + fresh + name-collisions, re-points

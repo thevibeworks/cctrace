@@ -31,6 +31,22 @@ cctrace --data-dir /new/share adopt --scan ./mounts --rebase ./mounts=/Users/me/
 cctrace compress --all --yes               # then archive whatever is still plain
 ```
 
+## Naming sessions
+
+`cctrace title` gives every session a human name. It builds the session's
+spine -- the human's prompts and the agent's final answers per turn, main
+chat threads only (no tool calls, no sub-agent context) -- and sends a
+capped, front/back-weighted digest to your own `claude -p` (sonnet by
+default). Titles land in `titles.json` in each project's store dir and show
+in the dashboard, `cctrace history`, the view picker and the trace header.
+
+```bash
+cctrace title                              # dry run: list sessions that would be named
+cctrace title --yes                        # name them (one model call each; --jobs N parallel)
+cctrace title --all --yes                  # every project in the store
+cctrace title --model opus --force --yes   # re-name with a different model
+```
+
 ## Subcommands
 
 Subcommands operate on traces already on disk -- no proxy, no Claude spawn.

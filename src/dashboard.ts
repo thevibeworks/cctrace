@@ -180,7 +180,11 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     var proj = el('span', 'proj', i.project || '(unknown)');
     proj.title = i.projectPath || '';
     row.appendChild(proj);
-    row.appendChild(el('span', 'prompt', i.firstPrompt || ''));
+    // The generated session title when one exists (cctrace title), else
+    // the human's first prompt — the wire-derived identity.
+    var who = el('span', 'prompt', i.title || i.firstPrompt || '');
+    if (i.title && i.firstPrompt) who.title = i.firstPrompt;
+    row.appendChild(who);
     if (i.sessionId) row.appendChild(el('span', 'sid', String(i.sessionId).slice(0, 8)));
     return row;
   }

@@ -218,6 +218,12 @@ cctrace history [--limit N | --all] [--json]  # global run log: every traced run
                                           # rows are another container's (trace not here)
 cctrace store [--json]                    # the store: root path, one row per project (size,
                                           # traces, newest), total — where the disk went
+cctrace title [target] [--model M] [--force] [--jobs N] [--yes]
+                                          # name sessions with a model (human prompts +
+                                          # agent finals, no tools/sub-agents -> claude -p,
+                                          # sonnet default); titles.json per store dir,
+                                          # shown everywhere a run is listed; --yes runs,
+                                          # one call each; dry-run lists
 cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
                                           # move legacy ./.cctrace dirs into the store
                                           # (no DIR: this project's + every one the registry

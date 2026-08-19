@@ -14,6 +14,7 @@ import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier, traceSizes } from "./view";
+import { titleLookup } from "./title";
 import { projectTraceDir } from "./store";
 import { statSync, existsSync } from "fs";
 import { dirname, basename, resolve } from "path";
@@ -373,10 +374,13 @@ export function createServer(config: ServerConfig) {
         // carrier's stat also carries the current on-disk size (post-
         // merge/compress, so fresher than anything stamped at exit).
         const list = config.dataDir ? listPastRuns(config.dataDir) : [];
+        const titleOf = config.dataDir ? titleLookup(config.dataDir) : () => "";
         return Response.json(list.map((i) => {
           const carrier = i.logFile ? findTraceCarrier(i.logFile, i.sessionId, storeDirFor(config.dataDir, i)) : null;
+          const title = titleOf(i);
           return {
             ...i,
+            ...(title ? { title } : {}),
             traceExists: carrier !== null,
             ...(carrier ? { traceBytes: carrier.bytes } : {}),
             ...(carrier && carrier.path !== i.logFile ? { traceCarrier: carrier.path } : {}),
@@ -434,6 +438,7 @@ export function createServer(config: ServerConfig) {
             traceRelPath: carrier.path,
             traceBytes,
             traceDiskBytes,
+            sessionTitle: config.dataDir ? titleLookup(config.dataDir)(run) || undefined : undefined,
           });
           return new Response(html, { headers: { "Content-Type": "text/html" } });
         } catch (e) {

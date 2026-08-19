@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync, statSync } from "fs";
+import { readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, existsSync, statSync, renameSync } from "fs";
 import { join } from "path";
 import http from "http";
 
@@ -146,6 +146,28 @@ export function registerInstance(
       write();
     },
   };
+}
+
+/**
+ * Merge a patch into a registry entry from ANOTHER process (the detached
+ * seal helper), atomically. The live parent stopped its heartbeat and
+ * tombstoned already; this only rewrites named fields (logFile, stats). No
+ * entry / unreadable / torn = best-effort no-op, never throws.
+ */
+export function patchEntry(dataDir: string, runId: string, patch: Partial<InstanceInfo>): boolean {
+  const file = join(instancesDir(dataDir), `${runId}.json`);
+  let info: InstanceInfo;
+  try { info = JSON.parse(readFileSync(file, "utf8")); } catch { return false; }
+  const next = { ...info, ...patch };
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
+    renameSync(tmp, file);
+    return true;
+  } catch {
+    try { unlinkSync(tmp); } catch { /* ignore */ }
+    return false;
+  }
 }
 
 /** Drop tombstones past their TTL. Best-effort, called at register time. */

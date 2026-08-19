@@ -13,11 +13,12 @@ import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMark
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
 import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError } from "./view";
+import { planTitles, applyTitles, titleFor, titleLookup, mainSessionId, DEFAULT_TITLE_MODEL } from "./title";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
   registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, LEGACY_DIRNAME, type TraceDirs, type Rebase,
 } from "./store";
-import { registerInstance, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, PORT_WALK, type InstanceHandle, type InstanceInfo } from "./instances";
+import { registerInstance, patchEntry, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, PORT_WALK, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
@@ -69,14 +70,17 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt", "title"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
+// Internal detached helper (`cctrace __seal <job>`): skip client/flag
+// parsing entirely — it is spawned by the exit path, never typed.
+const IS_SEAL = ARGV_HEAD === "__seal";
 // A leading client word picks who gets traced: `cctrace codex -- exec ...`.
 // Omitted (or "claude") keeps the original grammar; the rest parses the same.
 const CLIENT_SELECTED = !SUBCOMMAND && ARGV_HEAD in CLIENTS;
 const CLIENT = CLIENTS[CLIENT_SELECTED ? ARGV_HEAD : "claude"]!;
 const OWN_ARGV = CLIENT_SELECTED ? RAW_ARGV.slice(1) : RAW_ARGV;
-const { values, claudeArgs } = SUBCOMMAND ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit(OWN_ARGV);
+const { values, claudeArgs } = (SUBCOMMAND || IS_SEAL) ? { values: {} as Record<string, never>, claudeArgs: [] } : parseArgvOrExit(OWN_ARGV);
 
 const C = {
   reset: "\x1b[0m",
@@ -283,7 +287,7 @@ async function runView(args: string[]): Promise<boolean> {
         const peek = reg?.client && reg?.sessionId && reg?.firstPrompt ? {} : await peekTrace(t.path);
         const client = reg?.client || peek.client || "";
         const sid = (reg?.sessionId || peek.sessionId || "").slice(0, 8);
-        const prompt = reg?.firstPrompt || peek.prompt || "";
+        const prompt = titleFor(dirname(t.path), reg?.sessionId || peek.sessionId, t.base) || reg?.firstPrompt || peek.prompt || "";
         const who = prompt ? `"${snip(prompt, 46)}"` : t.base;
         console.log(
           `  ${String(i + 1).padStart(2)}  ${client.padEnd(6)} ${(sid || "-").padEnd(8)} ` +
@@ -294,10 +298,12 @@ async function runView(args: string[]): Promise<boolean> {
     }
     if (elsewhere.length) {
       log(`recent runs elsewhere:`, C.cyan);
+      const titleOf = titleLookup(DATA_DIR);
       elsewhere.forEach((r, i) => {
         const when = r.endedAt ? ago(Date.parse(r.endedAt)) : "";
         const label = `${r.project || "?"}${r.client ? ` (${r.client})` : ""}`;
-        const who = r.firstPrompt ? `"${snip(r.firstPrompt, 34)}"` : basename(r.logFile);
+        const named = titleOf(r) || r.firstPrompt;
+        const who = named ? `"${snip(named, 34)}"` : basename(r.logFile);
         console.log(
           `  ${String(shown.length + i + 1).padStart(2)}  ${label.padEnd(28)} ${who.padEnd(36)} ${when}`,
         );
@@ -478,6 +484,7 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, viewTracePath),
       mode: tailing ? "tail" : "view",
       traceDiskBytes: traceSizes(result).traceDiskBytes,
+      sessionTitle: titleFor(dirname(viewTracePath), mainSessionId(result.pairs, wireTables()), viewTrace) || undefined,
     },
     dataDir: DATA_DIR,
     instanceId,
@@ -620,13 +627,14 @@ async function runHistory(args: string[]) {
     const d = new Date(iso);
     return `${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   };
+  const titleOf = titleLookup(DATA_DIR);
   const rows = shown.map((r) => ({
     when: when(seen(r)),
     state: r.live ? "live" : "-",
     client: r.client || "-",
     project: r.project || "?",
     session: r.sessionId ? r.sessionId.slice(0, 8) : "-",
-    prompt: (r.firstPrompt || "").replace(/\s+/g, " ").slice(0, 48),
+    prompt: (titleOf(r) || r.firstPrompt || "").replace(/\s+/g, " ").slice(0, 48),
     // A tombstone from another container may name a trace that doesn't
     // resolve here — list it (it happened), but dimmed as not-openable.
     here: !!carrierOf(r),
@@ -680,6 +688,46 @@ function runStore(args: string[]) {
   for (const r of rows) console.log(line(r));
   log(`${human(total)} across ${projects.length} project(s)` + (raw ? ` — ${raw} plain .jsonl not yet archived: cctrace compress --all` : ""), C.cyan);
   log(`Reclaim: cctrace clean --all · cctrace compress --all · rm -rf <a project dir above>`, C.dim);
+}
+
+// `cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N]
+// [--yes]` — name sessions with a model. Dry-run lists the sessions that
+// would be titled (each is one `claude -p` call on the user's quota); --yes
+// runs them, --force re-titles ones that have a name.
+async function runTitle(args: string[]) {
+  const usage = `cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N] [--yes]`;
+  const { values: v, positionals } = parseStorageArgs("title", args, { model: { type: "string" }, force: { type: "boolean" }, jobs: { type: "string" } }, usage);
+  const model = (v.model as string | undefined) || DEFAULT_TITLE_MODEL;
+  const jobsN = v.jobs ? parseInt(v.jobs as string, 10) : 4;
+  const wire = wireTables();
+  const target = positionals[0];
+  let planned = 0, titled = 0, failed = 0;
+  await forStorageDirs(v as { dir?: string; all?: boolean }, async (logDir) => {
+    // Titles are stored in the dir being scanned (the project's store dir,
+    // or the named --dir); a legacy read dir keeps its own titles.json.
+    const project = projectPathOf(logDir) ?? viewProjectRoot(traceDirsFor(v.dir as string | undefined));
+    const { jobs, skipped } = await planTitles(logDir, logDir, wire, { force: !!v.force, onlyFile: target ? resolve(target) : undefined });
+    if (!jobs.length) {
+      log(`Nothing to title in ${logDir}` + (skipped ? ` (${skipped} session${skipped > 1 ? "s" : ""} already named; --force re-titles)` : ""), C.green);
+      return;
+    }
+    planned += jobs.length;
+    log(`${jobs.length} session(s) to title in ${logDir}` + (skipped ? ` (${skipped} already named)` : "") + `:`, C.cyan);
+    for (const j of jobs) console.log(`    ${j.sid ? j.sid.slice(0, 8) : j.key}  ${C.dim}${j.loops} exchange(s), ${human(j.digest.length)} digest — from ${j.source}${C.reset}`);
+    if (!v.yes) return;
+    log(`Naming with claude -p --model ${model} (${Math.min(jobsN, jobs.length)} at a time)…`, C.dim);
+    const res = await applyTitles(logDir, jobs, {
+      model, concurrency: jobsN, project: basename(project),
+      onDone: (job, title, err) => {
+        const who = job.sid ? job.sid.slice(0, 8) : job.key;
+        if (title) console.log(`    ${who}  ${title}`);
+        else console.log(`    ${who}  ${C.yellow}failed — ${err}${C.reset}`);
+      },
+    });
+    titled += res.titled; failed += res.failed;
+  });
+  if (!v.yes && planned) log(`Would name ${planned} session(s) with claude -p --model ${model} — one model call each. ${DRY}`, C.yellow);
+  else if (v.yes) log(`Named ${titled} session(s)` + (failed ? `, ${failed} failed` : "") + ` — titles.json in each store dir; the dashboard, history, view picker and headers show them`, failed ? C.yellow : C.green);
 }
 
 // `cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
@@ -1144,6 +1192,14 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
   ${C.cyan}store${C.reset} [--json]            Where traces live and what they cost: the store
                           root, one row per project (size, traces, newest),
                           the total — and the commands that reclaim space.
+  ${C.cyan}title${C.reset} [target] [--model M] [--force] [--jobs N]
+                          Name sessions with a model: the human's prompts +
+                          the agent's final answers (no tool calls, no
+                          sub-agents) go to your own \`claude -p\` (sonnet by
+                          default); titles land in the store's titles.json
+                          and show in the dashboard, history, picker, header.
+                          Dry-run lists the sessions; --yes runs (one model
+                          call each); --force re-names.
   ${C.cyan}adopt${C.reset} [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
                           Move legacy ./.cctrace dirs into the store. No DIR:
                           this project's + every one the run registry knows;
@@ -1423,15 +1479,9 @@ interface AutoMergeOutcome {
   written: { path: string; priorArchive: ArchiveStamp | null }[];
 }
 
-function autoMergeOnExit(opts: RunOpts, logFile: string, pairs: TracePair[]): AutoMergeOutcome {
+function autoMergeOnExit(opts: RunOpts, logFile: string, sids: Set<string>): AutoMergeOutcome {
   const none: AutoMergeOutcome = { absorbedInto: null, written: [] };
   try {
-    const wire = wireTables();
-    const sids = new Set<string>();
-    for (const p of pairs) {
-      const sid = extractSessionId(p, wire);
-      if (sid) sids.add(sid);
-    }
     if (!sids.size) return none;
     const onProgress = mergeProgressPrinter();
     const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true, onProgress });
@@ -1502,7 +1552,67 @@ async function restTracesOnExit(opts: RunOpts, traceFile: string, mergeWritten: 
   return rested;
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void) {
+/**
+ * The exit housekeeping — merge this run's session, archive it and the
+ * merge outputs, sweep the dir's stale leftovers — as one unit, given the
+ * session ids this run saw. Returns the final trace path. Runs inline OR
+ * in the detached seal helper; both call this.
+ */
+async function sealTrace(opts: RunOpts, logFile: string, sids: Set<string>): Promise<string> {
+  let traceFile = logFile;
+  let mergeWritten: AutoMergeOutcome["written"] = [];
+  if (!opts.fresh && !opts.noAutoMerge) {
+    const merged = autoMergeOnExit(opts, logFile, sids);
+    mergeWritten = merged.written;
+    if (merged.absorbedInto) traceFile = merged.absorbedInto;
+  }
+  if (!opts.noCompress) {
+    const rested = await restTracesOnExit(opts, traceFile, mergeWritten);
+    if (rested) traceFile = rested;
+  }
+  return traceFile;
+}
+
+// The seal job the parent hands a detached helper (`cctrace __seal <file>`):
+// enough to finish the housekeeping and re-point the run's tombstone,
+// nothing the helper can't re-derive from disk.
+interface SealJob {
+  dataDir: string;
+  runId?: string;
+  logFile: string;
+  logDir: string;
+  readDirs: string[];
+  noCompress: boolean;
+  fresh: boolean;
+  noAutoMerge: boolean;
+  sids: string[];
+}
+
+/** argv that re-invokes THIS cctrace (compiled binary, or bun + entry). */
+function selfExecArgv(extra: string[]): string[] {
+  return IS_COMPILED ? [process.execPath, ...extra] : [process.execPath, Bun.main, ...extra];
+}
+
+/**
+ * The detached seal helper. Finishes merge/archive/sweep for a run whose
+ * parent already exited, then re-points that run's tombstone at where the
+ * trace ended up. Quiet (its parent already printed the receipt); disk
+ * only, no network. Never throws out — housekeeping is best-effort.
+ */
+async function runSeal(jobPath: string): Promise<void> {
+  let job: SealJob;
+  try { job = JSON.parse(readFileSync(jobPath, "utf8")); } catch { return; }
+  try {
+    const opts = { logDir: job.logDir, readDirs: job.readDirs, noCompress: job.noCompress, fresh: job.fresh, noAutoMerge: job.noAutoMerge } as RunOpts;
+    const finalPath = await sealTrace(opts, job.logFile, new Set(job.sids));
+    if (job.runId && resolve(finalPath) !== resolve(job.logFile)) {
+      patchEntry(job.dataDir, job.runId, { logFile: resolve(finalPath) });
+    }
+  } catch { /* best-effort */ }
+  try { unlinkSync(jobPath); } catch { /* ignore */ }
+}
+
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void, runId?: string) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1570,32 +1680,37 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
       log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     }
     capturer.stop();
-    // Fold this run's trace into its session file before anything names it:
-    // the receipt, the registry tombstone and `cctrace view` must point at
-    // where the pairs actually live now. --fresh opts out along with the
-    // viewer-side merge; --no-auto-merge opts out of just this.
+    // The session ids this run saw — the merge scope, cheap from the pairs
+    // already in memory.
+    const wire = wireTables();
+    const sids = new Set<string>();
+    for (const p of getPairs?.() ?? []) { const sid = extractSessionId(p, wire); if (sid) sids.add(sid); }
+
+    // Fold + archive is bounded but not instant (a resumed session unions
+    // its whole history, then re-compresses). The plain trace is already
+    // complete and safe on disk, so DON'T make the shell wait: hand the
+    // seal to a detached helper and return now. Static mode's deliverable
+    // is the in-memory snapshot, so it seals inline. CCTRACE_SYNC_SEAL=1
+    // (and any run without a resolvable self-exec) also stays inline.
     let traceFile = logFile;
-    let mergeWritten: AutoMergeOutcome["written"] = [];
-    if (!opts.fresh && !opts.noAutoMerge) {
-      const merged = autoMergeOnExit(opts, logFile, getPairs?.() ?? []);
-      mergeWritten = merged.written;
-      if (merged.absorbedInto) {
-        traceFile = merged.absorbedInto;
-        onTraceMoved?.(resolve(merged.absorbedInto));
+    const canDetach = !onFinalize && !process.env.CCTRACE_SYNC_SEAL && (sids.size > 0 || !opts.noCompress);
+    let detached = false;
+    if (canDetach) {
+      try {
+        const job: SealJob = { dataDir: DATA_DIR, runId, logFile: resolve(logFile), logDir: opts.logDir, readDirs: opts.readDirs, noCompress: opts.noCompress, fresh: opts.fresh, noAutoMerge: opts.noAutoMerge, sids: [...sids] };
+        const jobPath = join(DATA_DIR, `seal-${runId ?? process.pid}-${startedAt}.json`);
+        writeFileSync(jobPath, JSON.stringify(job));
+        const proc = Bun.spawn(selfExecArgv(["__seal", jobPath]), { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
+        proc.unref();
+        detached = true;
+        log(`Sealing in the background (merge + archive) — reopen anytime: cctrace view ${basename(logFile).replace(/\.jsonl$/, "")}`, C.dim);
+      } catch {
+        detached = false; // spawn failed: fall through to inline
       }
     }
-    // Everything this run touched goes to rest as .zst (docs/design/
-    // store.md): the merged session file(s) were just written as verified
-    // unions of any prior archive, so they may overwrite one; the run's own
-    // trace never has one unless a sweep raced us, in which case the union
-    // path runs. Then the leftovers of killed runs in this dir. All fail-
-    // soft — housekeeping never costs the exit code.
-    if (!opts.noCompress) {
-      const rested = await restTracesOnExit(opts, traceFile, mergeWritten);
-      if (rested) {
-        traceFile = rested;
-        onTraceMoved?.(resolve(rested));
-      }
+    if (!detached) {
+      traceFile = await sealTrace(opts, logFile, sids);
+      if (resolve(traceFile) !== resolve(logFile)) onTraceMoved?.(resolve(traceFile));
     }
     if (onFinalize) {
       // Static mode: the self-contained snapshot is the deliverable.
@@ -1772,6 +1887,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // session file, not the trace the merge just absorbed.
     (path) => liveInstance?.update({ logFile: path }),
     (stats) => liveInstance?.update(stats),
+    instanceId,
   );
 }
 
@@ -1896,6 +2012,13 @@ function agentAwarenessNote(port: number | undefined, traceFile: string): string
 }
 
 async function main() {
+  // Internal: the detached seal helper the exit path spawns. Not a public
+  // subcommand — dispatched before anything else, does its housekeeping and
+  // exits.
+  if (ARGV_HEAD === "__seal") {
+    await runSeal(RAW_ARGV[1] ?? "");
+    process.exit(0);
+  }
   if (SUBCOMMAND) {
     const rest = RAW_ARGV.slice(1);
     if (SUBCOMMAND === "view") {
@@ -1911,6 +2034,7 @@ async function main() {
     else if (SUBCOMMAND === "history") await runHistory(rest);
     else if (SUBCOMMAND === "store") runStore(rest);
     else if (SUBCOMMAND === "adopt") await runAdopt(rest);
+    else if (SUBCOMMAND === "title") await runTitle(rest);
     process.exit(0);
   }
 

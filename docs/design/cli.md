@@ -99,6 +99,16 @@ cctrace store [--json]                    # the store: root, one row per project
                                           # traces + plain count, newest, path from the
                                           # project.json marker), total, and the reclaim
                                           # commands — "where did 73 GB go" in one screen
+cctrace title [target] [--dir DIR | --all] [--model M] [--force] [--jobs N] [--yes]
+                                          # name sessions with a model: the spine
+                                          # (human prompts + agent FINAL answers, main
+                                          # chat only — no tool calls, no sub-agents) is
+                                          # capped + front/back weighted and sent to the
+                                          # user's own `claude -p` (sonnet default);
+                                          # titles.json per store dir, keyed by session
+                                          # id, shown in dashboard/history/picker/header.
+                                          # Dry-run lists; --yes runs (one call each,
+                                          # --jobs N in parallel); --force re-names
 cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
                                           # move legacy ./.cctrace dirs into the store: no
                                           # DIR = cwd's + every legacy dir the registry

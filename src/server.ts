@@ -13,7 +13,7 @@ import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
-import { resolveView, findTraceCarrier } from "./view";
+import { resolveView, findTraceCarrier, traceSizes } from "./view";
 import { projectTraceDir } from "./store";
 import { statSync, existsSync } from "fs";
 import { dirname, basename, resolve } from "path";
@@ -422,8 +422,7 @@ export function createServer(config: ServerConfig) {
             result = null;
           }
           if (!result) result = await resolveView(carrier.path, viewDirs);
-          let traceBytes = 0;
-          for (const p of result.sourcePaths) { try { traceBytes += statSync(p).size; } catch {} }
+          const { traceBytes, traceDiskBytes } = traceSizes(result);
           const html = renderSnapshot(result.pairs, {
             version: config.meta?.version,
             pricing: config.meta?.pricing,
@@ -434,6 +433,7 @@ export function createServer(config: ServerConfig) {
             traceFile: basename(carrier.path),
             traceRelPath: carrier.path,
             traceBytes,
+            traceDiskBytes,
           });
           return new Response(html, { headers: { "Content-Type": "text/html" } });
         } catch (e) {

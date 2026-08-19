@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.41.1
+
+- Fixed the header totals chip's "in": it counted uncached input tokens only, so a session that read 400k tokens from cache showed "in 2.1k ... $5.62" — nonsense next to its cost. "in" is now total input (uncached + cache read + cache written), the same number the exit report and the dashboard use; the hover breaks it down
+- Fixed the trace size a view reports for an archived source: it showed the .zst file size (27.8 MB for a 140 MB trace, "only 77 requests?"). The chip now shows the decoded trace size, the hover adds what it occupies on disk, and dashboard rows label an archived size "on disk (zst)"
+
 ## 0.41.0
 
 - Changed where traces live: every run now writes into the trace store, ~/.local/share/cctrace/traces/[project-key]/ (the data dir; --data-dir / CCTRACE_DATA_DIR move it), one dir per project cwd named the way Claude Code names ~/.claude/projects/ entries, with a project.json marker holding the exact path. Per-project ./.cctrace dirs were the right first move and the wrong steady state: a real audit found 73 GB spread across ~50 of them, and because the run registry is shared across containers while those dirs were not, 255 of 272 finished runs on the dashboard read "trace missing" from any container but the one that wrote them. The store rides the same shared dir as the registry, so the dashboard and /view/[run-id] open any run from anywhere; --dir DIR still overrides. Legacy ./.cctrace dirs are read for continuity (a resumed session still finds its prior turns, cctrace view [sid] still merges them) and print a one-line hint; cctrace adopt moves them into the store

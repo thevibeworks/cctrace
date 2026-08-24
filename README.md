@@ -71,6 +71,12 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   `/model` epochs, compaction boundaries, superseded exchanges -- and
   **replay**: step or play back any captured session, deep-link any
   moment.
+- **Context insights.** A Context view shows what the model's window is
+  assembled from, request by request: a six-color composition bar against
+  the model's context window, a history chart where ✂ marks compactions
+  (watch the bars drop), every injection/compaction/model-switch as an
+  event, and a browser that opens any request's exact assembled contents.
+  Anchored to provider-reported tokens -- the wire, not a guess.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **One dashboard for everything.** `/dashboard` on any instance shows every

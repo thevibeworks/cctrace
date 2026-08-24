@@ -78,6 +78,38 @@ export function modelPricing(model: unknown, catalog?: any): any {
 }
 
 /**
+ * Context-window size (tokens) for a model id, or 0 when unknown. Same
+ * resolution ladder as modelPricing over the models.dev catalog (which now
+ * carries limit.context — src/pricing-catalog.ts); the embedded fallback
+ * covers Claude models at their standard 200k so offline pages still anchor.
+ * The caller applies the 1m-context beta override (a wire header fact, not
+ * a model fact). 0 = don't pretend — occupancy renders without a % then.
+ */
+export function modelWindow(model: unknown, catalog?: any): number {
+  let m = String(model || "").toLowerCase();
+  if (!m) return 0;
+  const cat = catalog || (typeof globalThis !== "undefined" && (globalThis as any).__PRICING__) || null;
+  if (cat) {
+    const id = m.replace(/\[.*\]$/, "");
+    const tries = [id, id.replace(/[-@]\d{8}$/, "")];
+    for (let i = 0; i < 2; i++) {
+      const base = tries[tries.length - 1].replace(/-[a-z0-9.]+$/, "");
+      if (!base || base === tries[tries.length - 1]) break;
+      tries.push(base);
+    }
+    for (const t of tries) {
+      const e = cat[t];
+      if (e && typeof e.context === "number" && e.context > 0) return e.context;
+    }
+  }
+  // Embedded fallback: the classic Claude families ship 200k standard.
+  // Fable/Mythos deliberately absent — their windows are larger and not
+  // publicly fixed; an unknown window renders no %, never a wrong one.
+  if (/claude-(opus|sonnet|haiku)|^(opus|sonnet|haiku)/.test(m)) return 200000;
+  return 0;
+}
+
+/**
  * Estimated USD cost of one /v1/messages pair, from its extractMessageInfo
  * result. Returns {total, input, output, cacheRead, cacheWrite} or null when
  * the model is unknown. Cache writes without a 5m/1h breakdown (older traces)

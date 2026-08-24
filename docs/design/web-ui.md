@@ -76,7 +76,7 @@ rotating verb while in flight, 160ms fade on action change. Wall-clock times ren
 (`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
 the trace actually contains (a codex run never shows Count Tokens), the
 active one staying visible even at zero. Live-arrived rows get one 160ms
-opacity fade (the motion budget lives in docs/design/ui.md). Two views,
+opacity fade (the motion budget lives in docs/design/ui.md). Three views,
 hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request. The toolbar's Select
@@ -442,6 +442,39 @@ hash-routed:
   never rebuilt by a pair landing elsewhere — thread switches and
   misaligned node counts fall back to the full innerHTML rewrite with
   positional fold restore); snapshots open at the top.
+- **Context** (`#/context[/<sid8-or-key>[/<key>]]`): what the model's
+  context window was assembled from, request by request — the full spec is
+  docs/design/context-view.md (the idea owes dsh-context; cctrace's edge is
+  that every captured request body IS the assembled context, so every step
+  is exact and anchored to that pair's provider-reported prompt tokens).
+  Same key grammar and thread resolution as Sessions (`resolveThreadSel`),
+  selection shared both ways (tab switches keep the thread; the convo
+  chips row carries "context →", the context head "sessions →"). Four
+  sections over the selected thread: stats chips (turns · steps ·
+  injections · compactions · reclaimed · est ≈ · actual prompt · window);
+  current composition (headline occupancy — actual, ≈estimate, % of the
+  model's window from the models.dev catalog (limit.context, 1m honored
+  via the anthropic-beta header, and a sanity guard drops the denominator
+  when the anchored prompt exceeds it — a stale catalog must never render
+  "100% used"); six-segment bar scaled against the window, legend, top
+  tool schemas by size); context history (one stacked column per step or
+  per turn — toggle persisted in localStorage `cctrace-ctx-gran` — height
+  anchored to actual prompt tokens, segment split from the estimate, ✂
+  marks compaction/rewind steps, dashed red = failed request whose bar
+  shows what was SENT; hover previews the detail strip AND the browser,
+  click pins, ←/→ walk the pin; chart scroll position survives live
+  re-renders and sticks to the newest edge); context events (newest first,
+  filter chips, producer-labeled injections, compactions with the
+  actual-anchored reclaim delta, model switches, tool-schema/system
+  changes, each row linked to its wire pair at its turn·step address —
+  the outline's numbering via loopTurns); and the context browser (the
+  picked step opened as six category folds → item rows → full content,
+  lazy-rendered through the existing renderBlock machinery, fold state
+  keyed by category/index so live re-renders keep what's open; compact
+  stubs say "composition unavailable" + their surviving usage). Data layer
+  is src/context.ts (contextComposition/contextItems/contextTimeline/
+  ctxAggregateTurns + CTX_CATS), pure and inlined via toString like
+  session.ts, so snapshots and view pages carry the whole thing offline.
 - **Replay** (inside the Sessions view): a time cursor over the same data —
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the

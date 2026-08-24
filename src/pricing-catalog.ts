@@ -38,12 +38,15 @@ export const CATALOG_ALIASES: Record<string, string> = {
 export const PRICING_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10000; // the full api.json is ~3MB
 
-/** USD per MTok. cacheWrite is the provider's 5m-equivalent write rate. */
+/** USD per MTok. cacheWrite is the provider's 5m-equivalent write rate.
+ * context is the model's context-window size in tokens (models.dev
+ * limit.context) — the anchor for the Context view's occupancy figures. */
 export interface CatalogEntry {
   input: number;
   output: number;
   cacheRead?: number;
   cacheWrite?: number;
+  context?: number;
 }
 
 export interface PricingCache {
@@ -90,6 +93,8 @@ export function filterCatalog(api: any): Record<string, CatalogEntry> {
       const entry: CatalogEntry = { input: c.input, output: c.output };
       if (typeof c.cache_read === "number") entry.cacheRead = c.cache_read;
       if (typeof c.cache_write === "number") entry.cacheWrite = c.cache_write;
+      const lim = m && m.limit;
+      if (lim && typeof lim.context === "number" && lim.context > 0) entry.context = lim.context;
       out[id] = entry;
     }
   }

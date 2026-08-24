@@ -43,6 +43,21 @@ offline snapshots -- same UI, three ways in.
   cost, exact model ids, and effort levels live in hovers. A masked
   screen-share mode (header eye toggle) blurs session ids and account
   values.
+- **Context view** -- what the model is actually carrying around, and what
+  is eating the window. Current composition as a six-color bar scaled
+  against the model's context window (system prompt, tool schemas, your
+  messages, injected context, assistant replies, tool results -- plus the
+  top tool schemas by size); a history chart with one stacked bar per
+  request (or per turn) where ✂ marks compactions and rewinds -- watch the
+  bars drop; a context-events list (every injection with its producer --
+  AGENTS.md, system reminders, recaps -- every compaction with the tokens
+  it reclaimed, every model switch and tool-schema change, each linked to
+  its wire request); and a context browser that opens any request into its
+  exact assembled contents, category by category, down to the full text.
+  Because cctrace sits on the wire, every step is exact -- the captured
+  request body IS the assembled context -- and every figure is anchored to
+  the provider-reported prompt tokens of that same request. Estimates wear
+  ≈ and never replace actuals.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,

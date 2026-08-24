@@ -55,7 +55,22 @@ import {
   diffHunk,
   richToolBody,
 } from "./session";
-import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
+import { modelPricing, modelWindow, pairCost, fmtCost, costTitle } from "./pricing";
+import {
+  CTX_CATS,
+  CTX_IMG_EST,
+  estTokens,
+  ctxTextCat,
+  ctxBlockTokens,
+  ctxEnvelope,
+  ctxNormalizeTurns,
+  ctxSnippet,
+  contextComposition,
+  contextItems,
+  contextTimeline,
+  ctxInjectLabel,
+  ctxAggregateTurns,
+} from "./context";
 import markedSrc from "./vendor/marked.umd.js" with { type: "text" };
 import {
   pairStartMs,
@@ -1349,6 +1364,114 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       content: ''; flex: 1; border-top: 1px solid var(--border);
     }
     .agent-note a { color: var(--accent); }
+    /* ---- Context view ----
+       What the model's context window was assembled from, request by
+       request (docs/design/context-view.md). Category colors are DATA
+       colors (fixed hex from CTX_CATS in src/context.ts, same rule as the
+       request-category chips); accent stays interactive-only. */
+    #context-view { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
+    body.view-context #context-view { display: block; }
+    body.view-context #split { display: none; }
+    body.view-context .cats { display: none; }
+    body.view-context #tb-list, body.view-context #tb-page { display: none; }
+    .cx-section { margin-bottom: 18px; max-width: 1100px; }
+    .cx-section > h4 {
+      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
+      margin-bottom: 6px; display: flex; align-items: baseline; gap: 10px;
+    }
+    .cx-h4-hint { color: var(--text-faint); text-transform: none; font-size: 10px; font-weight: 400; }
+    .cx-h4-right { margin-left: auto; display: inline-flex; gap: 4px; }
+    .cx-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+    .cx-head .thread-label { color: var(--text); }
+    .cx-goto { margin-left: auto; color: var(--accent); font-size: 11px; text-decoration: none; flex: none; }
+    .cx-goto:hover { text-decoration: underline; }
+    /* the headline occupancy: big number, quiet denominator */
+    .cx-occ { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+    .cx-occ-n { font-size: 15px; color: var(--text); }
+    .cx-occ-d { font-size: 11px; color: var(--text-muted); }
+    .cx-occ-pct { margin-left: auto; font-size: 12px; color: var(--text); }
+    /* the composition bar: six colored segments + the grey headroom track */
+    .cx-bar {
+      display: flex; height: 12px; border-radius: 4px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-seg { height: 100%; min-width: 0; }
+    .cx-leg { display: flex; flex-wrap: wrap; gap: 3px 18px; padding: 7px 0 0; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+    .cx-leg-row { display: inline-flex; align-items: center; gap: 6px; }
+    .cx-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; background: var(--cx, var(--text-faint)); }
+    .cx-leg-n { color: var(--text); }
+    .cx-leg-pct { color: var(--text-faint); }
+    .cx-topt { padding-top: 6px; font-size: 11px; color: var(--text-faint); }
+    .cx-topt b { color: var(--text-muted); font-weight: 500; }
+    /* history chart: one column per step (or turn), newest at the right */
+    .cx-chart-wrap { position: relative; }
+    .cx-scale {
+      position: absolute; left: 0; top: 0; z-index: 1; pointer-events: none;
+      font-size: 10px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
+    .cx-chart {
+      display: flex; align-items: flex-end; gap: 2px; height: 150px;
+      overflow-x: auto; overflow-y: hidden; padding: 12px 2px 2px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cx-colw {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: flex-end; height: 100%; flex: none; cursor: pointer;
+    }
+    .cx-mark { font-size: 9px; line-height: 1.2; color: var(--text-muted); }
+    .cx-col {
+      display: flex; flex-direction: column-reverse; width: 9px;
+      border-radius: 1px 1px 0 0; overflow: hidden;
+    }
+    .cx-colw:hover .cx-col, .cx-colw.pinned .cx-col { outline: 1px solid var(--accent); outline-offset: 1px; }
+    .cx-col-failed { outline: 1px dashed var(--red) !important; }
+    .cx-seg-v { width: 100%; }
+    .cx-seg-stub { width: 100%; background: var(--border); }
+    /* pinned/hovered step detail: one line of facts + per-category rows */
+    .cx-detail { padding: 8px 0 0; font-size: 11px; }
+    .cx-dhead { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 6px; }
+    .cx-dhead .cx-dt { color: var(--text); }
+    .cx-crow { display: flex; align-items: center; gap: 8px; padding: 1px 0; font-variant-numeric: tabular-nums; }
+    .cx-crow-label { flex: 0 0 120px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+    .cx-track {
+      flex: 0 1 260px; height: 6px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-fill { display: block; height: 100%; background: var(--cx, var(--text-faint)); }
+    .cx-crow-n { flex: 0 0 70px; text-align: right; color: var(--text); }
+    .cx-crow-pct { flex: 0 0 40px; text-align: right; color: var(--text-faint); }
+    /* context events */
+    .cx-fchip {
+      font: inherit; font-size: 10px; line-height: 1; cursor: pointer;
+      background: none; border: 1px solid var(--border); border-radius: 999px;
+      color: var(--text-muted); padding: 3px 9px;
+    }
+    .cx-fchip:hover { border-color: var(--accent); }
+    .cx-fchip.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .cx-ev:hover { background: var(--hover); }
+    .cx-ev-kind {
+      flex: 0 0 58px; text-align: center; font-size: 9px; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+    }
+    .cx-ev-glyph { flex: 0 0 12px; text-align: center; color: var(--text-faint); }
+    .cx-ev-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .cx-ev-at { flex: none; color: var(--text-faint); }
+    .cx-ev-at a { color: var(--text-faint); text-decoration: none; }
+    .cx-ev-at a:hover { color: var(--accent); }
+    .cx-delta { flex: 0 0 66px; text-align: right; }
+    .cx-delta.plus { color: var(--amber); }
+    .cx-delta.minus { color: var(--green); }
+    .cx-ev-time { flex: 0 0 60px; text-align: right; color: var(--text-faint); }
+    .cx-more { padding: 4px 0; font-size: 11px; color: var(--text-faint); }
+    /* context browser: category folds -> item rows -> full content */
+    .cx-item > summary { padding: 4px 12px; }
+    .cx-item > summary .fold-hint { color: var(--text-muted); }
+    .cx-item-n { flex: none; margin-left: auto; color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .cx-item-err .fold-title { color: var(--red); }
+    .cx-cat > summary .cx-item-n { font-size: 11px; }
+    .cx-note { padding: 4px 0 8px; font-size: 11px; color: var(--text-faint); }
   </style>
 </head>
 <body>
@@ -1374,6 +1497,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="tabs">
       <button class="tab active" id="tab-requests">requests</button>
       <button class="tab" id="tab-session">sessions</button>
+      <button class="tab" id="tab-context" title="context&#10;What the model&#8217;s context window is assembled from, request by request &#8212; composition, history, events, and a per-step browser.">context</button>
     </span>
     <span class="tb-group" id="tb-list">
       <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
@@ -1433,6 +1557,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
     <div id="pulse"></div>
   </div>
+  <div id="context-view"></div>
 
   <script>${markedSrc}</script>
   <script>
@@ -1490,9 +1615,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let showPrior = true;      // include prior-run pairs in the Requests list
     let selMode = false;       // select-to-purge mode (Requests view)
     const selIds = new Set();  // selected pair ids
-    let view = 'requests';      // 'requests' | 'session'
+    let view = 'requests';      // 'requests' | 'session' | 'context'
     let detailId = null;        // request id open in the detail panel
-    let sessionSelKey = null;   // selected thread in the session view
+    let sessionSelKey = null;   // selected thread in the session + context views
+    let ctxGran = localStorage.getItem('cctrace-ctx-gran') === 'turn' ? 'turn' : 'step';
+    let ctxPinned = null;       // pinned step's pairId (context history chart)
+    let ctxEvFilter = 'all';    // context events filter
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
 
@@ -1542,9 +1670,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Pricing + cost estimation, injected from src/pricing.ts.
     ${modelPricing.toString()}
+    ${modelWindow.toString()}
     ${pairCost.toString()}
     ${fmtCost.toString()}
     ${costTitle.toString()}
+
+    // The context layer, injected from src/context.ts (unit tested there).
+    const CTX_CATS = ${JSON.stringify(CTX_CATS)};
+    const CTX_IMG_EST = ${JSON.stringify(CTX_IMG_EST)};
+    ${estTokens.toString()}
+    ${ctxTextCat.toString()}
+    ${ctxBlockTokens.toString()}
+    ${ctxEnvelope.toString()}
+    ${ctxNormalizeTurns.toString()}
+    ${ctxSnippet.toString()}
+    ${contextComposition.toString()}
+    ${contextItems.toString()}
+    ${contextTimeline.toString()}
+    ${ctxInjectLabel.toString()}
+    ${ctxAggregateTurns.toString()}
 
     // Replay timeline primitives, injected from src/replay.ts.
     ${pairStartMs.toString()}
@@ -1609,6 +1753,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const themeToggle = document.getElementById('theme-toggle');
     const tabRequests = document.getElementById('tab-requests');
     const tabSession = document.getElementById('tab-session');
+    const tabContext = document.getElementById('tab-context');
+    const contextEl = document.getElementById('context-view');
 
     // Dashboard link: only meaningful when a server answers /dashboard —
     // a snapshot opened from disk (file://) has no routes to link to.
@@ -2095,6 +2241,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
           }
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
@@ -2108,6 +2255,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           render();
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
         } else if (msg.type === 'purged') {
           // Pairs deleted via select-to-purge (this page or another one on
           // the same server): drop them everywhere and re-render.
@@ -2120,6 +2268,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           updateSelBar();
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
         }
       };
     }
@@ -2417,6 +2566,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         }
         showSession(key, sub);
+      } else if ((m = h.match(/^#\\/context(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
+        // #/context[/<sid8-or-thread-key>[/<thread-key>]] — same key grammar
+        // as the sessions view; the selection is SHARED with it, so tab
+        // switches keep the conversation in focus.
+        let key = m[1] || null;
+        if (key) { try { key = decodeURIComponent(key); } catch {} }
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        setView('context');
+        showContext(key, sub);
       } else {
         setView('requests');
         closeDetail();
@@ -2431,13 +2590,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // (ui.md motion budget; animation is reserved for in-view jumps).
       if (v === 'session' && view !== 'session') pendingSessionFocus = true;
       view = v;
-      if (v === 'session' && selMode) setSelMode(false);
+      if (v !== 'requests' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
+      document.body.classList.toggle('view-context', v === 'context');
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
+      tabContext.classList.toggle('active', v === 'context');
     }
     tabRequests.onclick = () => { location.hash = ''; };
     tabSession.onclick = () => { location.hash = '#/session'; };
+    // The context tab keeps the sessions view's selection — same thread,
+    // different lens.
+    tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey); };
+    function ctxHash(key) {
+      return '#/context' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
+    }
 
     function openDetail(id) {
       const isNew = detailId !== id;
@@ -2532,6 +2699,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
+      if (view === 'context') {
+        if (e.key === 'Escape') { location.hash = ''; return; }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          // Walk the pinned step through the history chart — the keyboard
+          // face of click-to-pin.
+          e.preventDefault();
+          const t = getThreads().find(x => x.key === sessionSelKey);
+          if (!t) return;
+          const steps = ctxData(t).tl.steps;
+          if (!steps.length) return;
+          let i = steps.findIndex(s => s.pairId === ctxPinned);
+          if (i === -1) i = steps.length - 1;
+          i = Math.max(0, Math.min(steps.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
+          ctxPinned = steps[i].pairId;
+          renderContextView(t);
+          const el = contextEl.querySelector('[data-cxbar="' + (window.CSS && CSS.escape ? CSS.escape(ctxPinned) : ctxPinned) + '"]');
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          return;
+        }
+        return;
+      }
       if (view === 'requests' && selMode && !detailId && e.key === 'Escape') { setSelMode(false); return; }
       if (view === 'requests' && detailId) {
         if (e.key === 'Escape') location.hash = '';
@@ -3234,17 +3422,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return mainThread(scoped) || mainThread(threads);
     }
 
-    function showSession(key, sub) {
-      const threads = getThreads();
-      if (!threads.length) {
-        threadsEl.innerHTML = '';
-        convoEl.innerHTML = '<div class="empty">' + (replay.active
-          ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
-          : 'No /v1/messages requests captured yet.') + '</div>';
-        convoKey = null;
-        tailPill.classList.remove('show');
-        return;
-      }
+    // Resolve a URL key to a thread — shared by the sessions and context
+    // views (one key grammar, one resolution): exact key, short key
+    // ('<sid8>|<grouping>'), session-id prefix (+ optional sub thread-key),
+    // then the newest session's main thread.
+    function resolveThreadSel(threads, key, sub) {
       let sel = null;
       for (const t of threads) if (t.key === key) sel = t;
       if (!sel && key) {
@@ -3262,12 +3444,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
       }
       if (!sel && key) {
-        // Session-id prefix: #/session/<sid8>[/<thread-key>] selects that
-        // session's named thread, or its main thread.
+        // Session-id prefix: /<sid8>[/<thread-key>] selects that session's
+        // named thread, or its main thread.
         const st = threads.filter(t => t.sessionId && t.sessionId.lastIndexOf(key, 0) === 0);
         if (st.length) sel = (sub && st.find(t => t.key === sub || shortKeyStr(t.key) === sub)) || mainThread(st);
       }
-      if (!sel) sel = newestMainThread(threads);
+      return sel || newestMainThread(threads);
+    }
+
+    function showSession(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        threadsEl.innerHTML = '';
+        convoEl.innerHTML = '<div class="empty">' + (replay.active
+          ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
+          : 'No /v1/messages requests captured yet.') + '</div>';
+        convoKey = null;
+        tailPill.classList.remove('show');
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       agentThreadStats = {};
@@ -4484,6 +4680,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'exchanges that left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices); the wire pairs are kept, never lost');
       if (eu.unattributed) chips += kv('unplaced', String(eu.unattributed), '',
         'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
+      // The context view is the same thread through the other lens — what
+      // each request's window was assembled from.
+      chips += '<a class="turn-wire" href="' + ctxHash(t.key) + '" title="context view\\nComposition, per-request history, events, and a per-step browser for this thread\\u2019s context window.">context \\u2192</a>';
       // The pane renders as a PARTS array — one string per top-level node —
       // so live re-renders can patch only the nodes whose html actually
       // changed (see the apply step below).
@@ -4661,8 +4860,422 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       tipDetachedGuard();
     }
 
-    // ---- Session replay ----
-    // A time cursor over the same data (docs/design/session-replay.md):
+    // ---- Context view ----
+    // What the model's context window was assembled from, request by
+    // request (docs/design/context-view.md; the idea owes dsh-context).
+    // Four sections over the SELECTED thread (selection shared with the
+    // sessions view): current composition, per-step history chart, context
+    // events, and a per-step browser. cctrace's edge over an event-log
+    // fold: every captured request body IS the assembled context, so each
+    // step is exact, and each carries the provider-reported prompt tokens
+    // to anchor the estimates against.
+
+    // Timeline + step-address cache: recompute only when the selected
+    // thread gained pairs (per-pair composition/usage memoize on the pair).
+    let ctxTlCache = { key: '' };
+    function ctxData(t) {
+      const key = t.key + ':' + t.pairIds.length + ':' + pairs.length;
+      if (ctxTlCache.key !== key) {
+        const byId = {};
+        for (const p of pairs) byId[p.id] = p;
+        const tpairs = t.pairIds.map(id => byId[id]).filter(Boolean);
+        const tl = contextTimeline(tpairs, t.compactions);
+        // pairId -> {ord, step}: the outline's working-loop address for
+        // each wire request — bars and events speak "turn 04 · step 2",
+        // the same numbering the sessions rail uses.
+        const vis = (t.turns || []).filter(x => !x.toolResultsOnly);
+        const loops = loopTurns(vis);
+        const addr = {};
+        for (let li = 0; li < loops.length; li++) {
+          const L = loops[li];
+          for (const v of L.members) {
+            const turn = vis[v];
+            if (turn && turn.role === 'assistant' && turn.pairId) addr[turn.pairId] = { ord: li, step: (L.steps && L.steps[v]) || 0 };
+          }
+        }
+        ctxTlCache = { key, tl, addr, byId };
+      }
+      return ctxTlCache;
+    }
+
+    function ctxOrdLbl(addr, pairId) {
+      const a = addr && addr[pairId];
+      if (!a) return '';
+      const o = a.ord + 1 < 10 ? '0' + (a.ord + 1) : '' + (a.ord + 1);
+      return 'turn ' + o + (a.step > 1 ? ' \\u00b7 step ' + a.step : '');
+    }
+
+    // The thread's context window: models.dev limit.context (modelWindow),
+    // 1m when the wire's anthropic-beta header says context-1m. 0 = unknown
+    // — occupancy renders without a %, never a made-up denominator.
+    function ctxWindowOf(t) {
+      const wf = threadWireFacts(t);
+      if (wf.ctx1m) return 1000000;
+      return modelWindow(t.model);
+    }
+
+    function ctxStepTotal(s) { return s.actualIn != null ? s.actualIn : s.est; }
+
+    // Column segments for one step, stacked bottom-up in CTX_CATS order.
+    function ctxColSegs(s) {
+      if (!s.sums || !s.est) return '<span class="cx-seg-stub" style="height:100%"></span>';
+      let h = '';
+      for (const c of CTX_CATS) {
+        const v = s.sums[c.id];
+        if (!v) continue;
+        h += '<span class="cx-seg-v" style="height:' + ((v / s.est) * 100).toFixed(2) + '%;background:' + c.color + '"></span>';
+      }
+      return h;
+    }
+
+    function ctxBarTip(s, addr, extra) {
+      const bits = [];
+      const at = ctxOrdLbl(addr, s.pairId);
+      bits.push((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : ''));
+      if (extra) bits.push(extra);
+      if (s.t) bits.push(fmtDateTime(new Date(s.t * 1000)));
+      if (s.stub) bits.push('request body folded by cctrace compact \\u2014 composition unknown, usage kept');
+      else bits.push('estimated \\u2248' + fmtCompact(s.est));
+      if (s.actualIn != null) bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
+      else if (s.failed) bits.push('request FAILED \\u2014 no response; the bar shows what was SENT');
+      if (s.mark === 'compact') bits.push('\\u2702 compaction \\u2014 the history above was folded');
+      else if (s.mark === 'rewrite') bits.push('\\u2702 full rewrite \\u2014 history replaced by a continuation summary');
+      else if (s.mark === 'rewind') bits.push('\\u2702 rewind \\u2014 history stepped back to an earlier point');
+      return bits.join('\\n') + '\\n---\\n> click to pin \\u00b7 hover previews the browser';
+    }
+
+    function showContext(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        contextEl.innerHTML = '<div class="empty">No model calls captured yet.</div>';
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
+      sessionSelKey = sel.key;
+      renderContextView(sel);
+    }
+
+    // Browser fold state survives re-renders: category opens by cat id,
+    // item opens by "cat:index" (a live pair appends steps; the browsed
+    // step's items are stable for a picked pair).
+    const ctxOpenCats = {};
+    const ctxOpenItems = {};
+    let ctxItemsCache = { pairId: null, items: null };
+    function ctxItemsOf(pairId) {
+      if (ctxItemsCache.pairId !== pairId) {
+        const p = ctxTlCache.byId ? ctxTlCache.byId[pairId] : pairs.find(x => x.id === pairId);
+        ctxItemsCache = { pairId, items: p ? contextItems(p) : null };
+      }
+      return ctxItemsCache.items;
+    }
+
+    // The step the browser (and the detail strip) shows when nothing is
+    // hovered: the pinned bar, else the newest non-failed step.
+    function ctxFocusStep(steps) {
+      if (ctxPinned) { for (const s of steps) if (s.pairId === ctxPinned) return s; }
+      for (let i = steps.length - 1; i >= 0; i--) if (!steps[i].failed) return steps[i];
+      return steps[steps.length - 1] || null;
+    }
+
+    function renderCtxDetail(s, addr) {
+      if (!s) return '';
+      const at = ctxOrdLbl(addr, s.pairId);
+      let h = '<div class="cx-dhead">' +
+        '<span class="cx-dt">' + escapeHtml((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : '')) + '</span>' +
+        (s.t ? '<span>' + fmtTime(new Date(s.t * 1000)) + '</span>' : '') +
+        (s.stub ? '<span>body folded by compact</span>' : '<span>estimated \\u2248' + fmtCompact(s.est) + '</span>') +
+        (s.actualIn != null ? '<span class="ok">actual prompt ' + fmtCompact(s.actualIn) + '</span><span>output ' + fmtCompact(s.out) + '</span>'
+          : s.failed ? '<span class="err">request failed \\u2014 sent, never answered</span>' : '') +
+        '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.pairId) + '">wire</a>' +
+        '</div>';
+      if (s.sums && s.est) {
+        for (const c of CTX_CATS) {
+          const v = s.sums[c.id];
+          const pct = (v / s.est) * 100;
+          h += '<div class="cx-crow">' +
+            '<span class="cx-crow-label"><span class="cx-dot" style="--cx:' + c.color + '"></span>' + c.label + '</span>' +
+            '<span class="cx-track"><span class="cx-fill" style="--cx:' + c.color + ';width:' + Math.min(100, pct).toFixed(1) + '%"></span></span>' +
+            '<span class="cx-crow-n">\\u2248' + fmtCompact(v) + '</span>' +
+            '<span class="cx-crow-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '<1%' : '0%') + '</span></div>';
+        }
+      }
+      return h;
+    }
+
+    function renderCtxEvents(events, addr) {
+      const kinds = {};
+      for (const ev of events) kinds[ev.kind] = (kinds[ev.kind] || 0) + 1;
+      let chips = '<button class="cx-fchip' + (ctxEvFilter === 'all' ? ' active' : '') + '" data-evf="all">all ' + events.length + '</button>';
+      for (const k of ['inject', 'compact', 'model', 'tools', 'system']) {
+        if (!kinds[k]) continue;
+        chips += '<button class="cx-fchip' + (ctxEvFilter === k ? ' active' : '') + '" data-evf="' + k + '">' + k + ' ' + kinds[k] + '</button>';
+      }
+      const list = events.filter(ev => ctxEvFilter === 'all' || ev.kind === ctxEvFilter);
+      let rows = '';
+      const CAP = 200;
+      // Newest first — the question is "what just changed my window".
+      for (let i = list.length - 1, n = 0; i >= 0 && n < CAP; i--, n++) {
+        const ev = list[i];
+        let glyph = '+', label = '', delta = ev.tokens || 0;
+        if (ev.kind === 'inject') { label = ev.label || 'context'; }
+        else if (ev.kind === 'compact') {
+          glyph = '\\u2702';
+          label = (ev.mode === 'rewind' ? 'history rewound' : ev.mode === 'rewrite' ? 'context rewritten (continuation summary)' : 'context compacted') +
+            (ev.fromTurns ? ' \\u00b7 ' + ev.fromTurns + ' \\u2192 ' + ev.toTurns + ' turns' : '');
+        }
+        else if (ev.kind === 'model') { glyph = '\\u21c4'; label = shortModel(ev.from) + ' \\u2192 ' + shortModel(ev.to); delta = 0; }
+        else if (ev.kind === 'tools') { glyph = '\\u00b1'; label = 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools'; }
+        else if (ev.kind === 'system') { glyph = '\\u00b1'; label = 'system prompt changed'; }
+        const at = ctxOrdLbl(addr, ev.pairId);
+        rows += '<div class="cx-ev">' +
+          '<span class="cx-ev-glyph">' + glyph + '</span>' +
+          '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
+          '<span class="cx-ev-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</span>' +
+          (delta ? '<span class="cx-delta ' + (delta > 0 ? 'plus' : 'minus') + '">' + (delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(delta)) + '</span>' : '<span class="cx-delta"></span>') +
+          '<span class="cx-ev-at"><a href="#/p/' + encodeURIComponent(ev.pairId) + '" title="open the wire request">' + escapeHtml(at || 'wire') + '</a></span>' +
+          (ev.t ? '<span class="cx-ev-time">' + fmtTime(new Date(ev.t * 1000)) + '</span>' : '') +
+          '</div>';
+      }
+      if (!rows) rows = '<div class="cx-more">no context events' + (ctxEvFilter !== 'all' ? ' of this kind' : '') + '</div>';
+      if (list.length > CAP) rows += '<div class="cx-more">+' + (list.length - CAP) + ' older events not shown</div>';
+      return '<div class="cx-h4-right" id="cx-ev-chips" style="display:flex;gap:4px;flex-wrap:wrap;padding-bottom:6px">' + chips + '</div>' + rows;
+    }
+
+    function ctxItemBody(it) {
+      if (it.kind === 'tool') {
+        const d = it.b && it.b.description ? '<div class="block-note">' + escapeHtml(String(it.b.description).slice(0, 600)) + '</div>' : '';
+        return d + preBlock(formatJson(it.b));
+      }
+      try { return renderBlock(it.b, false); } catch (e) { return brokenItem('context item', '', e); }
+    }
+
+    function renderCtxBrowser(s, addr) {
+      if (!s) return '<div class="cx-note">nothing to browse yet</div>';
+      if (s.stub) {
+        return '<div class="cx-note">this step\\u2019s request body was folded by cctrace compact \\u2014 its composition is gone (the kept request of the epoch holds the full history)' +
+          (s.actualIn != null ? ' \\u00b7 actual prompt ' + fmtCompact(s.actualIn) : '') + '</div>';
+      }
+      const items = ctxItemsOf(s.pairId);
+      if (!items) return '<div class="cx-note">request not loaded</div>';
+      const at = ctxOrdLbl(addr, s.pairId);
+      let h = '<div class="cx-dhead"><span class="cx-dt">' + escapeHtml(at || 'wire request') + '</span>' +
+        '<span>assembled from the captured request body \\u2014 exact</span>' +
+        '<span>estimated \\u2248' + fmtCompact(s.est) + '</span>' +
+        (s.actualIn != null ? '<span class="ok">actual prompt ' + fmtCompact(s.actualIn) + '</span>' : '') +
+        '</div>';
+      const CAP = 300;
+      for (const c of CTX_CATS) {
+        const list = items.cats[c.id] || [];
+        let sum = 0;
+        for (const it of list) sum += it.tokens;
+        const pct = s.est ? Math.round((sum / s.est) * 100) : 0;
+        let body = '';
+        for (let i = 0; i < list.length && i < CAP; i++) {
+          const it = list[i];
+          const open = ctxOpenItems[c.id + ':' + i];
+          body += '<details class="fold cx-item' + (it.err ? ' cx-item-err' : '') + '"' + (open ? ' open' : '') +
+            ' data-cxcat="' + c.id + '" data-cxi="' + i + '">' +
+            '<summary><span class="fold-title">' + escapeHtml(it.kind === 'tool' ? it.label : (it.kind + (it.toolName && it.kind !== 'tool_result' ? ' \\u00b7 ' + it.toolName : ''))) + '</span>' +
+            '<span class="fold-hint">' + escapeHtml(it.kind === 'tool' ? '' : it.label) + '</span>' +
+            '<span class="cx-item-n">\\u2248' + fmtCompact(it.tokens) + '</span>' +
+            '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
+        }
+        if (list.length > CAP) body += '<div class="cx-more">+' + (list.length - CAP) + ' more items not shown</div>';
+        if (!list.length) body = '<div class="cx-more">none</div>';
+        h += '<details class="fold box cx-cat"' + (ctxOpenCats[c.id] ? ' open' : '') + ' data-cxcatfold="' + c.id + '">' +
+          '<summary><span class="cx-dot" style="--cx:' + c.color + '"></span>' +
+          '<span class="fold-title">' + c.label + '</span>' +
+          '<span class="fold-hint">' + list.length + ' item' + (list.length === 1 ? '' : 's') + '</span>' +
+          '<span class="cx-item-n">\\u2248' + fmtCompact(sum) + ' \\u00b7 ' + pct + '%</span>' +
+          '</summary><div class="fold-body">' + body + '</div></details>';
+      }
+      return h;
+    }
+
+    // Fill a browser item's body on first expand — a category can hold a
+    // megabyte of tool results; only what the user opens is rendered.
+    contextEl.addEventListener('toggle', (e) => {
+      const det = e.target;
+      if (!det || !det.dataset) return;
+      if (det.dataset.cxcatfold) { ctxOpenCats[det.dataset.cxcatfold] = det.open; return; }
+      if (det.dataset.cxcat == null) return;
+      ctxOpenItems[det.dataset.cxcat + ':' + det.dataset.cxi] = det.open;
+      if (!det.open) return;
+      const body = det.querySelector(':scope > .fold-body');
+      if (!body || body.dataset.filled) return;
+      const items = ctxItemsCache.items;
+      if (!items) return;
+      const it = (items.cats[det.dataset.cxcat] || [])[+det.dataset.cxi];
+      if (!it) return;
+      body.dataset.filled = '1';
+      body.innerHTML = ctxItemBody(it);
+    }, true);
+
+    let ctxThreadKey = null;
+    function renderContextView(t) {
+      // Switching threads drops the pin (it names a pair of the OLD
+      // thread); granularity and the events filter are preferences and stay.
+      if (ctxThreadKey !== t.key) { ctxThreadKey = t.key; ctxPinned = null; }
+      const d = ctxData(t);
+      const tl = d.tl;
+      const addr = d.addr;
+      const steps = tl.steps;
+      if (!steps.length) {
+        contextEl.innerHTML = '<div class="empty">No model calls in this thread yet.</div>';
+        return;
+      }
+      const focus = ctxFocusStep(steps);
+      // ---- head: thread identity + the stats row ----
+      const injN = tl.events.filter(ev => ev.kind === 'inject').length;
+      const compEvs = tl.events.filter(ev => ev.kind === 'compact');
+      let reclaimed = 0;
+      for (const ev of compEvs) if (ev.tokens < 0) reclaimed += -ev.tokens;
+      let win = ctxWindowOf(t);
+      const cur = focus && !focus.stub ? focus : null;
+      const anchor = focus ? ctxStepTotal(focus) : 0;
+      // Sanity: a provider-reported prompt LARGER than the resolved window
+      // proves the window wrong (stale catalog, an unlisted long-context
+      // tier). Show no denominator rather than "100% of context used".
+      if (win && anchor > win) win = 0;
+      let head = '<div class="cx-head">' +
+        '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
+        '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
+        modelChip(t) +
+        (t.sessionId ? '<span class="sess-sid" data-mask="sid">' + escapeHtml(t.sessionId.slice(0, 8)) + '</span>' : '') +
+        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
+        '</div>';
+      let chips = '';
+      chips += kv('turns', String(loopCountOf(t)), '', 'working-loop turns \\u2014 the same numbering as the sessions outline');
+      chips += kv('steps', String(steps.length), '', 'model-call wire requests in this thread (one bar each below)');
+      if (injN) chips += kv('injections', String(injN), '', 'harness-injected context blocks (system reminders, AGENTS.md, recaps\\u2026) \\u2014 the events list names each one');
+      if (compEvs.length) chips += kv('compactions', String(compEvs.length), '', 'compaction/rewind boundaries \\u2014 \\u2702 marks in the history chart');
+      if (reclaimed) chips += kv('reclaimed', '\\u2212' + fmtCompact(reclaimed), '', 'prompt tokens dropped by compactions \\u2014 the difference between the packing before and after each boundary');
+      if (cur && cur.est) chips += kv('est', '\\u2248' + fmtCompact(cur.est), '', 'chars/4 estimate over the newest assembled request body');
+      if (focus && focus.actualIn != null) chips += kv('prompt', fmtCompact(focus.actualIn), '', focus.actualIn.toLocaleString() + ' provider-reported prompt tokens (input + cache read + cache write) of the newest step');
+      if (win) chips += kv('window', fmtCompact(win), '', 'the model\\u2019s context window (models.dev' + (win === 1000000 ? '; 1m via the anthropic-beta context-1m header' : '') + ')');
+      head += '<div class="chips">' + chips + '</div>';
+
+      // ---- current composition ----
+      let comp = '';
+      if (cur && cur.sums) {
+        const pctWin = win ? Math.min(100, (anchor / win) * 100) : 0;
+        comp += '<div class="cx-occ">' +
+          '<span class="cx-occ-n">' + (focus.actualIn != null ? fmtCompact(focus.actualIn) : '\\u2248' + fmtCompact(cur.est)) + '</span>' +
+          '<span class="cx-occ-d">' + (focus.actualIn != null ? 'prompt tokens (provider-reported) \\u00b7 estimated \\u2248' + fmtCompact(cur.est) : 'estimated') +
+            (win ? ' \\u00b7 window ' + fmtCompact(win) : '') + '</span>' +
+          (win ? '<span class="cx-occ-pct">' + Math.round(pctWin) + '% of context used</span>' : '') +
+          '</div>';
+        const segW = win ? pctWin : 100;
+        let segs = '';
+        for (const c of CTX_CATS) {
+          const v = cur.sums[c.id];
+          if (!v) continue;
+          segs += '<span class="cx-seg" style="width:' + ((v / cur.est) * segW).toFixed(2) + '%;background:' + c.color + '" title="' + c.label + ' \\u2248' + fmtCompact(v) + '"></span>';
+        }
+        comp += '<div class="cx-bar">' + segs + '</div>';
+        let leg = '';
+        for (const c of CTX_CATS) {
+          const v = cur.sums[c.id];
+          const pct = cur.est ? (v / cur.est) * 100 : 0;
+          leg += '<span class="cx-leg-row"><span class="cx-dot" style="--cx:' + c.color + '"></span>' + c.label +
+            ' <span class="cx-leg-n">\\u2248' + fmtCompact(v) + '</span> <span class="cx-leg-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '<1%' : '0%') + '</span></span>';
+        }
+        comp += '<div class="cx-leg">' + leg + '</div>';
+        // top tool schemas, ranked — where the tools budget goes
+        const fp = d.byId[focus.pairId];
+        if (fp) {
+          const env = ctxEnvelope(fp.request.body || {}, wireDialect(fp) || 'anthropic');
+          const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+          if (ranked.length) {
+            comp += '<div class="cx-topt"><b>top tool schemas:</b> ' +
+              ranked.map(x => escapeHtml(x.name) + ' \\u2248' + fmtCompact(x.tokens)).join(' \\u00b7 ') +
+              (env.tools.length > ranked.length ? ' \\u00b7 of ' + env.tools.length : '') + '</div>';
+          }
+        }
+      } else {
+        comp = '<div class="cx-note">the newest request body was folded by cctrace compact \\u2014 composition unavailable' +
+          (focus && focus.actualIn != null ? '; actual prompt ' + fmtCompact(focus.actualIn) : '') + '</div>';
+      }
+
+      // ---- history chart ----
+      const turnBars = ctxGran === 'turn' ? ctxAggregateTurns(steps, addr) : null;
+      const maxT = Math.max(1, tl.maxTotal);
+      let cols = '';
+      const bar = (s, extra, w) => {
+        const total = ctxStepTotal(s);
+        const hpct = Math.max(2, (total / maxT) * 100);
+        return '<span class="cx-colw' + (s.pairId === ctxPinned ? ' pinned' : '') + '" data-cxbar="' + escapeHtml(s.pairId) + '"' +
+          ' data-tip="' + escapeHtml(ctxBarTip(s, addr, extra)) + '">' +
+          (s.mark ? '<span class="cx-mark">\\u2702</span>' : '') +
+          '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%' + (w ? ';width:' + w + 'px' : '') + '">' +
+          ctxColSegs(s) + '</span></span>';
+      };
+      if (turnBars) {
+        for (const tb of turnBars) {
+          const extra = tb.steps > 1 ? tb.steps + ' steps in this turn' + (tb.failed ? ' \\u00b7 ' + tb.failed + ' failed' : '') : '';
+          const s = tb.mark && !tb.last.mark ? { ...tb.last, mark: tb.mark } : tb.last;
+          cols += bar(s, extra, 14);
+        }
+      } else {
+        for (const s of steps) cols += bar(s, '', 0);
+      }
+      let hist = '<div class="cx-chart-wrap"><span class="cx-scale">' + fmtCompact(maxT) + '</span>' +
+        '<div class="cx-chart" id="cx-chart">' + cols + '</div></div>' +
+        '<div class="cx-detail" id="cx-detail">' + renderCtxDetail(focus, addr) + '</div>';
+
+      // ---- assemble ----
+      const scroll = contextEl.scrollTop;
+      const oldChart = document.getElementById('cx-chart');
+      const chartScroll = oldChart ? (oldChart.scrollLeft + oldChart.clientWidth >= oldChart.scrollWidth - 8 ? -1 : oldChart.scrollLeft) : -1;
+      contextEl.innerHTML =
+        head +
+        '<div class="cx-section"><h4>current composition <span class="cx-h4-hint">the newest assembled request \\u2014 what the model saw last call</span></h4>' + comp + '</div>' +
+        '<div class="cx-section"><h4>context history <span class="cx-h4-hint">one bar per ' + (ctxGran === 'turn' ? 'turn' : 'wire request') + ' \\u00b7 \\u2702 marks compaction/rewind \\u00b7 hover previews, click pins</span>' +
+          '<span class="cx-h4-right">' +
+          '<button class="cx-fchip' + (ctxGran === 'step' ? ' active' : '') + '" data-cxgran="step">step</button>' +
+          '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn">turn</button>' +
+          '</span></h4>' + hist + '</div>' +
+        '<div class="cx-section"><h4>context events <span class="cx-h4-hint">when and why the window changed</span></h4><div id="cx-events">' + renderCtxEvents(tl.events, addr) + '</div></div>' +
+        '<div class="cx-section"><h4>context browser <span class="cx-h4-hint">open the box of any request \\u2014 exact, from the captured body</span></h4><div id="cx-browser">' + renderCtxBrowser(focus, addr) + '</div></div>';
+      contextEl.scrollTop = scroll;
+      const chart = document.getElementById('cx-chart');
+      if (chart) chart.scrollLeft = chartScroll >= 0 ? chartScroll : chart.scrollWidth;
+      tipDetachedGuard();
+
+      // granularity toggle
+      contextEl.querySelectorAll('[data-cxgran]').forEach(btn => {
+        btn.onclick = () => {
+          ctxGran = btn.dataset.cxgran;
+          localStorage.setItem('cctrace-ctx-gran', ctxGran);
+          renderContextView(t);
+        };
+      });
+      // events filter
+      contextEl.querySelectorAll('[data-evf]').forEach(btn => {
+        btn.onclick = () => {
+          ctxEvFilter = btn.dataset.evf;
+          renderContextView(t);
+        };
+      });
+      // bars: hover drives the detail strip + the browser (dsh's linked
+      // scrub); click pins; leaving the chart restores the pinned/newest.
+      const stepById = {};
+      for (const s of steps) stepById[s.pairId] = s;
+      const preview = (s) => {
+        const det = document.getElementById('cx-detail');
+        if (det) det.innerHTML = renderCtxDetail(s, addr);
+        const br = document.getElementById('cx-browser');
+        if (br) br.innerHTML = renderCtxBrowser(s, addr);
+      };
+      contextEl.querySelectorAll('[data-cxbar]').forEach(el => {
+        el.addEventListener('mouseenter', () => { const s = stepById[el.dataset.cxbar]; if (s) preview(s); });
+        el.addEventListener('click', () => {
+          ctxPinned = ctxPinned === el.dataset.cxbar ? null : el.dataset.cxbar;
+          renderContextView(t);
+        });
+      });
+      if (chart) chart.addEventListener('mouseleave', () => preview(ctxFocusStep(steps)));
+    }
     // pairs whose response completed at or before the cursor are visible,
     // everything after doesn't exist yet. Both panes rebuild from the
     // visible subset via the normal buildSession path; playback is a

@@ -147,6 +147,19 @@ session) — the link a statusline can afford to print. Hash-routed views:
   visually marked, and a subagent fold links to its reconstructed thread.
   Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system
   prompt (same jumps on the on-page rail).
+- **Context** (`#/context[/<sid8-or-key>[/<key>]]`): what the model's
+  context window is assembled from, request by request — the "what is
+  eating the window" view. Current composition (six categories: system
+  prompt, tool schemas, user messages, injected context, assistant
+  replies, tool results — % of the model's context window, top tool
+  schemas by size), a per-request stacked history chart (✂ marks
+  compaction/rewind, hover previews, click pins, step/turn granularity),
+  a context-events list (injections with producer labels, compactions
+  with the reclaimed token delta, model switches, tool-schema changes —
+  each linked to its wire request), and a context browser opening any
+  step's exact assembled content category by category. Estimates carry ≈
+  and sit next to the provider-reported prompt tokens. Selection is
+  shared with the Sessions view.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a

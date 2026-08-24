@@ -61,7 +61,7 @@ src/
 │                   #   diff = what changed on the wire between observations)
 ├── icons.ts        # Per-client icon glyphs — ONE source for every surface that
 │                   #   labels a CLI (trace view header, dashboard rows)
-├── ui.ts           # The whole web UI: Requests list + detail panel + Sessions view
+├── ui.ts           # The whole web UI: Requests list + detail panel + Sessions + Context views
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
 │                   #   table as the offline fallback (inlined into UI)
@@ -69,6 +69,12 @@ src/
 │                   #   the data dir, filtered to anthropic/openai/xai
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
+├── context.ts      # The context layer (inlined into UI): per-request window
+│                   #   composition (6 categories), per-thread timeline +
+│                   #   events (injections/compactions/model/tool changes),
+│                   #   per-item browser data — every request body IS the
+│                   #   assembled context, so steps are exact and anchored
+│                   #   to that pair's usage (docs/design/context-view.md)
 ├── vendor/
 │   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 ├── html.ts         # Static HTML generator (legacy node mode only)

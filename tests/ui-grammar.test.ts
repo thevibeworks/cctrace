@@ -73,6 +73,8 @@ function allRoutes(page: ReturnType<typeof bootSnapshotPage>, pairs: TracePair[]
   page.goto("#/session");
   const keys = [...page.els["threads"].innerHTML.matchAll(/#\/session\/([^"]+)"/g)].map((m) => m[1]);
   for (const k of keys) page.goto("#/session/" + k);
+  page.goto("#/context");
+  for (const k of keys) page.goto("#/context/" + k);
 }
 
 function fragmentErrors(page: ReturnType<typeof bootSnapshotPage>): string[] {
@@ -820,5 +822,117 @@ describe("find in session (toolbar)", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     page.goto("#/session");
     expect(page.errors).toEqual([]);
+  });
+});
+
+describe("context view", () => {
+  const REMINDER = "<system-reminder>Recalled memory: the user prefers tabs.</system-reminder>";
+  // A three-step thread: reminder + prompt, then a tool round-trip, then a
+  // longer packing — enough surface for composition, events, and the browser.
+  const CTX_PAIRS: TracePair[] = [
+    msgPair("c1", {
+      reqBody: {
+        system: [{ type: "text", text: "You are Claude Code." }],
+        tools: [{ name: "Bash", description: "run a command", input_schema: { type: "object" } }],
+        messages: [{ role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: "list the files" }] }],
+      },
+    }),
+    msgPair("c2", {
+      reqBody: {
+        system: [{ type: "text", text: "You are Claude Code." }],
+        tools: [{ name: "Bash", description: "run a command", input_schema: { type: "object" } }],
+        messages: [
+          { role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: "list the files" }] },
+          { role: "assistant", content: [{ type: "text", text: "hello" }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "a.ts b.ts" }] },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "two files" }] },
+    }),
+  ];
+
+  test("the tab ships and the view renders all four sections", () => {
+    const html = renderSnapshot(CTX_PAIRS);
+    expect(html).toContain('id="tab-context"');
+    expect(html).toContain('id="context-view"');
+    const page = bootSnapshotPage(html);
+    page.goto("#/context");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("current composition");
+    expect(cx).toContain("context history");
+    expect(cx).toContain("context events");
+    expect(cx).toContain("context browser");
+    // stats chips: turns + steps at minimum
+    expect(cx).toContain("turns");
+    expect(cx).toContain("steps");
+    // one bar per wire request
+    expect((cx.match(/data-cxbar=/g) || []).length).toBe(2);
+    // the composition legend names all six categories
+    for (const label of ["system prompt", "tool schemas", "user messages", "injected context", "assistant replies", "tool results"]) {
+      expect(cx).toContain(label);
+    }
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("an injected reminder shows as an inject event and in the browser's inject items", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    // the event row names the reminder's opening words
+    expect(cx).toContain("Recalled memory");
+    // provider-anchored actuals sit next to the estimate
+    expect(cx).toContain("actual prompt");
+    expect(cx).toContain("≈"); // ≈ estimates
+  });
+
+  test("a compaction-scale drop wears the scissors mark and logs the reclaim", () => {
+    const long: { role: string; content: unknown }[] = [];
+    for (let i = 0; i < 12; i++) {
+      long.push({ role: "user", content: "prompt " + i });
+      long.push({ role: "assistant", content: [{ type: "text", text: "reply " + i }] });
+    }
+    const before = msgPair("d1", {
+      reqBody: { messages: long },
+      resBody: { usage: { input_tokens: 5000, output_tokens: 10 } },
+    });
+    const after = msgPair("d2", {
+      reqBody: { messages: [{ role: "user", content: "This session is being continued from a previous conversation. Summary." }] },
+      resBody: { usage: { input_tokens: 300, output_tokens: 10 } },
+    });
+    const page = bootSnapshotPage(renderSnapshot([before, after]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("cx-mark"); // ✂ above the post-compact bar
+    expect(cx).toContain("context rewritten"); // rewrite-mode label via the session layer
+    expect(cx).toContain("compactions");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a model switch between steps is an event with both ids", () => {
+    const p1 = msgPair("m1");
+    const p2 = msgPair("m2", {
+      reqBody: {
+        model: "claude-fable-5",
+        messages: [
+          { role: "user", content: "hi" },
+          { role: "assistant", content: "hello" },
+          { role: "user", content: "more" },
+        ],
+      },
+      resBody: { model: "claude-fable-5" },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p1, p2]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("opus-4-6 → fable-5");
+  });
+
+  test("a session-id-prefix context route resolves like the sessions view", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/aaaabbbb");
+    expect(page.errors).toEqual([]);
+    expect(page.els["context-view"].innerHTML).toContain("current composition");
   });
 });

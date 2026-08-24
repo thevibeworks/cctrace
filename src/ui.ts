@@ -5792,7 +5792,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (t.dataset.cxkids === '1') ctxFocusKey = t.dataset.cxnode;
       }
       const gr = document.getElementById('cx-graph');
-      if (gr && ctxLast.step) gr.innerHTML = renderCtxGraph(ctxLast.step, ctxLast.addr);
+      if (gr && ctxLast.step) {
+        // a zoom/select CHANGES what the pane shows, so its old scroll is
+        // meaningless — but the margin beside it did not move.
+        const tops = ctxCaptureTops();
+        delete tops['cx-pane'];
+        gr.innerHTML = renderCtxGraph(ctxLast.step, ctxLast.addr);
+        ctxRestoreTops(tops);
+      }
       // the ledger row wears the zoom too — margin and chart are one
       // selection, whichever side the click came from
       if (ctxLast.step) ctxRepaintMargin(ctxLast.step, ctxLast.addr);
@@ -5857,6 +5864,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<div class="cx-mblock"><div class="cx-mlabel">other threads<span class="cx-mlabel-r">' +
         sids.length + ' session' + (sids.length === 1 ? '' : 's') + ' \\u00b7 peak, one scale</span></div>' +
         '<div class="cx-thlist">' + rows + '</div></div>';
+    }
+
+    // The scroll containers the ledger layout added: the margin itself
+    // (it can outrun a short viewport), its thread list, and the graph's
+    // pane. One list, so a fourth one is a one-line change and not a
+    // fourth forgotten scroll reset.
+    const CTX_SCROLLERS = ['cx-margin', 'cx-pane'];
+    function ctxCaptureTops() {
+      const out = {};
+      for (const id of CTX_SCROLLERS) {
+        const el = document.getElementById(id);
+        if (el && el.scrollTop) out[id] = el.scrollTop;
+      }
+      const th = contextEl.querySelector('.cx-thlist');
+      if (th && th.scrollTop) out.thlist = th.scrollTop;
+      return out;
+    }
+    function ctxRestoreTops(tops) {
+      if (!tops) return;
+      for (const id of CTX_SCROLLERS) {
+        const el = tops[id] != null && document.getElementById(id);
+        if (el) el.scrollTop = tops[id];
+      }
+      const th = tops.thlist != null && contextEl.querySelector('.cx-thlist');
+      if (th) th.scrollTop = tops.thlist;
     }
 
     // The margin redraws on every scrub — the balance ticking as you move
@@ -5966,9 +5998,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<div class="cx-chart" id="cx-chart">' + cols + '</div></div>';
 
       // ---- assemble: the margin reconciles, the canvas scrolls ----
+      // A live capture re-renders this whole view on every pair arrival, so
+      // every scroll position in it must survive — the page's own, the
+      // chart's (which also STICKS to the newest edge when it was there),
+      // and the three inner panes the ledger layout added. Yanking a reader
+      // back to the top of a list they were reading is the one thing
+      // ui.md's terminal semantics forbid outright.
       const scroll = contextEl.scrollTop;
       const oldChart = document.getElementById('cx-chart');
       const chartScroll = oldChart ? (oldChart.scrollLeft + oldChart.clientWidth >= oldChart.scrollWidth - 8 ? -1 : oldChart.scrollLeft) : -1;
+      const keepTops = ctxCaptureTops();
+      // ...except the pane's, when the STEP changed under it (←/→ walking
+      // the pin, a thread switch): its old offset points into content that
+      // is no longer there. A live pair arriving on the same step keeps it.
+      if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
       const margin = '<aside class="cx-margin" id="cx-margin">' +
         '<div id="cx-bal">' + renderCtxMargin(focus, addr) + '</div>' +
         renderCtxThreads(getThreads(), t) +
@@ -5988,6 +6031,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '</div>';
       contextEl.innerHTML = head + '<div class="cx-cols">' + margin + canvas + '</div>';
       contextEl.scrollTop = scroll;
+      ctxRestoreTops(keepTops);
       const chart = document.getElementById('cx-chart');
       if (chart) chart.scrollLeft = chartScroll >= 0 ? chartScroll : chart.scrollWidth;
       tipDetachedGuard();

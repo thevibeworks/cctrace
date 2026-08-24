@@ -4229,9 +4229,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const trajDen = trajWin || trajPeak;
       const trajNone = '<span class="tctx tctx-none"></span>';
       const trajBar = (u, failed) => {
-        if (!trajDen || failed || !u) return '<span class="tctx"></span>';
+        // Nothing to measure -> the invisible SPACER, never an empty
+        // outlined track. A bordered pill with no fill is a bar claiming a
+        // measurement it does not have (TASTE 2026-07-28: what does this
+        // surface CLAIM vs what does it KNOW), and on a real trace 36 of
+        // 141 tracks were exactly that. The spacer still holds the column,
+        // so the rail's rhythm does not break — which is the whole reason
+        // the class exists.
+        if (!trajDen || failed || !u) return trajNone;
         const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
-        if (!tot) return '<span class="tctx"></span>';
+        if (!tot) return trajNone;
         const w = Math.max(3, Math.min(100, (tot / trajDen) * 100));
         const c = Math.round(((u.cacheRead || 0) / tot) * 100);
         return '<span class="tctx"><span class="tctx-b" style="width:' + w.toFixed(1) + '%">' +

@@ -867,17 +867,23 @@ describe("the trajectory gutter on the session rail", () => {
     }),
   ];
 
-  test("each wire step gets a track, split into the cached prefix and what was billed fresh", () => {
+  test("a track is drawn only where the wire reported usage; every other row gets the spacer", () => {
     const page = bootSnapshotPage(renderSnapshot(TRAJ));
     page.goto("#/session");
     const rail = page.els["threads"].innerHTML;
-    // one track per assistant step, plus the invisible spacers that keep
-    // the human's rows aligned with them
-    expect((rail.match(/class="tctx"/g) || []).length).toBe(2);
-    expect(rail).toContain("tctx-none");
-    // the cold first step is all-fresh; the second read 60k of 60.5k
-    expect(rail).toContain("tctx-f");
+    // Exactly one row here HAS provider-reported usage: the assistant turn
+    // j2's response produced. The human's "start" row and the history-only
+    // assistant turn (a tool_use replayed from j2's request, never a wire
+    // request of its own) have nothing to measure, so they get the
+    // invisible spacer — NOT an empty outlined track, which would be a bar
+    // claiming a measurement it does not have.
+    expect((rail.match(/class="tctx"/g) || []).length).toBe(1);
+    expect((rail.match(/tctx-none/g) || []).length).toBe(2);
+    // and the one real track is split: 60k of 60.5k came from cache
     expect(rail).toContain("tctx-c");
+    expect(rail).toContain("tctx-f");
+    // an empty bordered track must never appear
+    expect(rail).not.toMatch(/<span class="tctx"><\/span>/);
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });

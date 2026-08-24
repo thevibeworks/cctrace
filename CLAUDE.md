@@ -72,9 +72,14 @@ src/
 ├── context.ts      # The context layer (inlined into UI): per-request window
 │                   #   composition (6 categories), per-thread timeline +
 │                   #   events (injections/compactions/model/tool changes),
-│                   #   per-item browser data — every request body IS the
-│                   #   assembled context, so steps are exact and anchored
-│                   #   to that pair's usage (docs/design/context-view.md)
+│                   #   and the CONTEXT GRAPH — the assembled window as a
+│                   #   weighted tree, category -> group -> item (tool
+│                   #   results by tool, schemas by MCP server, injections
+│                   #   by producer, conversation by turn). Every request
+│                   #   body IS the assembled context, so steps are exact
+│                   #   and anchored to that pair's usage. The sessions
+│                   #   rail carries the same data as the trajectory
+│                   #   gutter (docs/design/context-view.md)
 ├── vendor/
 │   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 ├── html.ts         # Static HTML generator (legacy node mode only)

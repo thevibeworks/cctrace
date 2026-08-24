@@ -67,6 +67,12 @@ import {
   ctxSnippet,
   contextComposition,
   contextItems,
+  ctxGroupOf,
+  contextGraph,
+  ctxFlameTree,
+  ctxFlameFind,
+  ctxFlameLayout,
+  ctxFlameDefault,
   contextTimeline,
   ctxInjectLabel,
   ctxAggregateTurns,
@@ -554,6 +560,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .rp-mark.turn { height: 13px; background: var(--accent); opacity: 0.9; }
     .rp-mark.err { background: var(--red); opacity: 1; }
+    /* a context boundary on the timeline: where the window collapsed
+       (compaction / rewind). The trajectory's axis break, full height. */
+    .rp-mark.cut { height: 17px; width: 1px; background: var(--amber); opacity: 0.85; }
     #rp-handle {
       position: absolute; top: 2px; bottom: 2px; width: 2px; left: 0;
       background: var(--accent); pointer-events: none;
@@ -1224,7 +1233,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tturn:hover { background: var(--hover); color: var(--text); }
     .tturn-ord { color: var(--text-faint); flex-shrink: 0; }
     .tturn:hover .tturn-text { color: var(--text); }
-    .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tturn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tturn-tools { color: var(--text-faint); }
     /* Tool names are the agent's verbs — same color as the request METHOD
        column, no new palette entry. Args stay in the row's quiet color. */
@@ -1471,18 +1480,106 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-ev-at { flex: none; color: var(--text-faint); }
     .cx-ev-at a { color: var(--text-faint); text-decoration: none; }
     .cx-ev-at a:hover { color: var(--accent); }
+    .cx-ev-n { flex: none; color: var(--text-faint); font-size: 10px; }
     .cx-delta { flex: 0 0 66px; text-align: right; }
     .cx-delta.plus { color: var(--amber); }
     .cx-delta.minus { color: var(--green); }
     .cx-ev-time { flex: 0 0 60px; text-align: right; color: var(--text-faint); }
     .cx-more { padding: 4px 0; font-size: 11px; color: var(--text-faint); }
-    /* context browser: category folds -> item rows -> full content */
+    /* ---- the context graph: an icicle ----
+       Rows top-down, width = tokens, every child inside its parent's span.
+       Row 1 is the composition bar's own six categories, same order, same
+       hues — the graph IS that bar growing downward, which is why the
+       nodes wear TINTS of the data color (they carry text; the bar does
+       not) with the full-strength hue stated as a 2px left edge. */
+    .cx-crumbs { display: flex; align-items: baseline; gap: 6px; padding: 2px 0 6px; font-size: 11px; }
+    .cx-crumb { color: var(--accent); text-decoration: none; }
+    .cx-crumb:hover { text-decoration: underline; }
+    .cx-crumb.cur { color: var(--text); }
+    .cx-crumb-sep { color: var(--text-faint); }
+    .cx-crumb-hint { margin-left: auto; color: var(--text-faint); font-size: 10px; }
+    .cx-flame { position: relative; }
+    .cx-frow { position: relative; height: 17px; margin-bottom: 1px; }
+    /* row 0 is the frame: this whole width is the focused node */
+    .cx-frow:first-child .cx-fn { border: 1px solid var(--border); }
+    .cx-fn {
+      position: absolute; top: 0; bottom: 0; overflow: hidden;
+      display: flex; align-items: center; gap: 5px; padding: 0 4px;
+      font-size: 10px; line-height: 1; color: var(--text); cursor: pointer;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .cx-fn:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .cx-fn.sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .cx-fn.errn .cx-fn-l { color: var(--red); }
+    /* the merged sliver node is a count, not a place you can go */
+    .cx-fn.tailn { cursor: default; color: var(--text-faint); font-style: italic; }
+    .cx-fn.tailn:hover { outline: none; }
+    .cx-fn-l { overflow: hidden; text-overflow: ellipsis; }
+    .cx-fn-n { flex: none; color: var(--text-muted); font-size: 9px; }
+    .cx-fn-t { flex: none; margin-left: auto; color: var(--text-muted); font-size: 9px; }
+    /* the pane under the graph: the selected node, opened */
+    .cx-pane { padding-top: 10px; }
+    .cx-pane-h { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted); padding-bottom: 4px; font-variant-numeric: tabular-nums; }
+    .cx-pane-t { color: var(--text); }
+    .cx-pane-n { color: var(--text-faint); font-size: 10px; }
+    .cx-pane-tok { margin-left: auto; color: var(--text-faint); }
+    .cx-pane-body { font-size: 11px; }
+    .cx-prow {
+      display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px;
+      font-size: 11px; color: var(--text-muted); text-decoration: none; font-variant-numeric: tabular-nums;
+    }
+    .cx-prow:hover { background: var(--hover); color: var(--text); }
+    .cx-prow-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cx-item > summary { padding: 4px 12px; }
     .cx-item > summary .fold-hint { color: var(--text-muted); }
-    .cx-item-n { flex: none; margin-left: auto; color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; }
+    .cx-item-n { flex: none; color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; min-width: 84px; text-align: right; }
     .cx-item-err .fold-title { color: var(--red); }
-    .cx-cat > summary .cx-item-n { font-size: 11px; }
+    /* the weight track, reused by the pane's ranked rows */
+    .cx-wt {
+      flex: none; width: 120px; height: 5px; border-radius: 99px;
+      background: var(--bg-surface); border: 1px solid var(--border); overflow: hidden;
+    }
+    .cx-wf { display: block; height: 100%; min-width: 1px; }
     .cx-note { padding: 4px 0 8px; font-size: 11px; color: var(--text-faint); }
+    /* threads in this trace: the multi-session picker AND the comparison —
+       peak assembled context per thread, all bars on one scale */
+    .cx-pick > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: 10px; padding: 2px 0; }
+    .cx-pick > summary::-webkit-details-marker { display: none; }
+    .cx-pick-h { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+    .cx-pick[open] > summary { margin-bottom: 4px; }
+    .cx-thlist { max-height: 190px; overflow-y: auto; border-left: 1px solid var(--border); padding-left: 8px; }
+    .cx-sess { display: flex; align-items: baseline; gap: 8px; padding: 6px 0 2px; font-size: 10px; color: var(--text-faint); }
+    .cx-sess-t { margin-left: auto; }
+    .cx-th {
+      display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px;
+      font-size: 11px; color: var(--text-muted); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .cx-th:hover { background: var(--hover); }
+    .cx-th.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-th.selected .cx-th-label { color: var(--text); }
+    .cx-th-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-th-bar {
+      flex: none; width: 110px; height: 5px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-th-fill { display: block; height: 100%; min-width: 1px; background: var(--text-faint); }
+    .cx-th.selected .cx-th-fill { background: var(--accent); }
+    .cx-th-n { flex: 0 0 52px; text-align: right; color: var(--text); }
+    .cx-th-pct { flex: 0 0 34px; text-align: right; color: var(--text-faint); }
+    .cx-th-cut { flex: 0 0 26px; text-align: right; color: var(--text-faint); font-size: 10px; }
+    /* the rail's trajectory gutter: per-step context occupancy, split into
+       the cached prefix and what was billed fresh (session view) */
+    .tctx {
+      flex: none; width: 30px; height: 4px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border); display: flex;
+    }
+    .tctx-b { display: flex; height: 100%; min-width: 1px; }
+    .tctx-b > span { flex: none; height: 100%; }
+    .tctx-none { background: none; border-color: transparent; }
+    .tctx-c { background: color-mix(in srgb, var(--green) 70%, transparent); }
+    .tctx-f { background: color-mix(in srgb, var(--amber) 80%, transparent); }
+    .tctx-x { background: color-mix(in srgb, var(--red) 70%, transparent); }
   </style>
 </head>
 <body>
@@ -1632,8 +1729,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let ctxGran = localStorage.getItem('cctrace-ctx-gran') === 'turn' ? 'turn' : 'step';
     let ctxPinned = null;       // pinned step's pairId (context history chart)
     let ctxEvFilter = 'all';    // context events filter
+    let ctxSort = localStorage.getItem('cctrace-ctx-sort') === 'order' ? 'order' : 'size';
+    let ctxFocusKey = '';       // context graph zoom (a node key; falls back to root)
+    let ctxSelKey = '';         // context graph selection (drives the detail pane)
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
+
+    // pairId -> pair. The session/context layers resolve pair ids inside
+    // per-turn loops; pairs.find() there is O(turns x pairs), which on a
+    // long trace is the difference between a rail that renders and one that
+    // stalls. Rebuilt only when the capture grows (pairs is append-only).
+    let pairIdx = { n: -1, map: null };
+    function pairOf(id) {
+      if (!id) return null;
+      if (pairIdx.n !== pairs.length) {
+        const m = {};
+        for (const p of pairs) m[p.id] = p;
+        pairIdx = { n: pairs.length, map: m };
+      }
+      return pairIdx.map[id] || null;
+    }
 
     // modelPricing consults the ambient models.dev catalog (fail-soft: the
     // embedded Claude table still prices Claude traffic without it).
@@ -1697,6 +1812,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${ctxSnippet.toString()}
     ${contextComposition.toString()}
     ${contextItems.toString()}
+    ${ctxGroupOf.toString()}
+    ${contextGraph.toString()}
+    ${ctxFlameTree.toString()}
+    ${ctxFlameFind.toString()}
+    ${ctxFlameLayout.toString()}
+    ${ctxFlameDefault.toString()}
     ${contextTimeline.toString()}
     ${ctxInjectLabel.toString()}
     ${ctxAggregateTurns.toString()}
@@ -2313,7 +2434,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // (trailing gaps fall back to the previous known). 0 = no wire time.
     function turnTimes(list) {
       const ts = list.map(x => {
-        const p = x && x.pairId ? pairs.find(y => y.id === x.pairId) : null;
+        const p = x && x.pairId ? pairOf(x.pairId) : null;
         return p && p.request && p.request.timestamp ? p.request.timestamp : 0;
       });
       for (let i = ts.length - 2; i >= 0; i--) if (!ts[i]) ts[i] = ts[i + 1];
@@ -3594,7 +3715,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           tipEl.style.top = Math.max(8, Math.min(r.top, window.innerHeight - th - 8)) + 'px';
           return;
         }
-        let y = r.bottom + 6;
+        // A tip dropped below a 17px icicle row covers the rows underneath
+        // it — the very ones being scrubbed (same scar as the threads
+        // pane, docs/design/ui.md). Flame anchors open UPWARD, falling
+        // back down only when there is no room above.
+        const flame = t.closest ? t.closest('.cx-flame') : null;
+        let y = flame && r.top - th - 6 >= 8 ? r.top - th - 6 : r.bottom + 6;
         if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
         tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
         tipEl.style.top = y + 'px';
@@ -3689,7 +3815,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         out += u.output || 0;
         const c = pairCost(u);
         if (c) cost += c.total;
-        const p = vis[vi].pairId ? pairs.find(x => x.id === vis[vi].pairId) : null;
+        const p = vis[vi].pairId ? pairOf(vis[vi].pairId) : null;
         if (p) { if (!t0) t0 = p.request.timestamp; t1 = p.request.timestamp; }
       }
       const tip = 'T' + i + ' \\u00b7 ' + (shortModel(e.model) || 'unknown model') + ' run\\n' +
@@ -3825,7 +3951,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const eps = (t.epochs && t.epochs.length) ? t.epochs : [{ model: t.model, from: 0, to: vis.length - 1 }];
       const multi = eps.length > 1;
       const supRow = (pid, vi) => {
-        const p = pairs.find(x => x.id === pid);
+        const p = pairOf(pid);
         if (!p) return '';
         const b = p.request.body || {};
         const hist = Array.isArray(b.messages) ? b.messages : [];
@@ -3842,20 +3968,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="rgut"><span class="cdot"></span></span>' +
           '<span class="tturn-ord">' + ord + '</span>' +
           '<span class="tturn-text">' + (prompt ? escapeHtml(prompt.slice(0, 120)) : 'superseded exchange') + '</span>' +
-          '<span class="treq-mark">superseded</span></a>';
+          '<span class="treq-mark">superseded</span>' + trajNone + '</a>';
       };
       // The compact boundary: the request body sent to the API changed
       // completely at this point — everything above lives on only in the
       // summary/folded form. Break mark on the rail, wire pair linked;
       // the hover spells out the context collapse in turns AND tokens.
       const compRow = (c) => {
-        const p = pairs.find(x => x.id === c.pairId);
+        const p = pairOf(c.pairId);
         const info = p ? extractCallInfo(p) : null;
         const postTok = info ? (info.input || 0) + (info.cacheRead || 0) + (info.cacheWrite || 0) : 0;
         let preTok = 0;
         const pt = p ? p.request.timestamp : Infinity;
         for (const pid of t.pairIds) {
-          const pp = pairs.find(x => x.id === pid);
+          const pp = pairOf(pid);
           if (!pp || pp.request.timestamp >= pt) continue;
           const u = extractCallInfo(pp);
           const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
@@ -3895,7 +4021,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const times = [];
         for (const e of list) {
           stat[e.status ? String(e.status) : 'no response'] = 1;
-          const p = pairs.find(x => x.id === e.pairId);
+          const p = pairOf(e.pairId);
           if (!p) continue;
           times.push(p.request.timestamp);
           const ty = (p.response && p.response.body && p.response.body.error && p.response.body.error.type) || '';
@@ -3913,7 +4039,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
           '<span class="tturn-ord">wire</span>' +
           '<span class="tturn-text">' + escapeHtml(label) + '</span>' +
-          '<span class="treq-mark err">err</span></a>';
+          '<span class="treq-mark err">err</span>' + trajNone + '</a>';
       };
       // A subagent spawned by this turn attaches HERE, as a branch off the
       // rail — label + outcome inline, the thread one click away (its
@@ -3963,6 +4089,43 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // Per-step outcomes need the tool results that answered each step's
       // tool calls — they live in the (hidden) result-only turns.
       const toolRes = buildToolResultIndex(t.turns);
+      // ---- the trajectory gutter ----
+      // dsh's Trajectory tab reads the agent's path as a shape; the rail is
+      // already that path in cctrace, it just carried no magnitude. One
+      // track per step: width = how full the window was, split into the
+      // prefix READ FROM CACHE (green) and what was billed fresh (amber).
+      // Stacked down the rail it IS the trajectory — context climbs, a
+      // \u2702 row drops it, the step after a boundary is all-amber (cold),
+      // then green again. Every number is provider-reported; nothing here
+      // is estimated.
+      // Denominator: the model's context window when models.dev knows it,
+      // else this thread's own peak — named in each hover, so the bar never
+      // implies a figure the wire didn't state.
+      const trajPeak = ctxThreadStat(t).peak;
+      let trajWin = ctxWindowOf(t);
+      // A prompt larger than the resolved window proves the window wrong
+      // (same guard as the context view) \u2014 fall back to the peak.
+      if (trajWin && trajPeak > trajWin) trajWin = 0;
+      const trajDen = trajWin || trajPeak;
+      const trajNone = '<span class="tctx tctx-none"></span>';
+      const trajBar = (u, failed) => {
+        if (!trajDen || failed || !u) return '<span class="tctx"></span>';
+        const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+        if (!tot) return '<span class="tctx"></span>';
+        const w = Math.max(3, Math.min(100, (tot / trajDen) * 100));
+        const c = Math.round(((u.cacheRead || 0) / tot) * 100);
+        return '<span class="tctx"><span class="tctx-b" style="width:' + w.toFixed(1) + '%">' +
+          (c > 0 ? '<span class="tctx-c" style="width:' + c + '%"></span>' : '') +
+          (c < 100 ? '<span class="tctx-f" style="width:' + (100 - c) + '%"></span>' : '') +
+          '</span></span>';
+      };
+      const trajLine = (u) => {
+        const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+        if (!tot) return '';
+        return 'context ' + fmtCompact(tot) +
+          (trajDen ? ' \u00b7 ' + Math.round((tot / trajDen) * 100) + '% of ' +
+            (trajWin ? 'a ' + fmtCompact(trajWin) + ' window' : 'this thread\u2019s peak') : '');
+      };
       // Wall-clock per visible turn for the row hovers — user heads inherit
       // the time of the request that carried them (turnTimes).
       const vts = turnTimes(vis);
@@ -4005,6 +4168,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           let dot = '';
           let tip = '';
           let errMark = '';
+          let traj = trajNone;   // the trajectory gutter; blank on non-wire rows
           if (turn.role === 'assistant') {
             let raw = '';
             for (const b of turn.blocks || []) {
@@ -4018,7 +4182,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                 : '(no text)') + '</span>';
             }
             const u = turn.usage;
-            const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
+            const p = turn.pairId ? pairOf(turn.pairId) : null;
             // The dot leads the row — a status gutter. Assistant dots carry
             // the wire verdict: red = failed request, green = healthy cache
             // hit, amber = weak hit / cold / miss, neutral = no cache in
@@ -4035,6 +4199,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (b && b.type === 'tool_use' && b.id && toolRes[b.id] && toolRes[b.id].is_error) stepErrs++;
             }
             if (stepErrs) errMark = '<span class="tturn-terr">tool err</span>';
+            traj = trajBar(u, failed);
             const tbits = [];
             if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '---');
             // The heading names the node in the tree: a step is one wire
@@ -4056,6 +4221,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
               tbits.push(l);
             }
+            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push(tj); }
             // The final's stop is a wire fact, not an inference: end_turn is
             // a finished response; tool_use here means the loop was cut
             // mid-work and this "final" is just the last reply captured.
@@ -4130,7 +4296,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ' data-tip="' + escapeHtml(tip) + '">' +
             '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
             '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + '</a>';
+            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + traj + '</a>';
           if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
       }
@@ -4197,7 +4363,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const turn of t.turns || []) {
         if (!turn.pairId) continue;
         if (++scanned > 80) break;
-        const p = pairs.find(x => x.id === turn.pairId);
+        const p = pairOf(turn.pairId);
         if (!p || !p.request) continue;
         const e = extractEffort(p.request.body);
         if (e && !seen[e.v]) { seen[e.v] = 1; effs.push(e.v); }
@@ -4585,7 +4751,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {
         const u = turn.usage;
-        const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
+        const p = turn.pairId ? pairOf(turn.pairId) : null;
         const bits = [];
         // Every attributed reply names its model — with /model switches the
         // set is the story, and the epoch divider marks where it changes.
@@ -4909,13 +5075,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Timeline + step-address cache: recompute only when the selected
     // thread gained pairs (per-pair composition/usage memoize on the pair).
-    let ctxTlCache = { key: '' };
+    // Keyed by THREAD, not one slot: a trace holds many sessions and many
+    // threads, and switching between them must not re-walk every body.
+    // Bounded (oldest entry evicted) so a 40-thread trace can't pin 40
+    // timelines in memory.
+    const ctxTlCache = new Map();
+    const CTX_TL_KEEP = 8;
     function ctxData(t) {
       const key = t.key + ':' + t.pairIds.length + ':' + pairs.length;
-      if (ctxTlCache.key !== key) {
-        const byId = {};
-        for (const p of pairs) byId[p.id] = p;
-        const tpairs = t.pairIds.map(id => byId[id]).filter(Boolean);
+      let hit = ctxTlCache.get(t.key);
+      if (!hit || hit.key !== key) {
+        const tpairs = t.pairIds.map(id => pairOf(id)).filter(Boolean);
         const tl = contextTimeline(tpairs, t.compactions);
         // pairId -> {ord, step}: the outline's working-loop address for
         // each wire request — bars and events speak "turn 04 · step 2",
@@ -4927,12 +5097,43 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const L = loops[li];
           for (const v of L.members) {
             const turn = vis[v];
-            if (turn && turn.role === 'assistant' && turn.pairId) addr[turn.pairId] = { ord: li, step: (L.steps && L.steps[v]) || 0 };
+            // vi = the VISIBLE turn index: what jumpToTurn addresses, so a
+            // bar in the history chart can land on its turn in the rail.
+            if (turn && turn.role === 'assistant' && turn.pairId) addr[turn.pairId] = { ord: li, step: (L.steps && L.steps[v]) || 0, vi: v };
           }
         }
-        ctxTlCache = { key, tl, addr, byId };
+        hit = { key, tl, addr };
+        ctxTlCache.delete(t.key);
+        ctxTlCache.set(t.key, hit);
+        while (ctxTlCache.size > CTX_TL_KEEP) ctxTlCache.delete(ctxTlCache.keys().next().value);
       }
-      return ctxTlCache;
+      return hit;
+    }
+
+    // Cheap per-thread context stat for the thread strip: peak assembled
+    // prompt (provider-reported, extractCallInfo memoizes on the pair), the
+    // step count, compaction count. No composition walk — the strip must
+    // stay affordable for EVERY thread in the trace, not just the selected
+    // one.
+    const ctxStatCache = new Map();
+    function ctxThreadStat(t) {
+      const key = t.pairIds.length + ':' + pairs.length;
+      const hit = ctxStatCache.get(t.key);
+      if (hit && hit.key === key) return hit;
+      let peak = 0, steps = 0, lastAt = 0;
+      for (const id of t.pairIds) {
+        const p = pairOf(id);
+        if (!p || !wireDialect(p)) continue;
+        steps++;
+        if (p.request && p.request.timestamp > lastAt) lastAt = p.request.timestamp;
+        if (!p.response || p.response.status >= 400) continue;
+        const ci = p._ci || (p._ci = extractCallInfo(p));
+        const tot = (ci.input || 0) + (ci.cacheRead || 0) + (ci.cacheWrite || 0);
+        if (tot > peak) peak = tot;
+      }
+      const out = { key, peak, steps, lastAt, cuts: (t.compactions || []).length };
+      ctxStatCache.set(t.key, out);
+      return out;
     }
 
     function ctxOrdLbl(addr, pairId) {
@@ -4952,6 +5153,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     function ctxStepTotal(s) { return s.actualIn != null ? s.actualIn : s.est; }
+
+    // The way back into the timeline: a step is a turn's wire request, so
+    // the context view links to that turn in the sessions rail (the reverse
+    // of the convo pane's \"context \u2192\"). Only for steps the outline
+    // could address \u2014 a superseded or unattributed request has no turn
+    // to land on, and we do not invent one.
+    function ctxTurnLink(s, addr) {
+      const a = addr && addr[s.pairId];
+      if (!a || a.vi == null || !ctxThreadKey) return '';
+      return '<a class="turn-wire" href="' + threadHash(ctxThreadKey) + '"' +
+        ' onclick="return ctxJumpTurn(event, this)" data-key="' + escapeHtml(ctxThreadKey) + '" data-vi="' + a.vi + '"' +
+        ' title="open this step in the sessions timeline">' + escapeHtml(ctxOrdLbl(addr, s.pairId)) + ' \u2192</a>';
+    }
+    window.ctxJumpTurn = function(e, el) {
+      e.preventDefault();
+      setView('session');
+      history.replaceState(null, '', threadHash(el.dataset.key));
+      showSession(el.dataset.key);
+      jumpToTurn(el.dataset.key, +el.dataset.vi);
+      return false;
+    };
 
     // Column segments for one step, stacked bottom-up in CTX_CATS order.
     function ctxColSegs(s) {
@@ -5002,15 +5224,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Browser fold state survives re-renders: category opens by cat id,
     // item opens by "cat:index" (a live pair appends steps; the browsed
     // step's items are stable for a picked pair).
-    const ctxOpenCats = {};
     const ctxOpenItems = {};
-    let ctxItemsCache = { pairId: null, items: null };
-    function ctxItemsOf(pairId) {
-      if (ctxItemsCache.pairId !== pairId) {
-        const p = ctxTlCache.byId ? ctxTlCache.byId[pairId] : pairs.find(x => x.id === pairId);
-        ctxItemsCache = { pairId, items: p ? contextItems(p) : null };
+    // Scrubbing the history chart walks a different request body per bar;
+    // a one-slot cache re-walked the SAME bodies on every pass back. Small
+    // LRU instead — the walk is an index over blocks already in memory, so
+    // a handful of them is cheap, and the thrash is gone.
+    const ctxGraphCache = new Map();
+    const CTX_GRAPH_KEEP = 12;
+    let ctxGraphAt = null;   // pairId the graph pane currently shows
+    function ctxGraphOf(pairId) {
+      let g = ctxGraphCache.get(pairId);
+      if (g === undefined) {
+        const p = pairOf(pairId);
+        g = p ? contextGraph(p) : null;
+        ctxGraphCache.set(pairId, g);
+        while (ctxGraphCache.size > CTX_GRAPH_KEEP) ctxGraphCache.delete(ctxGraphCache.keys().next().value);
       }
-      return ctxItemsCache.items;
+      return g;
     }
 
     // The step the browser (and the detail strip) shows when nothing is
@@ -5030,6 +5260,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         (s.stub ? '<span>body folded by compact</span>' : '<span>estimated \\u2248' + fmtCompact(s.est) + '</span>') +
         (s.actualIn != null ? '<span class="ok">actual prompt ' + fmtCompact(s.actualIn) + '</span><span>output ' + fmtCompact(s.out) + '</span>'
           : s.failed ? '<span class="err">request failed \\u2014 sent, never answered</span>' : '') +
+        ctxTurnLink(s, addr) +
         '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.pairId) + '">wire</a>' +
         '</div>';
       if (s.sums && s.est) {
@@ -5040,7 +5271,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '<span class="cx-crow-label"><span class="cx-dot" style="--cx:' + c.color + '"></span>' + c.label + '</span>' +
             '<span class="cx-track"><span class="cx-fill" style="--cx:' + c.color + ';width:' + Math.min(100, pct).toFixed(1) + '%"></span></span>' +
             '<span class="cx-crow-n">\\u2248' + fmtCompact(v) + '</span>' +
-            '<span class="cx-crow-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '<1%' : '0%') + '</span></div>';
+            '<span class="cx-crow-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '&lt;1%' : '0%') + '</span></div>';
         }
       }
       return h;
@@ -5055,12 +5286,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         chips += '<button class="cx-fchip' + (ctxEvFilter === k ? ' active' : '') + '" data-evf="' + k + '">' + k + ' ' + kinds[k] + '</button>';
       }
       const list = events.filter(ev => ctxEvFilter === 'all' || ev.kind === ctxEvFilter);
+      // Newest first — the question is "what just changed my window".
+      // A recurring injector (the per-step token-budget banner fires on
+      // EVERY step) would otherwise bury the events that only happened
+      // once. Adjacent runs of the same kind+label collapse into one row:
+      // \u00d7N, the summed delta, the span. Chronology survives, because a
+      // genuinely different event between two occurrences breaks the run.
+      const rolled = [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        const ev = list[i];
+        const key = ev.kind + '|' + (ev.label || '') + '|' + (ev.mode || '');
+        const top = rolled[rolled.length - 1];
+        if (top && top.key === key) {
+          top.n++;
+          top.tokens += ev.tokens || 0;
+          top.t0 = ev.t;
+          continue;
+        }
+        rolled.push({ key, ev, n: 1, tokens: ev.tokens || 0, t0: ev.t });
+      }
       let rows = '';
       const CAP = 200;
-      // Newest first — the question is "what just changed my window".
-      for (let i = list.length - 1, n = 0; i >= 0 && n < CAP; i--, n++) {
-        const ev = list[i];
-        let glyph = '+', label = '', delta = ev.tokens || 0;
+      for (let n = 0; n < rolled.length && n < CAP; n++) {
+        const run = rolled[n];
+        const ev = run.ev;
+        let glyph = '+', label = '', delta = run.tokens;
         if (ev.kind === 'inject') { label = ev.label || 'context'; }
         else if (ev.kind === 'compact') {
           glyph = '\\u2702';
@@ -5071,17 +5321,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         else if (ev.kind === 'tools') { glyph = '\\u00b1'; label = 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools'; }
         else if (ev.kind === 'system') { glyph = '\\u00b1'; label = 'system prompt changed'; }
         const at = ctxOrdLbl(addr, ev.pairId);
+        const tip = label + (run.n > 1
+          ? '\\n' + run.n + ' occurrences, most recent shown' +
+            (run.t0 && run.t0 !== ev.t ? '\\n' + fmtTime(new Date(run.t0 * 1000)) + ' \\u2192 ' + fmtTime(new Date(ev.t * 1000)) : '') +
+            (run.tokens ? '\\n' + fmtCompact(Math.abs(run.tokens)) + ' tokens in total' : '')
+          : '');
         rows += '<div class="cx-ev">' +
           '<span class="cx-ev-glyph">' + glyph + '</span>' +
           '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
-          '<span class="cx-ev-label" title="' + escapeHtml(label) + '">' + escapeHtml(label) + '</span>' +
+          '<span class="cx-ev-label" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>' +
+          (run.n > 1 ? '<span class="cx-ev-n">\\u00d7' + run.n + '</span>' : '') +
           (delta ? '<span class="cx-delta ' + (delta > 0 ? 'plus' : 'minus') + '">' + (delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(delta)) + '</span>' : '<span class="cx-delta"></span>') +
           '<span class="cx-ev-at"><a href="#/p/' + encodeURIComponent(ev.pairId) + '" title="open the wire request">' + escapeHtml(at || 'wire') + '</a></span>' +
           (ev.t ? '<span class="cx-ev-time">' + fmtTime(new Date(ev.t * 1000)) + '</span>' : '') +
           '</div>';
       }
       if (!rows) rows = '<div class="cx-more">no context events' + (ctxEvFilter !== 'all' ? ' of this kind' : '') + '</div>';
-      if (list.length > CAP) rows += '<div class="cx-more">+' + (list.length - CAP) + ' older events not shown</div>';
+      if (rolled.length > CAP) rows += '<div class="cx-more">+' + (rolled.length - CAP) + ' older rows not shown</div>';
       return '<div class="cx-h4-right" id="cx-ev-chips" style="display:flex;gap:4px;flex-wrap:wrap;padding-bottom:6px">' + chips + '</div>' + rows;
     }
 
@@ -5093,69 +5349,317 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       try { return renderBlock(it.b, false); } catch (e) { return brokenItem('context item', '', e); }
     }
 
-    function renderCtxBrowser(s, addr) {
-      if (!s) return '<div class="cx-note">nothing to browse yet</div>';
+    // ---- the context graph ----
+    // The assembled window as a weighted tree: category -> group -> item,
+    // every node bar drawn on ONE scale (share of this request), so the
+    // nesting sums visually and "what is eating my context" is a scan.
+    // (This was the "context browser"; it never browsed anything — it
+    // decomposes a single request, and the shape IS the answer.)
+    // Returns an HTML fragment, not text: "<1%" written raw would parse
+    // as the start of a tag (the fragment checker caught exactly that).
+    function ctxPctStr(tokens, est) {
+      if (!est) return '';
+      const p = (tokens / est) * 100;
+      return p >= 0.5 ? Math.round(p) + '%' : tokens ? '&lt;1%' : '0%';
+    }
+
+    // Depth tints: each level fades toward the surface, so the hierarchy
+    // reads without a second hue. Capped at a TINT (never the raw data
+    // color) because these nodes carry text and var(--text) has to stay
+    // legible on them in both themes — full saturation stays the
+    // composition bar's job, which carries no text. The full-strength hue
+    // is still stated, as a 2px left edge on every node.
+    const CX_TINT = [62, 62, 44, 28];
+    function ctxNodeBg(color, depth) {
+      if (!color) return 'var(--bg-surface)';
+      return 'color-mix(in srgb, ' + color + ' ' + (CX_TINT[depth] || 28) + '%, var(--bg-surface))';
+    }
+
+    function ctxFlameTip(n) {
+      const bits = [n.label];
+      if (n.tail) {
+        bits.push(n.tail + ' nodes too thin to draw \\u2014 \\u2248' + fmtCompact(n.tokens) + ' between them');
+        bits.push('they are counted here, never dropped');
+        return bits.join('\\n');
+      }
+      bits.push('\\u2248' + fmtCompact(n.tokens) + ' \\u00b7 ' + ctxPctStr(n.tokens, ctxFlameTotal) + ' of this request');
+      if (n.n > 1) bits.push(n.n + ' items');
+      if (n.err) bits.push(n.err + ' returned is_error');
+      bits.push('---');
+      bits.push(n.root ? '> the whole of what you are looking at'
+        : n.hasKids ? '> click to zoom in' : '> click to open its content below');
+      return bits.join('\\n');
+    }
+
+    // ---- the context graph ----
+    // An ICICLE: rows top-down, width = tokens, every child inside its
+    // parent's span. The flame-graph idiom, because "what is eating my
+    // context window" IS a profiling question and this audience reads
+    // profiles natively. Row 1 is the six categories in CTX_CATS order —
+    // the same six the composition bar above shows, in the same order and
+    // the same hues: the graph IS that bar growing downward into its
+    // parts, which is why it belongs to this page and not to a chart
+    // library. Click a node to zoom, the breadcrumb to come back, a leaf
+    // to open its exact bytes underneath.
+    let ctxFlameTotal = 0;
+    // What the graph pane currently shows, so zoom/select can repaint it
+    // in place without going back through the whole view render.
+    let ctxLast = { step: null, addr: null };
+    function renderCtxGraph(s, addr) {
+      ctxGraphAt = s ? s.pairId : null;
+      ctxLast = { step: s, addr };
+      if (!s) return '<div class="cx-note">nothing to open yet</div>';
       if (s.stub) {
         return '<div class="cx-note">this step\\u2019s request body was folded by cctrace compact \\u2014 its composition is gone (the kept request of the epoch holds the full history)' +
           (s.actualIn != null ? ' \\u00b7 actual prompt ' + fmtCompact(s.actualIn) : '') + '</div>';
       }
-      const items = ctxItemsOf(s.pairId);
-      if (!items) return '<div class="cx-note">request not loaded</div>';
+      const g = ctxGraphOf(s.pairId);
+      if (!g || !g.est) return '<div class="cx-note">request not loaded</div>';
+      ctxFlameTotal = g.est;
       const at = ctxOrdLbl(addr, s.pairId);
       let h = '<div class="cx-dhead"><span class="cx-dt">' + escapeHtml(at || 'wire request') + '</span>' +
         '<span>assembled from the captured request body \\u2014 exact</span>' +
-        '<span>estimated \\u2248' + fmtCompact(s.est) + '</span>' +
+        '<span>estimated \\u2248' + fmtCompact(g.est) + '</span>' +
         (s.actualIn != null ? '<span class="ok">actual prompt ' + fmtCompact(s.actualIn) + '</span>' : '') +
+        ctxTurnLink(s, addr) +
+        '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.pairId) + '">wire</a>' +
         '</div>';
-      const CAP = 300;
-      for (const c of CTX_CATS) {
-        const list = items.cats[c.id] || [];
-        let sum = 0;
-        for (const it of list) sum += it.tokens;
-        const pct = s.est ? Math.round((sum / s.est) * 100) : 0;
-        let body = '';
-        for (let i = 0; i < list.length && i < CAP; i++) {
-          const it = list[i];
-          const open = ctxOpenItems[c.id + ':' + i];
-          body += '<details class="fold cx-item' + (it.err ? ' cx-item-err' : '') + '"' + (open ? ' open' : '') +
-            ' data-cxcat="' + c.id + '" data-cxi="' + i + '">' +
-            '<summary><span class="fold-title">' + escapeHtml(it.kind === 'tool' ? it.label : (it.kind + (it.toolName && it.kind !== 'tool_result' ? ' \\u00b7 ' + it.toolName : ''))) + '</span>' +
-            '<span class="fold-hint">' + escapeHtml(it.kind === 'tool' ? '' : it.label) + '</span>' +
-            '<span class="cx-item-n">\\u2248' + fmtCompact(it.tokens) + '</span>' +
-            '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
-        }
-        if (list.length > CAP) body += '<div class="cx-more">+' + (list.length - CAP) + ' more items not shown</div>';
-        if (!list.length) body = '<div class="cx-more">none</div>';
-        h += '<details class="fold box cx-cat"' + (ctxOpenCats[c.id] ? ' open' : '') + ' data-cxcatfold="' + c.id + '">' +
-          '<summary><span class="cx-dot" style="--cx:' + c.color + '"></span>' +
-          '<span class="fold-title">' + c.label + '</span>' +
-          '<span class="fold-hint">' + list.length + ' item' + (list.length === 1 ? '' : 's') + '</span>' +
-          '<span class="cx-item-n">\\u2248' + fmtCompact(sum) + ' \\u00b7 ' + pct + '%</span>' +
-          '</summary><div class="fold-body">' + body + '</div></details>';
+
+      const fl = ctxFlameLayout(g, { sort: ctxSort, focus: ctxFocusKey });
+      // A focus key that no longer resolves (the picked step changed) fell
+      // back to the root — say so by dropping the stale key, so the next
+      // click starts from where the reader actually is.
+      if (ctxFocusKey && fl.focus.key !== ctxFocusKey) ctxFocusKey = '';
+      // Resolve the selection BEFORE drawing, so the selected node wears its
+      // outline on the first paint. A key from another step (scrubbing the
+      // history chart) falls back to the heaviest group \u2014 the section opens
+      // ON the answer instead of asking the reader to go find it.
+      if (!ctxSelKey || !ctxFlameFind(fl.root, ctxSelKey)) ctxSelKey = ctxFlameDefault(g);
+      // breadcrumb: the zoom's way home, one clickable segment per level
+      let crumbs = '';
+      for (let i = 0; i < fl.path.length; i++) {
+        const p = fl.path[i];
+        crumbs += (i ? '<span class="cx-crumb-sep">\\u203a</span>' : '') +
+          (i === fl.path.length - 1
+            ? '<span class="cx-crumb cur">' + escapeHtml(p.label) + '</span>'
+            : '<a class="cx-crumb" href="#" data-cxzoom="' + escapeHtml(p.key) + '">' + escapeHtml(p.label) + '</a>');
       }
+      // Only when zoomed: at the root the crumb is one unclickable word
+      // that row 0 of the graph already says.
+      if (fl.path.length > 1) {
+        h += '<div class="cx-crumbs">' + crumbs +
+          '<span class="cx-crumb-hint">zoomed \\u2014 percentages stay against the whole request</span></div>';
+      }
+
+      let flame = '';
+      for (let r = 0; r < fl.rows.length; r++) {
+        let cells = '';
+        for (const n of fl.rows[r]) {
+          const sel = n.key === ctxSelKey;
+          cells += '<span class="cx-fn' + (sel ? ' sel' : '') + (n.tail ? ' tailn' : '') + (n.err && !n.hasKids ? ' errn' : '') + '"' +
+            ' style="left:' + n.x.toFixed(3) + '%;width:' + n.w.toFixed(3) + '%;' +
+            'background:' + ctxNodeBg(n.color, r === 0 ? 1 : r) +
+            (n.color ? ';box-shadow:inset 2px 0 0 ' + n.color + ',inset -1px 0 0 var(--bg)' : '') + '"' +
+            // Keyboard reaches the nodes that can say what they are; the
+            // slivers are reached by zooming their parent, which is what
+            // zoom is for. 75 labelled tab stops beats 400 unlabelled ones.
+            (n.tail ? '' : ' data-cxnode="' + escapeHtml(n.key) + '" data-cxkids="' + (n.hasKids ? 1 : 0) + '"' +
+              (n.lbl ? ' tabindex="0" role="button"' : '')) +
+            ' data-tip="' + escapeHtml(ctxFlameTip(r === 0 ? { ...n, root: 1 } : n)) + '">' +
+            (n.lbl ? '<span class="cx-fn-l">' + escapeHtml(n.label) + '</span>' +
+              // Metrics drop before the label does: a node clipped to "F"
+              // says nothing, and the hover carries every number anyway.
+              (n.n > 1 && !n.tail && n.w >= 14 ? '<span class="cx-fn-n">\\u00d7' + n.n + '</span>' : '') +
+              (n.w >= 10 ? '<span class="cx-fn-t">\\u2248' + fmtCompact(n.tokens) + '</span>' : '') : '') +
+            '</span>';
+        }
+        flame += '<div class="cx-frow" style="z-index:' + (9 - r) + '">' + cells + '</div>';
+      }
+      h += '<div class="cx-flame">' + flame + '</div>';
+      h += '<div class="cx-pane" id="cx-pane">' + renderCtxPane(fl) + '</div>';
       return h;
     }
 
-    // Fill a browser item's body on first expand — a category can hold a
-    // megabyte of tool results; only what the user opens is rendered.
+    // The detail pane under the graph: whatever node is selected, opened.
+    // A leaf gives its exact bytes; a group gives its items as folds; a
+    // container gives its children ranked, each one click from a zoom.
+    // Selection defaults to the heaviest group, so the section opens ON
+    // the answer instead of asking the reader to go find it.
+    function renderCtxPane(fl) {
+      const path = ctxSelKey ? ctxFlameFind(fl.root, ctxSelKey) : null;
+      const hit = path && path[path.length - 1];
+      if (!hit) return '<div class="cx-note">pick a node above to open it</div>';
+      const head = '<div class="cx-pane-h">' +
+        '<span class="cx-dot" style="--cx:' + (hit.color || 'var(--text-faint)') + '"></span>' +
+        '<span class="cx-pane-t">' + escapeHtml(hit.label) + '</span>' +
+        (hit.n > 1 ? '<span class="cx-pane-n">' + hit.n + ' items</span>' : '') +
+        '<span class="cx-pane-tok">\\u2248' + fmtCompact(hit.tokens) + ' \\u00b7 ' + ctxPctStr(hit.tokens, ctxFlameTotal) + ' of the request</span>' +
+        '</div>';
+      // a leaf: its exact bytes, already open — that is what was asked for
+      if (hit.item) {
+        let body = '';
+        try { body = ctxItemBody(hit.item); } catch (e) { body = brokenItem('context item', '', e); }
+        return head + '<div class="cx-pane-body">' + body + '</div>';
+      }
+      const kids = hit.kids || [];
+      if (!kids.length) return head + '<div class="cx-note">nothing under this node</div>';
+      // a group: its items as lazy folds (a category: its groups, ranked)
+      if (kids[0].item || !(kids[0].kids || []).length) {
+        // The graph is the answer; the pane is the drill-down. Dumping 177
+        // rows under a 72px chart would put the flat list back, so: the
+        // heaviest handful, said out loud, and every other node is one
+        // click away IN the graph.
+        const CAP = 15;
+        const ranked = kids.slice().sort((a, b) => b.tokens - a.tokens);
+        // Shed what the pane head already says: under a group called
+        // "Bash", 15 rows of "tool_result | Bash -> ..." is one fact
+        // repeated 30 times. The kind column survives only where it
+        // VARIES (an assistant turn mixes text/thinking/tool_use).
+        const kinds = {};
+        for (const k of kids) kinds[(k.item && k.item.kind) || 'item'] = 1;
+        const showKind = Object.keys(kinds).length > 1;
+        let rows = '';
+        for (let i = 0; i < ranked.length && i < CAP; i++) {
+          const k = ranked[i];
+          const open = ctxOpenItems[k.key];
+          const lbl = k.label;
+          rows += '<details class="fold cx-item' + (k.err ? ' cx-item-err' : '') + '"' + (open ? ' open' : '') +
+            ' data-cxitem="' + escapeHtml(k.key) + '">' +
+            '<summary>' + (showKind ? '<span class="fold-title">' + escapeHtml((k.item && k.item.kind) || 'item') + '</span>' : '') +
+            '<span class="fold-hint">' + escapeHtml(lbl) + '</span>' +
+            '<span class="cx-item-n">\\u2248' + fmtCompact(k.tokens) + '</span>' +
+            '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
+        }
+        if (ranked.length > CAP) rows += '<div class="cx-more">the ' + CAP + ' heaviest of ' + ranked.length +
+          ' \\u2014 pick any node in the graph above to open it</div>';
+        return head + rows;
+      }
+      let rows = '';
+      const ranked = kids.slice().sort((a, b) => b.tokens - a.tokens);
+      for (const k of ranked.slice(0, 40)) {
+        rows += '<a class="cx-prow" href="#" data-cxzoom="' + escapeHtml(k.key) + '">' +
+          '<span class="cx-prow-l">' + escapeHtml(k.label) + '</span>' +
+          (k.n > 1 ? '<span class="cx-fn-n">×' + k.n + '</span>' : '') +
+          '<span class="cx-wt"><span class="cx-wf" style="width:' + (hit.tokens ? Math.min(100, (k.tokens / hit.tokens) * 100) : 0).toFixed(2) + '%;background:' + (k.color || 'var(--text-faint)') + '"></span></span>' +
+          '<span class="cx-item-n">≈' + fmtCompact(k.tokens) + ' · ' + ctxPctStr(k.tokens, ctxFlameTotal) + '</span></a>';
+      }
+      if (ranked.length > 40) rows += '<div class="cx-more">+' + (ranked.length - 40) + ' more</div>';
+      return head + rows;
+    }
+
+    // Fill a pane item's body on first expand — one tool-result group can
+    // hold a megabyte; only what the reader opens is rendered. Keys are the
+    // flame's node keys, stable across steps, so what you opened stays open
+    // while you scrub the history chart.
     contextEl.addEventListener('toggle', (e) => {
       const det = e.target;
-      if (!det || !det.dataset) return;
-      if (det.dataset.cxcatfold) { ctxOpenCats[det.dataset.cxcatfold] = det.open; return; }
-      if (det.dataset.cxcat == null) return;
-      ctxOpenItems[det.dataset.cxcat + ':' + det.dataset.cxi] = det.open;
+      if (!det || !det.dataset || !det.dataset.cxitem) return;
+      ctxOpenItems[det.dataset.cxitem] = det.open;
       if (!det.open) return;
       const body = det.querySelector(':scope > .fold-body');
       if (!body || body.dataset.filled) return;
-      const items = ctxItemsCache.items;
-      if (!items) return;
-      const it = (items.cats[det.dataset.cxcat] || [])[+det.dataset.cxi];
+      const g = ctxGraphAt ? ctxGraphOf(ctxGraphAt) : null;
+      if (!g) return;
+      const node = ctxFlameFind(ctxFlameTree(g, ctxSort !== 'order'), det.dataset.cxitem);
+      const it = node && node[node.length - 1].item;
       if (!it) return;
       body.dataset.filled = '1';
-      body.innerHTML = ctxItemBody(it);
+      try { body.innerHTML = ctxItemBody(it); }
+      catch (err) { body.innerHTML = brokenItem('context item', '', err); }
     }, true);
 
+    // Zoom + select. One delegated listener on the section, because the
+    // flame re-renders on every hover-scrub and per-node handlers would be
+    // rebound hundreds of times a second.
+    contextEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const t = e.target && e.target.dataset && e.target.dataset.cxnode != null ? e.target : null;
+      if (!t) return;
+      e.preventDefault();
+      t.click();
+    });
+    contextEl.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('[data-cxzoom],[data-cxnode]') : null;
+      if (!t) return;
+      e.preventDefault();
+      if (t.dataset.cxzoom != null) {
+        ctxFocusKey = t.dataset.cxzoom === 'root' ? '' : t.dataset.cxzoom;
+      } else {
+        // A node with children zooms; a leaf opens. Both select, so the
+        // pane always names where you are.
+        ctxSelKey = t.dataset.cxnode;
+        if (t.dataset.cxkids === '1') ctxFocusKey = t.dataset.cxnode;
+      }
+      const gr = document.getElementById('cx-graph');
+      if (gr && ctxLast.step) gr.innerHTML = renderCtxGraph(ctxLast.step, ctxLast.addr);
+      tipDetachedGuard(); // the node under the cursor was just replaced
+    });
+
+    // ---- threads in this trace (the multi-session picker) ----
+    // One trace routinely holds several sessions (a /clear rotates the sid,
+    // a resume merges a prior run) and each session several threads (the
+    // chat, its subagents, utility probes). The context tab used to show
+    // exactly one of them with no way across; this strip is both the
+    // switcher and the comparison: peak assembled context per thread, all
+    // bars on ONE scale, so "which session is running hot" is a glance.
+    // Peaks are provider-reported prompt tokens; the % is against each
+    // thread's OWN model window (per-model correct), the bar against the
+    // largest peak on show (comparable).
+    let ctxPickOpen = localStorage.getItem('cctrace-ctx-pick') !== '0';
+    function renderCtxThreads(threads, sel) {
+      const live = threads.filter(x => (x.pairIds || []).length);
+      if (live.length < 2) return '';
+      const stats = {};
+      let scale = 1;
+      for (const x of live) {
+        const st = ctxThreadStat(x);
+        stats[x.key] = st;
+        if (st.peak > scale) scale = st.peak;
+      }
+      const bySid = {};
+      const sids = [];
+      for (const x of live) {
+        const sid = x.sessionId || '';
+        if (!bySid[sid]) { bySid[sid] = []; sids.push(sid); }
+        bySid[sid].push(x);
+      }
+      const lastAt = (g) => { let m = 0; for (const x of g) m = Math.max(m, x.lastAt || x.firstAt || 0); return m; };
+      sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]) || (a < b ? -1 : a > b ? 1 : 0));
+      let rows = '';
+      for (const sid of sids) {
+        const g = bySid[sid].slice().sort((a, b) => (a.firstAt || 0) - (b.firstAt || 0));
+        if (sids.length > 1) {
+          rows += '<div class="cx-sess"><span class="sess-sid" data-mask="sid">' + escapeHtml(sid ? sid.slice(0, 8) : 'no session id') + '</span>' +
+            '<span class="cx-sess-n">' + g.length + ' thread' + (g.length === 1 ? '' : 's') + '</span>' +
+            (lastAt(g) ? '<span class="cx-sess-t">' + fmtDateTime(new Date(lastAt(g) * 1000)) + '</span>' : '') + '</div>';
+        }
+        for (const x of g) {
+          const st = stats[x.key];
+          const w = ctxWindowOf(x);
+          const pct = w && st.peak && st.peak <= w ? Math.round((st.peak / w) * 100) : 0;
+          const tip = threadTitle(x) + '\\npeak assembled context ' + fmtCompact(st.peak) +
+            (w ? ' \\u00b7 ' + pct + '% of a ' + fmtCompact(w) + ' window' : ' \\u00b7 window unknown') +
+            (st.cuts ? '\\n' + st.cuts + ' compaction/rewind boundar' + (st.cuts === 1 ? 'y' : 'ies') : '') +
+            '\\n---\\n> click to open this thread\\u2019s context';
+          rows += '<a class="cx-th' + (x.key === sel.key ? ' selected' : '') + '" href="' + ctxHash(x.key) + '"' +
+            ' data-tip="' + escapeHtml(tip) + '">' +
+            '<span class="tkind tkind-' + x.kind + '">' + x.kind + '</span>' +
+            '<span class="cx-th-label">' + escapeHtml(x.label) + '</span>' +
+            '<span class="cx-th-bar"><span class="cx-th-fill" style="width:' + ((st.peak / scale) * 100).toFixed(1) + '%"></span></span>' +
+            '<span class="cx-th-n">' + fmtCompact(st.peak) + '</span>' +
+            '<span class="cx-th-pct">' + (pct ? pct + '%' : '\\u00b7') + '</span>' +
+            '<span class="cx-th-cut">' + (st.cuts ? '\\u2702' + st.cuts : '') + '</span></a>';
+        }
+      }
+      return '<div class="cx-section"><details class="cx-pick"' + (ctxPickOpen ? ' open' : '') + ' id="cx-pick">' +
+        '<summary><span class="cx-pick-h">threads in this trace</span>' +
+        '<span class="cx-h4-hint">' + sids.length + ' session' + (sids.length === 1 ? '' : 's') + ' \\u00b7 ' + live.length +
+        ' threads \\u00b7 peak assembled context, one scale \\u2014 click to switch</span></summary>' +
+        '<div class="cx-thlist">' + rows + '</div></details></div>';
+    }
+
     let ctxThreadKey = null;
+    let ctxGraphTimer = 0;
     function renderContextView(t) {
       // Switching threads drops the pin (it names a pair of the OLD
       // thread); granularity and the events filter are preferences and stay.
@@ -5222,11 +5726,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const v = cur.sums[c.id];
           const pct = cur.est ? (v / cur.est) * 100 : 0;
           leg += '<span class="cx-leg-row"><span class="cx-dot" style="--cx:' + c.color + '"></span>' + c.label +
-            ' <span class="cx-leg-n">\\u2248' + fmtCompact(v) + '</span> <span class="cx-leg-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '<1%' : '0%') + '</span></span>';
+            ' <span class="cx-leg-n">\\u2248' + fmtCompact(v) + '</span> <span class="cx-leg-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '&lt;1%' : '0%') + '</span></span>';
         }
         comp += '<div class="cx-leg">' + leg + '</div>';
         // top tool schemas, ranked — where the tools budget goes
-        const fp = d.byId[focus.pairId];
+        const fp = pairOf(focus.pairId);
         if (fp) {
           const env = ctxEnvelope(fp.request.body || {}, wireDialect(fp) || 'anthropic');
           const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 5);
@@ -5277,6 +5781,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const chartScroll = oldChart ? (oldChart.scrollLeft + oldChart.clientWidth >= oldChart.scrollWidth - 8 ? -1 : oldChart.scrollLeft) : -1;
       contextEl.innerHTML =
         head +
+        renderCtxThreads(getThreads(), t) +
         '<div class="cx-section"><h4>current composition <span class="cx-h4-hint">the newest assembled request \\u2014 what the model saw last call</span></h4>' + comp + '</div>' +
         '<div class="cx-section"><h4>context history <span class="cx-h4-hint">one bar per ' + (ctxGran === 'turn' ? 'turn' : 'wire request') + ' \\u00b7 \\u2702 marks compaction/rewind \\u00b7 hover previews, click pins</span>' +
           '<span class="cx-h4-right">' +
@@ -5284,7 +5789,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn">turn</button>' +
           '</span></h4>' + hist + '</div>' +
         '<div class="cx-section"><h4>context events <span class="cx-h4-hint">when and why the window changed</span></h4><div id="cx-events">' + renderCtxEvents(tl.events, addr) + '</div></div>' +
-        '<div class="cx-section"><h4>context browser <span class="cx-h4-hint">open the box of any request \\u2014 exact, from the captured body</span></h4><div id="cx-browser">' + renderCtxBrowser(focus, addr) + '</div></div>';
+        '<div class="cx-section"><h4>context graph <span class="cx-h4-hint">the picked step as an icicle \\u2014 width is tokens, rows are levels \\u00b7 click to zoom, a leaf opens below</span>' +
+          '<span class="cx-h4-right">' +
+          '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first \\u2014 what is eating the window">by size</button>' +
+          '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order \\u2014 how the window was assembled">in order</button>' +
+          '</span></h4><div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div></div>';
       contextEl.scrollTop = scroll;
       const chart = document.getElementById('cx-chart');
       if (chart) chart.scrollLeft = chartScroll >= 0 ? chartScroll : chart.scrollWidth;
@@ -5295,6 +5804,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         btn.onclick = () => {
           ctxGran = btn.dataset.cxgran;
           localStorage.setItem('cctrace-ctx-gran', ctxGran);
+          renderContextView(t);
+        };
+      });
+      // the picker's open state is a preference, not view state
+      const pick = document.getElementById('cx-pick');
+      if (pick) pick.addEventListener('toggle', () => {
+        ctxPickOpen = pick.open;
+        localStorage.setItem('cctrace-ctx-pick', pick.open ? '1' : '0');
+      });
+      // graph sort lens: size (what is eating the window) vs wire order
+      contextEl.querySelectorAll('[data-cxsort]').forEach(btn => {
+        btn.onclick = () => {
+          ctxSort = btn.dataset.cxsort;
+          localStorage.setItem('cctrace-ctx-sort', ctxSort);
           renderContextView(t);
         };
       });
@@ -5309,11 +5832,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // scrub); click pins; leaving the chart restores the pinned/newest.
       const stepById = {};
       for (const s of steps) stepById[s.pairId] = s;
-      const preview = (s) => {
+      // The detail strip follows the pointer instantly (a dozen rows); the
+      // GRAPH is a full decomposition of a possibly-400k-token body, so it
+      // lands on a short settle — scrubbing 100 bars must not rebuild 100
+      // trees. Landing on the bar you stopped at is what the eye wants
+      // anyway.
+      const preview = (s, now) => {
         const det = document.getElementById('cx-detail');
         if (det) det.innerHTML = renderCtxDetail(s, addr);
-        const br = document.getElementById('cx-browser');
-        if (br) br.innerHTML = renderCtxBrowser(s, addr);
+        clearTimeout(ctxGraphTimer);
+        const paint = () => {
+          const gr = document.getElementById('cx-graph');
+          if (gr) gr.innerHTML = renderCtxGraph(s, addr);
+        };
+        if (now) paint(); else ctxGraphTimer = setTimeout(paint, 90);
       };
       contextEl.querySelectorAll('[data-cxbar]').forEach(el => {
         el.addEventListener('mouseenter', () => { const s = stepById[el.dataset.cxbar]; if (s) preview(s); });
@@ -5322,7 +5854,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           renderContextView(t);
         });
       });
-      if (chart) chart.addEventListener('mouseleave', () => preview(ctxFocusStep(steps)));
+      if (chart) chart.addEventListener('mouseleave', () => preview(ctxFocusStep(steps), true));
     }
     // pairs whose response completed at or before the cursor are visible,
     // everything after doesn't exist yet. Both panes rebuild from the
@@ -5453,11 +5985,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = replaySpan(pairs);
       if (!span) { rpMarks.innerHTML = ''; return; }
       const dur = Math.max(1, span.t1 - span.t0);
+      // Context boundaries across EVERY thread: where the window collapsed
+      // (compaction, rewrite, rewind). On the timeline these are the
+      // trajectory's axis breaks — the moment the agent's memory changed
+      // shape, which the per-pair ticks alone never showed.
+      const cuts = {};
+      for (const t of getThreads()) for (const c of (t.compactions || [])) if (c.pairId) cuts[c.pairId] = 1;
       let html = '';
       for (const p of pairs) {
         const x = ((pairEndMs(p) - span.t0) / dur) * 100;
         const err = !p.response || p.response.status >= 400;
-        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
+        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') +
+          (cuts[p.id] ? ' cut' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
       }
       rpMarks.innerHTML = html;
     }

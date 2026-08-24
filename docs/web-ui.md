@@ -54,8 +54,14 @@ offline snapshots -- same UI, three ways in.
   bars drop; a context-events list (every injection with its producer --
   AGENTS.md, system reminders, recaps -- every compaction with the tokens
   it reclaimed, every model switch and tool-schema change, each linked to
-  its wire request); and a context browser that opens any request into its
-  exact assembled contents, category by category, down to the full text.
+  its wire request); and a context graph -- an icicle where width is
+  tokens and rows are levels, decomposing any request into category ->
+  group -> item, with tool results grouped by the tool that made them,
+  schemas by MCP server, injections by producer. Click a node to zoom, a
+  leaf to open its exact bytes below. Row 1 is the composition bar's own
+  six categories, so the graph reads as that bar growing downward. A trace holding
+  several sessions gets a thread strip: peak assembled context per thread,
+  one scale, click to switch.
   Because cctrace sits on the wire, every step is exact -- the captured
   request body IS the assembled context -- and every figure is anchored to
   the provider-reported prompt tokens of that same request. Estimates wear

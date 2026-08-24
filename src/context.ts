@@ -62,6 +62,13 @@ export const CTX_IMG_EST = 1500;
 export function ctxTextCat(text: any): string {
   const s = String(text || "");
   if (s.lastIndexOf("<system-reminder>", 0) === 0) return "inject";
+  // The per-turn banners Claude Code appends to the user role: the budget
+  // line (+ whatever output-style reminder rides with it) and SessionStart
+  // hook output. Measured on a real 91-step session, these were 97 of 99
+  // "user" blocks — read as the human's words they invert the whole
+  // composition, which is the one thing this view exists to get right.
+  if (s.lastIndexOf("<total_tokens>", 0) === 0) return "inject";
+  if (s.lastIndexOf("SessionStart hook additional context:", 0) === 0) return "inject";
   if (harnessPrompt(s)) return "inject";
   if (s.lastIndexOf("This session is being continued from a previous conversation", 0) === 0) return "inject";
   if (s.lastIndexOf("The conversation so far has been compacted", 0) === 0) return "inject";
@@ -254,7 +261,13 @@ export function contextItems(pair: any): any {
           tokens, ti, kind: "tool_result", err: !!b.is_error, toolName: name, b,
         });
       } else if (b.type === "text") {
-        cats[ctxTextCat(b.text)].push({ label: ctxSnippet(b.text, 110), tokens, ti, kind: "text", b });
+        const cat = ctxTextCat(b.text);
+        const item: any = { label: ctxSnippet(b.text, 110), tokens, ti, kind: "text", b };
+        // Injected text carries its PRODUCER (the same vocabulary the events
+        // list speaks) — that is what the graph groups by: "which injector
+        // is eating my window", not "which of the 90 reminder blocks".
+        if (cat === "inject") item.src = ctxInjectLabel(b.text);
+        cats[cat].push(item);
       } else if (b.type === "image") {
         cats.user.push({ label: "[image]", tokens, ti, kind: "image", b });
       } else {
@@ -265,6 +278,260 @@ export function contextItems(pair: any): any {
   let est = 0;
   for (const k in cats) for (const it of cats[k]) est += it.tokens;
   return { cats, est };
+}
+
+/**
+ * Which GROUP an item belongs to inside its category — the middle level of
+ * the context graph. The grouping is the question each category answers:
+ *
+ *   toolResult  by tool name      "Bash x31 ~62k" — the usual window hog
+ *   tools       by origin         built-ins vs one node per MCP server
+ *   inject      by producer       system-reminder / AGENTS.md / recap / ...
+ *   system      by block          the system prompt's own parts
+ *   user        by turn           one node per human message
+ *   assistant   by turn           a reply and its tool calls read together
+ *
+ * Returns { key, label } — key is stable across steps (fold state survives
+ * scrubbing the history chart), label is what the row says.
+ */
+export function ctxGroupOf(catId: string, it: any, idx: number): any {
+  if (catId === "toolResult") {
+    const n = it.toolName || "";
+    return { key: "t:" + (n || "?"), label: n || "unattributed result" };
+  }
+  if (catId === "tools") {
+    const n = String(it.label || "");
+    if (n.lastIndexOf("mcp__", 0) === 0) {
+      const srv = n.slice(5).split("__")[0] || "?";
+      return { key: "mcp:" + srv, label: "mcp \u00b7 " + srv };
+    }
+    return { key: "builtin", label: "built-in tools" };
+  }
+  if (catId === "inject") {
+    const src = it.src || it.label || "context";
+    return { key: "i:" + src, label: src };
+  }
+  // The system prompt's blocks are distinct chunks (the harness preamble,
+  // the billing header, the project instructions) — one node each, never
+  // one "system" lump: which BLOCK grew is the whole question there.
+  if (catId === "system") return { key: "sys:" + idx, label: it.label };
+  // The conversation groups by history turn — a message and the tool calls
+  // it made read as one node, in wire order.
+  return { key: catId + ":" + it.ti, label: it.label };
+}
+
+/**
+ * The CONTEXT GRAPH of one request: the assembled window as a weighted tree
+ * — category -> group -> item, every node carrying its estimate and share.
+ * (Was called the "context browser"; it is not a browser, it is the shape
+ * of the window: three levels, sized, so "what is eating my context" is a
+ * scan, not an audit.)
+ *
+ * Built on contextItems, so there is ONE walk of the body. Groups come back
+ * in FIRST-APPEARANCE (wire) order with their totals; ranking by size is
+ * the view's job (the graph has a size/order toggle) — the data layer does
+ * not pick a lens.
+ *
+ * Shape: { est, cats: [{ id, label, color, tokens, count, groups: [
+ *          { key, label, tokens, count, err, items: [item, ...] } ] }] }
+ * Returns null for compact stubs / non-model-call pairs, same as its source.
+ */
+export function contextGraph(pair: any): any {
+  const items = contextItems(pair);
+  if (!items) return null;
+  const cats: any[] = [];
+  for (const c of CTX_CATS) {
+    const list = items.cats[c.id] || [];
+    const byKey: any = {};
+    const groups: any[] = [];
+    let tokens = 0;
+    for (let i = 0; i < list.length; i++) {
+      const it = list[i];
+      tokens += it.tokens;
+      const g = ctxGroupOf(c.id, it, i);
+      let node = byKey[g.key];
+      if (!node) {
+        node = byKey[g.key] = { key: g.key, label: g.label || "", tokens: 0, count: 0, err: 0, items: [] };
+        groups.push(node);
+      }
+      // A turn that opens with an empty text block would otherwise be an
+      // unnamed node; take the first label the group actually has (the
+      // tool call it made, the thinking it did).
+      if (!node.label && it.label) node.label = it.label;
+      node.tokens += it.tokens;
+      node.count++;
+      if (it.err) node.err++;
+      node.items.push(it);
+    }
+    for (const node of groups) {
+      if (!node.label) node.label = c.id === "user" ? "message" : c.id === "assistant" ? "reply" : c.label;
+    }
+    cats.push({ id: c.id, label: c.label, color: c.color, tokens, count: list.length, groups });
+  }
+  return { cats, est: items.est };
+}
+
+/**
+ * The context graph as a TREE, uniform node shape, ready to lay out.
+ *
+ * Categories keep CTX_CATS order ALWAYS — the composition bar directly
+ * above the graph is the same six segments in the same order, and the
+ * graph is that bar growing downward into its parts. Re-ranking the top
+ * row would break the one thing that makes this ours instead of a chart
+ * bolted on. The size/order lens applies INSIDE a category, which is
+ * where the "which tool" question actually lives.
+ *
+ * A one-item group IS its item, promoted a level (no rung for a lone
+ * node). Node: { key, label, tokens, depth, cat, color, n, err, item?,
+ * kids }.
+ */
+export function ctxFlameTree(graph: any, bySize: boolean): any {
+  const cats: any[] = [];
+  for (const cat of graph.cats) {
+    if (!cat.count) continue;
+    const src = bySize
+      ? cat.groups.slice().sort((a: any, b: any) => b.tokens - a.tokens || (a.label < b.label ? -1 : a.label > b.label ? 1 : 0))
+      : cat.groups;
+    const groups: any[] = [];
+    for (const g of src) {
+      const items: any[] = [];
+      // A child never repeats its parent's name: under a node labelled
+      // "Bash", "Bash -> const tmp = ..." spends the narrowest column in
+      // the chart saying what the column above already says.
+      const dedupe = (g.label || "") + " \u2192 ";
+      for (let i = 0; i < g.items.length; i++) {
+        const it = g.items[i];
+        const raw = it.label || it.kind;
+        items.push({
+          key: "i:" + cat.id + "/" + g.key + "/" + i,
+          label: raw.lastIndexOf(dedupe, 0) === 0 ? raw.slice(dedupe.length) : raw,
+          tokens: it.tokens, depth: 3,
+          cat: cat.id, color: cat.color, n: 0, err: !!it.err, item: it, kids: [],
+        });
+      }
+      if (bySize) items.sort((a, b) => b.tokens - a.tokens);
+      if (g.count === 1 && items.length === 1) {
+        groups.push({
+          key: "g:" + cat.id + "/" + g.key, label: g.label || items[0].label,
+          tokens: g.tokens, depth: 2, cat: cat.id, color: cat.color,
+          n: 1, err: items[0].err, item: items[0].item, kids: [],
+        });
+      } else {
+        groups.push({
+          key: "g:" + cat.id + "/" + g.key, label: g.label, tokens: g.tokens,
+          depth: 2, cat: cat.id, color: cat.color, n: g.count, err: g.err, kids: items,
+        });
+      }
+    }
+    cats.push({
+      key: "c:" + cat.id, label: cat.label, tokens: cat.tokens, depth: 1,
+      cat: cat.id, color: cat.color, n: cat.count, err: 0, kids: groups,
+    });
+  }
+  return { key: "root", label: "assembled context", tokens: graph.est, depth: 0, cat: "", color: "", n: 0, err: 0, kids: cats };
+}
+
+/** The ancestor chain down to `key` (the breadcrumb), or null. */
+export function ctxFlameFind(node: any, key: any): any[] | null {
+  if (!key || key === node.key) return [node];
+  for (const k of node.kids || []) {
+    const sub = ctxFlameFind(k, key);
+    if (sub) return [node].concat(sub);
+  }
+  return null;
+}
+
+/**
+ * ICICLE LAYOUT — the context graph as an actual graph.
+ *
+ * Rows top-down, width proportional to tokens: row 0 is the focused node
+ * at full width, each row below it one level of its children, every child
+ * sitting inside its parent's span. The flame-graph idiom, because "what
+ * is eating my context window" IS a profiling question and this audience
+ * reads profiles natively. Chosen over a treemap because the LABELS are
+ * the answer here (Bash, Read, token budget) and a treemap can only
+ * whisper them on hover; over a sunburst because that is the reflex.
+ *
+ * Zoom is the focus key: pass a node's key and its subtree is laid out
+ * across the full width, with `path` as the breadcrumb home. A key that
+ * no longer exists (the picked step changed) falls back to the root
+ * rather than rendering nothing.
+ *
+ * Slivers do not become sub-pixel confetti: children narrower than
+ * `minW` percent collapse into ONE labeled "+N smaller" node at the end
+ * of their parent's span — visible, countable, and zoomable, never
+ * silently dropped. Only in a CROWD though (`tailMin` siblings): merging
+ * three things into "+3 smaller" saves nothing, and it would break the
+ * category row, whose six segments must stay the same six the
+ * composition bar above shows. Width is never floored — a thin node is
+ * thin because it is small, and zoom is how you reach it.
+ *
+ * Percentages are always of the WHOLE request, never of the zoom, so a
+ * number cannot change meaning when you drill in.
+ */
+export function ctxFlameLayout(graph: any, opts?: any): any {
+  const o = opts || {};
+  const root = ctxFlameTree(graph, o.sort !== "order");
+  const path = ctxFlameFind(root, o.focus) || [root];
+  const focus = path[path.length - 1];
+  const total = graph.est || 0;
+  const minW = typeof o.minW === "number" ? o.minW : 0.6;
+  const tailMin = typeof o.tailMin === "number" ? o.tailMin : 9;
+  const maxRow = typeof o.maxRow === "number" ? o.maxRow : 3;
+  const rows: any[][] = [];
+  const push = (row: number, n: any) => {
+    while (rows.length <= row) rows.push([]);
+    rows[row].push(n);
+  };
+  const place = (node: any, x: number, w: number, row: number) => {
+    push(row, {
+      key: node.key, label: node.label, tokens: node.tokens, cat: node.cat,
+      color: node.color, err: node.err, n: node.n, item: node.item,
+      hasKids: (node.kids || []).length > 0, x, w,
+      pct: total ? (node.tokens / total) * 100 : 0,
+      // A label needs room to say something; under ~4% of the width it
+      // would clip to two characters, which is noise. The hover has it.
+      lbl: w >= 4,
+    });
+    if (!(node.kids || []).length || row >= maxRow) return;
+    let cx = x, tail = 0, tailN = 0;
+    const crowd = node.kids.length >= tailMin;
+    for (const k of node.kids) {
+      const kw = node.tokens ? (k.tokens / node.tokens) * w : 0;
+      if (crowd && kw < minW) { tail += k.tokens; tailN++; continue; }
+      place(k, cx, kw, row + 1);
+      cx += kw;
+    }
+    if (tailN) {
+      const tw = x + w - cx;
+      if (tw > 0.01) {
+        push(row + 1, {
+          key: node.key + "/~", label: "+" + tailN + " smaller", tokens: tail,
+          cat: node.cat, color: node.color, err: 0, n: tailN, hasKids: false,
+          x: cx, w: tw, pct: total ? (tail / total) * 100 : 0, lbl: tw >= 6, tail: tailN,
+        });
+      }
+    }
+  };
+  place(focus, 0, 100, 0);
+  return { rows, focus, path, total, root };
+}
+
+/**
+ * The node the section opens on: the heaviest GROUP that holds items —
+ * the answer to "what is eating my window", already selected, so the
+ * detail pane has content the moment the view renders instead of asking
+ * the reader to go find it.
+ */
+export function ctxFlameDefault(graph: any): string {
+  let best = "";
+  let bestTok = -1;
+  for (const cat of graph.cats) {
+    for (const g of cat.groups) {
+      if (g.tokens > bestTok) { bestTok = g.tokens; best = "g:" + cat.id + "/" + g.key; }
+    }
+  }
+  return best;
 }
 
 /**
@@ -402,6 +669,10 @@ export function ctxInjectLabel(text: any): string {
   const s = String(text || "");
   const kind = harnessPrompt(s);
   if (kind) return kind;
+  // Stable producer names for the per-turn banners: their text carries a
+  // changing number, so the snippet fallback would make one group each.
+  if (s.lastIndexOf("<total_tokens>", 0) === 0) return "token budget";
+  if (s.lastIndexOf("SessionStart hook additional context:", 0) === 0) return "SessionStart hook";
   if (s.lastIndexOf("This session is being continued", 0) === 0) return "continuation summary";
   if (s.lastIndexOf("The conversation so far has been compacted", 0) === 0) return "compaction summary";
   if (/^# AGENTS\.md instructions/.test(s)) return "AGENTS.md";

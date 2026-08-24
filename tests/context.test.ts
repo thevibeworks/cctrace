@@ -8,6 +8,12 @@ import {
   ctxEnvelope,
   contextComposition,
   contextItems,
+  ctxGroupOf,
+  contextGraph,
+  ctxFlameTree,
+  ctxFlameFind,
+  ctxFlameLayout,
+  ctxFlameDefault,
   contextTimeline,
   ctxInjectLabel,
   ctxAggregateTurns,
@@ -71,6 +77,38 @@ describe("ctxTextCat", () => {
   test("human text and command wrappers stay user", () => {
     expect(ctxTextCat("fix the bug in ui.ts")).toBe("user");
     expect(ctxTextCat("<command-name>/model</command-name>")).toBe("user");
+  });
+});
+
+describe("ctxTextCat: the harness banners are not the human", () => {
+  // Measured on a real 91-step session: 97 of 99 "user" blocks were these.
+  const BUDGET = "<total_tokens>14944833 tokens left</total_tokens>\n\nProactive output style is active.";
+  const HOOK = "SessionStart hook additional context: deadman: auto-handoff from 2026-08-24T06:51Z";
+  test("the per-turn token-budget banner is injected context", () => {
+    expect(ctxTextCat(BUDGET)).toBe("inject");
+    expect(ctxInjectLabel(BUDGET)).toBe("token budget");
+  });
+  test("SessionStart hook output is injected context", () => {
+    expect(ctxTextCat(HOOK)).toBe("inject");
+    expect(ctxInjectLabel(HOOK)).toBe("SessionStart hook");
+  });
+  test("budget banners collapse into ONE graph node, not one per number", () => {
+    const msgs: any[] = [{ role: "user", content: [{ type: "text", text: "the actual ask" }] }];
+    for (let i = 0; i < 5; i++) {
+      msgs.push({ role: "assistant", content: [{ type: "text", text: "step " + i }] });
+      msgs.push({ role: "user", content: [{ type: "text", text: "<total_tokens>" + (14900000 - i) + " tokens left</total_tokens>\n\nProactive output style is active." }] });
+    }
+    const g = contextGraph(msgPair(msgs));
+    const inj = g.cats.find((c: any) => c.id === "inject");
+    expect(inj.groups.length).toBe(1);
+    expect(inj.groups[0].count).toBe(5);
+    expect(inj.groups[0].label).toBe("token budget");
+    // and the human's own words stay exactly one item
+    const user = g.cats.find((c: any) => c.id === "user");
+    expect(user.count).toBe(1);
+  });
+  test("a human message that merely mentions the tag is still the human", () => {
+    expect(ctxTextCat("why does <total_tokens> show up in my context?")).toBe("user");
   });
 });
 
@@ -182,6 +220,247 @@ describe("contextItems", () => {
     const it = contextItems(p);
     expect(it.cats.inject.length).toBe(1);
     expect(it.cats.inject[0].label.includes("<system-reminder>")).toBe(false);
+  });
+});
+
+describe("contextGraph", () => {
+  // Three Bash results, two Reads, an MCP tool and a built-in, the same
+  // reminder twice — the shapes the graph exists to collapse.
+  function busyPair() {
+    return msgPair(
+      [
+        { role: "user", content: [{ type: "text", text: REMINDER }, { type: "text", text: "clean this up" }] },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "on it" },
+            { type: "tool_use", id: "b1", name: "Bash", input: { command: "ls" } },
+          ],
+        },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "b1", content: "a b c" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "b2", name: "Bash", input: { command: "pwd" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "b2", content: "/tmp" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: "a.ts" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "r1", content: "x".repeat(400), is_error: true }] },
+        { role: "user", content: [{ type: "text", text: REMINDER }] },
+      ],
+      {
+        tools: [
+          { name: "Bash", description: "run", input_schema: { type: "object" } },
+          { name: "Read", description: "read", input_schema: { type: "object" } },
+          { name: "mcp__docs__search", description: "search", input_schema: { type: "object" } },
+          { name: "mcp__docs__fetch", description: "fetch", input_schema: { type: "object" } },
+        ],
+      },
+    );
+  }
+
+  test("tool results group by the tool that produced them", () => {
+    const g = contextGraph(busyPair());
+    const tr = g.cats.find((c: any) => c.id === "toolResult");
+    const keys = tr.groups.map((x: any) => x.key).sort();
+    expect(keys).toEqual(["t:Bash", "t:Read"]);
+    const bash = tr.groups.find((x: any) => x.key === "t:Bash");
+    expect(bash.count).toBe(2);
+    expect(bash.tokens).toBe(bash.items[0].tokens + bash.items[1].tokens);
+    // the Read result came back is_error — the group counts it
+    expect(tr.groups.find((x: any) => x.key === "t:Read").err).toBe(1);
+  });
+
+  test("tool schemas split built-ins from each MCP server", () => {
+    const g = contextGraph(busyPair());
+    const tools = g.cats.find((c: any) => c.id === "tools");
+    const keys = tools.groups.map((x: any) => x.key).sort();
+    expect(keys).toEqual(["builtin", "mcp:docs"]);
+    expect(tools.groups.find((x: any) => x.key === "mcp:docs").count).toBe(2);
+    expect(tools.groups.find((x: any) => x.key === "mcp:docs").label).toContain("docs");
+  });
+
+  test("repeated injections collapse under one producer", () => {
+    const g = contextGraph(busyPair());
+    const inj = g.cats.find((c: any) => c.id === "inject");
+    expect(inj.groups.length).toBe(1);
+    expect(inj.groups[0].count).toBe(2);
+    expect(inj.groups[0].label.includes("<system-reminder>")).toBe(false);
+  });
+
+  test("a reply and the tool calls it made are one node", () => {
+    const g = contextGraph(busyPair());
+    const asst = g.cats.find((c: any) => c.id === "assistant");
+    const first = asst.groups[0];
+    expect(first.count).toBe(2); // the text + the tool_use of turn index 1
+    expect(first.key).toBe("assistant:1");
+  });
+
+  test("groups come back in wire order and every node sums to its category", () => {
+    const g = contextGraph(busyPair());
+    for (const cat of g.cats) {
+      let sum = 0;
+      for (const grp of cat.groups) {
+        let gs = 0;
+        for (const it of grp.items) gs += it.tokens;
+        expect(grp.tokens).toBe(gs);
+        expect(grp.count).toBe(grp.items.length);
+        sum += grp.tokens;
+      }
+      expect(cat.tokens).toBe(sum);
+      expect(cat.count).toBe(cat.groups.reduce((n: number, x: any) => n + x.count, 0));
+    }
+    // wire order, not size order — ranking is the view's lens, not the data's
+    const tr = g.cats.find((c: any) => c.id === "toolResult");
+    expect(tr.groups[0].key).toBe("t:Bash");
+    // the whole graph sums to the flat walk's estimate
+    let est = 0;
+    for (const cat of g.cats) est += cat.tokens;
+    expect(est).toBe(g.est);
+  });
+
+  test("a compact-folded stub has no graph, same as its source walk", () => {
+    const p = msgPair([{ role: "user", content: "hi" }]);
+    p.request.body = { _cctrace_stub: true, model: "claude-sonnet-5", historyLen: 40 };
+    expect(contextGraph(p)).toBeNull();
+  });
+
+  test("ctxGroupOf keys are stable across steps", () => {
+    // the same tool result in two different requests groups identically —
+    // that is what lets fold state survive scrubbing the history chart
+    const a = ctxGroupOf("toolResult", { toolName: "Bash", ti: 3 }, 0);
+    const b = ctxGroupOf("toolResult", { toolName: "Bash", ti: 41 }, 7);
+    expect(a.key).toBe(b.key);
+    expect(ctxGroupOf("toolResult", { toolName: "", ti: 0 }, 0).label).toBe("unattributed result");
+  });
+});
+
+describe("ctxFlameLayout: the graph is a graph", () => {
+  function pair() {
+    const msgs: any[] = [{ role: "user", content: [{ type: "text", text: "do the thing" }] }];
+    // Bash dominates; Read is a mid node; twenty tiny Edits are slivers.
+    msgs.push({ role: "assistant", content: [{ type: "tool_use", id: "b1", name: "Bash", input: { command: "x" } }] });
+    msgs.push({ role: "user", content: [{ type: "tool_result", tool_use_id: "b1", content: "B".repeat(8000) }] });
+    msgs.push({ role: "assistant", content: [{ type: "tool_use", id: "r1", name: "Read", input: { file_path: "a" } }] });
+    msgs.push({ role: "user", content: [{ type: "tool_result", tool_use_id: "r1", content: "R".repeat(2000) }] });
+    for (let i = 0; i < 20; i++) {
+      msgs.push({ role: "assistant", content: [{ type: "tool_use", id: "e" + i, name: "Edit", input: { file_path: "f" } }] });
+      msgs.push({ role: "user", content: [{ type: "tool_result", tool_use_id: "e" + i, content: "ok" }] });
+    }
+    return msgPair(msgs);
+  }
+
+  test("rows are levels and widths are token shares of the parent", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g);
+    expect(fl.rows[0].length).toBe(1);           // the focused node, full width
+    expect(fl.rows[0][0].key).toBe("root");
+    expect(fl.rows[0][0].w).toBe(100);
+    // row 1 is the categories, and they fill the row
+    const cats = fl.rows[1];
+    expect(cats.length).toBeGreaterThan(1);
+    const span = cats.reduce((n: number, x: any) => n + x.w, 0);
+    expect(span).toBeGreaterThan(99.9);
+    expect(span).toBeLessThan(100.01);
+    // every child sits inside its parent's span
+    for (const row of fl.rows) for (const n of row) {
+      expect(n.x).toBeGreaterThanOrEqual(-0.001);
+      expect(n.x + n.w).toBeLessThan(100.01);
+    }
+  });
+
+  test("the category row never collapses — it is the composition bar's six", () => {
+    const g = contextGraph(pair());
+    // even with an absurd sliver threshold, row 1 keeps every category:
+    // the bar above shows six segments and the graph must show the same six
+    const fl = ctxFlameLayout(g, { minW: 40 });
+    expect(fl.rows[1].some((n: any) => n.tail)).toBe(false);
+    expect(fl.rows[1].length).toBe(g.cats.filter((c: any) => c.count).length);
+  });
+
+  test("categories keep CTX_CATS order so the row matches the composition bar", () => {
+    const g = contextGraph(pair());
+    for (const sort of ["size", "order"]) {
+      const ids = ctxFlameLayout(g, { sort }).rows[1].map((n: any) => n.cat);
+      const want = CTX_CATS.map(c => c.id).filter(id => ids.indexOf(id) !== -1);
+      expect(ids).toEqual(want);
+    }
+  });
+
+  test("the size lens ranks INSIDE a category, never the categories", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g, { sort: "size" });
+    const tr = fl.rows[2].filter((n: any) => n.cat === "toolResult");
+    for (let i = 1; i < tr.length; i++) {
+      if (tr[i].tail) continue;
+      expect(tr[i - 1].tokens).toBeGreaterThanOrEqual(tr[i].tokens);
+    }
+    expect(tr[0].label).toBe("Bash");
+  });
+
+  test("slivers collapse into one labeled, countable node instead of confetti", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g, { sort: "size", minW: 5, tailMin: 3 });
+    const tails = [];
+    for (const row of fl.rows) for (const n of row) if (n.tail) tails.push(n);
+    expect(tails.length).toBeGreaterThan(0);
+    expect(tails[0].label).toMatch(/^\+\d+ smaller$/);
+    // nothing is silently dropped: a parent's children still sum to it
+    const cat = fl.rows[1].find((n: any) => n.cat === "toolResult");
+    const kids = fl.rows[2].filter((n: any) => n.x >= cat.x - 0.001 && n.x + n.w <= cat.x + cat.w + 0.001);
+    const sum = kids.reduce((n: number, x: any) => n + x.tokens, 0);
+    expect(sum).toBe(cat.tokens);
+  });
+
+  test("zoom lays the focused subtree across the full width and keeps the breadcrumb", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g, { focus: "c:toolResult" });
+    expect(fl.rows[0][0].key).toBe("c:toolResult");
+    expect(fl.rows[0][0].w).toBe(100);
+    expect(fl.path.map((n: any) => n.key)).toEqual(["root", "c:toolResult"]);
+    // percentages stay against the WHOLE request, so a number cannot
+    // change meaning when you drill in
+    expect(fl.rows[0][0].pct).toBeLessThan(100);
+    expect(Math.round(fl.rows[0][0].pct)).toBe(
+      Math.round(ctxFlameLayout(g).rows[1].find((n: any) => n.key === "c:toolResult").pct));
+  });
+
+  test("a focus key from another step falls back to the root, never to nothing", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g, { focus: "g:toolResult/t:NoSuchTool" });
+    expect(fl.focus.key).toBe("root");
+    expect(fl.rows[0][0].key).toBe("root");
+  });
+
+  test("a one-item group is its item, promoted — no rung for a lone node", () => {
+    const g = contextGraph(pair());
+    const tree = ctxFlameTree(g, true);
+    const tr = tree.kids.find((c: any) => c.cat === "toolResult");
+    const read = tr.kids.find((n: any) => n.label === "Read");
+    expect(read.kids.length).toBe(0);
+    expect(read.item).toBeTruthy();
+    expect(ctxFlameFind(tree, read.key)!.map((n: any) => n.key)).toEqual(["root", tr.key, read.key]);
+  });
+
+  test("a child never repeats its parent's name in the narrowest column", () => {
+    const tree = ctxFlameTree(contextGraph(pair()), true);
+    const bash = tree.kids.find((c: any) => c.cat === "toolResult").kids.find((n: any) => n.label === "Bash");
+    for (const it of bash.kids) expect(it.label.startsWith("Bash \u2192 ")).toBe(false);
+  });
+
+  test("the section opens on the heaviest group holding items", () => {
+    const g = contextGraph(pair());
+    expect(ctxFlameDefault(g)).toBe("g:toolResult/t:Bash");
+  });
+
+  test("a row entry says only whether it can be zoomed, never a child list", () => {
+    const fl = ctxFlameLayout(contextGraph(pair()));
+    expect(fl.rows[1].every((n: any) => typeof n.hasKids === "boolean")).toBe(true);
+    expect(fl.rows[1].find((n: any) => n.cat === "toolResult").hasKids).toBe(true);
+  });
+
+  test("narrow nodes carry no label — the hover has it", () => {
+    const g = contextGraph(pair());
+    const fl = ctxFlameLayout(g, { minW: 0.1 });
+    for (const row of fl.rows) for (const n of row) {
+      expect(n.lbl).toBe(n.w >= 4);
+    }
   });
 });
 

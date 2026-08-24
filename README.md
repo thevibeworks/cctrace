@@ -75,8 +75,19 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   assembled from, request by request: a six-color composition bar against
   the model's context window, a history chart where ✂ marks compactions
   (watch the bars drop), every injection/compaction/model-switch as an
-  event, and a browser that opens any request's exact assembled contents.
+  event, and a **context graph** -- an icicle where width is tokens and
+  rows are levels -- decomposing any request into category -> group ->
+  item, with tool results grouped by the tool that made them, schemas by
+  MCP server, injections by producer. `Bash x189, 38% of the window` is
+  the widest block on the row, not a number you had to go find; click it
+  to zoom, click a leaf to read the exact bytes. Traces holding
+  several sessions get a thread strip comparing their peaks on one scale.
   Anchored to provider-reported tokens -- the wire, not a guess.
+- **The trajectory, in the timeline.** Every step on the sessions rail
+  carries a track: how full the window was, split into the prefix read
+  from cache and what was billed fresh. Down the rail that column is the
+  agent's context trajectory -- it climbs, a compaction drops it, the next
+  step runs cold, then warms again.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **One dashboard for everything.** `/dashboard` on any instance shows every

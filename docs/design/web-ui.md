@@ -257,6 +257,21 @@ hash-routed:
   healthy cache hit, amber weak <90%/cold/miss, red failed) — then
   ordinal + message text, nothing else inline: all metrics live in the
   hover; user rows read in full text color, finals muted, mids faint.
+  Every row CLOSES with the trajectory gutter (`.tctx`, borrowed from
+  dsh's Trajectory tab, which reads an agent's path as a shape): a 30px
+  track per wire step, filled to how full the window was, the fill split
+  into the prefix read from CACHE (green) and what was billed FRESH
+  (amber). Stacked down the rail that column IS the thread's context
+  trajectory — it climbs, a ✂ boundary row drops it, the step after is
+  all-amber (cold), then green again. Non-wire rows (the human's prompts,
+  superseded/failed runs) get an invisible spacer so the column holds.
+  Every figure is provider-reported; the denominator is the model's
+  context window when models.dev knows it, else this thread's own peak
+  (same anchored-prompt > window guard as the Context view), and the
+  hover NAMES which — "context 212k · 61% of a 1m window" vs "…of this
+  thread's peak". The replay track carries the same story at trace scale:
+  a compaction/rewind pair gets a distinct full-height `.rp-mark.cut`
+  beside the per-pair ticks.
   The thread/session model chip wears the identifier color (--text-method,
   same as METHOD and tool names) and its hover carries the wire facts:
   exact model id(s), requested effort level(s), 1m-context beta when the
@@ -461,20 +476,42 @@ hash-routed:
   per turn — toggle persisted in localStorage `cctrace-ctx-gran` — height
   anchored to actual prompt tokens, segment split from the estimate, ✂
   marks compaction/rewind steps, dashed red = failed request whose bar
-  shows what was SENT; hover previews the detail strip AND the browser,
-  click pins, ←/→ walk the pin; chart scroll position survives live
-  re-renders and sticks to the newest edge); context events (newest first,
-  filter chips, producer-labeled injections, compactions with the
-  actual-anchored reclaim delta, model switches, tool-schema/system
-  changes, each row linked to its wire pair at its turn·step address —
-  the outline's numbering via loopTurns); and the context browser (the
-  picked step opened as six category folds → item rows → full content,
-  lazy-rendered through the existing renderBlock machinery, fold state
-  keyed by category/index so live re-renders keep what's open; compact
-  stubs say "composition unavailable" + their surviving usage). Data layer
-  is src/context.ts (contextComposition/contextItems/contextTimeline/
-  ctxAggregateTurns + CTX_CATS), pure and inlined via toString like
-  session.ts, so snapshots and view pages carry the whole thing offline.
+  shows what was SENT; hover previews the detail strip immediately and the
+  graph on a short settle, click pins, ←/→ walk the pin; chart scroll
+  position survives live re-renders and sticks to the newest edge); context
+  events (newest first, filter chips, producer-labeled injections,
+  compactions with the actual-anchored reclaim delta, model switches,
+  tool-schema/system changes, each row linked to its wire pair at its
+  turn·step address — the outline's numbering via loopTurns); and the
+  context graph (the picked step as an ICICLE — rows top-down, width =
+  tokens, every child inside its parent's span; row 1 is the composition
+  bar's own six categories in the same order and hues, so the graph reads
+  as that bar growing downward into its parts. Grouping is the question
+  each category answers: tool results by the tool that produced them,
+  schemas by MCP server vs built-ins, injections by producer, the system
+  prompt per block, the conversation per turn. Click a node to zoom
+  (breadcrumb home; percentages stay against the whole request), a leaf to
+  open its bytes in the pane below. Nodes wear depth TINTS with the full
+  hue as a 2px left edge — they carry text; metrics drop before the label
+  does; slivers merge into one countable "+N smaller"; red marks a leaf
+  that failed, never a group that contains one; tips fly UP so they don't
+  cover the rows being scrubbed; labelled nodes are keyboard-reachable.
+  Under it the pane: the selected node opened — a leaf's exact bytes, or a
+  group's heaviest 15 items as lazy renderBlock folds, or a container's
+  children ranked. "by size" / "in order" lens ranks INSIDE a category
+  (never the categories), persisted in `cctrace-ctx-sort`; compact stubs
+  say "composition unavailable" + their surviving usage). Above all
+  four, a trace with more than one thread gets **threads in this trace**:
+  every thread's PEAK assembled context (provider-reported), grouped by
+  session, all bars on one scale, the % against each thread's own model
+  window — the multi-session switcher AND the "which session is running
+  hot" comparison, open state in `cctrace-ctx-pick`. Data layer is
+  src/context.ts (contextComposition/contextItems/contextGraph/
+  ctxFlameLayout/contextTimeline/ctxAggregateTurns + CTX_CATS), pure and
+  unit-tested apart from the DOM — layout is data, the view only turns
+  rows into positioned spans — and inlined via
+  toString like session.ts, so snapshots and view pages carry the whole
+  thing offline.
 - **Replay** (inside the Sessions view): a time cursor over the same data —
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the

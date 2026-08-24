@@ -825,10 +825,77 @@ describe("find in session (toolbar)", () => {
   });
 });
 
+describe("context boundaries on the replay timeline", () => {
+  test("a compaction gets its own mark on the track, beside the per-pair ticks", () => {
+    const long: { role: string; content: unknown }[] = [];
+    for (let i = 0; i < 12; i++) {
+      long.push({ role: "user", content: "prompt " + i });
+      long.push({ role: "assistant", content: [{ type: "text", text: "reply " + i }] });
+    }
+    const before = msgPair("k1", { reqBody: { messages: long } });
+    const after = msgPair("k2", {
+      reqBody: { messages: [{ role: "user", content: "This session is being continued from a previous conversation. Summary." }] },
+    });
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [before, after] }) });
+    page.goto("#/session/aaaabbbb/@k1..k2");
+    const marks = page.els["rp-marks"].innerHTML as string;
+    expect(marks).toContain("rp-mark turn cut");
+    expect((marks.match(/rp-mark/g) || []).length).toBe(2);
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe("the trajectory gutter on the session rail", () => {
+  // The rail already drew the agent's path; the gutter gives it magnitude —
+  // per step, how full the window was, split cached vs billed fresh.
+  const TRAJ: TracePair[] = [
+    msgPair("j1", {
+      reqBody: { messages: [{ role: "user", content: "start" }] },
+      resBody: { usage: { input_tokens: 20000, output_tokens: 40, cache_read_input_tokens: 0 } },
+    }),
+    msgPair("j2", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "start" },
+          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "a".repeat(4000) }] },
+        ],
+      },
+      resBody: { usage: { input_tokens: 500, output_tokens: 40, cache_read_input_tokens: 60000 } },
+    }),
+  ];
+
+  test("each wire step gets a track, split into the cached prefix and what was billed fresh", () => {
+    const page = bootSnapshotPage(renderSnapshot(TRAJ));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    // one track per assistant step, plus the invisible spacers that keep
+    // the human's rows aligned with them
+    expect((rail.match(/class="tctx"/g) || []).length).toBe(2);
+    expect(rail).toContain("tctx-none");
+    // the cold first step is all-fresh; the second read 60k of 60.5k
+    expect(rail).toContain("tctx-f");
+    expect(rail).toContain("tctx-c");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the hover names the denominator instead of implying one", () => {
+    const page = bootSnapshotPage(renderSnapshot(TRAJ));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    // models.dev knows opus's window, so the % is against the window
+    expect(rail).toContain("context 60.5k");
+    expect(rail).toMatch(/context [\d.]+k · \d+% of a \d+k window/);
+  });
+});
+
 describe("context view", () => {
   const REMINDER = "<system-reminder>Recalled memory: the user prefers tabs.</system-reminder>";
   // A three-step thread: reminder + prompt, then a tool round-trip, then a
-  // longer packing — enough surface for composition, events, and the browser.
+  // longer packing — enough surface for composition, events, and the graph.
   const CTX_PAIRS: TracePair[] = [
     msgPair("c1", {
       reqBody: {
@@ -862,7 +929,7 @@ describe("context view", () => {
     expect(cx).toContain("current composition");
     expect(cx).toContain("context history");
     expect(cx).toContain("context events");
-    expect(cx).toContain("context browser");
+    expect(cx).toContain("context graph");
     // stats chips: turns + steps at minimum
     expect(cx).toContain("turns");
     expect(cx).toContain("steps");
@@ -875,7 +942,7 @@ describe("context view", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
-  test("an injected reminder shows as an inject event and in the browser's inject items", () => {
+  test("an injected reminder shows as an inject event and in the graph's inject items", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
     page.goto("#/context");
     const cx = page.els["context-view"].innerHTML;
@@ -927,6 +994,123 @@ describe("context view", () => {
     page.goto("#/context");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("opus-4-6 → fable-5");
+  });
+
+  test("the graph is an icicle: tool results grouped by tool, schemas by server", () => {
+    const p = msgPair("g1", {
+      reqBody: {
+        tools: [
+          { name: "Bash", description: "run", input_schema: { type: "object" } },
+          { name: "mcp__docs__search", description: "search", input_schema: { type: "object" } },
+          { name: "mcp__docs__fetch", description: "fetch", input_schema: { type: "object" } },
+        ],
+        messages: [
+          { role: "user", content: "go" },
+          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "a" }] },
+          { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "pwd" } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "b".repeat(3000) }] },
+        ],
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    // the graph is an icicle: rows of positioned nodes, width = tokens
+    expect(cx).toContain('class="cx-frow"');
+    expect(cx).toMatch(/class="cx-fn[^"]*" style="left:[\d.]+%;width:[\d.]+%/);
+    // one node for both Bash results, one for the MCP server's schemas
+    expect(cx).toContain('data-cxnode="g:toolResult/t:Bash"');
+    expect(cx).toContain('data-cxnode="g:tools/mcp:docs"');
+    expect(cx).toContain("mcp · docs");
+    // row 1 is the composition bar's six, in CTX_CATS order
+    const cats = [...cx.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]);
+    expect(cats).toEqual(["tools", "user", "assistant", "toolResult"]); // no system block in this fixture
+    // a container node zooms, a leaf opens
+    expect(cx).toContain('data-cxkids="1"');
+    expect(cx).toContain('data-cxkids="0"');
+    // and it opens on the answer: the heaviest group is selected
+    expect(cx).toMatch(/class="cx-fn sel"[^>]*data-cxnode="g:toolResult\/t:Bash"/);
+    // labelled nodes are keyboard-reachable; slivers are reached by zoom
+    expect(cx).toMatch(/data-cxnode="c:toolResult"[^>]*tabindex="0"/);
+    // the size/order lens is offered, size by default
+    expect(cx).toContain('data-cxsort="size"');
+    expect(cx).toContain('data-cxsort="order"');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a multi-session trace gets the thread picker; a single-thread one does not", () => {
+    const one = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    one.goto("#/context");
+    expect(one.els["context-view"].innerHTML).not.toContain("threads in this trace");
+
+    // two sessions on the wire (a /clear rotates the sid) — the picker is
+    // both the switcher and the cross-session comparison
+    const other = msgPair("s9", {
+      reqBody: {
+        metadata: { user_id: "ccccdddd-1111-2222-3333-444455556666" },
+        messages: [{ role: "user", content: "a second session" }],
+      },
+      resBody: { usage: { input_tokens: 400, output_tokens: 20, cache_read_input_tokens: 9000 } },
+    });
+    const page = bootSnapshotPage(renderSnapshot([...CTX_PAIRS, other]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("threads in this trace");
+    expect(cx).toContain("2 sessions");
+    // each thread is a row linking to its own context route
+    expect((cx.match(/class="cx-th[ "]/g) || []).length).toBe(2);
+    expect(cx).toContain('href="#/context/');
+    expect(cx).toContain("cx-th-fill");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("at the root the graph carries no breadcrumb — row 0 already names it", () => {
+    // (the zoomed state's layout is covered in tests/context.test.ts, which
+    // drives ctxFlameLayout directly; this stub renders markup, not clicks)
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).not.toContain("cx-crumbs");
+    expect(cx).toContain('data-cxnode="root"');
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a recurring injector rolls up instead of burying the one-off events", () => {
+    // the per-step token-budget banner fires on EVERY step; 6 of them must
+    // not push the one compaction/model event off the top of the list
+    const msgs: { role: string; content: unknown }[] = [{ role: "user", content: "the ask" }];
+    const pairsOut = [];
+    for (let i = 0; i < 6; i++) {
+      msgs.push({ role: "assistant", content: [{ type: "text", text: "step " + i }] });
+      msgs.push({ role: "user", content: [{ type: "text", text: "<total_tokens>" + (14900000 - i * 1000) + " tokens left</total_tokens>\n\nProactive output style is active." }] });
+      pairsOut.push(msgPair("e" + i, { reqBody: { messages: msgs.slice() } }));
+    }
+    const page = bootSnapshotPage(renderSnapshot(pairsOut));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    // the chips still count every raw event...
+    expect(cx).toContain("inject 6");
+    // ...but the list shows one rolled row for the run
+    expect(cx).toContain("token budget");
+    expect((cx.match(/class="cx-ev"/g) || []).length).toBe(1);
+    expect(cx).toContain('class="cx-ev-n">×6<');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a step links back to its turn in the sessions timeline", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    // the reverse of the convo pane's "context →": the picked step names
+    // its turn and jumps into the rail
+    expect(cx).toContain('onclick="return ctxJumpTurn(event, this)"');
+    expect(cx).toMatch(/data-vi="\d+"/);
+    expect(cx).toContain("turn 01");
+    expect(fragmentErrors(page)).toEqual([]);
   });
 
   test("a session-id-prefix context route resolves like the sessions view", () => {

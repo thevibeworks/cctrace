@@ -156,10 +156,14 @@ session) — the link a statusline can afford to print. Hash-routed views:
   compaction/rewind, hover previews, click pins, step/turn granularity),
   a context-events list (injections with producer labels, compactions
   with the reclaimed token delta, model switches, tool-schema changes —
-  each linked to its wire request), and a context browser opening any
-  step's exact assembled content category by category. Estimates carry ≈
-  and sit next to the provider-reported prompt tokens. Selection is
-  shared with the Sessions view.
+  each linked to its wire request), and a context graph — an icicle
+  (flame graph) where width is tokens and rows are levels — decomposing
+  any step into category → group → item (tool results by tool, schemas by
+  MCP server, injections by producer). Click a node to zoom, a leaf to
+  open its exact bytes in the pane below; "by size" or "in order". Multi-session traces get a thread strip at the top:
+  peak assembled context per thread, one scale, click to switch. Estimates
+  carry ≈ and sit next to the provider-reported prompt tokens. Selection is
+  shared with the Sessions view, and a step links back to its turn there.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a

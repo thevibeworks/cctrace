@@ -185,8 +185,10 @@ describe("openaiBlocks", () => {
 
   test("image_url parts become image blocks (kimi K3 media, 2026-07-20 wire)", () => {
     // Real shape: a kimi tool-role message carries text parts wrapping an
-    // image_url part whose url is a base64 data URL. The block keeps only the
-    // mime — the base64 stays on the wire copy.
+    // image_url part whose url is a base64 data URL. The block keeps the
+    // data URL so the UI can render the actual thumbnail (the bytes are
+    // already in the trace); a remote URL keeps only the address — the
+    // viewer never auto-fetches wire-named resources.
     const dataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
     const [t] = openaiBlocks({
       type: "function_call_output",
@@ -200,7 +202,7 @@ describe("openaiBlocks", () => {
     expect(t.type).toBe("tool_result");
     expect(t.content).toEqual([
       { type: "text", text: "<image path=/tmp/x.png>" },
-      { type: "image", source: { media_type: "image/png" } },
+      { type: "image", source: { media_type: "image/png", dataUrl } },
       { type: "text", text: "</image>" },
     ]);
     // same mapping on message content (a user attaching an image directly)
@@ -209,7 +211,14 @@ describe("openaiBlocks", () => {
       role: "user",
       content: [{ type: "text", text: "what is this?" }, { type: "image_url", image_url: { url: dataUrl } }],
     });
-    expect(blocks[1]).toEqual({ type: "image", source: { media_type: "image/png" } });
+    expect(blocks[1]).toEqual({ type: "image", source: { media_type: "image/png", dataUrl } });
+    // a remote image_url: address only, no payload to render
+    const [r] = openaiBlocks({
+      type: "message",
+      role: "user",
+      content: [{ type: "image_url", image_url: { url: "https://example.com/x.png" } }],
+    });
+    expect(r).toEqual({ type: "image", source: { media_type: "", url: "https://example.com/x.png" } });
     // text-only part arrays still join to a plain string (codex shape unchanged)
     const [plain] = openaiBlocks({ type: "function_call_output", call_id: "c9", output: [{ type: "text", text: "a" }, { type: "text", text: "b" }] });
     expect(plain.content).toBe("ab");

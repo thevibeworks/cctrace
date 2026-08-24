@@ -213,12 +213,17 @@ export function openaiCompleted(pair: any): any {
 export function openaiBlocks(item: any): any[] {
   if (!item || !item.type) return [];
   // image_url parts (kimi media messages/tool results) become Anthropic-shape
-  // image blocks — the UI renders a media-type note. The base64 data itself
-  // stays on the wire copy; the block keeps only the mime from the data URL.
+  // image blocks. A data: URL keeps its payload (the UI renders the actual
+  // thumbnail from it — the bytes are already in the trace); a remote URL
+  // keeps only the address as a note (the viewer must never auto-fetch a
+  // wire-named remote resource).
   const imgBlock = (part: any) => {
     const url = part && part.image_url && typeof part.image_url.url === "string" ? part.image_url.url : "";
     const m = /^data:([^;,]+)/.exec(url);
-    return { type: "image", source: { media_type: m ? m[1] : "" } };
+    const src: any = { media_type: m ? m[1] : "" };
+    if (m) src.dataUrl = url;
+    else if (url) src.url = url;
+    return { type: "image", source: src };
   };
   if (item.type === "message") {
     const out: any[] = [];

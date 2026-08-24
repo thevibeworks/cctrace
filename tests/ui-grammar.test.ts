@@ -936,3 +936,76 @@ describe("context view", () => {
     expect(page.els["context-view"].innerHTML).toContain("current composition");
   });
 });
+
+describe("multi-modal: wire image attachments", () => {
+  const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+  test("an Anthropic base64 image renders as a real thumbnail in every surface", () => {
+    const p = msgPair("i1", {
+      reqBody: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "what is in this screenshot?" },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: PNG } },
+            ],
+          },
+        ],
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/p/i1");
+    expect(page.els["detail"].innerHTML).toContain('img class="msg-img"');
+    expect(page.els["detail"].innerHTML).toContain("data:image/png;base64,");
+    page.goto("#/session");
+    expect(page.els["convo"].innerHTML).toContain('img class="msg-img"');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("hostile media types and payloads degrade to a note, never markup", () => {
+    const p = msgPair("i2", {
+      reqBody: {
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: 'image/svg"><script>alert(1)</script>', data: PNG } },
+              { type: "image", source: { type: "base64", media_type: "image/png", data: '"><img onerror=alert(1) src=x>' } },
+            ],
+          },
+        ],
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/p/i2");
+    const html = page.els["detail"].innerHTML;
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain("onerror=alert");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a remote image URL is named, never fetched", () => {
+    const p = msgPair("i3", {
+      reqBody: {
+        messages: [
+          { role: "user", content: [{ type: "image", source: { url: "https://evil.example/x.png" } }] },
+        ],
+      },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/p/i3");
+    const html = page.els["detail"].innerHTML;
+    expect(html).toContain("not fetched");
+    expect(html).not.toContain('src="https://evil.example');
+  });
+
+  test("a step's bar tip carries its cache story", () => {
+    const page = bootSnapshotPage(renderSnapshot([
+      msgPair("h1", { resBody: { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 90 } } }),
+    ]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("cache read 90 (90% of prompt)");
+  });
+});

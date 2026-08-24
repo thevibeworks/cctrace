@@ -40,9 +40,11 @@ offline snapshots -- same UI, three ways in.
   the context collapse in turns and tokens; superseded exchanges
   (rewinds, edits, injected recaps) sit grey at the ordinal they
   occupied. Every turn links back to its wire request; tokens, timing,
-  cost, exact model ids, and effort levels live in hovers. A masked
-  screen-share mode (header eye toggle) blurs session ids and account
-  values.
+  cost, exact model ids, and effort levels live in hovers. Image
+  attachments render as real thumbnails (click for full size) -- the bytes
+  were already in the trace; remote image URLs are named, never fetched.
+  A masked screen-share mode (header eye toggle) blurs session ids and
+  account values.
 - **Context view** -- what the model is actually carrying around, and what
   is eating the window. Current composition as a six-color bar scaled
   against the model's context window (system prompt, tool schemas, your

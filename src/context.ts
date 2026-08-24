@@ -314,6 +314,7 @@ export function contextTimeline(threadPairs: any[], compactions?: any[]): any {
       sums: comp ? comp.sums : null,
       est: comp ? comp.est : 0,
       actualIn,
+      cacheRead: failed ? 0 : ci.cacheRead || 0,
       out: failed ? 0 : ci.output || 0,
       histLen,
       stub,

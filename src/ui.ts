@@ -932,6 +932,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .msg-more:hover { background: var(--hover); }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
+    /* wire image attachments: thumbnail by default, click for full size —
+       the bytes were already in the trace, rendering them adds nothing */
+    .msg-imgwrap { padding: 6px 12px; }
+    .msg-img {
+      display: block; max-width: 320px; max-height: 240px;
+      border: 1px solid var(--border); border-radius: 4px;
+      cursor: zoom-in; background: var(--bg-surface);
+    }
+    .msg-img.full { max-width: 100%; max-height: none; cursor: zoom-out; }
     .fold > summary {
       display: flex; align-items: baseline; gap: 8px;
       padding: 7px 12px; cursor: pointer; user-select: none;
@@ -1427,6 +1436,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-col-failed { outline: 1px dashed var(--red) !important; }
     .cx-seg-v { width: 100%; }
     .cx-seg-stub { width: 100%; background: var(--border); }
+    /* turn-granularity axis labels: the outline's ordinals under the bars */
+    .cx-tlbl { font-size: 9px; color: var(--text-faint); padding-top: 2px; font-variant-numeric: tabular-nums; }
     /* pinned/hovered step detail: one line of facts + per-category rows */
     .cx-detail { padding: 8px 0 0; font-size: 11px; }
     .cx-dhead { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 6px; }
@@ -3084,11 +3095,37 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const len = typeof b.content === 'string' ? fmtCompact(b.content.length) + ' chars \\u00b7 ' : '';
         return fold('tool_result' + (b.is_error ? ' \\u00b7 error' : ''), len + snippet(b.content, 90), body, b.is_error ? 'errline' : '');
       }
-      if (type === 'image') {
-        const mt = b.source && b.source.media_type;
-        return '<div class="block-note">[image' + (mt ? ' \\u00b7 ' + escapeHtml(mt) : '') + ']</div>';
-      }
+      if (type === 'image') return renderImageBlock(b);
       return fold(String(type || 'block'), '', preBlock(formatJson(b)));
+    }
+
+    // Image blocks render as REAL thumbnails when the bytes are already in
+    // the trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
+    // image_url carried) — click toggles full size. Wire-controlled fields
+    // are validated, not trusted: media_type against an image/* shape, the
+    // base64 payload against its alphabet. A REMOTE url stays a note with
+    // the address — the viewer must never auto-fetch a wire-named resource
+    // (a captured conversation could point the reader's browser anywhere).
+    function renderImageBlock(b) {
+      const src = b.source || {};
+      const mt = typeof src.media_type === 'string' && /^image\\/[\\w.+-]+$/.test(src.media_type) ? src.media_type : '';
+      let dataUrl = '';
+      if (src.type === 'base64' && typeof src.data === 'string' && mt &&
+          /^[A-Za-z0-9+/=\\s]+$/.test(src.data.slice(0, 4096))) {
+        dataUrl = 'data:' + mt + ';base64,' + src.data.replace(/[^A-Za-z0-9+/=]/g, '');
+      } else if (typeof src.dataUrl === 'string' && /^data:image\\/[\\w.+-]+[;,]/.test(src.dataUrl)) {
+        dataUrl = src.dataUrl;
+      }
+      if (dataUrl) {
+        const kb = Math.round((dataUrl.length * 3) / 4 / 1024);
+        return '<div class="msg-imgwrap"><img class="msg-img" loading="lazy" src="' + escapeHtml(dataUrl) + '"' +
+          ' onclick="this.classList.toggle(\\'full\\')"' +
+          ' title="' + escapeHtml((mt || 'image') + (kb ? ' \\u00b7 ~' + kb + ' KB stored' : '') + '\\n> click toggles full size') + '"></div>';
+      }
+      if (typeof src.url === 'string' && src.url) {
+        return '<div class="block-note">[image \\u00b7 remote \\u00b7 ' + escapeHtml(src.url.slice(0, 120)) + ' \\u2014 not fetched]</div>';
+      }
+      return '<div class="block-note">[image' + (mt ? ' \\u00b7 ' + escapeHtml(mt) : '') + ']</div>';
     }
 
     function renderTurn(role, content, tag) {
@@ -4936,7 +4973,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (s.t) bits.push(fmtDateTime(new Date(s.t * 1000)));
       if (s.stub) bits.push('request body folded by cctrace compact \\u2014 composition unknown, usage kept');
       else bits.push('estimated \\u2248' + fmtCompact(s.est));
-      if (s.actualIn != null) bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
+      if (s.actualIn != null) {
+        bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
+        // Cache behavior is the step's cost story: a healthy step reads
+        // most of its prompt from cache; a cold step after a compaction
+        // (or an expired TTL) re-bills the whole prefix.
+        if (s.cacheRead > 0) bits.push('cache read ' + fmtCompact(s.cacheRead) + ' (' + Math.round((s.cacheRead / s.actualIn) * 100) + '% of prompt)');
+        else bits.push('cache read 0 \\u2014 cold: the whole prompt billed at full input price');
+      }
       else if (s.failed) bits.push('request FAILED \\u2014 no response; the bar shows what was SENT');
       if (s.mark === 'compact') bits.push('\\u2702 compaction \\u2014 the history above was folded');
       else if (s.mark === 'rewrite') bits.push('\\u2702 full rewrite \\u2014 history replaced by a continuation summary');
@@ -5201,23 +5245,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const turnBars = ctxGran === 'turn' ? ctxAggregateTurns(steps, addr) : null;
       const maxT = Math.max(1, tl.maxTotal);
       let cols = '';
-      const bar = (s, extra, w) => {
+      const bar = (s, extra, w, lbl) => {
         const total = ctxStepTotal(s);
         const hpct = Math.max(2, (total / maxT) * 100);
         return '<span class="cx-colw' + (s.pairId === ctxPinned ? ' pinned' : '') + '" data-cxbar="' + escapeHtml(s.pairId) + '"' +
           ' data-tip="' + escapeHtml(ctxBarTip(s, addr, extra)) + '">' +
           (s.mark ? '<span class="cx-mark">\\u2702</span>' : '') +
           '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%' + (w ? ';width:' + w + 'px' : '') + '">' +
-          ctxColSegs(s) + '</span></span>';
+          ctxColSegs(s) + '</span>' +
+          (lbl ? '<span class="cx-tlbl">' + escapeHtml(lbl) + '</span>' : '') + '</span>';
       };
       if (turnBars) {
         for (const tb of turnBars) {
           const extra = tb.steps > 1 ? tb.steps + ' steps in this turn' + (tb.failed ? ' \\u00b7 ' + tb.failed + ' failed' : '') : '';
           const s = tb.mark && !tb.last.mark ? { ...tb.last, mark: tb.mark } : tb.last;
-          cols += bar(s, extra, 14);
+          // The dsh chart labels turn bars beneath — same numbering as the
+          // outline's ordinals, so the axis reads T-for-turn at a glance.
+          const lbl = tb.ord != null ? (tb.ord + 1 < 10 ? '0' + (tb.ord + 1) : '' + (tb.ord + 1)) : '';
+          cols += bar(s, extra, 14, lbl);
         }
       } else {
-        for (const s of steps) cols += bar(s, '', 0);
+        for (const s of steps) cols += bar(s, '', 0, '');
       }
       let hist = '<div class="cx-chart-wrap"><span class="cx-scale">' + fmtCompact(maxT) + '</span>' +
         '<div class="cx-chart" id="cx-chart">' + cols + '</div></div>' +

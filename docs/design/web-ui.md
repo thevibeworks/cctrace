@@ -464,26 +464,54 @@ hash-routed:
   is exact and anchored to that pair's provider-reported prompt tokens).
   Same key grammar and thread resolution as Sessions (`resolveThreadSel`),
   selection shared both ways (tab switches keep the thread; the convo
-  chips row carries "context →", the context head "sessions →"). Four
-  sections over the selected thread: stats chips (turns · steps ·
-  injections · compactions · reclaimed · est ≈ · actual prompt · window);
-  current composition (headline occupancy — actual, ≈estimate, % of the
-  model's window from the models.dev catalog (limit.context, 1m honored
-  via the anthropic-beta header, and a sanity guard drops the denominator
-  when the anchored prompt exceeds it — a stale catalog must never render
-  "100% used"); six-segment bar scaled against the window, legend, top
-  tool schemas by size); context history (one stacked column per step or
-  per turn — toggle persisted in localStorage `cctrace-ctx-gran` — height
-  anchored to actual prompt tokens, segment split from the estimate, ✂
-  marks compaction/rewind steps, dashed red = failed request whose bar
-  shows what was SENT; hover previews the detail strip immediately and the
-  graph on a short settle, click pins, ←/→ walk the pin; chart scroll
-  position survives live re-renders and sticks to the newest edge); context
-  events (newest first, filter chips, producer-labeled injections,
-  compactions with the actual-anchored reclaim delta, model switches,
-  tool-schema/system changes, each row linked to its wire pair at its
-  turn·step address — the outline's numbering via loopTurns); and the
-  context graph (the picked step as an ICICLE — rows top-down, width =
+  chips row carries "context →", the context head "sessions →"). The page
+  is a LEDGER: a sticky 320px margin beside a canvas, the same two-pane
+  grammar Requests (list|detail) and Sessions (rail|convo) already use.
+
+  The **margin** (`renderCtxMargin`, repainted on every scrub via
+  `ctxRepaintMargin`, which swaps `#cx-bal` and leaves the threads block
+  alone) is the balance: the picked step's provider-reported prompt at
+  display scale (the one 24px number ui.md licenses), a six-segment bar
+  scaled against the model's window from the models.dev catalog
+  (limit.context, 1m honored via the anthropic-beta header, and a sanity
+  guard drops the denominator when the anchored prompt exceeds it — a
+  stale catalog must never render "100% used"), "N% of context used", and
+  the RECONCILIATION — how far chars/4 reads under or over the billed
+  prompt ("≈134k estimated · chars/4 reads 49% under"), or the failed /
+  compact-stub reason instead. Under it the LEDGER: the six categories,
+  always all six, always in CTX_CATS order, with weight, ≈tokens and % —
+  the page's one LIST of those numbers (the icicle's row 1 is a chart: it
+  reorders under the size lens and vanishes when you zoom), and every line
+  is also a control carrying the flame's own node key
+  (`data-cxnode="c:<id>"`), so clicking it zooms the graph and the line
+  wears `.sel` while that zoom holds. Then "this step" (clock, output,
+  cache share, `turn NN · step N →` and `wire →`), the heaviest tool
+  schemas, and — when the trace holds more than one thread — **other
+  threads**: every thread's PEAK assembled context (provider-reported),
+  grouped by session, all bars on one scale, the % against each thread's
+  own model window. It sits at the foot of the margin so switching sheets
+  never needs a scroll. At ≤960px the margin unsticks into a multi-column
+  band above the canvas (`columns: 300px`, blocks `break-inside: avoid`).
+
+  The **canvas** is three sections, each named for what the reader gets:
+  trajectory (one stacked column per step or per turn — toggle persisted
+  in localStorage `cctrace-ctx-gran` — height anchored to actual prompt
+  tokens and scaled to this thread's own peak, segment split from the
+  estimate, columns `flex: 1 1 9px` up to 22px so a short thread fills the
+  canvas, ✂ plus a full-height amber axis break on compaction/rewind
+  steps — the amber `.rp-mark.cut` already uses — dashed red = failed
+  request whose bar shows what was SENT; hover scrubs the margin
+  immediately and the graph on a short settle, click pins, ←/→ walk the
+  pin; chart scroll position survives live re-renders and sticks to the
+  newest edge; it does NOT draw the window as a second line, because
+  occupancy against the limit is the margin's balance, stated once);
+  what changed it (newest first, filter chips, producer-labeled
+  injections, compactions with the actual-anchored reclaim delta, model
+  switches, tool-schema/system changes, the token delta beside the LABEL
+  because it is what the event did to the window, with ×N, the turn·step
+  wire link and the clock holding the right edge — the outline's numbering
+  via loopTurns); and inside this step (the picked step as an ICICLE —
+  rows top-down, width =
   tokens, every child inside its parent's span; row 1 is the composition
   bar's own six categories in the same order and hues, so the graph reads
   as that bar growing downward into its parts. Grouping is the question
@@ -500,12 +528,19 @@ hash-routed:
   group's heaviest 15 items as lazy renderBlock folds, or a container's
   children ranked. "by size" / "in order" lens ranks INSIDE a category
   (never the categories), persisted in `cctrace-ctx-sort`; compact stubs
-  say "composition unavailable" + their surviving usage). Above all
-  four, a trace with more than one thread gets **threads in this trace**:
-  every thread's PEAK assembled context (provider-reported), grouped by
-  session, all bars on one scale, the % against each thread's own model
-  window — the multi-session switcher AND the "which session is running
-  hot" comparison, open state in `cctrace-ctx-pick`. Data layer is
+  say "composition unavailable" + their surviving usage; the pane scrolls
+  inside itself so an open tool result cannot push the events off the
+  sheet). The section carries no head of its own — the margin beside it
+  already names the step, its estimate, its billed prompt and both links;
+  the one thing that head said which the margin does not, "decomposed
+  from the captured request body — exact, not reconstructed", lives in
+  the section hint.
+
+  Counts caption the thing they count (`91 wire requests · 8 working
+  loops` on the trajectory, `132 injections · 1 compaction · 4.7k
+  reclaimed` on the events) instead of an orphan chips row under the head,
+  and "turns" is spelled out both ways because the thread label counts
+  MESSAGE turns while the addresses count WORKING LOOPS. Data layer is
   src/context.ts (contextComposition/contextItems/contextGraph/
   ctxFlameLayout/contextTimeline/ctxAggregateTurns + CTX_CATS), pure and
   unit-tested apart from the DOM — layout is data, the view only turns

@@ -46,22 +46,27 @@ offline snapshots -- same UI, three ways in.
   A masked screen-share mode (header eye toggle) blurs session ids and
   account values.
 - **Context view** -- what the model is actually carrying around, and what
-  is eating the window. Current composition as a six-color bar scaled
-  against the model's context window (system prompt, tool schemas, your
-  messages, injected context, assistant replies, tool results -- plus the
-  top tool schemas by size); a history chart with one stacked bar per
-  request (or per turn) where ✂ marks compactions and rewinds -- watch the
-  bars drop; a context-events list (every injection with its producer --
+  is eating the window, laid out as a ledger. A sticky MARGIN states the
+  balance for the picked step and never scrolls away: its prompt tokens, a
+  six-color bar scaled against the model's context window, how far the
+  chars/4 estimate reads under or over the billed prompt, and the six
+  categories as ledger lines (system prompt, tool schemas, your messages,
+  injected context, assistant replies, tool results) -- click a line to
+  zoom the graph to it. Under them the step's links out, the top tool
+  schemas by size, and, on a trace holding several sessions, the other
+  threads: peak assembled context per thread, one scale, click to switch.
+  The CANVAS beside it: a trajectory chart with one stacked bar per
+  request (or per turn) where ✂ and an amber axis break mark compactions
+  and rewinds -- watch the bars drop; the picked step as a context graph
+  -- an icicle where width is tokens and rows are levels, decomposing it
+  into category -> group -> item, with tool results grouped by the tool
+  that made them, schemas by MCP server, injections by producer (click a
+  node to zoom, a leaf to open its exact bytes below; row 1 is the
+  margin's own six categories, so the graph reads as that bar growing
+  downward); and the events -- every injection with its producer --
   AGENTS.md, system reminders, recaps -- every compaction with the tokens
   it reclaimed, every model switch and tool-schema change, each linked to
-  its wire request); and a context graph -- an icicle where width is
-  tokens and rows are levels, decomposing any request into category ->
-  group -> item, with tool results grouped by the tool that made them,
-  schemas by MCP server, injections by producer. Click a node to zoom, a
-  leaf to open its exact bytes below. Row 1 is the composition bar's own
-  six categories, so the graph reads as that bar growing downward. A trace holding
-  several sessions gets a thread strip: peak assembled context per thread,
-  one scale, click to switch.
+  its wire request.
   Because cctrace sits on the wire, every step is exact -- the captured
   request body IS the assembled context -- and every figure is anchored to
   the provider-reported prompt tokens of that same request. Estimates wear

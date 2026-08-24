@@ -918,7 +918,7 @@ describe("context view", () => {
     }),
   ];
 
-  test("the tab ships and the view renders all four sections", () => {
+  test("the sheet ships: a reconciling margin beside three canvas sections", () => {
     const html = renderSnapshot(CTX_PAIRS);
     expect(html).toContain('id="tab-context"');
     expect(html).toContain('id="context-view"');
@@ -926,20 +926,43 @@ describe("context view", () => {
     page.goto("#/context");
     expect(page.errors).toEqual([]);
     const cx = page.els["context-view"].innerHTML;
-    expect(cx).toContain("current composition");
-    expect(cx).toContain("context history");
-    expect(cx).toContain("context events");
-    expect(cx).toContain("context graph");
-    // stats chips: turns + steps at minimum
-    expect(cx).toContain("turns");
-    expect(cx).toContain("steps");
+    // the two-pane sheet: a sticky margin that reconciles, a canvas that scrolls
+    expect(cx).toContain('class="cx-cols"');
+    expect(cx).toContain('id="cx-margin"');
+    expect(cx).toContain('class="cx-canvas"');
+    // the margin's balance: the headline, the bar, the reconciliation
+    expect(cx).toContain("cx-bal-n");
+    expect(cx).toContain("of context used");
+    expect(cx).toContain("cx-recon");
+    // the canvas's three sections, each named for what the reader gets
+    expect(cx).toContain("trajectory");
+    expect(cx).toContain("inside this step");
+    expect(cx).toContain("what changed it");
+    // counts caption the thing they count — never an orphan chips row
+    expect(cx).toContain("wire request");
+    expect(cx).toContain("working loop");
     // one bar per wire request
     expect((cx.match(/data-cxbar=/g) || []).length).toBe(2);
-    // the composition legend names all six categories
+    // the ledger names all six categories, and every line is a zoom
     for (const label of ["system prompt", "tool schemas", "user messages", "injected context", "assistant replies", "tool results"]) {
       expect(cx).toContain(label);
     }
+    expect((cx.match(/class="cx-crow[ "]/g) || []).length).toBe(6);
+    expect(cx).toContain('data-cxnode="c:toolResult"');
     expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the six numbers are rendered ONCE as a list: no legend, no detail strip", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    // the old page rendered the categories three times (legend, detail
+    // strip, icicle row 1). The ledger is the one LIST; the icicle is a
+    // chart, not a list. Both dead classes must stay dead.
+    expect(cx).not.toContain("cx-leg-row");
+    expect(cx).not.toContain('id="cx-detail"');
+    // and the graph sheds the step facts the margin already states
+    expect((cx.match(/class="cx-dhead"/g) || []).length).toBe(1);
   });
 
   test("an injected reminder shows as an inject event and in the graph's inject items", () => {
@@ -971,8 +994,11 @@ describe("context view", () => {
     page.goto("#/context");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("cx-mark"); // ✂ above the post-compact bar
+    expect(cx).toContain("cx-colw cut"); // ...and the axis-break rule down the bar
     expect(cx).toContain("context rewritten"); // rewrite-mode label via the session layer
-    expect(cx).toContain("compactions");
+    // the count captions the section it belongs to, not an orphan chip row
+    expect(cx).toContain("1 compaction");
+    expect(cx).toContain("reclaimed");
     expect(fragmentErrors(page)).toEqual([]);
     expect(page.errors).toEqual([]);
   });
@@ -1024,8 +1050,17 @@ describe("context view", () => {
     expect(cx).toContain('data-cxnode="g:tools/mcp:docs"');
     expect(cx).toContain("mcp · docs");
     // row 1 is the composition bar's six, in CTX_CATS order
-    const cats = [...cx.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]);
+    // Row 1 of the flame is the six in CTX_CATS order — scoped to the
+    // flame, because the margin's ledger emits the same node keys (that
+    // correspondence is the point, and it is asserted next).
+    const flame = cx.slice(cx.indexOf('class="cx-flame"'));
+    const cats = [...flame.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]);
     expect(cats).toEqual(["tools", "user", "assistant", "toolResult"]); // no system block in this fixture
+    // the ledger states all six, always, in the same order — it is the
+    // invariant the chart stops showing the moment you zoom
+    const margin = cx.slice(cx.indexOf('id="cx-margin"'), cx.indexOf('class="cx-canvas"'));
+    expect([...margin.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]))
+      .toEqual(["system", "tools", "user", "inject", "assistant", "toolResult"]);
     // a container node zooms, a leaf opens
     expect(cx).toContain('data-cxkids="1"');
     expect(cx).toContain('data-cxkids="0"');
@@ -1043,7 +1078,7 @@ describe("context view", () => {
   test("a multi-session trace gets the thread picker; a single-thread one does not", () => {
     const one = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
     one.goto("#/context");
-    expect(one.els["context-view"].innerHTML).not.toContain("threads in this trace");
+    expect(one.els["context-view"].innerHTML).not.toContain("other threads");
 
     // two sessions on the wire (a /clear rotates the sid) — the picker is
     // both the switcher and the cross-session comparison
@@ -1057,7 +1092,7 @@ describe("context view", () => {
     const page = bootSnapshotPage(renderSnapshot([...CTX_PAIRS, other]));
     page.goto("#/context");
     const cx = page.els["context-view"].innerHTML;
-    expect(cx).toContain("threads in this trace");
+    expect(cx).toContain("other threads");
     expect(cx).toContain("2 sessions");
     // each thread is a row linking to its own context route
     expect((cx.match(/class="cx-th[ "]/g) || []).length).toBe(2);
@@ -1117,7 +1152,7 @@ describe("context view", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
     page.goto("#/context/aaaabbbb");
     expect(page.errors).toEqual([]);
-    expect(page.els["context-view"].innerHTML).toContain("current composition");
+    expect(page.els["context-view"].innerHTML).toContain("of context used");
   });
 });
 

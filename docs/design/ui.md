@@ -37,9 +37,12 @@ to protect that feeling.
 
 - Type scale is 11/12/13px for text and rows — new row UI picks from those
   three. Badges, small-caps labels, and tags drop to a 9-10px micro-tier
-  (`.cat-badge`, `.klabel`, `.tcompact-label`, `.sum-tag`); the header
-  wordmark (16px) is the one exception above 13px. That is the whole closed
-  set — a fourth text size is drift, not a decision.
+  (`.cat-badge`, `.klabel`, `.tcompact-label`, `.sum-tag`). Above 13px there
+  are exactly two: the header wordmark (16px) and ONE display number per
+  view — today only `.cx-bal-n` (24px), the context view's balance. The
+  display size is licensed by a view whose whole job is one number, and it
+  is spent once: a second 24px figure on the same page cancels the first.
+  That is the whole closed set — anything else is drift, not a decision.
 - System monospace stack; no webfonts ever (self-contained pages).
 - GitHub-dark derived palette, defined once in `:root` variables.
 - Scrollbars are thin and quiet (styled once, globally).
@@ -98,6 +101,23 @@ to protect that feeling.
   ≡cache · cost · state), wire transport as right-aligned columns (sizes ·
   ttft · duration · time). The ≡ glyph (U+2261) is the cache mark — slim,
   layered, one monospace cell.
+- A row that carries BOTH a label and a number gives the label a measure
+  (~46ch) and puts the slack after the number, not between them. The
+  right-edge columns are transport (turn address, clock); the number that
+  says what the row is worth travels with its label. A 46ch cap plus a
+  flexible spacer is the pattern (`.cx-ev-gap`, `.cx-prow-gap`) — an
+  amount parked 800px from the words it belongs to is a hunt, not a column.
+- Every view is two panes: a narrow left column that states what you are
+  looking at, and a wide right column you work in — requests
+  (list | detail), sessions (rail | convo), context (ledger | canvas).
+  The left column is fixed-measure and may stick; the right one scrolls.
+  A view that is one full-width ribbon is the odd one out and reads as a
+  different product.
+- A number is stated ONCE per view. If the same figure appears in a
+  headline, a legend and a chart, two of the three are decoration —
+  delete them or make each a genuinely different form (a list that is
+  always the same six lines is not the same thing as a chart that
+  reorders and rescales).
 
 - The dashboard (`src/dashboard.ts`) is part of this design system, not a
   side page: same variable block, same type scale, same lowercase labels,

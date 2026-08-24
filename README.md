@@ -72,17 +72,20 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   **replay**: step or play back any captured session, deep-link any
   moment.
 - **Context insights.** A Context view shows what the model's window is
-  assembled from, request by request: a six-color composition bar against
-  the model's context window, a history chart where ✂ marks compactions
-  (watch the bars drop), every injection/compaction/model-switch as an
-  event, and a **context graph** -- an icicle where width is tokens and
-  rows are levels -- decomposing any request into category -> group ->
-  item, with tool results grouped by the tool that made them, schemas by
-  MCP server, injections by producer. `Bash x189, 38% of the window` is
-  the widest block on the row, not a number you had to go find; click it
-  to zoom, click a leaf to read the exact bytes. Traces holding
-  several sessions get a thread strip comparing their peaks on one scale.
-  Anchored to provider-reported tokens -- the wire, not a guess.
+  assembled from, request by request, laid out as a ledger: a sticky
+  margin states the balance -- prompt tokens, a six-color composition bar
+  against the model's context window, how far the chars/4 estimate reads
+  under the billed prompt, and the six categories as lines you click to
+  zoom -- while the canvas beside it carries the trajectory (✂ marks
+  compactions; watch the bars drop), the picked step as a **context
+  graph** -- an icicle where width is tokens and rows are levels,
+  decomposing it into category -> group -> item, with tool results
+  grouped by the tool that made them, schemas by MCP server, injections
+  by producer -- and every injection/compaction/model-switch as an event.
+  `Bash x189, 38% of the window` is the widest block on the row, not a
+  number you had to go find; click it to zoom, click a leaf to read the
+  exact bytes. Traces holding several sessions compare their peaks on one
+  scale. Anchored to provider-reported tokens -- the wire, not a guess.
 - **The trajectory, in the timeline.** Every step on the sessions rail
   carries a track: how full the window was, split into the prefix read
   from cache and what was billed fresh. Down the rail that column is the

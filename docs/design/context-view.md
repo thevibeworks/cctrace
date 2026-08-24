@@ -1,9 +1,11 @@
 # The Context view
 
-Status: shipped (0.44). The third page view (`#/context[/<key>]`, tab beside
-requests/sessions): what the model's context window was assembled from,
-request by request — composition, growth history, change events, and the
-per-step context GRAPH.
+Status: shipped (0.44); re-staged as a ledger (0.45). The third page view
+(`#/context[/<key>]`, tab beside requests/sessions): what the model's
+context window was assembled from, request by request. The page is a SHEET
+— a sticky margin that states the balance and reconciles it on every
+scrub, beside a canvas carrying the trajectory, the icicle, and the events
+(§The form).
 
 ## Why (and where the idea comes from)
 
@@ -146,34 +148,117 @@ so is the selection: switching tabs keeps the thread in focus. The convo
 pane carries a quiet "context →" link; the context head links back
 ("sessions →").
 
-Four sections, ui.md grammar (h4 sections, chips, one accent):
+### The form: a ledger that reconciles
 
-1. **head + stats chips** — thread identity (kind, label, model chip, sid)
-   and: turns · steps · injections · compactions · reclaimed · est ·
-   prompt (actual) · window.
-2. **current composition** — the newest assembled request: headline
-   occupancy (actual, estimate, % of window), the six-segment bar scaled
-   against the window (grey = headroom), legend with per-category ≈tokens
-   and %, and the top-5 tool schemas by size.
-3. **context history** — one stacked column per step (or per turn —
+The page is a SHEET with a margin, not a stack of reports. That is a
+verdict on the shipped 0.44 arrangement, which put five equal-weight
+sections down a 1100px ribbon and made the answer — *what is eating my
+window* — arrive fifth, below the fold, while the same six numbers were
+rendered three times on the way there (legend, detail strip, icicle row).
+
+The invariant is real and it is what earns the form: the six categories
+sum to the assembled window, the chars/4 estimate reconciles against the
+provider's reported prompt, and the whole sits against the model's limit.
+A sheet with a balance that must close gets a margin that states it and
+never scrolls away.
+
+    ┌─ head: kind · label · model · sid ───────── sessions → ─┐
+    ├──────────────────┬──────────────────────────────────────┤
+    │ MARGIN (sticky)  │ CANVAS (scrolls)                     │
+    │ 261k             │ trajectory  — how the window grew    │
+    │ 26% of 1.00m ▓░░ │ inside this step — the icicle        │
+    │ ≈134k · 49% under│   + the pane (its own scroll)        │
+    │ ── composition ──│ what changed it — the events         │
+    │ six ledger lines │                                      │
+    │ ── this step ────│                                      │
+    │ ── tool schemas ─│                                      │
+    │ ── other threads │                                      │
+    └──────────────────┴──────────────────────────────────────┘
+
+The two-pane shape is not an import: it is the grammar the other two
+views already use (requests = list | detail, sessions = rail | convo).
+The context view was the odd full-width ribbon out.
+
+**The margin** (`renderCtxMargin`, `.cx-margin`, 320px, `position: sticky`)
+is the whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
+`#cx-bal`; the threads block is outside it and stays put):
+
+- **the balance** — the provider's prompt at display scale (`.cx-bal-n`,
+  the one 24px number the design language licenses, see ui.md), the
+  turn·step·model line, the six-segment bar scaled against the window
+  (grey = headroom), `N% of context used`, and **the reconciliation**:
+  `≈134k estimated · chars/4 reads 49% under`. On code-heavy bodies the
+  estimate reads well under the bill, and saying so by how much is the
+  honest form of showing both numbers. A failed or compact-stubbed step
+  says that instead.
+- **the ledger** — the six categories, always all six, always in CTX_CATS
+  order, with weight, ≈tokens and %. This is the page's ONE list of those
+  numbers; the icicle's row 1 is the other rendering and it is a *chart*
+  — it reorders under the size lens and it disappears the moment you
+  zoom. The ledger is the invariant that does not. Every line is also a
+  control: clicking it zooms the graph to that category
+  (`data-cxnode="c:<id>"`, the same node key the flame uses), and the
+  line wears `.sel` while that zoom holds — margin and chart are one
+  selection whichever side the click came from.
+- **this step** — clock, output, cache share, and both ways out (`turn NN
+  · step N →` into the sessions rail, `wire →` to the captured pair).
+- **heaviest tool schemas** — the standing cost, top 5 of N.
+- **other threads** — the multi-session picker, quietest block in the
+  margin, because switching sheets must not need a scroll.
+
+Counts caption the thing they count — `91 wire requests · 8 working loops`
+on the trajectory, `132 injections · 1 compaction · 4.7k reclaimed` on the
+events — instead of a strip of orphan chips under the head. "Turns" is
+overloaded on this page (the thread label counts MESSAGE turns, the
+addresses count WORKING LOOPS), so both are named in full rather than
+guessed at.
+
+At ≤960px (the page's established breakpoint) the margin unsticks and
+becomes a multi-column band above the canvas — `columns: 300px`, blocks
+`break-inside: avoid`. Grid was tried and rejected: its rows take the
+tallest block's height and leave dead cells.
+
+**The canvas** is three sections, each named for what the reader gets:
+
+1. **trajectory** — one stacked column per step (or per turn —
    granularity toggle, persisted in `cctrace-ctx-gran`), height = anchored
-   total, ✂ above compaction/rewind steps, dashed red outline on failed
-   requests. Hover previews the detail strip AND the browser (dsh's linked
-   scrub); click pins; ←/→ walk the pinned step. The chart keeps its scroll
-   position across live re-renders and sticks to the newest edge when there.
-4. **context events** — newest first, filter chips (inject / compact /
-   model / tools / system), each row: glyph, kind, label (producer for
-   injections — AGENTS.md, environment context, recap, the reminder's own
-   opening words), token delta (+amber = grew, −green = reclaimed), turn ·
-   step link to the wire pair, wall-clock. Capped at 200 rows with an
+   total, scaled to this thread's own peak and labelled with it. Columns
+   `flex: 1 1 9px` up to 22px, so a 17-bar thread fills the canvas instead
+   of pinning 9px bars in a 1000px field and reading as broken. Outliers
+   are RAISED: a compaction/rewind wears ✂ *and* a full-height dashed
+   amber axis-break down the column (`.cx-colw.cut`) — amber because that
+   is what `.rp-mark.cut` already paints this exact wire fact on the
+   replay track, and one compaction gets one color across both surfaces;
+   a failed request keeps its dashed red outline. Hover scrubs the margin and the graph (dsh's linked
+   scrub); click pins; ←/→ walk the pinned step. The chart keeps its
+   scroll position across live re-renders and sticks to the newest edge.
+   It does NOT draw the model window as a second line — occupancy against
+   the limit is the margin's balance, stated once.
+2. **inside this step** — the icicle (below). It carries no head of its
+   own: the margin beside it already names the step, its estimate, its
+   billed prompt and both links. The one thing the head said that the
+   margin does not — *decomposed from the captured request body, exact,
+   not reconstructed* — moved into the section hint, because that is the
+   sentence separating this page from a harness-log reconstruction and it
+   should not be lost to a layout change.
+3. **what changed it** — the events, newest first, filter chips (inject /
+   compact / model / tools / system), each row: glyph, kind, label
+   (producer for injections — AGENTS.md, environment context, recap, the
+   reminder's own opening words), then the token delta (+amber = grew,
+   −green = reclaimed) *beside the label*, because the delta is what the
+   event did to the window (content); ×N, the turn·step link and the
+   wall-clock hold the right edge (transport). Capped at 200 rows with an
    honest "+N older" line.
-5. **context graph** — the picked step as an **icicle**: rows top-down,
+
+### The icicle
+
+The picked step as an **icicle**: rows top-down,
    width proportional to tokens, every child inside its parent's span.
    Row 0 is the focused node at full width; row 1 is the six categories in
-   CTX_CATS order — *the same six the composition bar above shows, in the
-   same order and the same hues*. The graph IS that bar growing downward
-   into its parts, which is why it belongs to this page rather than to a
-   chart library.
+   CTX_CATS order — *the same six the margin's ledger and balance bar
+   show, in the same order and the same hues*. The graph IS that bar
+   growing downward into its parts, which is why it belongs to this page
+   rather than to a chart library.
 
    Why the flame-graph idiom and not a treemap or a sunburst: "what is
    eating my context window" is a **profiling** question, and this

@@ -149,21 +149,27 @@ session) — the link a statusline can afford to print. Hash-routed views:
   prompt (same jumps on the on-page rail).
 - **Context** (`#/context[/<sid8-or-key>[/<key>]]`): what the model's
   context window is assembled from, request by request — the "what is
-  eating the window" view. Current composition (six categories: system
+  eating the window" view, laid out as a ledger. A sticky left MARGIN
+  carries the balance for the picked step: its prompt tokens, a six-color
+  bar against the model's context window, how far the chars/4 estimate
+  reads under or over the billed prompt, and six ledger lines (system
   prompt, tool schemas, user messages, injected context, assistant
-  replies, tool results — % of the model's context window, top tool
-  schemas by size), a per-request stacked history chart (✂ marks
-  compaction/rewind, hover previews, click pins, step/turn granularity),
-  a context-events list (injections with producer labels, compactions
-  with the reclaimed token delta, model switches, tool-schema changes —
-  each linked to its wire request), and a context graph — an icicle
-  (flame graph) where width is tokens and rows are levels — decomposing
-  any step into category → group → item (tool results by tool, schemas by
-  MCP server, injections by producer). Click a node to zoom, a leaf to
-  open its exact bytes in the pane below; "by size" or "in order". Multi-session traces get a thread strip at the top:
-  peak assembled context per thread, one scale, click to switch. Estimates
-  carry ≈ and sit next to the provider-reported prompt tokens. Selection is
-  shared with the Sessions view, and a step links back to its turn there.
+  replies, tool results) — click any line to zoom the graph to it. Below
+  those, the step's links out (`turn NN · step N →`, `wire →`), the
+  heaviest tool schemas, and — on multi-session traces — the other
+  threads, peak assembled context on one scale, click to switch.
+  The CANVAS beside it: trajectory (a stacked bar per request or per
+  turn, ✂ plus an amber axis break at compaction/rewind, hover scrubs the
+  margin and the graph, click pins), inside this step (an icicle — width
+  is tokens, rows are levels — decomposing the step into category →
+  group → item, tool results by tool, schemas by MCP server, injections
+  by producer; click a node to zoom, a leaf to open its exact bytes in
+  the pane below; "by size" or "in order"), and what changed it
+  (injections with producer labels, compactions with the reclaimed token
+  delta, model switches, tool-schema changes — each linked to its wire
+  request). Estimates carry ≈ and sit next to the provider-reported
+  prompt tokens. Selection is shared with the Sessions view, and a step
+  links back to its turn there.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a

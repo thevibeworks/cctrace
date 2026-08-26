@@ -91,6 +91,14 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   from cache and what was billed fresh. Down the rail that column is the
   agent's context trajectory -- it climbs, a compaction drops it, the next
   step runs cold, then warms again.
+- **The trajectory, as a stream.** A Trajectory view renders a thread as
+  one linear, time-anchored list of records: system prompt, your turns,
+  the context the harness injected (inline, at the moment it entered),
+  the model's thinking, each tool call fused with its result, the reply.
+  MAP / READ / FULL filters it down to the skeleton or up to everything
+  without ever summarizing; a kind filter isolates just the injections
+  (the context trajectory), and a strip on top shows where the wall-clock
+  went: model, tools, waiting, between turns.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **One dashboard for everything.** `/dashboard` on any instance shows every

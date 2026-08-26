@@ -3,7 +3,9 @@
 (Moved verbatim from CLAUDE.md 2026-07-30 — the behavior spec for ui.ts.
 Design rules live in ui.md; read that before adding UI.)
 
-One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
+One self-contained page (`getLiveHtml` in `ui.ts`) — four view tabs:
+Requests, Sessions, Context, and Trajectory (the thread as a linear stream
+of records, docs/design/trajectory.md) — serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
 The header identifies the run: traced client (icon + name chip — quiet
 generic monograms in `CLIENT_ICONS`, not vendor logos — from
@@ -138,7 +140,11 @@ hash-routed:
   prompt size, first token / first byte delay with its share of
   wall-clock, output tok/s (computed over post-first-token streaming time
   when ttft is known), and a cost tooltip broken down by component; the
-  Sessions view shows per-turn and per-thread cost and ttft, plus error
+  Sessions view shows per-turn and per-thread cost and ttft, a `time`
+  chip breaking the thread's wall-clock into model / tools / waiting /
+  between-turns time read off the wire alone (dsh Trajectory's lanes via
+  `threadTimeSplit`; each assistant role bar also carries its own step's
+  tools/waiting time), plus error
   metrics aggregated per thread and per session (buildSession's usage:
   wireErrors = no response / 4xx-5xx / in-stream error events, truncated
   streams, toolErrors over toolUses for a rate — reported separately

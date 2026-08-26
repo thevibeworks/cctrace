@@ -71,6 +71,23 @@ offline snapshots -- same UI, three ways in.
   request body IS the assembled context -- and every figure is anchored to
   the provider-reported prompt tokens of that same request. Estimates wear
   ≈ and never replace actuals.
+- **Trajectory view** -- the agent's path as one linear, time-anchored
+  stream of records, borrowed from the DeepSeek Harness web UI's
+  Trajectory tab: system prompt, the human's turns, the context the
+  harness injected (inline, first-class, at the moment it entered), the
+  model's thinking, each tool call fused with its result, the reply --
+  kind-badged, in spine order, every record linked to its wire pair and
+  addressed turn NN . step N exactly as the Sessions outline and the
+  Context view address it. A record list beside an inspector that reuses
+  the detail panel's own block renderers. Three detail levels, filtering
+  only, never summarizing (the toolbar says how many rows it hid): MAP is
+  the skeleton (system, the human, the tool calls), READ drops the token
+  budget banners and bare thinking, FULL is everything. A kind filter
+  isolates one record type -- context-only is the context trajectory: you
+  watch context enter the window inline with the reasoning that consumed
+  it -- plus search. A strip on top shows where the thread's wall-clock
+  went (model / tools / waiting / between turns), the same split the
+  Sessions view's "time" chip carries; every figure is a wire timestamp.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,

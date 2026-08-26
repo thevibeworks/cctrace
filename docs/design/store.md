@@ -50,20 +50,31 @@ store is the default, not a cage.
   happens. Plain is what `view --tail`, torn-line recovery and a killed
   run all rely on; the compressed form is a rest state, not a wire state.
 - At exit everything the run touched goes to rest as `.zst`
-  (`restTracesOnExit` in cli.ts):
-  - auto-merge (a session that spans runs) still writes a plain
-    `session-<sid8>.jsonl` as a union of the sources and of any prior
-    `.jsonl`/`.zst`/`.gz` output of that session (or blocks if a prior can't
-    be fully read — merge never shrinks); the archive step then streams it
-    to `session-<sid8>.jsonl.zst`, and because that plain file is a
-    verified superset it MAY overwrite the prior `.zst` (`supersedesArchive`
-    — the one sanctioned overwrite in storage.ts);
-  - the run's own `trace-<ts>.jsonl` streams to `.jsonl.zst` (union path
-    if an archive somehow already exists) and is unlinked only after a
-    decode pass counts every byte back. Two attempts: a CONNECT tunnel
+  (`sealTrace` in cli.ts), in THIS order:
+  - the run's own `trace-<ts>.jsonl` streams to `.jsonl.zst` FIRST (union
+    path if an archive somehow already exists) and is unlinked only after
+    a decode pass counts every byte back. Two attempts: a CONNECT tunnel
     closing as the child dies logs its meta pair AFTER the exit event, so
     the first pass can find the file grew mid-stream — it refuses to seal
-    (drops the fresh archive), the second pass seals;
+    (drops the fresh archive), the second pass seals. First because the
+    seal runs in a helper whose lifetime is the terminal or container the
+    run lived in (below): the archive is seconds, the merge scan behind it
+    can be minutes, and the space win must be banked before the slow part.
+    Measured 2026-08-26 with the old merge-first order: 56 of 58 helpers
+    died with their trace still plain (33 GB of it);
+  - auto-merge (a session that spans runs) then writes a plain
+    `session-<sid8>.jsonl` as a union of the sources — the fresh `.zst`
+    reads like any other — and of any prior `.jsonl`/`.zst`/`.gz` output
+    of that session (or blocks if a prior can't be fully read — merge
+    never shrinks). The scan for the session ids STREAMS each source
+    (`traceLines`) and measures what it decodes to; a session with a
+    source over `MERGE_MAX_SOURCE_BYTES` (1 GiB) is blocked with the
+    reason, never attempted — merge holds pairs as objects (~3x the bytes
+    as RSS) and a 199 MB archive of a multi-GB trace killed the helper
+    outright. The archive step then streams the union to
+    `session-<sid8>.jsonl.zst`, and because that plain file is a verified
+    superset it MAY overwrite the prior `.zst` (`supersedesArchive` — the
+    one sanctioned overwrite in storage.ts);
   - leftovers from killed runs are compressed the same way: a plain
     `trace-*`/`session-*.jsonl` (only names cctrace mints — a `train.jsonl`
     under `--dir` is the user's) idle > 24h that no heartbeat-fresh registry
@@ -80,8 +91,28 @@ store is the default, not a cage.
     The union path is damage-aware like merge's prune rule (a torn line in
     either input keeps the plain file). Temp names carry the pid so two
     exits in one dir never truncate each other's in-flight write.
+  - the `.tmp` a helper killed mid-archive leaves (`<trace>.jsonl.zst.<pid>.tmp`,
+    265 MB of one measured) is unlinked once idle > 1h (`sweepOrphanTmps`,
+    the rule `clean` applies);
   - `--no-compress` keeps everything plain (debugging the writer, tail with
     other tools).
+- The seal runs in a DETACHED helper (`cctrace __seal <job...>`, one
+  `seal-<run>-<ts>.json` per run in the data dir root) so the shell
+  returns the moment the plain trace is safe. The helper is spawned in its
+  own session (`detached: true` = setsid): closing the terminal that ran
+  the session no longer takes it down. A container being torn down still
+  does, so the job file is the durable record: the helper heartbeats its
+  mtime every 30s and unlinks it when done, and a job idle > 10 min is an
+  orphan — every live run's startup re-spawns the orphans it finds
+  (`recoverSeals`: folded per project dir so N orphans from one project
+  cost one merge scan, one helper working through them in order; a
+  folded job archives every member's trace, merges the union of their
+  sids, and re-points the lead run's tombstone — the others resolve via
+  `findTraceCarrier`), and `cctrace compress --yes` finishes them inline
+  before it plans. Three attempts, then the job is dropped with a line
+  saying so — a crash no try/catch sees must not be re-spawned forever.
+  `CCTRACE_SYNC_SEAL=1` forces inline; static mode seals inline (its
+  snapshot needs the pairs).
 - Codec: zstd level 9 with a 128 MB window (`windowLog 27`, the largest a
   default decoder accepts). Measured on a real 119 MB session trace: 87x
   at ~1 GB/s; level 19 gives the same 87x at 53 MB/s, level 3 with the

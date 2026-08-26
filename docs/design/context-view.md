@@ -14,8 +14,17 @@ answer "what is the model actually carrying around, and what is eating the
 window" — the question you have when a session degrades, when cost climbs,
 or when a compaction fires and you want to see what it reclaimed.
 
-The design borrows deliberately from `dsh-context` (the DeepSeek Harness
-context plugin, vendored for study in `reference/dsh-context/`): the context
+Two upstreams are borrowed from, both vendored for study under
+`reference/`: `dsh-context` (the DeepSeek Harness context plugin) for the
+composition/history/events shape and its Trajectory reading of an agent's
+path, and `semantica` (the graph-native context/provenance engine) for one
+idea — every fact links to its source. semantica renders a decision's
+provenance as a path through its graph; cctrace's version is smaller and
+exact: each context-graph pane row names the wire request that first
+carried its turn into the window ("since turn NN"), matched to the spine by
+content (`ctxOriginTurn`), because the window IS a request body and its
+origin is another captured request. The composition borrow from
+`dsh-context`: the context
 stats board, the six-category composition bar, the per-request stacked
 history chart with ✂ compaction marks, the context-events list, and the
 linked per-step decomposition (dsh's "browser"; ours is the context graph
@@ -303,7 +312,21 @@ The picked step as an **icicle**: rows top-down,
    folds (`renderBlock` reuse, so tool_use/tool_result/thinking render
    exactly as in the detail panel), saying out loud that it is showing 15
    of N; a container gives its children ranked with weight bars, each one
-   click from a zoom. The pane sheds any column the head already states —
+   click from a zoom. Each row also names its **provenance** — the turn
+   that first carried it into the window (`ctxSinceHtml` → `ctxOriginTurn`):
+   "since turn 04 · step 2" for a prompt, tool result or injection (which
+   entered with the NEXT request, whose reply is that step), "from turn 07"
+   for a reply (which IS a step). Content-verified against the spine, never
+   index-only, and among repeats (a second "continue", the same reminder
+   opening two turns) the match is anchored on the request's own position
+   in the spine — the window is the history up to that request, so the
+   nearest occurrence counted from the window's END is the right one;
+   start-anchoring sent every repeat after a compaction to its first
+   occurrence in the session. A turn that matches nothing, and an envelope
+   row (system, schemas) that has no turn, say nothing rather than guess. The link is a
+   control: clicking it pins that step, so the trajectory and the icicle
+   jump to where the item came from — semantica's "the path is navigable,
+   not a picture", in one line. The pane sheds any column the head already states —
    under a group called "Bash", 15 rows of "tool_result | Bash → …" is one
    fact repeated 30 times. Selection defaults to the heaviest group
    (`ctxFlameDefault`), so the section opens ON the answer instead of
@@ -348,6 +371,22 @@ borrow lands as a gutter, not a tab (`.tctx` in ui.ts, built in
 
 Every figure is provider-reported; nothing in the gutter is estimated.
 
+dsh's Trajectory also reads the agent's path as TIME — three lanes (Input /
+Model / Tools). cctrace has that too, off its own attributed pairs
+(`threadTimeSplit` in src/session.ts), and it lands where the reader is
+already looking at a thread's totals: a **`time` chip** on the sessions
+thread header, `model 15m · tools 7m · between turns 20m`, with the split
+in the hover — and each assistant role bar carries its own step's
+`tools`/`waiting` time beside its duration. The lanes in cctrace's terms:
+*model* is the requests' own durations; *tools* is the gap from a reply
+that made tool calls to the same working loop's next request (one gap
+covers calls run in parallel, so it is the STEP's tool time, never per
+call); *waiting* is that gap after a reply with no tool call (the harness
+came back on its own — a nudge, a loaded tool, a recap); *between turns* is
+the gap before the next prompt. Failed and superseded requests are not on
+the reply path — the gap spans them, they are never counted. Every figure
+is a wire timestamp; nothing here is estimated either.
+
 At trace scale the replay track tells the same story: a compaction/rewind
 pair gets a distinct full-height `.rp-mark.cut` beside the per-pair ticks —
 the trajectory's axis break on the timeline.
@@ -388,7 +427,10 @@ context route renders in ~45ms, the sessions route in ~35ms.
 
 - Per-item wire timestamps in the graph (dsh shows them; our items could
   carry the producing request's time via attribution — needs a
-  turn-index → pair map walk).
+  turn-index → pair map walk). PARTLY DONE: the pane rows now carry
+  provenance (`since turn NN`), which resolves the item's origin turn to a
+  wire request; the exact per-item timestamp is one `pairOf` away from
+  there.
 - Skill/MCP loads as first-class inject events (today they're visible as
   tool results in the graph; the event list only carries text-block
   injections).

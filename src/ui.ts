@@ -51,6 +51,7 @@ import {
   harnessTurnKind,
   continuationSummaryTurn,
   loopTurns,
+  threadTimeSplit,
   escHtml,
   diffHunk,
   richToolBody,
@@ -76,6 +77,13 @@ import {
   contextTimeline,
   ctxInjectLabel,
   ctxAggregateTurns,
+  ctxWindowTurns,
+  ctxTurnSig,
+  ctxOriginTurn,
+  trajectoryRecords,
+  trajectoryAtLevel,
+  trajLabel,
+  trajResultPreview,
 } from "./context";
 import markedSrc from "./vendor/marked.umd.js" with { type: "text" };
 import {
@@ -1410,6 +1418,53 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     body.view-context #split { display: none; }
     body.view-context .cats { display: none; }
     body.view-context #tb-list, body.view-context #tb-page { display: none; }
+
+    /* ---- Trajectory view: the thread as a linear stream of records ---- */
+    #trajectory-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+    body.view-trajectory #trajectory-view { display: flex; }
+    body.view-trajectory #split { display: none; }
+    body.view-trajectory .cats { display: none; }
+    body.view-trajectory #tb-list, body.view-trajectory #tb-page, body.view-trajectory #tb-find, body.view-trajectory #tb-trace { display: none; }
+    .tj-head { padding: 10px 16px 8px; border-bottom: 1px solid var(--border); }
+    .tj-title { display: flex; align-items: baseline; gap: 10px; }
+    .tj-t-label { font-size: 13px; color: var(--text); font-weight: 600; }
+    .tj-t-meta { font-size: 11px; color: var(--text-faint); }
+    .tj-title .turn-wire { margin-left: auto; }
+    .tj-lanes { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin: 8px 0 5px; background: var(--bg-surface); }
+    .tj-lane { min-width: 2px; }
+    .tj-lane-key { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px; color: var(--text-faint); }
+    .tj-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    .tj-counts { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+    .tj-toolbar { display: flex; align-items: center; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .tj-lvls, .tj-kinds { display: inline-flex; gap: 2px; }
+    .tj-lvl, .tj-kind { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text-faint); border: 1px solid var(--border); padding: 2px 8px; border-radius: 5px; cursor: pointer; }
+    .tj-lvl.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .tj-kind.active { color: var(--text); border-color: var(--tjc, var(--accent)); background: color-mix(in srgb, var(--tjc, var(--accent)) 14%, transparent); }
+    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 180px; }
+    .tj-hidden { font-size: 10px; color: var(--text-faint); }
+    .tj-body { flex: 1; min-height: 0; display: flex; }
+    .tj-list { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 0 24px; }
+    .tj-detail { width: 40%; max-width: 560px; min-width: 300px; border-left: 1px solid var(--border); overflow-y: auto; padding: 10px 14px 24px; }
+    .tj-turn { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+    .tj-row { display: flex; align-items: center; gap: 8px; padding: 3px 16px; text-decoration: none; color: var(--text); border-left: 2px solid transparent; font-size: 12px; }
+    .tj-row:hover { background: var(--hover); }
+    .tj-row.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left-color: var(--accent); }
+    .tj-badge { flex: 0 0 auto; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--tjc, var(--text-faint)); width: 52px; text-align: right; }
+    .tj-row.tj-think .tj-badge, .tj-row.tj-think .tj-label { color: var(--text-faint); }
+    .tj-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tj-label.tj-mono { color: var(--tjc); flex: 0 0 auto; max-width: 32ch; }
+    .tj-arrow { flex: 0 0 auto; color: var(--text-faint); }
+    .tj-result { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+    .tj-row.tj-err .tj-result, .tj-row.tj-err .tj-label { color: var(--red); }
+    .tj-gap { flex: 1 1 auto; min-width: 8px; }
+    .tj-tok { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
+    .tj-dh { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+    .tj-dh-addr { font-size: 11px; color: var(--text-faint); }
+    .tj-dh-tok { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+    @media (max-width: 900px) {
+      .tj-body { flex-direction: column; }
+      .tj-detail { width: auto; max-width: none; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+    }
     /* the sheet: a ruled margin that reconciles, a canvas that scrolls.
        The same two-pane grammar the requests (list|detail) and sessions
        (rail|convo) views already use — this view was the odd ribbon out. */
@@ -1634,6 +1689,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        to the shared rule. */
     .cx-item > summary .fold-hint { flex: 0 1 auto; }
     .cx-prow-gap { flex: 1; min-width: 8px; }
+    .cx-since { margin-left: 8px; color: var(--text-faint); font-size: 10px; white-space: nowrap; cursor: pointer; }
+    .cx-since:hover, .cx-since:focus-visible { color: var(--accent); }
     .cx-item > summary { padding: 4px 12px; }
     .cx-item > summary .fold-hint { color: var(--text-muted); }
     .cx-item-n { flex: none; color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; min-width: 84px; text-align: right; }
@@ -1726,6 +1783,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button class="tab active" id="tab-requests">requests</button>
       <button class="tab" id="tab-session">sessions</button>
       <button class="tab" id="tab-context" title="context&#10;What the model&#8217;s context window is assembled from, request by request &#8212; composition, history, events, and a per-step browser.">context</button>
+      <button class="tab" id="tab-trajectory" title="trajectory&#10;The agent&#8217;s path as one linear stream of records &#8212; system, the human, the CONTEXT the harness injected inline, the model&#8217;s thinking, each tool call fused with its result, the reply. Where the time went, at MAP / READ / FULL detail.">trajectory</button>
     </span>
     <span class="tb-group" id="tb-list">
       <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
@@ -1786,6 +1844,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <div id="pulse"></div>
   </div>
   <div id="context-view"></div>
+  <div id="trajectory-view"></div>
 
   <script>${markedSrc}</script>
   <script>
@@ -1941,6 +2000,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${contextTimeline.toString()}
     ${ctxInjectLabel.toString()}
     ${ctxAggregateTurns.toString()}
+    ${ctxWindowTurns.toString()}
+    ${ctxTurnSig.toString()}
+    ${ctxOriginTurn.toString()}
+    ${trajectoryRecords.toString()}
+    ${trajectoryAtLevel.toString()}
+    ${trajLabel.toString()}
+    ${trajResultPreview.toString()}
 
     // Replay timeline primitives, injected from src/replay.ts.
     ${pairStartMs.toString()}
@@ -1974,6 +2040,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${harnessTurnKind.toString()}
     ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
+    ${threadTimeSplit.toString()}
     ${escHtml.toString()}
     ${diffHunk.toString()}
     ${richToolBody.toString()}
@@ -2006,6 +2073,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const tabRequests = document.getElementById('tab-requests');
     const tabSession = document.getElementById('tab-session');
     const tabContext = document.getElementById('tab-context');
+    const tabTrajectory = document.getElementById('tab-trajectory');
+    const trajectoryEl = document.getElementById('trajectory-view');
     const contextEl = document.getElementById('context-view');
 
     // Dashboard link: only meaningful when a server answers /dashboard —
@@ -2353,11 +2422,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 session titles \\u2014 the cctrace-title skill names every session from its spine (your prompts + the agent\\u2019s answers) across subagents; shown in the dashboard, history and header\\n' +
-        '\\u00b7 the trace store \\u2014 traces live in ~/.local/share/cctrace/traces/<project>/, shared across containers; cctrace adopt moves legacy ./.cctrace dirs in\\n' +
-        '\\u00b7 zstd at rest \\u2014 a run archives its trace at exit (30-180x smaller, in the background now); view reads .zst directly\\n' +
-        '\\u00b7 streaming reads from the tail \\u2014 multi-GB traces open in seconds to their newest turns; --full for everything\\n' +
-        '\\u00b7 dashboard rows stay openable \\u2014 compressed, merged or adopted traces resolve from any container\\n' +
+        '\\u00b7 the Trajectory view \\u2014 a thread as one time-anchored stream of records: system, your turns, injected context inline, thinking, tool call + result, reply; MAP / READ / FULL\\n' +
+        '\\u00b7 the Context view \\u2014 what the window is assembled from, request by request: a ledger margin against the model\\u2019s limit, an icicle graph of the step, every injection and compaction as an event\\n' +
+        '\\u00b7 provenance \\u2014 every item in the graph says which turn first carried it into the window; click to pin that step\\n' +
+        '\\u00b7 where the time went \\u2014 model / tools / waiting / between turns, off wire timestamps, on the Sessions chip and the Trajectory strip\\n' +
+        '\\u00b7 the exit seal survives your terminal \\u2014 archive first, helper in its own session, orphaned seals recovered by the next run\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -2494,6 +2563,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
@@ -2508,6 +2578,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
         } else if (msg.type === 'purged') {
           // Pairs deleted via select-to-purge (this page or another one on
           // the same server): drop them everywhere and re-render.
@@ -2521,6 +2592,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
         }
       };
     }
@@ -2545,6 +2617,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ' \\u2014 ' + escapeHtml((e && e.message) || String(e)) + '</div>';
     }
     function formatDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
+    // Spans of minutes and hours (where a session's time went): "820ms",
+    // "4.2s", "31m 09s", "2h 13m" — compact, static, never a ticking surface.
+    function fmtSpan(ms) {
+      if (ms < 1000) return Math.round(ms) + 'ms';
+      const s = ms / 1000;
+      if (s < 60) return s.toFixed(1) + 's';
+      const m = Math.floor(s / 60), sec = Math.round(s % 60);
+      if (m < 60) return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
+      const h = Math.floor(m / 60), mm = m % 60;
+      return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+    }
     // Wall-clock is always 24h — locale 12h AM/PM wastes row width and
     // reads slower in a dense table.
     function fmtTime(d) { return d.toTimeString().slice(0, 8); }
@@ -2828,6 +2911,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
         setView('context');
         showContext(key, sub);
+      } else if ((m = h.match(/^#\\/trajectory(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
+        // #/trajectory[/<sid8-or-thread-key>[/<thread-key>]] — same key
+        // grammar and shared selection as sessions/context.
+        let key = m[1] || null;
+        if (key) { try { key = decodeURIComponent(key); } catch {} }
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        setView('trajectory');
+        showTrajectory(key, sub);
       } else {
         setView('requests');
         closeDetail();
@@ -2845,17 +2937,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (v !== 'requests' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
       document.body.classList.toggle('view-context', v === 'context');
+      document.body.classList.toggle('view-trajectory', v === 'trajectory');
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
       tabContext.classList.toggle('active', v === 'context');
+      tabTrajectory.classList.toggle('active', v === 'trajectory');
     }
     tabRequests.onclick = () => { location.hash = ''; };
     tabSession.onclick = () => { location.hash = '#/session'; };
     // The context tab keeps the sessions view's selection — same thread,
     // different lens.
     tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey); };
+    tabTrajectory.onclick = () => { location.hash = tjHash(sessionSelKey); };
     function ctxHash(key) {
       return '#/context' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
+    }
+    function tjHash(key) {
+      return '#/trajectory' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
     }
 
     function openDetail(id) {
@@ -4891,6 +4989,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (p) bits.push(formatDuration(p.duration));
         if (p && p.response && typeof p.response.firstTokenMs === 'number')
           bits.push('ttft ' + fmtMs(p.response.firstTokenMs));
+        // The step's own tool / wait time (threadTimeSplit): the gap from
+        // this reply's end to the working loop's next request.
+        const tsp = convoTime && turn.pairId ? convoTime.byPair[turn.pairId] : null;
+        if (tsp && tsp.tools) bits.push('tools ' + fmtSpan(tsp.tools));
+        else if (tsp && tsp.waiting) bits.push('waiting ' + fmtSpan(tsp.waiting));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
       } else if (turn.role === 'assistant' && !turn.pairId) {
@@ -4939,6 +5042,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // reading history — new activity surfaces as a pill instead. Snapshots
     // open at the top: reviewing a finished session is reading, not tailing.
     let convoKey = null;   // thread key currently rendered in the convo pane
+    let convoTime = null;  // threadTimeSplit of that thread (the role bars read it)
     const TAIL_SLACK = 60; // px from the bottom that still counts as tailing
 
     function convoAtBottom() {
@@ -4992,6 +5096,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'prompt cache totals over this thread\\u2019s requests \\u2014 \\u2193 read, \\u2191 written');
       }
       if (t.usage.cost) chips += kv('cost', fmtCost(t.usage.cost), '', 'estimated from sticker pricing \\u2014 sum over this thread\\u2019s requests');
+      // Where the wall-clock went (dsh's Trajectory lanes — Input / Model /
+      // Tools — read off cctrace's own pairs, see threadTimeSplit). One
+      // chip, the split in the hover; every figure is a wire timestamp.
+      convoTime = threadTimeSplit(t, pairOf);
+      if (convoTime.steps > 1) {
+        const tb = ['model ' + fmtSpan(convoTime.model)];
+        if (convoTime.tools) tb.push('tools ' + fmtSpan(convoTime.tools));
+        if (convoTime.waiting) tb.push('waiting ' + fmtSpan(convoTime.waiting));
+        if (convoTime.between) tb.push('between turns ' + fmtSpan(convoTime.between));
+        chips += kv('time', tb.join(' \\u00b7 '), '',
+          'where this thread\\u2019s ' + fmtSpan(convoTime.wall) + ' went, from the wire alone \\u2014 model: the requests\\u2019 own durations; tools: the gap after a reply that made tool calls until the same working loop\\u2019s next request (one gap may cover several calls run in parallel); waiting: such a gap after a reply with no tool call (the harness came back on its own); between turns: the gap before the next prompt. Failed and superseded requests are not on the path.');
+      }
       // Error metrics, reported separately — a failed wire request and a
       // failed tool call are different problems (idea: error rate per thread).
       const eu = t.usage;
@@ -5348,6 +5464,183 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderContextView(sel);
     }
 
+    // ---- Trajectory view: the thread as one linear stream of records ----
+    // (dsh's Trajectory tab, in cctrace's terms — trajectoryRecords in
+    // src/context.ts). Two panes like requests (list | inspector); the
+    // list is the agent's PATH, every record a row with context injections
+    // inline; the inspector opens the picked record's full block. The level
+    // toggle (archify's MAP/READ/FULL) filters, never summarizes.
+    let tjLevel = localStorage.getItem('cctrace-tj-level') || 'full';
+    if (tjLevel !== 'full' && tjLevel !== 'read' && tjLevel !== 'map') tjLevel = 'full';
+    let tjFilter = 'all';     // 'all' or a record kind
+    let tjQuery = '';
+    let tjSel = null;         // selected record index (_i), preserved across re-renders
+    let tjCurThread = null;
+    let tjRecs = [];          // the current thread's full records (each carries _i)
+    const TJ_KIND_COLOR = { system: '#8957e5', user: '#3fb950', context: '#db61a2', assistant: '#4184e4', tool: '#39c5cf' };
+    const TJ_KINDS = ['all', 'user', 'context', 'assistant', 'tool'];
+
+    function showTrajectory(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        trajectoryEl.innerHTML = '<div class="empty">No model calls captured yet.</div>';
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
+      sessionSelKey = sel.key;
+      renderTrajectory(sel);
+    }
+
+    function tjBadge(r) {
+      const k = r.kind;
+      const txt = k === 'assistant' ? (r.think ? 'THINK' : 'ASSIST') : k.toUpperCase();
+      const c = r.think ? 'var(--text-faint)' : (TJ_KIND_COLOR[k] || 'var(--text-faint)');
+      return '<span class="tj-badge" style="--tjc:' + c + '">' + txt + '</span>';
+    }
+
+    // The picked record, opened. A tool shows call + result + schema via the
+    // detail-panel's own tool renderer; a system record its blocks; anything
+    // else its block. The head names kind, turn.step, weight, and the wire.
+    function renderTjDetail(r, results) {
+      if (!r) return '<div class="cx-note">pick a record to open it</div>';
+      const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' \\u00b7 step ' + r.step : '') : '';
+      const wire = r.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(r.pairId) + '" title="open the wire request that carried this record">wire \\u2192</a>' : '';
+      const head = '<div class="tj-dh">' + tjBadge(r) +
+        (addr ? '<span class="tj-dh-addr">' + addr + '</span>' : '') +
+        '<span class="tj-dh-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' + wire + '</div>';
+      let body = '';
+      try {
+        if (r.kind === 'system') body = renderSystem((r.block && r.block.blocks) || []);
+        else if (r.kind === 'tool') body = renderBlockS(r.block, results, true);
+        else body = renderBlock(r.block, r.kind === 'assistant');
+      } catch (e) { body = brokenItem('record', r.pairId, e); }
+      return head + '<div class="tj-dbody">' + body + '</div>';
+    }
+
+    function renderTrajectory(t) {
+      const same = tjCurThread && tjCurThread.key === t.key;
+      const prevTop = same ? (trajectoryEl.querySelector('.tj-list') || {}).scrollTop || 0 : 0;
+      // A live pair re-renders the whole view; the search box must survive
+      // it with focus and caret (the input handler's own re-render too).
+      const prevSearch = trajectoryEl.querySelector('#tj-search');
+      const searchFocused = !!prevSearch && document.activeElement === prevSearch;
+      const caret = searchFocused ? prevSearch.selectionStart : 0;
+      if (!same) tjSel = null; // a record index means nothing in another thread
+      tjCurThread = t;
+      tjRecs = trajectoryRecords(t);
+      tjRecs.forEach((r, i) => { r._i = i; });
+      // A results index for the inspector's tool renderer (tool_use -> result).
+      const results = {};
+      for (const r of tjRecs) if (r.kind === 'tool' && r.block && r.block.id) results[r.block.id] = r.result;
+      if (tjSel == null || tjSel >= tjRecs.length) tjSel = tjRecs.length ? 0 : null;
+
+      const leveled = trajectoryAtLevel(tjRecs, tjLevel);
+      let shown = leveled.records;
+      if (tjFilter !== 'all') shown = shown.filter(r => r.kind === tjFilter);
+      const q = tjQuery.trim().toLowerCase();
+      if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
+
+      // ---- head: identity + where the time went (the trajectory shape) ----
+      const model = t.model || (t.models && Object.keys(t.models)[0]) || '?';
+      const sid = t.sessionId ? t.sessionId.slice(0, 8) : '';
+      const split = threadTimeSplit(t, pairOf);
+      let lanes = '';
+      if (split.steps > 1 && split.wall > 0) {
+        const seg = (v, c, lbl) => v > 0 ? '<span class="tj-lane" style="flex:' + v + ';background:' + c + '" title="' + lbl + ' ' + fmtSpan(v) + '"></span>' : '';
+        const gapMs = Math.max(0, split.wall - split.model - split.tools - split.waiting - split.between);
+        lanes = '<div class="tj-lanes">' +
+          seg(split.model, '#4184e4', 'model') + seg(split.tools, '#39c5cf', 'tools') +
+          seg(split.waiting, '#d29922', 'waiting') + seg(split.between, 'var(--border)', 'between turns') +
+          (gapMs ? seg(gapMs, 'var(--border)', 'other') : '') + '</div>' +
+          '<div class="tj-lane-key">' +
+          '<span><i style="background:#4184e4"></i>model ' + fmtSpan(split.model) + '</span>' +
+          (split.tools ? '<span><i style="background:#39c5cf"></i>tools ' + fmtSpan(split.tools) + '</span>' : '') +
+          (split.waiting ? '<span><i style="background:#d29922"></i>waiting ' + fmtSpan(split.waiting) + '</span>' : '') +
+          (split.between ? '<span><i style="background:var(--border)"></i>between ' + fmtSpan(split.between) + '</span>' : '') +
+          '</div>';
+      }
+      const head = '<div class="tj-head">' +
+        '<div class="tj-title">' +
+          '<span class="tj-t-label" data-mask>' + escapeHtml(t.label || 'thread') + '</span>' +
+          '<span class="tj-t-meta">' + escapeHtml(shortModel(model) || model) +
+            (sid ? ' \\u00b7 <span data-mask>' + escapeHtml(sid) + '</span>' : '') + '</span>' +
+          '<a class="turn-wire" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
+        '</div>' + lanes +
+        '<div class="tj-counts">' + tjRecs.length + ' records \\u00b7 ' +
+          split.steps + ' wire step' + (split.steps === 1 ? '' : 's') +
+          (split.wall ? ' \\u00b7 ' + fmtSpan(split.wall) : '') +
+          (t.usage && t.usage.cost ? ' \\u00b7 ' + fmtCost(t.usage.cost) : '') + '</div>' +
+        '</div>';
+
+      // ---- toolbar: detail level (MAP/READ/FULL), kind filter, search ----
+      const lvlBtn = (v, lbl, tip) => '<button class="tj-lvl' + (tjLevel === v ? ' active' : '') + '" data-tjlvl="' + v + '" title="' + tip + '">' + lbl + '</button>';
+      const kindBtn = k => '<button class="tj-kind' + (tjFilter === k ? ' active' : '') + '" data-tjkind="' + k + '"' +
+        (k !== 'all' ? ' style="--tjc:' + (TJ_KIND_COLOR[k] || 'var(--text-faint)') + '"' : '') + '>' + k + '</button>';
+      const toolbar = '<div class="tj-toolbar">' +
+        '<span class="tj-lvls" title="detail level \\u2014 the stream is always complete; the level decides what earns a row">' +
+          lvlBtn('map', 'map', 'skeleton: the human\\u2019s turns and the tool calls') +
+          lvlBtn('read', 'read', 'drop the budget banners and bare thinking; keep the substance') +
+          lvlBtn('full', 'full', 'every record') + '</span>' +
+        '<span class="tj-kinds">' + TJ_KINDS.map(kindBtn).join('') + '</span>' +
+        '<input type="text" class="tj-search" id="tj-search" placeholder="find in trajectory\\u2026" value="' + escapeHtml(tjQuery) + '">' +
+        (leveled.hidden ? '<span class="tj-hidden">' + leveled.hidden + ' hidden at this level</span>' : '') +
+        '</div>';
+
+      // ---- the record stream ----
+      let rows = '';
+      let lastOrd = -2;
+      for (const r of shown) {
+        if (r.ord !== lastOrd && r.ord != null) {
+          rows += '<div class="tj-turn">turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + '</div>';
+          lastOrd = r.ord;
+        }
+        const isTool = r.kind === 'tool';
+        rows += '<a class="tj-row tj-k-' + r.kind + (r.think ? ' tj-think' : '') + (r.err ? ' tj-err' : '') +
+            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
+          tjBadge(r) +
+          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(r.label) + '</span>' +
+          (isTool && r.detail ? '<span class="tj-arrow">\\u2192</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
+          '<span class="tj-gap"></span>' +
+          '<span class="tj-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' +
+        '</a>';
+      }
+      if (!shown.length) rows = '<div class="cx-note">no records match this filter</div>';
+
+      trajectoryEl.innerHTML = head + toolbar +
+        '<div class="tj-body"><div class="tj-list">' + rows + '</div>' +
+        '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], results) + '</aside></div>';
+
+      const list = trajectoryEl.querySelector('.tj-list');
+      if (list && same) list.scrollTop = prevTop;
+      const detailEl2 = trajectoryEl.querySelector('#tj-detail');
+      // Row click -> open in the inspector (no navigation, like requests).
+      trajectoryEl.querySelectorAll('.tj-row').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          tjSel = +a.dataset.tj;
+          trajectoryEl.querySelectorAll('.tj-row.sel').forEach(x => x.classList.remove('sel'));
+          a.classList.add('sel');
+          if (!detailEl2) return;
+          detailEl2.innerHTML = renderTjDetail(tjRecs[tjSel], results);
+          detailEl2.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
+        });
+      });
+      // Level / kind / search controls re-render (cheap; the walk is memo-free
+      // but the thread is small relative to the page).
+      trajectoryEl.querySelectorAll('[data-tjlvl]').forEach(b => b.addEventListener('click', () => {
+        tjLevel = b.dataset.tjlvl; localStorage.setItem('cctrace-tj-level', tjLevel); renderTrajectory(t);
+      }));
+      trajectoryEl.querySelectorAll('[data-tjkind]').forEach(b => b.addEventListener('click', () => {
+        tjFilter = b.dataset.tjkind; renderTrajectory(t);
+      }));
+      const search = trajectoryEl.querySelector('#tj-search');
+      if (search && searchFocused) { search.focus(); try { search.setSelectionRange(caret, caret); } catch {} }
+      if (search) search.addEventListener('input', () => {
+        tjQuery = search.value;
+        renderTrajectory(t);
+      });
+    }
+
     // Browser fold state survives re-renders: category opens by cat id,
     // item opens by "cat:index" (a live pair appends steps; the browsed
     // step's items are stable for a picked pair).
@@ -5359,6 +5652,58 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const ctxGraphCache = new Map();
     const CTX_GRAPH_KEEP = 12;
     let ctxGraphAt = null;   // pairId the graph pane currently shows
+    // Provenance for the pane rows: the current thread's spine with its
+    // turn sigs (computed once per spine length) and the graph pair's
+    // window turns (one slot — the pane renders many rows against one
+    // window). ctxCurThread lets the provenance link re-render the view.
+    let ctxSince = null;
+    let ctxCurThread = null;
+    // "since turn 04 · step 2": the request that first carried this row's
+    // turn into the window (semantica's provenance trail, cctrace-style:
+    // an origin is a wire request). Content-verified against the spine
+    // (ctxOriginTurn). A user-role turn — the prompt, a tool result, an
+    // injection — entered with the NEXT request, whose reply is the step
+    // named ("since"); an assistant turn IS a step's reply ("from").
+    // Envelope rows (system, schemas) have no turn and say nothing.
+    function ctxSinceHtml(node) {
+      const c = ctxSince;
+      if (!c || !ctxGraphAt) return '';
+      let n = node;
+      while (n && !n.item && n.kids && n.kids.length) n = n.kids[0];
+      const it = n && n.item;
+      if (!it || it.ti == null || it.ti < 0) return '';
+      if (c.winPair !== ctxGraphAt) {
+        const p = pairOf(ctxGraphAt);
+        c.win = p ? ctxWindowTurns(p) : [];
+        c.winPair = ctxGraphAt;
+        // Where this request's window ENDS in the spine: the reply it
+        // produced (anchors the content match — see ctxOriginTurn).
+        let end = c.spine.length;
+        for (let i = 0; i < c.spine.length; i++) { const tt = c.spine[i]; if (tt && tt.role === 'assistant' && tt.pairId === ctxGraphAt) { end = i; break; } }
+        c.winEnd = end;
+      }
+      const vi = ctxOriginTurn(c.spine, c.win, it.ti, c.sigs, c.winEnd);
+      if (vi < 0) return '';
+      const origin = c.spine[vi];
+      let pid = null;
+      if (origin.role === 'assistant') {
+        // A reply is its own step — an unattributed one names nothing
+        // rather than borrowing the next step's address.
+        if (origin.pairId && c.addr[origin.pairId]) pid = origin.pairId;
+      } else {
+        for (let i = vi; i < c.spine.length && !pid; i++) {
+          const tt = c.spine[i];
+          if (tt && tt.role === 'assistant' && tt.pairId && c.addr[tt.pairId]) pid = tt.pairId;
+        }
+      }
+      if (!pid) return '';
+      const lbl = ctxOrdLbl(c.addr, pid);
+      if (!lbl) return '';
+      const verb = c.spine[vi].role === 'assistant' ? 'from' : 'since';
+      return '<span class="cx-since" role="button" tabindex="0" data-cxpin="' + escapeHtml(pid) + '" data-tip="' +
+        escapeHtml((verb === 'from' ? 'the reply of ' : 'in the window since ') + lbl + ' \\u2014 the request that first carried it') +
+        '\\n> click to pin that step">' + verb + ' ' + escapeHtml(lbl) + '</span>';
+    }
     function ctxGraphOf(pairId) {
       let g = ctxGraphCache.get(pairId);
       if (g === undefined) {
@@ -5734,7 +6079,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '<summary>' + (showKind ? '<span class="fold-title">' + escapeHtml((k.item && k.item.kind) || 'item') + '</span>' : '') +
             '<span class="fold-hint">' + escapeHtml(lbl) + '</span>' +
             '<span class="cx-item-n">\\u2248' + fmtCompact(k.tokens) + '</span>' +
-            '<span class="cx-prow-gap"></span>' +
+            '<span class="cx-prow-gap"></span>' + ctxSinceHtml(k) +
             '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
         }
         if (ranked.length > CAP) rows += '<div class="cx-more">the ' + CAP + ' heaviest of ' + ranked.length +
@@ -5749,7 +6094,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           (k.n > 1 ? '<span class="cx-fn-n">×' + k.n + '</span>' : '') +
           '<span class="cx-wt"><span class="cx-wf" style="width:' + (hit.tokens ? Math.min(100, (k.tokens / hit.tokens) * 100) : 0).toFixed(2) + '%;background:' + (k.color || 'var(--text-faint)') + '"></span></span>' +
           '<span class="cx-item-n">≈' + fmtCompact(k.tokens) + ' · ' + ctxPctStr(k.tokens, ctxFlameTotal) + '</span>' +
-          '<span class="cx-prow-gap"></span></a>';
+          '<span class="cx-prow-gap"></span>' + ctxSinceHtml(k) + '</a>';
       }
       if (ranked.length > 40) rows += '<div class="cx-more">+' + (ranked.length - 40) + ' more</div>';
       return head + rows;
@@ -5759,6 +6104,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // hold a megabyte; only what the reader opens is rendered. Keys are the
     // flame's node keys, stable across steps, so what you opened stays open
     // while you scrub the history chart.
+    // The provenance link pins the step it names (a path chip is a focus
+    // control, not a picture). Capture phase: the link sits inside a zoom
+    // row / a fold summary, and pinning must win over zooming or toggling.
+    const ctxPinFromLink = (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('[data-cxpin]') : null;
+      if (!a || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!ctxCurThread) return;
+      ctxPinned = a.dataset.cxpin;
+      renderContextView(ctxCurThread);
+    };
+    contextEl.addEventListener('click', ctxPinFromLink, true);
+    contextEl.addEventListener('keydown', ctxPinFromLink, true);
     contextEl.addEventListener('toggle', (e) => {
       const det = e.target;
       if (!det || !det.dataset || !det.dataset.cxitem) return;
@@ -5921,6 +6280,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const tl = d.tl;
       const addr = d.addr;
       const steps = tl.steps;
+      ctxCurThread = t;
+      if (!ctxSince || ctxSince.key !== t.key || ctxSince.n !== t.turns.length) {
+        ctxSince = { key: t.key, n: t.turns.length, spine: t.turns, sigs: t.turns.map(x => ctxTurnSig(x && x.blocks)), addr, winPair: null, win: null, winEnd: 0 };
+      } else ctxSince.addr = addr;
       if (!steps.length) {
         contextEl.innerHTML = '<div class="empty">No model calls in this thread yet.</div>';
         return;

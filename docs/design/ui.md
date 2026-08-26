@@ -109,7 +109,8 @@ to protect that feeling.
   amount parked 800px from the words it belongs to is a hunt, not a column.
 - Every view is two panes: a narrow left column that states what you are
   looking at, and a wide right column you work in — requests
-  (list | detail), sessions (rail | convo), context (ledger | canvas).
+  (list | detail), sessions (rail | convo), context (ledger | canvas),
+  trajectory (record list | inspector).
   The left column is fixed-measure and may stick; the right one scrolls.
   A view that is one full-width ribbon is the odd one out and reads as a
   different product.

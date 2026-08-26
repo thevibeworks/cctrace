@@ -17,6 +17,9 @@ import {
   contextTimeline,
   ctxInjectLabel,
   ctxAggregateTurns,
+  ctxWindowTurns,
+  ctxTurnSig,
+  ctxOriginTurn,
 } from "../src/context";
 import { modelWindow } from "../src/pricing";
 import { filterCatalog } from "../src/pricing-catalog";
@@ -628,5 +631,72 @@ describe("filterCatalog carries context windows", () => {
 describe("CTX_CATS", () => {
   test("six categories in stacking order", () => {
     expect(CTX_CATS.map((c) => c.id)).toEqual(["system", "tools", "user", "inject", "assistant", "toolResult"]);
+  });
+});
+
+describe("provenance: ctxOriginTurn / ctxTurnSig / ctxWindowTurns", () => {
+  const CALL = { type: "tool_use", id: "tu9", name: "Bash", input: { cmd: "ls" } };
+  const RES = { type: "tool_result", tool_use_id: "tu9", content: "ok" };
+  // The session's spine, as buildSession keeps it — with an ephemeral
+  // notice the harness injected at index 1 AFTER the window below was sent.
+  const spine = [
+    { role: "user", blocks: [{ type: "text", text: "ask" }] },
+    { role: "user", blocks: [{ type: "text", text: "<system-reminder>notice</system-reminder>" }] },
+    { role: "assistant", blocks: [CALL] },
+    { role: "user", blocks: [RES], toolResultsOnly: true },
+    { role: "assistant", blocks: [{ type: "text", text: "done" }] },
+  ];
+  // An older request's window: same turns, no notice — indices drift by one.
+  const win = [
+    { role: "user", blocks: [{ type: "text", text: "ask" }] },
+    { role: "assistant", blocks: [CALL] },
+    { role: "user", blocks: [RES] },
+  ];
+  test("matches by content, so a repacked index still lands on the right spine turn", () => {
+    expect(ctxOriginTurn(spine, win, 0)).toBe(0);
+    expect(ctxOriginTurn(spine, win, 1)).toBe(2);
+    expect(ctxOriginTurn(spine, win, 2)).toBe(3); // tool results match by tool_use id
+  });
+  test("precomputed sigs give the same answer", () => {
+    const sigs = spine.map((s) => ctxTurnSig(s.blocks));
+    expect(sigs[3]).toBe("r:tu9");
+    expect(ctxOriginTurn(spine, win, 2, sigs)).toBe(3);
+  });
+  test("repeated content after a compaction resolves to the occurrence nearest the request, not the first in the session", () => {
+    // 300-turn spine where the human said "continue" at turns 1, 101, 201
+    // and the model replied "ok" after each; the request under review is
+    // the reply at index 203, whose (compacted) window holds only the
+    // last exchange: [summary, "continue"]. Start-anchoring matched
+    // "continue" to index 1 (|1-1| = 0); end-anchoring lands on 201.
+    const spine: any[] = [];
+    for (let i = 0; i < 300; i++) {
+      if (i % 100 === 1) spine.push({ role: "user", blocks: [{ type: "text", text: "continue" }] });
+      else if (i % 100 === 2) spine.push({ role: "assistant", blocks: [{ type: "text", text: "ok" }] });
+      else spine.push({ role: i % 2 ? "assistant" : "user", blocks: [{ type: "text", text: "turn " + i }] });
+    }
+    const win = [
+      { role: "user", blocks: [{ type: "text", text: "This session is being continued from a previous conversation" }] },
+      { role: "user", blocks: [{ type: "text", text: "continue" }] },
+    ];
+    expect(ctxOriginTurn(spine, win, 1)).toBe(1);            // legacy start anchor: wrong by 200
+    expect(ctxOriginTurn(spine, win, 1, undefined, 203)).toBe(201);
+    // Mid-session, pre-compaction: the window is the spine's prefix up to
+    // the request, and the same anchor still picks the right occurrence.
+    const win2 = spine.slice(0, 103);
+    expect(ctxOriginTurn(spine, win2, 101, undefined, 103)).toBe(101);
+    expect(ctxOriginTurn(spine, win2, 1, undefined, 103)).toBe(1);
+  });
+  test("no turn, no identity, or nothing matching says -1 rather than guessing", () => {
+    expect(ctxOriginTurn(spine, win, -1)).toBe(-1);
+    expect(ctxOriginTurn(spine, win, 7)).toBe(-1);
+    expect(ctxOriginTurn(spine, [{ role: "user", blocks: [] }], 0)).toBe(-1);
+    expect(ctxOriginTurn(spine, [{ role: "user", blocks: [{ type: "text", text: "never sent" }] }], 0)).toBe(-1);
+  });
+  test("ctxWindowTurns is the request body's history, normalized like contextItems", () => {
+    const p = msgPair([{ role: "user", content: "ask" }, { role: "assistant", content: [CALL] }, { role: "user", content: [RES] }]);
+    const w = ctxWindowTurns(p);
+    expect(w.length).toBe(3);
+    expect(w[0].blocks[0].text).toBe("ask");
+    expect(ctxWindowTurns({ request: { body: { _cctrace_stub: true } } })).toEqual([]);
   });
 });

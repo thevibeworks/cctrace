@@ -170,6 +170,18 @@ session) — the link a statusline can afford to print. Hash-routed views:
   request). Estimates carry ≈ and sit next to the provider-reported
   prompt tokens. Selection is shared with the Sessions view, and a step
   links back to its turn there.
+- **Trajectory** (`#/trajectory[/<sid8-or-key>]`): the thread as one
+  linear, time-anchored stream of records — system prompt, the human's
+  turns, harness-injected CONTEXT inline at the moment it entered, the
+  model's thinking, each tool call fused with its result, the reply —
+  kind-badged, in spine order, turn/step addressed like the Sessions
+  outline and the Context view. Two panes: record list | inspector. A
+  detail level filters, never summarizes, and says how many rows it hid:
+  MAP (system + the human + tool calls), READ (drops budget banners and
+  bare thinking), FULL (everything). A kind filter isolates one record
+  type (context-only IS the context trajectory) plus search. The time
+  lanes on top (model / tools / waiting / between turns) are the same
+  wire-timestamp split the Sessions "time" chip carries.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a

@@ -61,6 +61,10 @@ cctrace merge [--prune] [--all] [--yes]   # one deduped session-<id>.jsonl per s
                                           # merges its OWN session at exit — and archives
                                           # the result, see below)
 cctrace compress [--older-than N] [--all] [--yes]
+                                          # --yes first finishes any exit seal an
+                                          # earlier run's helper left undone (seal-*.json
+                                          # in the data dir idle > 10 min: archive, merge,
+                                          # sweep — folded per project dir), then plans.
                                           # zstd archive: streamed file-to-file, level 9
                                           # with a 128MB window (87x on session traces,
                                           # ~1GB/s), decode-verified before the plain

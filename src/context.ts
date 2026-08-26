@@ -1,5 +1,5 @@
 import { extractCallInfo } from "./summarize";
-import { harnessPrompt } from "./session";
+import { harnessPrompt, turnContentSig, loopTurns, buildToolResultIndex } from "./session";
 import {
   wireDialect,
   openaiInput,
@@ -711,4 +711,239 @@ export function ctxAggregateTurns(steps: any[], stepAddr: any): any[] {
     }
   }
   return out;
+}
+
+/** The window's history turns as the request body carries them — the same
+ * normalization contextItems walks, dialect-aware, so an item's `ti`
+ * indexes into this list. Empty for stubs and non-model-call pairs. */
+export function ctxWindowTurns(pair: any): any[] {
+  const dialect = wireDialect(pair);
+  if (!dialect) return [];
+  const body = (pair.request && pair.request.body) || {};
+  if (body._cctrace_stub) return [];
+  return dialect === "openai" ? normalizeOpenaiTurns(openaiInput(body)) : ctxNormalizeTurns(body.messages);
+}
+
+/** A turn's identity for matching a window turn to the session's spine:
+ * turnContentSig (text, else the first tool_use), and for a turn that is
+ * only tool results — which turnContentSig leaves blank — the first
+ * result's tool_use id, unique per call. */
+export function ctxTurnSig(blocks: any[]): string {
+  const s = turnContentSig(blocks || []);
+  if (s) return s;
+  for (const b of blocks || []) if (b && b.type === "tool_result" && b.tool_use_id) return "r:" + b.tool_use_id;
+  return "";
+}
+
+/**
+ * PROVENANCE: which turn of the session's spine a window turn IS — so the
+ * view can say since when an item has been in the window (semantica's
+ * provenance trail, in cctrace's terms: an item's origin is the wire
+ * request that first carried it). Content-verified, nearest index first,
+ * the same discipline as buildSession's attribution — never index-only,
+ * because Claude Code repacks ephemeral turns between requests and a bare
+ * index drifts by one to three. Returns the spine index, or -1.
+ * `sigs` = precomputed ctxTurnSig per spine turn (the caller renders many
+ * rows against one spine; computing them once is the whole cost).
+ * `end` = the spine index the window ends at (exclusive) — the position of
+ * the reply this request produced. The window is the spine's history UP TO
+ * that request, so identical content (a repeated "continue", the same
+ * system-reminder opening two turns, a nudge) is disambiguated by distance
+ * from the window's END, not from its start: after a compaction the window
+ * is a handful of turns while the spine is hundreds, and start-anchoring
+ * sent every repeat to its FIRST occurrence in the session. Without `end`
+ * (no request known) it falls back to start-anchoring.
+ */
+export function ctxOriginTurn(spine: any[], win: any[], ti: number, sigs?: string[], end?: number): number {
+  const w = win && ti >= 0 ? win[ti] : null;
+  if (!w) return -1;
+  const sig = ctxTurnSig(w.blocks);
+  if (!sig) return -1;
+  const n = (spine || []).length;
+  const fromEnd = end != null && end >= 0 ? win.length - ti : null;
+  const anchor = end != null && end >= 0 ? Math.min(end, n) : 0;
+  let best = -1;
+  let cost = Infinity;
+  for (let i = 0; i < n; i++) {
+    const s = spine[i];
+    if (!s || s.role !== w.role) continue;
+    const ss = sigs ? sigs[i] : ctxTurnSig(s.blocks);
+    if (ss !== sig) continue;
+    const c = fromEnd != null ? Math.abs((anchor - i) - fromEnd) : Math.abs(i - ti);
+    if (c < cost) { best = i; cost = c; }
+  }
+  return best;
+}
+
+// ============================================================================
+// The TRAJECTORY — the whole thread as a linear, time-anchored stream of
+// RECORDS (dsh's Trajectory tab, in cctrace's terms). Where the Sessions
+// convo reads the conversation and the Context graph reads one request's
+// window, the trajectory reads the agent's PATH: every record the run
+// produced, one row, in order — system prompt, the human's turns, the
+// CONTEXT the harness injected (inline, first-class, at the moment it
+// entered), the model's thinking, each tool call fused with its result,
+// the reply. cctrace's advantage over a harness event log: this is built
+// from the reconstructed spine (buildSession's t.turns), so it is exact
+// and every record carries its wire pair.
+//
+// Record kinds mirror CTX_CATS, as a linear stream:
+//   system | user | context | assistant (think|reply) | tool (call->result)
+// A record: { kind, think, tool, ord, step, label, detail, tokens, pairId,
+//   t, err, block, result, toolName }.  Pure; unit-tested; inlined into
+// the page like session.ts.
+
+/** One-line preview of a normalized block, tag-wrappers stripped. */
+export function trajLabel(b: any): string {
+  if (!b) return "";
+  if (b.type === "text") return ctxSnippet(b.text, 200);
+  if (b.type === "thinking") return ctxSnippet(b.thinking, 200);
+  if (b.type === "redacted_thinking") return "[redacted thinking]";
+  if (b.type === "tool_use" || b.type === "server_tool_use") return b.name || "tool";
+  if (b.type === "image") return "[image]";
+  return ctxSnippet(typeof b.text === "string" ? b.text : "", 200);
+}
+
+/** The tool_result's content as a one-line preview (the "-> result" side). */
+export function trajResultPreview(res: any): string {
+  if (!res) return "";
+  const c = res.content;
+  let s = "";
+  if (typeof c === "string") s = c;
+  else if (Array.isArray(c)) s = c.map((x: any) => (x && x.type === "text" ? x.text : x && x.type === "image" ? "[image]" : "")).join(" ");
+  else if (c != null) { try { s = JSON.stringify(c); } catch { s = ""; } }
+  return ctxSnippet(s, 200);
+}
+
+/**
+ * The thread's records, in spine order. `t` is a built thread (buildSession);
+ * loops/results are recomputed from t.turns so this stays a pure function of
+ * the thread. Turn/step addressing matches the Sessions outline and the
+ * Context view (loopTurns): a record's `ord` is its working-loop ordinal
+ * (0-based; +1 for display), `step` the step within the loop.
+ */
+export function trajectoryRecords(t: any): any[] {
+  const out: any[] = [];
+  if (!t) return out;
+  const turns: any[] = t.turns || [];
+  const results = buildToolResultIndex(turns);
+
+  // Working-loop address per VISIBLE turn (same numbering as the outline).
+  const vis = turns.filter((x: any) => x && !x.toolResultsOnly);
+  const loops = loopTurns(vis);
+  const addr: any = {}; // visible-index -> { ord, step }
+  for (let li = 0; li < loops.length; li++) {
+    const L = loops[li];
+    const mark = (i: number, step: number) => { if (i != null) addr[i] = { ord: li, step }; };
+    if (L.head != null) mark(L.head, 0);
+    // An assistant member IS a step. A user-role member (a tool result, an
+    // injection, a nudge) entered the window with the NEXT request, so it
+    // takes that request's step — the address the Context pane's
+    // provenance already gives it ("since turn 04 · step 2"); one turn,
+    // one name on every surface. Injected after the final reply: step 0.
+    let next = 0;
+    for (let m = L.members.length - 1; m >= 0; m--) {
+      const v = L.members[m];
+      const own = L.steps && L.steps[v];
+      if (own) next = own;
+      mark(v, own || next);
+    }
+  }
+
+  // The system prompt opens the trajectory — one record, blocks in the
+  // inspector (dsh's "Initial System Prompt" row).
+  const sysBlocks = typeof t.system === "string" ? [{ type: "text", text: t.system }] : (Array.isArray(t.system) ? t.system : []);
+  if (sysBlocks.length) {
+    let tok = 0;
+    for (const b of sysBlocks) tok += estTokens(String((b && b.text) || "").length);
+    out.push({ kind: "system", ord: null, step: 0, label: "initial system prompt", detail: "", tokens: tok, pairId: null, t: 0, err: false, block: { type: "system", blocks: sysBlocks }, result: null, toolName: "" });
+  }
+
+  let vi = 0;
+  for (const turn of turns) {
+    if (!turn) continue;
+    if (turn.toolResultsOnly) continue; // results are fused into their tool_use below
+    const a = addr[vi] || { ord: null, step: 0 };
+    vi++;
+    const pairId = turn.pairId || null;
+    const role = turn.role;
+    for (const b of turn.blocks || []) {
+      if (!b) continue;
+      if (role === "user") {
+        // Split the human's words from the harness's injections IN ORDER.
+        const text = b.type === "text" ? String(b.text || "") : "";
+        if (b.type === "text") {
+          const inject = ctxTextCat(text) === "inject";
+          out.push({
+            kind: inject ? "context" : "user",
+            ord: a.ord, step: a.step,
+            label: inject ? ctxInjectLabel(text) : ctxSnippet(text, 200),
+            detail: inject ? ctxSnippet(text, 200) : "",
+            tokens: estTokens(text.length), pairId, t: 0, err: false,
+            block: b, result: null, toolName: "",
+          });
+        } else if (b.type === "image") {
+          out.push({ kind: "user", ord: a.ord, step: a.step, label: "[image]", detail: "", tokens: CTX_IMG_EST, pairId, t: 0, err: false, block: b, result: null, toolName: "" });
+        }
+        // tool_result blocks that ride a user turn are handled via the
+        // index on the tool_use side; a bare user turn rarely holds them.
+        continue;
+      }
+      if (role === "assistant") {
+        if (b.type === "tool_use" || b.type === "server_tool_use") {
+          const res = results[b.id];
+          out.push({
+            kind: "tool", ord: a.ord, step: a.step,
+            label: b.name || "tool", detail: trajResultPreview(res),
+            tokens: ctxBlockTokens(b) + (res ? ctxBlockTokens(res) : 0),
+            pairId, t: 0, err: !!(res && res.is_error),
+            block: b, result: res || null, toolName: b.name || "",
+          });
+        } else if (b.type === "text" || b.type === "thinking" || b.type === "redacted_thinking") {
+          const think = b.type !== "text";
+          const label = trajLabel(b);
+          if (!label && !think) continue; // empty text block, no signal
+          out.push({
+            kind: "assistant", think, ord: a.ord, step: a.step,
+            label: label || "[thinking]", detail: "", tokens: ctxBlockTokens(b),
+            pairId, t: 0, err: false, block: b, result: null, toolName: "",
+          });
+        }
+        continue;
+      }
+      // A neither-user-nor-assistant turn (Claude Code sends nudges as role
+      // "system"): harness-authored context by definition.
+      if (b.type === "text") {
+        out.push({ kind: "context", ord: a.ord, step: a.step, label: ctxInjectLabel(b.text), detail: ctxSnippet(b.text, 200), tokens: estTokens(String(b.text || "").length), pairId, t: 0, err: false, block: b, result: null, toolName: "" });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Roll trajectory records up to a coarser DETAIL LEVEL (archify's MAP -> READ
+ * -> FULL progressive disclosure). The stream is always complete; the level
+ * decides what earns a row so a long run stays scannable:
+ *   full — every record (the default);
+ *   read — drop the token-budget/reminder banners and standalone thinking
+ *          (the plumbing), keep system, the human, replies, tool calls, and
+ *          the SUBSTANTIVE context (skills, AGENTS.md, watch/notice events);
+ *   map  — only the skeleton: the human's turns and the tool calls (what the
+ *          agent was asked and what it did), plus system.
+ * Filtering, never summarizing: a hidden record is counted, not folded into a
+ * lie. Returns { records, hidden } — hidden is how many the level dropped.
+ */
+export function trajectoryAtLevel(records: any[], level: string): any {
+  if (level === "full" || !level) return { records: records.slice(), hidden: 0 };
+  const NOISE = new Set(["token budget", "SessionStart hook"]);
+  const keep = (r: any): boolean => {
+    if (level === "map") return r.kind === "system" || r.kind === "user" || r.kind === "tool";
+    // read: drop banners and bare thinking
+    if (r.kind === "context" && NOISE.has(r.label)) return false;
+    if (r.kind === "assistant" && r.think) return false;
+    return true;
+  };
+  const kept = records.filter(keep);
+  return { records: kept, hidden: records.length - kept.length };
 }

@@ -5,6 +5,7 @@ import { tmpdir } from "os";
 import {
   projectKey, projectTraceDir, ensureProjectDir, projectPathOf, legacyLocalDir, resolveTraceDirs,
   listStoreProjects, registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, storeRoot, parseRebase, rebasePath,
+  staleSealJobs, SEAL_JOB_IDLE_MS,
 } from "../src/store";
 import { instancesDir } from "../src/instances";
 
@@ -292,5 +293,24 @@ describe("adopt", () => {
       join(projectTraceDir(dataDir, "/p"), "trace-live.jsonl"),
     ].sort());
     expect(readdirSync(instancesDir(dataDir)).length).toBe(3); // reads never GC
+  });
+});
+
+describe("exit-seal jobs", () => {
+  test("staleSealJobs: idle seal-*.json only — a fresh job, a foreign file and a subdir are left alone", () => {
+    const now = Date.now();
+    const old = join(dataDir, "seal-aaaa-1.json");
+    const fresh = join(dataDir, "seal-bbbb-2.json");
+    writeFileSync(old, "{}");
+    writeFileSync(fresh, "{}");
+    writeFileSync(join(dataDir, "pricing.json"), "{}");
+    writeFileSync(join(dataDir, "seal-notes.txt"), "");
+    mkdirSync(join(dataDir, "seal-dir.json"));
+    age(old, SEAL_JOB_IDLE_MS + 60_000);
+    expect(staleSealJobs(dataDir, now)).toEqual([old]);
+    // idle threshold is inclusive of "exactly idle"; a shorter window catches the fresh one too
+    expect(staleSealJobs(dataDir, now + 1000, 500).sort()).toEqual([old, fresh].sort());
+    // a missing data dir is nothing, not an error
+    expect(staleSealJobs(join(root, "nope"))).toEqual([]);
   });
 });

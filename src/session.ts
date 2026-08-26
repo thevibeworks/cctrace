@@ -1205,3 +1205,58 @@ export function richToolBody(name: string, input: any): string {
   }
   return "";
 }
+
+/**
+ * Where a thread's wall-clock went, read off the wire alone — dsh's
+ * Trajectory lanes (Input / Model / Tools) in cctrace's terms. For every
+ * reply attributed to a request, `model` is that request's duration, and
+ * the gap from its response end to the NEXT attributed request's start is:
+ *   tools    — same working loop and the reply made tool calls (the harness
+ *              ran them; one gap may cover several calls run in parallel, so
+ *              it is the STEP's tool time, never per call);
+ *   waiting  — same loop, no tool call in the reply (the harness came back
+ *              on its own: a nudge, a loaded tool, a recap);
+ *   between  — the loop ended there (the next prompt took that long to
+ *              arrive — a human typing, a harness resuming; the label
+ *              names the gap, not its cause).
+ * Failed, superseded and unattributed requests are not on the reply path
+ * and add nothing; the gap simply spans them. All ms. The path is the
+ * spine's attributed replies in order; `pairOf(id)` resolves each to its
+ * wire pair (the page keeps that index; a finished thread carries ids).
+ *   { wall, model, tools, waiting, between, steps, byPair: { [pairId]: { tools | waiting } } }
+ */
+export function threadTimeSplit(t: any, pairOf: (id: string) => any): any {
+  const out: any = { wall: 0, model: 0, tools: 0, waiting: 0, between: 0, steps: 0, byPair: {} };
+  const vis = (t && t.turns ? t.turns : []).filter((x: any) => x && !x.toolResultsOnly);
+  const loops = loopTurns(vis);
+  const path: any[] = []; // { p, loop, calls } in spine order
+  for (let li = 0; li < loops.length; li++) {
+    for (const v of loops[li].members) {
+      const turn = vis[v];
+      if (!turn || turn.role !== "assistant" || !turn.pairId) continue;
+      const p = pairOf(turn.pairId);
+      if (!p || !p.request) continue;
+      path.push({ p, loop: li, calls: (turn.blocks || []).some((b: any) => b && (b.type === "tool_use" || b.type === "server_tool_use")) });
+    }
+  }
+  if (!path.length) return out;
+  for (let i = 0; i < path.length; i++) {
+    const { p, loop, calls } = path[i];
+    const dur = p.duration || 0;
+    out.model += dur;
+    out.steps++;
+    const next = path[i + 1];
+    if (!next) continue;
+    const gap = Math.max(0, ((next.p.request.timestamp || 0) - (p.request.timestamp || 0)) * 1000 - dur);
+    if (loop !== next.loop) { out.between += gap; continue; }
+    const kind = calls ? "tools" : "waiting";
+    out[kind] += gap;
+    const slot: any = {};
+    slot[kind] = gap;
+    out.byPair[p.id] = slot;
+  }
+  const first = path[0].p;
+  const last = path[path.length - 1].p;
+  out.wall = Math.max(0, ((last.request.timestamp || 0) - (first.request.timestamp || 0)) * 1000 + (last.duration || 0));
+  return out;
+}

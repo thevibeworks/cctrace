@@ -2,7 +2,7 @@ import { readdirSync, statSync, writeFileSync, appendFileSync, unlinkSync, exist
 import { join, basename, resolve } from "path";
 import zlib, { gzipSync } from "zlib";
 import { pipeline } from "stream/promises";
-import { readTraceText, isTraceFile, parseTraceText, type TraceParseStats } from "./history";
+import { readTraceText, isTraceFile, parseTraceText, traceLines, type TraceParseStats } from "./history";
 import { extractSessionId } from "./summarize";
 import { wireTables } from "./clients";
 import type { TracePair } from "./types";
@@ -194,55 +194,88 @@ export interface MergeScope {
   /** Called before each slow step (file scan/parse) so a big merge stays
    * visible instead of looking stuck at exit. */
   onProgress?: (ev: MergeProgress) => void;
+  /** Override of MERGE_MAX_SOURCE_BYTES (tests). */
+  maxSourceBytes?: number;
 }
 
-export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
+/**
+ * The most a single source may decode to and still be unioned in memory.
+ * merge holds a session's pairs as objects (measured ~3x the decoded
+ * bytes as RSS), and a JS string cannot hold ~2 GB at all — a 199 MB
+ * archive of a multi-GB trace killed the exit helper outright (2026-08-26,
+ * no exception to catch: the process was gone). Above this a session is
+ * BLOCKED with the reason, never attempted; its files stay as they are,
+ * and every reader already follows a session across files.
+ */
+export const MERGE_MAX_SOURCE_BYTES = 1 << 30;
+
+/**
+ * One streamed pass over a trace: how many bytes it decodes to, and which
+ * of `ids` it mentions. A wire session id is always a verbatim substring
+ * of its pair's JSON line, so the scan never parses JSON, never holds the
+ * file, and a `.zst` costs one decode at ~1 GB/s. Substring hits over-count
+ * (an id quoted inside a response body), which is safe: the parse re-derives
+ * the real attribution; under-counting is impossible.
+ */
+async function scanTrace(path: string, ids: Set<string>): Promise<{ bytes: number; hits: Set<string> }> {
+  const hits = new Set<string>();
+  let bytes = 0;
+  for await (const line of traceLines(path)) {
+    bytes += Buffer.byteLength(line) + 1;
+    if (hits.size === ids.size) continue;
+    for (const id of ids) if (!hits.has(id) && line.includes(id)) hits.add(id);
+  }
+  return { bytes, hits };
+}
+
+export async function planMerge(logDir: string, scope: MergeScope = {}): Promise<MergePlan> {
   const bySession = new Map<string, { pairs: Map<string, TracePair>; sources: Set<string>; dupes: number }>();
   const fileSessionPairs = new Map<string, { total: number; attributed: number; sids: Set<string> }>();
   const progress = scope.onProgress ?? (() => {});
   let unattributable = 0;
+  const blocked: MergePlan["blocked"] = [];
 
   let sources = ls(logDir).filter((p) => isTraceFile(p) && !basename(p).startsWith("session-")); // our own output is an input below, never a source
 
-  // Scoped plans (the exit auto-merge) pre-scan by SUBSTRING before parsing
-  // anything: a wire session id is always a verbatim substring of its pair's
-  // JSON line, so a file whose text never mentions a target id cannot hold a
-  // pair this plan would keep. Two wins over parse-everything: unrelated
-  // traces in a big log dir are never JSON-parsed at all, and fragmentedOnly
-  // can conclude "nothing to consolidate" — the common fresh-single-file
-  // exit — without parsing even this run's own (possibly huge) trace.
-  // Substring hits over-count (an id quoted inside some response body makes
-  // a file a candidate), which is safe: the parse below re-derives the real
-  // attribution; under-counting is impossible.
-  if (scope.sessionIds && scope.sessionIds.size) {
-    const hitFiles: string[] = [];
-    const hitCount = new Map<string, number>();
-    for (const path of sources) {
-      let st;
-      try { st = statSync(path); } catch { continue; }
-      progress({ phase: "scan", name: basename(path), bytes: st.size });
-      let text: string;
-      try { text = readTraceText(path); } catch { continue; }
-      let hit = false;
-      for (const sid of scope.sessionIds) {
-        if (!text.includes(sid)) continue;
-        hit = true;
-        hitCount.set(sid, (hitCount.get(sid) || 0) + 1);
-      }
-      if (hit) hitFiles.push(path);
+  // Every plan pre-scans each source STREAMED before parsing anything: the
+  // decoded size decides whether the file may be held in memory at all, and
+  // a scoped plan (the exit auto-merge) also learns which files mention its
+  // session ids — unrelated traces in a big dir are never JSON-parsed, and
+  // fragmentedOnly can conclude "nothing to consolidate" (the common
+  // fresh-single-file exit) without parsing even this run's own trace.
+  const wantIds = scope.sessionIds ?? new Set<string>();
+  const cap = scope.maxSourceBytes ?? MERGE_MAX_SOURCE_BYTES;
+  const hitFiles: string[] = [];
+  const hitCount = new Map<string, number>();
+  const tooBig = new Map<string, string>(); // sid -> reason (scoped) ; "*" -> file (unscoped)
+  for (const path of sources) {
+    let st;
+    try { st = statSync(path); } catch { continue; }
+    progress({ phase: "scan", name: basename(path), bytes: st.size });
+    let scan: { bytes: number; hits: Set<string> };
+    try { scan = await scanTrace(path, wantIds); } catch { continue; }
+    if (scan.bytes > cap) {
+      const reason = `${basename(path)} decodes to ${human(scan.bytes)} — over the ${human(cap)} in-memory union cap, left as is`;
+      if (wantIds.size) { for (const sid of scan.hits) tooBig.set(sid, reason); }
+      else blocked.push({ outName: basename(path), reason });
+      continue;
     }
-    if (scope.fragmentedOnly) {
-      // A prior output makes a single-source session still worth merging
-      // (the union grows it); its name starts with the sid's 8-hex prefix
-      // whatever collision-extension the writer used.
-      const names = ls(logDir).map((p) => basename(p));
-      const priorFor = (sid: string) => names.some((n) => n.lastIndexOf(`session-${sid.slice(0, 8)}`, 0) === 0);
-      if (![...scope.sessionIds].some((sid) => (hitCount.get(sid) || 0) >= 2 || priorFor(sid))) {
-        return { sessions: [], unattributable: 0, subsumed: [], blocked: [] };
-      }
-    }
-    sources = hitFiles;
+    if (!wantIds.size) { hitFiles.push(path); continue; }
+    for (const sid of scan.hits) hitCount.set(sid, (hitCount.get(sid) || 0) + 1);
+    if (scan.hits.size) hitFiles.push(path);
   }
+  for (const [sid, reason] of tooBig) blocked.push({ outName: `session-${sid.slice(0, 8)}.jsonl`, reason });
+  if (wantIds.size && scope.fragmentedOnly) {
+    // A prior output makes a single-source session still worth merging
+    // (the union grows it); its name starts with the sid's 8-hex prefix
+    // whatever collision-extension the writer used.
+    const names = ls(logDir).map((p) => basename(p));
+    const priorFor = (sid: string) => names.some((n) => n.lastIndexOf(`session-${sid.slice(0, 8)}`, 0) === 0);
+    if (![...wantIds].some((sid) => !tooBig.has(sid) && ((hitCount.get(sid) || 0) >= 2 || priorFor(sid)))) {
+      return { sessions: [], unattributable: 0, subsumed: [], blocked };
+    }
+  }
+  sources = hitFiles;
 
   for (const path of sources) {
     let size = 0;
@@ -282,9 +315,9 @@ export function planMerge(logDir: string, scope: MergeScope = {}): MergePlan {
   };
 
   const sessions: MergeSession[] = [];
-  const blocked: MergePlan["blocked"] = [];
   for (const [id, g] of bySession) {
     if (scope.sessionIds && !scope.sessionIds.has(id)) continue;
+    if (tooBig.has(id)) continue; // blocked above: one of its sources can't be held
     const shortId = shortFor(id);
     const outPath = join(logDir, `session-${shortId}.jsonl`);
     const priors = [outPath, `${outPath}.zst`, `${outPath}.gz`].filter(existsSync);
@@ -662,6 +695,28 @@ export function planStaleSweep(dir: string, exclude: Set<string>, nowMs = Date.n
   }
   files.sort((a, b) => b.size - a.size);
   return { files, upgrades: [], bytes: files.reduce((s, f) => s + f.size, 0) };
+}
+
+/**
+ * Unlink the orphaned `.tmp` files a killed housekeeping write left in
+ * `dir` — cctrace-minted names only, idle >= TMP_ORPHAN_MS, re-stat'd
+ * first (the rule `clean` applies). A seal helper killed mid-archive leaves
+ * `<trace>.jsonl.zst.<pid>.tmp` (265 MB of one, measured); the next exit in
+ * that dir picks it up. Returns the names removed.
+ */
+export function sweepOrphanTmps(dir: string, nowMs = Date.now()): string[] {
+  const removed: string[] = [];
+  for (const path of ls(dir)) {
+    const name = basename(path);
+    if (!name.endsWith(".tmp") || !isOurTmp(name)) continue;
+    try {
+      const st = statSync(path);
+      if (!st.isFile() || nowMs - st.mtimeMs < TMP_ORPHAN_MS) continue;
+      unlinkSync(path);
+      removed.push(name);
+    } catch { /* gone, or being written */ }
+  }
+  return removed;
 }
 
 // ---- purge: drop whole categories of pairs from saved traces ----

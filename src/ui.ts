@@ -51,11 +51,40 @@ import {
   harnessTurnKind,
   continuationSummaryTurn,
   loopTurns,
+  threadTimeSplit,
   escHtml,
   diffHunk,
   richToolBody,
 } from "./session";
-import { modelPricing, pairCost, fmtCost, costTitle } from "./pricing";
+import { modelPricing, modelWindow, pairCost, fmtCost, costTitle } from "./pricing";
+import {
+  CTX_CATS,
+  CTX_IMG_EST,
+  estTokens,
+  ctxTextCat,
+  ctxBlockTokens,
+  ctxEnvelope,
+  ctxNormalizeTurns,
+  ctxSnippet,
+  contextComposition,
+  contextItems,
+  ctxGroupOf,
+  contextGraph,
+  ctxFlameTree,
+  ctxFlameFind,
+  ctxFlameLayout,
+  ctxFlameDefault,
+  contextTimeline,
+  ctxInjectLabel,
+  ctxAggregateTurns,
+  ctxWindowTurns,
+  ctxTurnSig,
+  ctxOriginTurn,
+  trajectoryRecords,
+  trajectoryAtLevel,
+  trajLabel,
+  trajResultPreview,
+} from "./context";
 import markedSrc from "./vendor/marked.umd.js" with { type: "text" };
 import {
   pairStartMs,
@@ -539,6 +568,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .rp-mark.turn { height: 13px; background: var(--accent); opacity: 0.9; }
     .rp-mark.err { background: var(--red); opacity: 1; }
+    /* a context boundary on the timeline: where the window collapsed
+       (compaction / rewind). The trajectory's axis break, full height. */
+    .rp-mark.cut { height: 17px; width: 1px; background: var(--amber); opacity: 0.85; }
     #rp-handle {
       position: absolute; top: 2px; bottom: 2px; width: 2px; left: 0;
       background: var(--accent); pointer-events: none;
@@ -917,6 +949,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .msg-more:hover { background: var(--hover); }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
+    /* wire image attachments: thumbnail by default, click for full size —
+       the bytes were already in the trace, rendering them adds nothing */
+    .msg-imgwrap { padding: 6px 12px; }
+    .msg-img {
+      display: block; max-width: 320px; max-height: 240px;
+      border: 1px solid var(--border); border-radius: 4px;
+      cursor: zoom-in; background: var(--bg-surface);
+    }
+    .msg-img.full { max-width: 100%; max-height: none; cursor: zoom-out; }
     .fold > summary {
       display: flex; align-items: baseline; gap: 8px;
       padding: 7px 12px; cursor: pointer; user-select: none;
@@ -1200,7 +1241,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tturn:hover { background: var(--hover); color: var(--text); }
     .tturn-ord { color: var(--text-faint); flex-shrink: 0; }
     .tturn:hover .tturn-text { color: var(--text); }
-    .tturn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tturn-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tturn-tools { color: var(--text-faint); }
     /* Tool names are the agent's verbs — same color as the request METHOD
        column, no new palette entry. Args stay in the row's quiet color. */
@@ -1349,6 +1390,373 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       content: ''; flex: 1; border-top: 1px solid var(--border);
     }
     .agent-note a { color: var(--accent); }
+    /* ---- Context view: the ledger that reconciles ----
+       THESIS: the assembled window is a sheet that must close. Six
+       categories sum to the whole, the estimate reconciles against the
+       provider's reported prompt, and the whole sits against the model's
+       limit — so the balance is stated ONCE, in a margin that never
+       scrolls away, and the page refuses the stacked-report arrangement
+       that made the answer arrive fifth, below the fold.
+       OWN-WORLD: the trace viewer's own material (docs/design/ui.md) —
+       GitHub-dark tokens, system mono, 11/12/13 + 9/10 micro, one accent,
+       the six fixed data hues. Its device is the RULE: hairline section
+       rules and a ruled margin, never a card.
+       STORY: how full is the window -> what is filling it -> when did it
+       change -> which of my sessions is worst.
+       FIRST VIEWPORT: sticky left margin — occupancy, the reconciliation,
+       six ledger rows bound to the picked step, each one a zoom into the
+       chart. Right: the trajectory strip, then the icicle directly under
+       it, then its pane. The answer is above the fold.
+       FORM: staging "Ledger That Reconciles", dealt #1 of 3, roll
+       5c1855a3, raised by the spec sheet's bound margin and the proof
+       sheet's raised outliers.
+       Category colors are DATA colors (fixed hex from CTX_CATS in
+       src/context.ts, same rule as the request-category chips); accent
+       stays interactive-only. */
+    #context-view { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
+    body.view-context #context-view { display: block; }
+    body.view-context #split { display: none; }
+    body.view-context .cats { display: none; }
+    body.view-context #tb-list, body.view-context #tb-page { display: none; }
+
+    /* ---- Trajectory view: the thread as a linear stream of records ---- */
+    #trajectory-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+    body.view-trajectory #trajectory-view { display: flex; }
+    body.view-trajectory #split { display: none; }
+    body.view-trajectory .cats { display: none; }
+    body.view-trajectory #tb-list, body.view-trajectory #tb-page, body.view-trajectory #tb-find, body.view-trajectory #tb-trace { display: none; }
+    .tj-head { padding: 10px 16px 8px; border-bottom: 1px solid var(--border); }
+    .tj-title { display: flex; align-items: baseline; gap: 10px; }
+    .tj-t-label { font-size: 13px; color: var(--text); font-weight: 600; }
+    .tj-t-meta { font-size: 11px; color: var(--text-faint); }
+    .tj-title .turn-wire { margin-left: auto; }
+    .tj-lanes { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin: 8px 0 5px; background: var(--bg-surface); }
+    .tj-lane { min-width: 2px; }
+    .tj-lane-key { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px; color: var(--text-faint); }
+    .tj-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    .tj-counts { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
+    .tj-toolbar { display: flex; align-items: center; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .tj-lvls, .tj-kinds { display: inline-flex; gap: 2px; }
+    .tj-lvl, .tj-kind { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text-faint); border: 1px solid var(--border); padding: 2px 8px; border-radius: 5px; cursor: pointer; }
+    .tj-lvl.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .tj-kind.active { color: var(--text); border-color: var(--tjc, var(--accent)); background: color-mix(in srgb, var(--tjc, var(--accent)) 14%, transparent); }
+    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 180px; }
+    .tj-hidden { font-size: 10px; color: var(--text-faint); }
+    .tj-body { flex: 1; min-height: 0; display: flex; }
+    .tj-list { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 0 24px; }
+    .tj-detail { width: 40%; max-width: 560px; min-width: 300px; border-left: 1px solid var(--border); overflow-y: auto; padding: 10px 14px 24px; }
+    .tj-turn { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+    .tj-row { display: flex; align-items: center; gap: 8px; padding: 3px 16px; text-decoration: none; color: var(--text); border-left: 2px solid transparent; font-size: 12px; }
+    .tj-row:hover { background: var(--hover); }
+    .tj-row.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left-color: var(--accent); }
+    .tj-badge { flex: 0 0 auto; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--tjc, var(--text-faint)); width: 52px; text-align: right; }
+    .tj-row.tj-think .tj-badge, .tj-row.tj-think .tj-label { color: var(--text-faint); }
+    .tj-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tj-label.tj-mono { color: var(--tjc); flex: 0 0 auto; max-width: 32ch; }
+    .tj-arrow { flex: 0 0 auto; color: var(--text-faint); }
+    .tj-result { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+    .tj-row.tj-err .tj-result, .tj-row.tj-err .tj-label { color: var(--red); }
+    .tj-gap { flex: 1 1 auto; min-width: 8px; }
+    .tj-tok { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
+    .tj-dh { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
+    .tj-dh-addr { font-size: 11px; color: var(--text-faint); }
+    .tj-dh-tok { margin-left: auto; font-size: 11px; color: var(--text-faint); }
+    @media (max-width: 900px) {
+      .tj-body { flex-direction: column; }
+      .tj-detail { width: auto; max-width: none; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+    }
+    /* the sheet: a ruled margin that reconciles, a canvas that scrolls.
+       The same two-pane grammar the requests (list|detail) and sessions
+       (rail|convo) views already use — this view was the odd ribbon out. */
+    .cx-cols { display: flex; align-items: flex-start; gap: 20px; }
+    .cx-margin {
+      flex: 0 0 320px; min-width: 0; position: sticky; top: 0; align-self: flex-start;
+      max-height: calc(100vh - 120px); overflow-y: auto;
+      padding-right: 16px; border-right: 1px solid var(--border);
+    }
+    .cx-canvas { flex: 1; min-width: 0; }
+    .cx-section { margin-bottom: 20px; }
+    /* ruled sections: the ledger's own device. The first needs no rule —
+       it sits directly under the head's own hairline. */
+    .cx-canvas > .cx-section + .cx-section { border-top: 1px solid var(--border); padding-top: 14px; }
+    .cx-section > h4 {
+      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
+      margin-bottom: 6px; display: flex; align-items: baseline; gap: 10px;
+    }
+    .cx-h4-hint { color: var(--text-faint); text-transform: none; font-size: 10px; font-weight: 400; }
+    .cx-h4-right { margin-left: auto; display: inline-flex; gap: 4px; }
+    .cx-head {
+      display: flex; align-items: center; gap: 8px; font-size: 12px;
+      padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+    }
+    .cx-head .thread-label { color: var(--text); }
+    .cx-goto { margin-left: auto; color: var(--accent); font-size: 11px; text-decoration: none; flex: none; }
+    .cx-goto:hover { text-decoration: underline; }
+    /* ---- the margin's balance: the largest signal on the sheet ---- */
+    .cx-bal { padding-bottom: 12px; font-variant-numeric: tabular-nums; }
+    .cx-bal-n { font-size: 24px; line-height: 1.1; color: var(--text); display: block; }
+    .cx-bal-n .cx-bal-u { font-size: 12px; color: var(--text-muted); margin-left: 3px; }
+    .cx-bal-d { display: block; font-size: 10px; color: var(--text-muted); padding: 3px 0 8px; }
+    /* the composition bar: six colored segments + the grey headroom track */
+    .cx-bar {
+      display: flex; height: 10px; border-radius: 4px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-seg { height: 100%; min-width: 0; }
+    .cx-bal-foot { display: flex; align-items: baseline; gap: 8px; padding-top: 5px; font-size: 10px; color: var(--text-faint); }
+    .cx-bal-pct { color: var(--text); font-size: 11px; }
+    .cx-bal-win { margin-left: auto; }
+    /* the reconciliation line: what the estimate is worth against the
+       number the provider actually billed. The sheet's own check. */
+    .cx-recon { font-size: 10px; color: var(--text-faint); padding-top: 6px; line-height: 1.5; }
+    .cx-recon b { color: var(--text-muted); font-weight: 400; }
+    .cx-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; background: var(--cx, var(--text-faint)); }
+    .cx-topt { padding-top: 8px; font-size: 10px; color: var(--text-faint); line-height: 1.6; }
+    .cx-topt b { color: var(--text-muted); font-weight: 500; }
+    /* the margin's own section labels — quieter than the canvas's h4s,
+       because the margin is one continuous sheet, not stacked reports */
+    .cx-mlabel {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-faint); padding: 0 0 5px;
+    }
+    .cx-mlabel-r { margin-left: auto; text-transform: none; letter-spacing: 0; }
+    /* #cx-bal is the repaint handle for the step-dependent blocks, not a
+       box: display:contents keeps every .cx-mblock a direct sibling in the
+       margin, so the rules below (and the narrow-tier grid) see them all. */
+    #cx-bal { display: contents; }
+    /* #cx-bal + .cx-mblock is NOT redundant: display:contents changes the
+       box tree, never the DOM tree, so the threads block's adjacent DOM
+       sibling is #cx-bal itself and the rule above cannot reach it. */
+    .cx-mblock + .cx-mblock,
+    #cx-bal + .cx-mblock { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
+    /* ---- the trajectory: every step as a countable population ----
+       One column per step (or turn), newest at the right, outliers
+       (compaction cuts, failed requests) raised out of the row so the
+       trouble is findable without reading every bar. Columns GROW to
+       fill the canvas when a thread is short — a 17-bar chart pinned to
+       9px in a 1000px field reads as broken, not as small. */
+    .cx-chart-wrap { position: relative; padding-left: 42px; }
+    .cx-scale {
+      position: absolute; left: 0; top: 0; width: 38px; text-align: right;
+      z-index: 1; pointer-events: none;
+      font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
+    .cx-chart {
+      display: flex; align-items: flex-end; gap: 2px; height: 132px;
+      overflow-x: auto; overflow-y: hidden; padding: 14px 2px 2px;
+      border-bottom: 1px solid var(--border);
+    }
+    .cx-colw {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: flex-end; height: 100%; cursor: pointer;
+      flex: 1 1 9px; min-width: 5px; max-width: 22px;
+    }
+    /* the raised outlier: a cut is an axis break, drawn full height. AMBER,
+       because that is what .rp-mark.cut already paints this exact wire fact
+       on the replay track — one compaction, one color, both surfaces. (The
+       tools segment is amber-adjacent, but it is ~6% at the foot of the
+       bar and the break runs the whole height.) */
+    .cx-colw.cut { position: relative; }
+    .cx-colw.cut::before {
+      content: ''; position: absolute; top: 12px; bottom: 0; left: 50%;
+      border-left: 1px dashed color-mix(in srgb, var(--amber) 75%, transparent);
+    }
+    .cx-mark { font-size: 9px; line-height: 1.2; color: var(--amber); }
+    .cx-col {
+      display: flex; flex-direction: column-reverse; width: 100%;
+      border-radius: 1px 1px 0 0; overflow: hidden;
+    }
+    .cx-colw:hover .cx-col, .cx-colw.pinned .cx-col { outline: 1px solid var(--accent); outline-offset: 1px; }
+    .cx-colw.pinned .cx-col { outline-width: 2px; }
+    .cx-col-failed { outline: 1px dashed var(--red) !important; }
+    .cx-seg-v { width: 100%; }
+    .cx-seg-stub { width: 100%; background: var(--border); }
+    /* turn-granularity axis labels: the outline's ordinals under the bars */
+    .cx-tlbl { font-size: 9px; color: var(--text-faint); padding-top: 2px; font-variant-numeric: tabular-nums; }
+    /* ---- the ledger rows: the six categories of the picked step ----
+       ONE rendering of these six numbers on the page (the icicle's row 1
+       is the other, and it is a chart, not a list — it reorders and it
+       disappears when you zoom; this is the invariant that does not).
+       Every row is a control: it zooms the chart to its category. */
+    .cx-dhead {
+      display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 10px;
+      color: var(--text-muted); font-variant-numeric: tabular-nums; padding-bottom: 8px;
+    }
+    .cx-dhead .cx-dt { color: var(--text); flex-basis: 100%; font-size: 11px; }
+    .cx-crow {
+      display: flex; align-items: center; gap: 7px; padding: 3px 4px; margin: 0 -4px;
+      border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums;
+      color: inherit; text-decoration: none; cursor: pointer;
+    }
+    .cx-crow:hover { background: var(--hover); }
+    .cx-crow.sel { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-crow-label { flex: 1; min-width: 0; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+    .cx-crow:hover .cx-crow-label, .cx-crow.sel .cx-crow-label { color: var(--text); }
+    .cx-crow-label > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-track {
+      flex: none; width: 54px; height: 5px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-fill { display: block; height: 100%; background: var(--cx, var(--text-faint)); }
+    .cx-crow-n { flex: 0 0 52px; text-align: right; color: var(--text); }
+    .cx-crow-pct { flex: 0 0 32px; text-align: right; color: var(--text-faint); }
+    /* context events */
+    .cx-fchip {
+      font: inherit; font-size: 10px; line-height: 1; cursor: pointer; white-space: nowrap;
+      background: none; border: 1px solid var(--border); border-radius: 999px;
+      color: var(--text-muted); padding: 3px 9px;
+    }
+    .cx-fchip:hover { border-color: var(--accent); }
+    .cx-fchip.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .cx-ev:hover { background: var(--hover); }
+    .cx-ev-kind {
+      flex: 0 0 58px; text-align: center; font-size: 9px; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--text-muted);
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+    }
+    .cx-ev-glyph { flex: 0 0 12px; text-align: center; color: var(--text-faint); }
+    .cx-ev-label { flex: 0 1 46ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .cx-ev-gap { flex: 1; min-width: 8px; }
+    .cx-ev-at { flex: none; color: var(--text-faint); }
+    .cx-ev-at a { color: var(--text-faint); text-decoration: none; }
+    .cx-ev-at a:hover { color: var(--accent); }
+    .cx-ev-n { flex: none; color: var(--text-faint); font-size: 10px; }
+    .cx-delta { flex: 0 0 66px; text-align: right; }
+    .cx-ev { max-width: 1100px; }
+    .cx-delta.plus { color: var(--amber); }
+    .cx-delta.minus { color: var(--green); }
+    .cx-ev-time { flex: 0 0 60px; text-align: right; color: var(--text-faint); }
+    .cx-more { padding: 4px 0; font-size: 11px; color: var(--text-faint); }
+    /* ---- the context graph: an icicle ----
+       Rows top-down, width = tokens, every child inside its parent's span.
+       Row 1 is the composition bar's own six categories, same order, same
+       hues — the graph IS that bar growing downward, which is why the
+       nodes wear TINTS of the data color (they carry text; the bar does
+       not) with the full-strength hue stated as a 2px left edge. */
+    .cx-crumbs { display: flex; align-items: baseline; gap: 6px; padding: 2px 0 6px; font-size: 11px; }
+    .cx-crumb { color: var(--accent); text-decoration: none; }
+    .cx-crumb:hover { text-decoration: underline; }
+    .cx-crumb.cur { color: var(--text); }
+    .cx-crumb-sep { color: var(--text-faint); }
+    .cx-crumb-hint { margin-left: auto; color: var(--text-faint); font-size: 10px; }
+    .cx-flame { position: relative; }
+    .cx-frow { position: relative; height: 17px; margin-bottom: 1px; }
+    /* row 0 is the frame: this whole width is the focused node */
+    .cx-frow:first-child .cx-fn { border: 1px solid var(--border); }
+    .cx-fn {
+      position: absolute; top: 0; bottom: 0; overflow: hidden;
+      display: flex; align-items: center; gap: 5px; padding: 0 4px;
+      font-size: 10px; line-height: 1; color: var(--text); cursor: pointer;
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .cx-fn:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .cx-fn.sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+    .cx-fn.errn .cx-fn-l { color: var(--red); }
+    /* the merged sliver node is a count, not a place you can go */
+    .cx-fn.tailn { cursor: default; color: var(--text-faint); font-style: italic; }
+    .cx-fn.tailn:hover { outline: none; }
+    .cx-fn-l { overflow: hidden; text-overflow: ellipsis; }
+    .cx-fn-n { flex: none; color: var(--text-muted); font-size: 9px; }
+    .cx-fn-t { flex: none; margin-left: auto; color: var(--text-muted); font-size: 9px; }
+    /* the pane under the graph: the selected node, opened */
+    /* the pane is a DRILL-DOWN, not the page: it scrolls inside itself so
+       15 open tool results can never push "what changed it" off the sheet */
+    .cx-pane { padding-top: 10px; max-height: 460px; overflow-y: auto; }
+    .cx-pane-h {
+      position: sticky; top: 0; z-index: 1; background: var(--bg);
+      display: flex; align-items: center; gap: 8px; font-size: 11px;
+      color: var(--text-muted); padding: 2px 0 5px; font-variant-numeric: tabular-nums;
+    }
+    .cx-pane-t { color: var(--text); }
+    .cx-pane-n { color: var(--text-faint); font-size: 10px; }
+    .cx-pane-tok { margin-left: auto; color: var(--text-faint); }
+    .cx-pane-body { font-size: 11px; }
+    .cx-prow {
+      display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px;
+      font-size: 11px; color: var(--text-muted); text-decoration: none; font-variant-numeric: tabular-nums;
+    }
+    .cx-prow:hover { background: var(--hover); color: var(--text); }
+    /* Same rule as the events row: a label capped at a readable measure,
+       then the weight and the number, then the slack. A ranked list whose
+       amounts sit 800px from their labels is not a column, it is a hunt. */
+    .cx-prow-l { flex: 0 1 46ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-prow, .cx-item > summary { max-width: 1100px; }
+    /* .fold-hint is flex:1 app-wide (right for the detail panel, where the
+       row IS the label). Here the row also carries a number, so the label
+       gets a measure and the slack goes after it — scoped, never a change
+       to the shared rule. */
+    .cx-item > summary .fold-hint { flex: 0 1 auto; }
+    .cx-prow-gap { flex: 1; min-width: 8px; }
+    .cx-since { margin-left: 8px; color: var(--text-faint); font-size: 10px; white-space: nowrap; cursor: pointer; }
+    .cx-since:hover, .cx-since:focus-visible { color: var(--accent); }
+    .cx-item > summary { padding: 4px 12px; }
+    .cx-item > summary .fold-hint { color: var(--text-muted); }
+    .cx-item-n { flex: none; color: var(--text-faint); font-size: 10px; font-variant-numeric: tabular-nums; min-width: 84px; text-align: right; }
+    .cx-item-err .fold-title { color: var(--red); }
+    /* the weight track, reused by the pane's ranked rows */
+    .cx-wt {
+      flex: none; width: 120px; height: 5px; border-radius: 99px;
+      background: var(--bg-surface); border: 1px solid var(--border); overflow: hidden;
+    }
+    .cx-wf { display: block; height: 100%; min-width: 1px; }
+    .cx-note { padding: 4px 0 8px; font-size: 11px; color: var(--text-faint); }
+    /* the other sheets: peak assembled context per thread, all bars on
+       one scale. It lives in the margin because switching sheets must
+       not need a scroll — but it is the margin's quietest block. */
+    .cx-thlist { max-height: 168px; overflow-y: auto; }
+    .cx-sess { display: flex; align-items: baseline; gap: 8px; padding: 5px 0 1px; font-size: 9px; color: var(--text-faint); }
+    .cx-sess-t { margin-left: auto; }
+    .cx-th {
+      display: flex; align-items: center; gap: 6px; padding: 2px 4px; margin: 0 -4px; border-radius: 4px;
+      font-size: 11px; color: var(--text-muted); text-decoration: none;
+      font-variant-numeric: tabular-nums;
+    }
+    .cx-th:hover { background: var(--hover); }
+    .cx-th.selected { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-th.selected .cx-th-label { color: var(--text); }
+    .cx-th-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-th-bar {
+      flex: none; width: 44px; height: 4px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border);
+    }
+    .cx-th-fill { display: block; height: 100%; min-width: 1px; background: var(--text-faint); }
+    .cx-th.selected .cx-th-fill { background: var(--accent); }
+    .cx-th-n { flex: 0 0 42px; text-align: right; color: var(--text); }
+    .cx-th-pct { flex: 0 0 28px; text-align: right; color: var(--text-faint); }
+    .cx-th-cut { flex: 0 0 22px; text-align: right; color: var(--purple); font-size: 9px; }
+    /* Narrow tier: the margin unsticks and becomes the sheet's top block.
+       960px is the page's established breakpoint (threads rail, detail). */
+    @media (max-width: 960px) {
+      .cx-cols { display: block; }
+      .cx-margin {
+        position: static; max-height: none; overflow: visible;
+        padding: 0 0 14px; margin-bottom: 14px;
+        border-right: none; border-bottom: 1px solid var(--border);
+        /* a band of columns, not one stretched sheet: a ledger row spread
+           across 1400px puts 800px of nothing between label and amount.
+           Multicol, not grid — grid rows take the tallest block's height
+           and leave dead cells; columns just pack. */
+        columns: 300px; column-gap: 28px;
+      }
+      #cx-bal { display: block; }
+      .cx-mblock { break-inside: avoid; padding-bottom: 14px; }
+      .cx-mblock + .cx-mblock,
+      #cx-bal + .cx-mblock { padding-top: 0; margin-top: 0; border-top: none; }
+    }
+    /* the rail's trajectory gutter: per-step context occupancy, split into
+       the cached prefix and what was billed fresh (session view) */
+    .tctx {
+      flex: none; width: 30px; height: 4px; border-radius: 99px; overflow: hidden;
+      background: var(--bg-surface); border: 1px solid var(--border); display: flex;
+    }
+    .tctx-b { display: flex; height: 100%; min-width: 1px; }
+    .tctx-b > span { flex: none; height: 100%; }
+    .tctx-none { background: none; border-color: transparent; }
+    .tctx-c { background: color-mix(in srgb, var(--green) 70%, transparent); }
+    .tctx-f { background: color-mix(in srgb, var(--amber) 80%, transparent); }
+    .tctx-x { background: color-mix(in srgb, var(--red) 70%, transparent); }
   </style>
 </head>
 <body>
@@ -1374,6 +1782,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="tabs">
       <button class="tab active" id="tab-requests">requests</button>
       <button class="tab" id="tab-session">sessions</button>
+      <button class="tab" id="tab-context" title="context&#10;What the model&#8217;s context window is assembled from, request by request &#8212; composition, history, events, and a per-step browser.">context</button>
+      <button class="tab" id="tab-trajectory" title="trajectory&#10;The agent&#8217;s path as one linear stream of records &#8212; system, the human, the CONTEXT the harness injected inline, the model&#8217;s thinking, each tool call fused with its result, the reply. Where the time went, at MAP / READ / FULL detail.">trajectory</button>
     </span>
     <span class="tb-group" id="tb-list">
       <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
@@ -1433,6 +1843,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <button id="tail-pill" title="Jump to the newest turn">↓ new activity</button>
     <div id="pulse"></div>
   </div>
+  <div id="context-view"></div>
+  <div id="trajectory-view"></div>
 
   <script>${markedSrc}</script>
   <script>
@@ -1490,11 +1902,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let showPrior = true;      // include prior-run pairs in the Requests list
     let selMode = false;       // select-to-purge mode (Requests view)
     const selIds = new Set();  // selected pair ids
-    let view = 'requests';      // 'requests' | 'session'
+    let view = 'requests';      // 'requests' | 'session' | 'context'
     let detailId = null;        // request id open in the detail panel
-    let sessionSelKey = null;   // selected thread in the session view
+    let sessionSelKey = null;   // selected thread in the session + context views
+    let ctxGran = localStorage.getItem('cctrace-ctx-gran') === 'turn' ? 'turn' : 'step';
+    let ctxPinned = null;       // pinned step's pairId (context history chart)
+    let ctxEvFilter = 'all';    // context events filter
+    let ctxSort = localStorage.getItem('cctrace-ctx-sort') === 'order' ? 'order' : 'size';
+    let ctxFocusKey = '';       // context graph zoom (a node key; falls back to root)
+    let ctxSelKey = '';         // context graph selection (drives the detail pane)
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     let sessionCache = { key: '', threads: [] };
+
+    // pairId -> pair. The session/context layers resolve pair ids inside
+    // per-turn loops; pairs.find() there is O(turns x pairs), which on a
+    // long trace is the difference between a rail that renders and one that
+    // stalls. Rebuilt only when the capture grows (pairs is append-only).
+    let pairIdx = { n: -1, map: null };
+    function pairOf(id) {
+      if (!id) return null;
+      if (pairIdx.n !== pairs.length) {
+        const m = {};
+        for (const p of pairs) m[p.id] = p;
+        pairIdx = { n: pairs.length, map: m };
+      }
+      return pairIdx.map[id] || null;
+    }
 
     // modelPricing consults the ambient models.dev catalog (fail-soft: the
     // embedded Claude table still prices Claude traffic without it).
@@ -1542,9 +1975,38 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Pricing + cost estimation, injected from src/pricing.ts.
     ${modelPricing.toString()}
+    ${modelWindow.toString()}
     ${pairCost.toString()}
     ${fmtCost.toString()}
     ${costTitle.toString()}
+
+    // The context layer, injected from src/context.ts (unit tested there).
+    const CTX_CATS = ${JSON.stringify(CTX_CATS)};
+    const CTX_IMG_EST = ${JSON.stringify(CTX_IMG_EST)};
+    ${estTokens.toString()}
+    ${ctxTextCat.toString()}
+    ${ctxBlockTokens.toString()}
+    ${ctxEnvelope.toString()}
+    ${ctxNormalizeTurns.toString()}
+    ${ctxSnippet.toString()}
+    ${contextComposition.toString()}
+    ${contextItems.toString()}
+    ${ctxGroupOf.toString()}
+    ${contextGraph.toString()}
+    ${ctxFlameTree.toString()}
+    ${ctxFlameFind.toString()}
+    ${ctxFlameLayout.toString()}
+    ${ctxFlameDefault.toString()}
+    ${contextTimeline.toString()}
+    ${ctxInjectLabel.toString()}
+    ${ctxAggregateTurns.toString()}
+    ${ctxWindowTurns.toString()}
+    ${ctxTurnSig.toString()}
+    ${ctxOriginTurn.toString()}
+    ${trajectoryRecords.toString()}
+    ${trajectoryAtLevel.toString()}
+    ${trajLabel.toString()}
+    ${trajResultPreview.toString()}
 
     // Replay timeline primitives, injected from src/replay.ts.
     ${pairStartMs.toString()}
@@ -1578,6 +2040,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${harnessTurnKind.toString()}
     ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
+    ${threadTimeSplit.toString()}
     ${escHtml.toString()}
     ${diffHunk.toString()}
     ${richToolBody.toString()}
@@ -1609,6 +2072,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const themeToggle = document.getElementById('theme-toggle');
     const tabRequests = document.getElementById('tab-requests');
     const tabSession = document.getElementById('tab-session');
+    const tabContext = document.getElementById('tab-context');
+    const tabTrajectory = document.getElementById('tab-trajectory');
+    const trajectoryEl = document.getElementById('trajectory-view');
+    const contextEl = document.getElementById('context-view');
 
     // Dashboard link: only meaningful when a server answers /dashboard —
     // a snapshot opened from disk (file://) has no routes to link to.
@@ -1955,11 +2422,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 session titles \\u2014 the cctrace-title skill names every session from its spine (your prompts + the agent\\u2019s answers) across subagents; shown in the dashboard, history and header\\n' +
-        '\\u00b7 the trace store \\u2014 traces live in ~/.local/share/cctrace/traces/<project>/, shared across containers; cctrace adopt moves legacy ./.cctrace dirs in\\n' +
-        '\\u00b7 zstd at rest \\u2014 a run archives its trace at exit (30-180x smaller, in the background now); view reads .zst directly\\n' +
-        '\\u00b7 streaming reads from the tail \\u2014 multi-GB traces open in seconds to their newest turns; --full for everything\\n' +
-        '\\u00b7 dashboard rows stay openable \\u2014 compressed, merged or adopted traces resolve from any container\\n' +
+        '\\u00b7 the Trajectory view \\u2014 a thread as one time-anchored stream of records: system, your turns, injected context inline, thinking, tool call + result, reply; MAP / READ / FULL\\n' +
+        '\\u00b7 the Context view \\u2014 what the window is assembled from, request by request: a ledger margin against the model\\u2019s limit, an icicle graph of the step, every injection and compaction as an event\\n' +
+        '\\u00b7 provenance \\u2014 every item in the graph says which turn first carried it into the window; click to pin that step\\n' +
+        '\\u00b7 where the time went \\u2014 model / tools / waiting / between turns, off wire timestamps, on the Sessions chip and the Trajectory strip\\n' +
+        '\\u00b7 the exit seal survives your terminal \\u2014 archive first, helper in its own session, orphaned seals recovered by the next run\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -2095,6 +2562,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
           }
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
@@ -2108,6 +2577,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           render();
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
         } else if (msg.type === 'purged') {
           // Pairs deleted via select-to-purge (this page or another one on
           // the same server): drop them everywhere and re-render.
@@ -2120,6 +2591,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           updateSelBar();
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
+          if (view === 'context') showContext(sessionSelKey);
+          if (view === 'trajectory') showTrajectory(sessionSelKey);
         }
       };
     }
@@ -2144,6 +2617,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ' \\u2014 ' + escapeHtml((e && e.message) || String(e)) + '</div>';
     }
     function formatDuration(ms) { return ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(2) + 's'; }
+    // Spans of minutes and hours (where a session's time went): "820ms",
+    // "4.2s", "31m 09s", "2h 13m" — compact, static, never a ticking surface.
+    function fmtSpan(ms) {
+      if (ms < 1000) return Math.round(ms) + 'ms';
+      const s = ms / 1000;
+      if (s < 60) return s.toFixed(1) + 's';
+      const m = Math.floor(s / 60), sec = Math.round(s % 60);
+      if (m < 60) return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
+      const h = Math.floor(m / 60), mm = m % 60;
+      return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+    }
     // Wall-clock is always 24h — locale 12h AM/PM wastes row width and
     // reads slower in a dense table.
     function fmtTime(d) { return d.toTimeString().slice(0, 8); }
@@ -2153,7 +2637,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // (trailing gaps fall back to the previous known). 0 = no wire time.
     function turnTimes(list) {
       const ts = list.map(x => {
-        const p = x && x.pairId ? pairs.find(y => y.id === x.pairId) : null;
+        const p = x && x.pairId ? pairOf(x.pairId) : null;
         return p && p.request && p.request.timestamp ? p.request.timestamp : 0;
       });
       for (let i = ts.length - 2; i >= 0; i--) if (!ts[i]) ts[i] = ts[i + 1];
@@ -2417,6 +2901,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         }
         showSession(key, sub);
+      } else if ((m = h.match(/^#\\/context(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
+        // #/context[/<sid8-or-thread-key>[/<thread-key>]] — same key grammar
+        // as the sessions view; the selection is SHARED with it, so tab
+        // switches keep the conversation in focus.
+        let key = m[1] || null;
+        if (key) { try { key = decodeURIComponent(key); } catch {} }
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        setView('context');
+        showContext(key, sub);
+      } else if ((m = h.match(/^#\\/trajectory(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
+        // #/trajectory[/<sid8-or-thread-key>[/<thread-key>]] — same key
+        // grammar and shared selection as sessions/context.
+        let key = m[1] || null;
+        if (key) { try { key = decodeURIComponent(key); } catch {} }
+        let sub = m[2] || null;
+        if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        setView('trajectory');
+        showTrajectory(key, sub);
       } else {
         setView('requests');
         closeDetail();
@@ -2431,13 +2934,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // (ui.md motion budget; animation is reserved for in-view jumps).
       if (v === 'session' && view !== 'session') pendingSessionFocus = true;
       view = v;
-      if (v === 'session' && selMode) setSelMode(false);
+      if (v !== 'requests' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
+      document.body.classList.toggle('view-context', v === 'context');
+      document.body.classList.toggle('view-trajectory', v === 'trajectory');
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
+      tabContext.classList.toggle('active', v === 'context');
+      tabTrajectory.classList.toggle('active', v === 'trajectory');
     }
     tabRequests.onclick = () => { location.hash = ''; };
     tabSession.onclick = () => { location.hash = '#/session'; };
+    // The context tab keeps the sessions view's selection — same thread,
+    // different lens.
+    tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey); };
+    tabTrajectory.onclick = () => { location.hash = tjHash(sessionSelKey); };
+    function ctxHash(key) {
+      return '#/context' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
+    }
+    function tjHash(key) {
+      return '#/trajectory' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
+    }
 
     function openDetail(id) {
       const isNew = detailId !== id;
@@ -2532,6 +3049,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
+      if (view === 'context') {
+        if (e.key === 'Escape') { location.hash = ''; return; }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          // Walk the pinned step through the history chart — the keyboard
+          // face of click-to-pin.
+          e.preventDefault();
+          const t = getThreads().find(x => x.key === sessionSelKey);
+          if (!t) return;
+          const steps = ctxData(t).tl.steps;
+          if (!steps.length) return;
+          let i = steps.findIndex(s => s.pairId === ctxPinned);
+          if (i === -1) i = steps.length - 1;
+          i = Math.max(0, Math.min(steps.length - 1, i + (e.key === 'ArrowRight' ? 1 : -1)));
+          ctxPinned = steps[i].pairId;
+          renderContextView(t);
+          const el = contextEl.querySelector('[data-cxbar="' + (window.CSS && CSS.escape ? CSS.escape(ctxPinned) : ctxPinned) + '"]');
+          if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          return;
+        }
+        return;
+      }
       if (view === 'requests' && selMode && !detailId && e.key === 'Escape') { setSelMode(false); return; }
       if (view === 'requests' && detailId) {
         if (e.key === 'Escape') location.hash = '';
@@ -2896,11 +3434,37 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const len = typeof b.content === 'string' ? fmtCompact(b.content.length) + ' chars \\u00b7 ' : '';
         return fold('tool_result' + (b.is_error ? ' \\u00b7 error' : ''), len + snippet(b.content, 90), body, b.is_error ? 'errline' : '');
       }
-      if (type === 'image') {
-        const mt = b.source && b.source.media_type;
-        return '<div class="block-note">[image' + (mt ? ' \\u00b7 ' + escapeHtml(mt) : '') + ']</div>';
-      }
+      if (type === 'image') return renderImageBlock(b);
       return fold(String(type || 'block'), '', preBlock(formatJson(b)));
+    }
+
+    // Image blocks render as REAL thumbnails when the bytes are already in
+    // the trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
+    // image_url carried) — click toggles full size. Wire-controlled fields
+    // are validated, not trusted: media_type against an image/* shape, the
+    // base64 payload against its alphabet. A REMOTE url stays a note with
+    // the address — the viewer must never auto-fetch a wire-named resource
+    // (a captured conversation could point the reader's browser anywhere).
+    function renderImageBlock(b) {
+      const src = b.source || {};
+      const mt = typeof src.media_type === 'string' && /^image\\/[\\w.+-]+$/.test(src.media_type) ? src.media_type : '';
+      let dataUrl = '';
+      if (src.type === 'base64' && typeof src.data === 'string' && mt &&
+          /^[A-Za-z0-9+/=\\s]+$/.test(src.data.slice(0, 4096))) {
+        dataUrl = 'data:' + mt + ';base64,' + src.data.replace(/[^A-Za-z0-9+/=]/g, '');
+      } else if (typeof src.dataUrl === 'string' && /^data:image\\/[\\w.+-]+[;,]/.test(src.dataUrl)) {
+        dataUrl = src.dataUrl;
+      }
+      if (dataUrl) {
+        const kb = Math.round((dataUrl.length * 3) / 4 / 1024);
+        return '<div class="msg-imgwrap"><img class="msg-img" loading="lazy" src="' + escapeHtml(dataUrl) + '"' +
+          ' onclick="this.classList.toggle(\\'full\\')"' +
+          ' title="' + escapeHtml((mt || 'image') + (kb ? ' \\u00b7 ~' + kb + ' KB stored' : '') + '\\n> click toggles full size') + '"></div>';
+      }
+      if (typeof src.url === 'string' && src.url) {
+        return '<div class="block-note">[image \\u00b7 remote \\u00b7 ' + escapeHtml(src.url.slice(0, 120)) + ' \\u2014 not fetched]</div>';
+      }
+      return '<div class="block-note">[image' + (mt ? ' \\u00b7 ' + escapeHtml(mt) : '') + ']</div>';
     }
 
     function renderTurn(role, content, tag) {
@@ -3234,17 +3798,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return mainThread(scoped) || mainThread(threads);
     }
 
-    function showSession(key, sub) {
-      const threads = getThreads();
-      if (!threads.length) {
-        threadsEl.innerHTML = '';
-        convoEl.innerHTML = '<div class="empty">' + (replay.active
-          ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
-          : 'No /v1/messages requests captured yet.') + '</div>';
-        convoKey = null;
-        tailPill.classList.remove('show');
-        return;
-      }
+    // Resolve a URL key to a thread — shared by the sessions and context
+    // views (one key grammar, one resolution): exact key, short key
+    // ('<sid8>|<grouping>'), session-id prefix (+ optional sub thread-key),
+    // then the newest session's main thread.
+    function resolveThreadSel(threads, key, sub) {
       let sel = null;
       for (const t of threads) if (t.key === key) sel = t;
       if (!sel && key) {
@@ -3262,12 +3820,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
       }
       if (!sel && key) {
-        // Session-id prefix: #/session/<sid8>[/<thread-key>] selects that
-        // session's named thread, or its main thread.
+        // Session-id prefix: /<sid8>[/<thread-key>] selects that session's
+        // named thread, or its main thread.
         const st = threads.filter(t => t.sessionId && t.sessionId.lastIndexOf(key, 0) === 0);
         if (st.length) sel = (sub && st.find(t => t.key === sub || shortKeyStr(t.key) === sub)) || mainThread(st);
       }
-      if (!sel) sel = newestMainThread(threads);
+      return sel || newestMainThread(threads);
+    }
+
+    function showSession(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        threadsEl.innerHTML = '';
+        convoEl.innerHTML = '<div class="empty">' + (replay.active
+          ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
+          : 'No /v1/messages requests captured yet.') + '</div>';
+        convoKey = null;
+        tailPill.classList.remove('show');
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       agentThreadStats = {};
@@ -3361,7 +3933,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           tipEl.style.top = Math.max(8, Math.min(r.top, window.innerHeight - th - 8)) + 'px';
           return;
         }
-        let y = r.bottom + 6;
+        // A tip dropped below a 17px icicle row covers the rows underneath
+        // it — the very ones being scrubbed (same scar as the threads
+        // pane, docs/design/ui.md). Flame anchors open UPWARD, falling
+        // back down only when there is no room above.
+        const flame = t.closest ? t.closest('.cx-flame') : null;
+        let y = flame && r.top - th - 6 >= 8 ? r.top - th - 6 : r.bottom + 6;
         if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
         tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
         tipEl.style.top = y + 'px';
@@ -3456,7 +4033,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         out += u.output || 0;
         const c = pairCost(u);
         if (c) cost += c.total;
-        const p = vis[vi].pairId ? pairs.find(x => x.id === vis[vi].pairId) : null;
+        const p = vis[vi].pairId ? pairOf(vis[vi].pairId) : null;
         if (p) { if (!t0) t0 = p.request.timestamp; t1 = p.request.timestamp; }
       }
       const tip = 'T' + i + ' \\u00b7 ' + (shortModel(e.model) || 'unknown model') + ' run\\n' +
@@ -3592,7 +4169,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const eps = (t.epochs && t.epochs.length) ? t.epochs : [{ model: t.model, from: 0, to: vis.length - 1 }];
       const multi = eps.length > 1;
       const supRow = (pid, vi) => {
-        const p = pairs.find(x => x.id === pid);
+        const p = pairOf(pid);
         if (!p) return '';
         const b = p.request.body || {};
         const hist = Array.isArray(b.messages) ? b.messages : [];
@@ -3609,20 +4186,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="rgut"><span class="cdot"></span></span>' +
           '<span class="tturn-ord">' + ord + '</span>' +
           '<span class="tturn-text">' + (prompt ? escapeHtml(prompt.slice(0, 120)) : 'superseded exchange') + '</span>' +
-          '<span class="treq-mark">superseded</span></a>';
+          '<span class="treq-mark">superseded</span>' + trajNone + '</a>';
       };
       // The compact boundary: the request body sent to the API changed
       // completely at this point — everything above lives on only in the
       // summary/folded form. Break mark on the rail, wire pair linked;
       // the hover spells out the context collapse in turns AND tokens.
       const compRow = (c) => {
-        const p = pairs.find(x => x.id === c.pairId);
+        const p = pairOf(c.pairId);
         const info = p ? extractCallInfo(p) : null;
         const postTok = info ? (info.input || 0) + (info.cacheRead || 0) + (info.cacheWrite || 0) : 0;
         let preTok = 0;
         const pt = p ? p.request.timestamp : Infinity;
         for (const pid of t.pairIds) {
-          const pp = pairs.find(x => x.id === pid);
+          const pp = pairOf(pid);
           if (!pp || pp.request.timestamp >= pt) continue;
           const u = extractCallInfo(pp);
           const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
@@ -3662,7 +4239,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const times = [];
         for (const e of list) {
           stat[e.status ? String(e.status) : 'no response'] = 1;
-          const p = pairs.find(x => x.id === e.pairId);
+          const p = pairOf(e.pairId);
           if (!p) continue;
           times.push(p.request.timestamp);
           const ty = (p.response && p.response.body && p.response.body.error && p.response.body.error.type) || '';
@@ -3680,7 +4257,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
           '<span class="tturn-ord">wire</span>' +
           '<span class="tturn-text">' + escapeHtml(label) + '</span>' +
-          '<span class="treq-mark err">err</span></a>';
+          '<span class="treq-mark err">err</span>' + trajNone + '</a>';
       };
       // A subagent spawned by this turn attaches HERE, as a branch off the
       // rail — label + outcome inline, the thread one click away (its
@@ -3730,6 +4307,50 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // Per-step outcomes need the tool results that answered each step's
       // tool calls — they live in the (hidden) result-only turns.
       const toolRes = buildToolResultIndex(t.turns);
+      // ---- the trajectory gutter ----
+      // dsh's Trajectory tab reads the agent's path as a shape; the rail is
+      // already that path in cctrace, it just carried no magnitude. One
+      // track per step: width = how full the window was, split into the
+      // prefix READ FROM CACHE (green) and what was billed fresh (amber).
+      // Stacked down the rail it IS the trajectory — context climbs, a
+      // \u2702 row drops it, the step after a boundary is all-amber (cold),
+      // then green again. Every number is provider-reported; nothing here
+      // is estimated.
+      // Denominator: the model's context window when models.dev knows it,
+      // else this thread's own peak — named in each hover, so the bar never
+      // implies a figure the wire didn't state.
+      const trajPeak = ctxThreadStat(t).peak;
+      let trajWin = ctxWindowOf(t);
+      // A prompt larger than the resolved window proves the window wrong
+      // (same guard as the context view) \u2014 fall back to the peak.
+      if (trajWin && trajPeak > trajWin) trajWin = 0;
+      const trajDen = trajWin || trajPeak;
+      const trajNone = '<span class="tctx tctx-none"></span>';
+      const trajBar = (u, failed) => {
+        // Nothing to measure -> the invisible SPACER, never an empty
+        // outlined track. A bordered pill with no fill is a bar claiming a
+        // measurement it does not have (TASTE 2026-07-28: what does this
+        // surface CLAIM vs what does it KNOW), and on a real trace 36 of
+        // 141 tracks were exactly that. The spacer still holds the column,
+        // so the rail's rhythm does not break — which is the whole reason
+        // the class exists.
+        if (!trajDen || failed || !u) return trajNone;
+        const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+        if (!tot) return trajNone;
+        const w = Math.max(3, Math.min(100, (tot / trajDen) * 100));
+        const c = Math.round(((u.cacheRead || 0) / tot) * 100);
+        return '<span class="tctx"><span class="tctx-b" style="width:' + w.toFixed(1) + '%">' +
+          (c > 0 ? '<span class="tctx-c" style="width:' + c + '%"></span>' : '') +
+          (c < 100 ? '<span class="tctx-f" style="width:' + (100 - c) + '%"></span>' : '') +
+          '</span></span>';
+      };
+      const trajLine = (u) => {
+        const tot = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
+        if (!tot) return '';
+        return 'context ' + fmtCompact(tot) +
+          (trajDen ? ' \u00b7 ' + Math.round((tot / trajDen) * 100) + '% of ' +
+            (trajWin ? 'a ' + fmtCompact(trajWin) + ' window' : 'this thread\u2019s peak') : '');
+      };
       // Wall-clock per visible turn for the row hovers — user heads inherit
       // the time of the request that carried them (turnTimes).
       const vts = turnTimes(vis);
@@ -3772,6 +4393,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           let dot = '';
           let tip = '';
           let errMark = '';
+          let traj = trajNone;   // the trajectory gutter; blank on non-wire rows
           if (turn.role === 'assistant') {
             let raw = '';
             for (const b of turn.blocks || []) {
@@ -3785,7 +4407,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                 : '(no text)') + '</span>';
             }
             const u = turn.usage;
-            const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
+            const p = turn.pairId ? pairOf(turn.pairId) : null;
             // The dot leads the row — a status gutter. Assistant dots carry
             // the wire verdict: red = failed request, green = healthy cache
             // hit, amber = weak hit / cold / miss, neutral = no cache in
@@ -3802,6 +4424,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (b && b.type === 'tool_use' && b.id && toolRes[b.id] && toolRes[b.id].is_error) stepErrs++;
             }
             if (stepErrs) errMark = '<span class="tturn-terr">tool err</span>';
+            traj = trajBar(u, failed);
             const tbits = [];
             if (raw.length > 120) tbits.push(raw.slice(0, 600) + (raw.length > 600 ? '\\u2026' : ''), '---');
             // The heading names the node in the tree: a step is one wire
@@ -3823,6 +4446,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
               tbits.push(l);
             }
+            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push(tj); }
             // The final's stop is a wire fact, not an inference: end_turn is
             // a finished response; tool_use here means the loop was cut
             // mid-work and this "final" is just the last reply captured.
@@ -3897,7 +4521,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ' data-tip="' + escapeHtml(tip) + '">' +
             '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
             '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + '</a>';
+            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + traj + '</a>';
           if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
       }
@@ -3964,7 +4588,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const turn of t.turns || []) {
         if (!turn.pairId) continue;
         if (++scanned > 80) break;
-        const p = pairs.find(x => x.id === turn.pairId);
+        const p = pairOf(turn.pairId);
         if (!p || !p.request) continue;
         const e = extractEffort(p.request.body);
         if (e && !seen[e.v]) { seen[e.v] = 1; effs.push(e.v); }
@@ -4352,7 +4976,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {
         const u = turn.usage;
-        const p = turn.pairId ? pairs.find(x => x.id === turn.pairId) : null;
+        const p = turn.pairId ? pairOf(turn.pairId) : null;
         const bits = [];
         // Every attributed reply names its model — with /model switches the
         // set is the story, and the epoch divider marks where it changes.
@@ -4365,6 +4989,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (p) bits.push(formatDuration(p.duration));
         if (p && p.response && typeof p.response.firstTokenMs === 'number')
           bits.push('ttft ' + fmtMs(p.response.firstTokenMs));
+        // The step's own tool / wait time (threadTimeSplit): the gap from
+        // this reply's end to the working loop's next request.
+        const tsp = convoTime && turn.pairId ? convoTime.byPair[turn.pairId] : null;
+        if (tsp && tsp.tools) bits.push('tools ' + fmtSpan(tsp.tools));
+        else if (tsp && tsp.waiting) bits.push('waiting ' + fmtSpan(tsp.waiting));
         meta = '<span class="turn-usage">' + bits.join(' \\u00b7 ') + '</span>' +
           (turn.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(turn.pairId) + '" title="open wire request">wire</a>' : '');
       } else if (turn.role === 'assistant' && !turn.pairId) {
@@ -4413,6 +5042,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // reading history — new activity surfaces as a pill instead. Snapshots
     // open at the top: reviewing a finished session is reading, not tailing.
     let convoKey = null;   // thread key currently rendered in the convo pane
+    let convoTime = null;  // threadTimeSplit of that thread (the role bars read it)
     const TAIL_SLACK = 60; // px from the bottom that still counts as tailing
 
     function convoAtBottom() {
@@ -4466,6 +5096,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'prompt cache totals over this thread\\u2019s requests \\u2014 \\u2193 read, \\u2191 written');
       }
       if (t.usage.cost) chips += kv('cost', fmtCost(t.usage.cost), '', 'estimated from sticker pricing \\u2014 sum over this thread\\u2019s requests');
+      // Where the wall-clock went (dsh's Trajectory lanes — Input / Model /
+      // Tools — read off cctrace's own pairs, see threadTimeSplit). One
+      // chip, the split in the hover; every figure is a wire timestamp.
+      convoTime = threadTimeSplit(t, pairOf);
+      if (convoTime.steps > 1) {
+        const tb = ['model ' + fmtSpan(convoTime.model)];
+        if (convoTime.tools) tb.push('tools ' + fmtSpan(convoTime.tools));
+        if (convoTime.waiting) tb.push('waiting ' + fmtSpan(convoTime.waiting));
+        if (convoTime.between) tb.push('between turns ' + fmtSpan(convoTime.between));
+        chips += kv('time', tb.join(' \\u00b7 '), '',
+          'where this thread\\u2019s ' + fmtSpan(convoTime.wall) + ' went, from the wire alone \\u2014 model: the requests\\u2019 own durations; tools: the gap after a reply that made tool calls until the same working loop\\u2019s next request (one gap may cover several calls run in parallel); waiting: such a gap after a reply with no tool call (the harness came back on its own); between turns: the gap before the next prompt. Failed and superseded requests are not on the path.');
+      }
       // Error metrics, reported separately — a failed wire request and a
       // failed tool call are different problems (idea: error rate per thread).
       const eu = t.usage;
@@ -4484,6 +5126,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'exchanges that left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices); the wire pairs are kept, never lost');
       if (eu.unattributed) chips += kv('unplaced', String(eu.unattributed), '',
         'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
+      // The context view is the same thread through the other lens — what
+      // each request's window was assembled from.
+      chips += '<a class="turn-wire" href="' + ctxHash(t.key) + '" title="context view\\nComposition, per-request history, events, and a per-step browser for this thread\\u2019s context window.">context \\u2192</a>';
       // The pane renders as a PARTS array — one string per top-level node —
       // so live re-renders can patch only the nodes whose html actually
       // changed (see the apply step below).
@@ -4661,8 +5306,1156 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       tipDetachedGuard();
     }
 
-    // ---- Session replay ----
-    // A time cursor over the same data (docs/design/session-replay.md):
+    // ---- Context view ----
+    // What the model's context window was assembled from, request by
+    // request (docs/design/context-view.md; the idea owes dsh-context).
+    // Four sections over the SELECTED thread (selection shared with the
+    // sessions view): current composition, per-step history chart, context
+    // events, and a per-step browser. cctrace's edge over an event-log
+    // fold: every captured request body IS the assembled context, so each
+    // step is exact, and each carries the provider-reported prompt tokens
+    // to anchor the estimates against.
+
+    // Timeline + step-address cache: recompute only when the selected
+    // thread gained pairs (per-pair composition/usage memoize on the pair).
+    // Keyed by THREAD, not one slot: a trace holds many sessions and many
+    // threads, and switching between them must not re-walk every body.
+    // Bounded (oldest entry evicted) so a 40-thread trace can't pin 40
+    // timelines in memory.
+    const ctxTlCache = new Map();
+    const CTX_TL_KEEP = 8;
+    function ctxData(t) {
+      const key = t.key + ':' + t.pairIds.length + ':' + pairs.length;
+      let hit = ctxTlCache.get(t.key);
+      if (!hit || hit.key !== key) {
+        const tpairs = t.pairIds.map(id => pairOf(id)).filter(Boolean);
+        const tl = contextTimeline(tpairs, t.compactions);
+        // pairId -> {ord, step}: the outline's working-loop address for
+        // each wire request — bars and events speak "turn 04 · step 2",
+        // the same numbering the sessions rail uses.
+        const vis = (t.turns || []).filter(x => !x.toolResultsOnly);
+        const loops = loopTurns(vis);
+        const addr = {};
+        for (let li = 0; li < loops.length; li++) {
+          const L = loops[li];
+          for (const v of L.members) {
+            const turn = vis[v];
+            // vi = the VISIBLE turn index: what jumpToTurn addresses, so a
+            // bar in the history chart can land on its turn in the rail.
+            if (turn && turn.role === 'assistant' && turn.pairId) addr[turn.pairId] = { ord: li, step: (L.steps && L.steps[v]) || 0, vi: v };
+          }
+        }
+        hit = { key, tl, addr };
+        ctxTlCache.delete(t.key);
+        ctxTlCache.set(t.key, hit);
+        while (ctxTlCache.size > CTX_TL_KEEP) ctxTlCache.delete(ctxTlCache.keys().next().value);
+      }
+      return hit;
+    }
+
+    // Cheap per-thread context stat for the thread strip: peak assembled
+    // prompt (provider-reported, extractCallInfo memoizes on the pair), the
+    // step count, compaction count. No composition walk — the strip must
+    // stay affordable for EVERY thread in the trace, not just the selected
+    // one.
+    const ctxStatCache = new Map();
+    function ctxThreadStat(t) {
+      const key = t.pairIds.length + ':' + pairs.length;
+      const hit = ctxStatCache.get(t.key);
+      if (hit && hit.key === key) return hit;
+      let peak = 0, steps = 0, lastAt = 0;
+      for (const id of t.pairIds) {
+        const p = pairOf(id);
+        if (!p || !wireDialect(p)) continue;
+        steps++;
+        if (p.request && p.request.timestamp > lastAt) lastAt = p.request.timestamp;
+        if (!p.response || p.response.status >= 400) continue;
+        const ci = p._ci || (p._ci = extractCallInfo(p));
+        const tot = (ci.input || 0) + (ci.cacheRead || 0) + (ci.cacheWrite || 0);
+        if (tot > peak) peak = tot;
+      }
+      const out = { key, peak, steps, lastAt, cuts: (t.compactions || []).length };
+      ctxStatCache.set(t.key, out);
+      return out;
+    }
+
+    function ctxOrdLbl(addr, pairId) {
+      const a = addr && addr[pairId];
+      if (!a) return '';
+      const o = a.ord + 1 < 10 ? '0' + (a.ord + 1) : '' + (a.ord + 1);
+      return 'turn ' + o + (a.step > 1 ? ' \\u00b7 step ' + a.step : '');
+    }
+
+    // The thread's context window: models.dev limit.context (modelWindow),
+    // 1m when the wire's anthropic-beta header says context-1m. 0 = unknown
+    // — occupancy renders without a %, never a made-up denominator.
+    function ctxWindowOf(t) {
+      const wf = threadWireFacts(t);
+      if (wf.ctx1m) return 1000000;
+      return modelWindow(t.model);
+    }
+
+    function ctxStepTotal(s) { return s.actualIn != null ? s.actualIn : s.est; }
+
+    // The way back into the timeline: a step is a turn's wire request, so
+    // the context view links to that turn in the sessions rail (the reverse
+    // of the convo pane's \"context \u2192\"). Only for steps the outline
+    // could address \u2014 a superseded or unattributed request has no turn
+    // to land on, and we do not invent one.
+    function ctxTurnLink(s, addr) {
+      const a = addr && addr[s.pairId];
+      if (!a || a.vi == null || !ctxThreadKey) return '';
+      return '<a class="turn-wire" href="' + threadHash(ctxThreadKey) + '"' +
+        ' onclick="return ctxJumpTurn(event, this)" data-key="' + escapeHtml(ctxThreadKey) + '" data-vi="' + a.vi + '"' +
+        ' title="open this step in the sessions timeline">' + escapeHtml(ctxOrdLbl(addr, s.pairId)) + ' \u2192</a>';
+    }
+    window.ctxJumpTurn = function(e, el) {
+      e.preventDefault();
+      setView('session');
+      history.replaceState(null, '', threadHash(el.dataset.key));
+      showSession(el.dataset.key);
+      jumpToTurn(el.dataset.key, +el.dataset.vi);
+      return false;
+    };
+
+    // Column segments for one step, stacked bottom-up in CTX_CATS order.
+    function ctxColSegs(s) {
+      if (!s.sums || !s.est) return '<span class="cx-seg-stub" style="height:100%"></span>';
+      let h = '';
+      for (const c of CTX_CATS) {
+        const v = s.sums[c.id];
+        if (!v) continue;
+        h += '<span class="cx-seg-v" style="height:' + ((v / s.est) * 100).toFixed(2) + '%;background:' + c.color + '"></span>';
+      }
+      return h;
+    }
+
+    function ctxBarTip(s, addr, extra) {
+      const bits = [];
+      const at = ctxOrdLbl(addr, s.pairId);
+      bits.push((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : ''));
+      if (extra) bits.push(extra);
+      if (s.t) bits.push(fmtDateTime(new Date(s.t * 1000)));
+      if (s.stub) bits.push('request body folded by cctrace compact \\u2014 composition unknown, usage kept');
+      else bits.push('estimated \\u2248' + fmtCompact(s.est));
+      if (s.actualIn != null) {
+        bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
+        // Cache behavior is the step's cost story: a healthy step reads
+        // most of its prompt from cache; a cold step after a compaction
+        // (or an expired TTL) re-bills the whole prefix.
+        if (s.cacheRead > 0) bits.push('cache read ' + fmtCompact(s.cacheRead) + ' (' + Math.round((s.cacheRead / s.actualIn) * 100) + '% of prompt)');
+        else bits.push('cache read 0 \\u2014 cold: the whole prompt billed at full input price');
+      }
+      else if (s.failed) bits.push('request FAILED \\u2014 no response; the bar shows what was SENT');
+      if (s.mark === 'compact') bits.push('\\u2702 compaction \\u2014 the history above was folded');
+      else if (s.mark === 'rewrite') bits.push('\\u2702 full rewrite \\u2014 history replaced by a continuation summary');
+      else if (s.mark === 'rewind') bits.push('\\u2702 rewind \\u2014 history stepped back to an earlier point');
+      return bits.join('\\n') + '\\n---\\n> click to pin \\u00b7 hover previews the browser';
+    }
+
+    function showContext(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        contextEl.innerHTML = '<div class="empty">No model calls captured yet.</div>';
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
+      sessionSelKey = sel.key;
+      renderContextView(sel);
+    }
+
+    // ---- Trajectory view: the thread as one linear stream of records ----
+    // (dsh's Trajectory tab, in cctrace's terms — trajectoryRecords in
+    // src/context.ts). Two panes like requests (list | inspector); the
+    // list is the agent's PATH, every record a row with context injections
+    // inline; the inspector opens the picked record's full block. The level
+    // toggle (archify's MAP/READ/FULL) filters, never summarizes.
+    let tjLevel = localStorage.getItem('cctrace-tj-level') || 'full';
+    if (tjLevel !== 'full' && tjLevel !== 'read' && tjLevel !== 'map') tjLevel = 'full';
+    let tjFilter = 'all';     // 'all' or a record kind
+    let tjQuery = '';
+    let tjSel = null;         // selected record index (_i), preserved across re-renders
+    let tjCurThread = null;
+    let tjRecs = [];          // the current thread's full records (each carries _i)
+    const TJ_KIND_COLOR = { system: '#8957e5', user: '#3fb950', context: '#db61a2', assistant: '#4184e4', tool: '#39c5cf' };
+    const TJ_KINDS = ['all', 'user', 'context', 'assistant', 'tool'];
+
+    function showTrajectory(key, sub) {
+      const threads = getThreads();
+      if (!threads.length) {
+        trajectoryEl.innerHTML = '<div class="empty">No model calls captured yet.</div>';
+        return;
+      }
+      const sel = resolveThreadSel(threads, key, sub);
+      sessionSelKey = sel.key;
+      renderTrajectory(sel);
+    }
+
+    function tjBadge(r) {
+      const k = r.kind;
+      const txt = k === 'assistant' ? (r.think ? 'THINK' : 'ASSIST') : k.toUpperCase();
+      const c = r.think ? 'var(--text-faint)' : (TJ_KIND_COLOR[k] || 'var(--text-faint)');
+      return '<span class="tj-badge" style="--tjc:' + c + '">' + txt + '</span>';
+    }
+
+    // The picked record, opened. A tool shows call + result + schema via the
+    // detail-panel's own tool renderer; a system record its blocks; anything
+    // else its block. The head names kind, turn.step, weight, and the wire.
+    function renderTjDetail(r, results) {
+      if (!r) return '<div class="cx-note">pick a record to open it</div>';
+      const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' \\u00b7 step ' + r.step : '') : '';
+      const wire = r.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(r.pairId) + '" title="open the wire request that carried this record">wire \\u2192</a>' : '';
+      const head = '<div class="tj-dh">' + tjBadge(r) +
+        (addr ? '<span class="tj-dh-addr">' + addr + '</span>' : '') +
+        '<span class="tj-dh-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' + wire + '</div>';
+      let body = '';
+      try {
+        if (r.kind === 'system') body = renderSystem((r.block && r.block.blocks) || []);
+        else if (r.kind === 'tool') body = renderBlockS(r.block, results, true);
+        else body = renderBlock(r.block, r.kind === 'assistant');
+      } catch (e) { body = brokenItem('record', r.pairId, e); }
+      return head + '<div class="tj-dbody">' + body + '</div>';
+    }
+
+    function renderTrajectory(t) {
+      const same = tjCurThread && tjCurThread.key === t.key;
+      const prevTop = same ? (trajectoryEl.querySelector('.tj-list') || {}).scrollTop || 0 : 0;
+      // A live pair re-renders the whole view; the search box must survive
+      // it with focus and caret (the input handler's own re-render too).
+      const prevSearch = trajectoryEl.querySelector('#tj-search');
+      const searchFocused = !!prevSearch && document.activeElement === prevSearch;
+      const caret = searchFocused ? prevSearch.selectionStart : 0;
+      if (!same) tjSel = null; // a record index means nothing in another thread
+      tjCurThread = t;
+      tjRecs = trajectoryRecords(t);
+      tjRecs.forEach((r, i) => { r._i = i; });
+      // A results index for the inspector's tool renderer (tool_use -> result).
+      const results = {};
+      for (const r of tjRecs) if (r.kind === 'tool' && r.block && r.block.id) results[r.block.id] = r.result;
+      if (tjSel == null || tjSel >= tjRecs.length) tjSel = tjRecs.length ? 0 : null;
+
+      const leveled = trajectoryAtLevel(tjRecs, tjLevel);
+      let shown = leveled.records;
+      if (tjFilter !== 'all') shown = shown.filter(r => r.kind === tjFilter);
+      const q = tjQuery.trim().toLowerCase();
+      if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
+
+      // ---- head: identity + where the time went (the trajectory shape) ----
+      const model = t.model || (t.models && Object.keys(t.models)[0]) || '?';
+      const sid = t.sessionId ? t.sessionId.slice(0, 8) : '';
+      const split = threadTimeSplit(t, pairOf);
+      let lanes = '';
+      if (split.steps > 1 && split.wall > 0) {
+        const seg = (v, c, lbl) => v > 0 ? '<span class="tj-lane" style="flex:' + v + ';background:' + c + '" title="' + lbl + ' ' + fmtSpan(v) + '"></span>' : '';
+        const gapMs = Math.max(0, split.wall - split.model - split.tools - split.waiting - split.between);
+        lanes = '<div class="tj-lanes">' +
+          seg(split.model, '#4184e4', 'model') + seg(split.tools, '#39c5cf', 'tools') +
+          seg(split.waiting, '#d29922', 'waiting') + seg(split.between, 'var(--border)', 'between turns') +
+          (gapMs ? seg(gapMs, 'var(--border)', 'other') : '') + '</div>' +
+          '<div class="tj-lane-key">' +
+          '<span><i style="background:#4184e4"></i>model ' + fmtSpan(split.model) + '</span>' +
+          (split.tools ? '<span><i style="background:#39c5cf"></i>tools ' + fmtSpan(split.tools) + '</span>' : '') +
+          (split.waiting ? '<span><i style="background:#d29922"></i>waiting ' + fmtSpan(split.waiting) + '</span>' : '') +
+          (split.between ? '<span><i style="background:var(--border)"></i>between ' + fmtSpan(split.between) + '</span>' : '') +
+          '</div>';
+      }
+      const head = '<div class="tj-head">' +
+        '<div class="tj-title">' +
+          '<span class="tj-t-label" data-mask>' + escapeHtml(t.label || 'thread') + '</span>' +
+          '<span class="tj-t-meta">' + escapeHtml(shortModel(model) || model) +
+            (sid ? ' \\u00b7 <span data-mask>' + escapeHtml(sid) + '</span>' : '') + '</span>' +
+          '<a class="turn-wire" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
+        '</div>' + lanes +
+        '<div class="tj-counts">' + tjRecs.length + ' records \\u00b7 ' +
+          split.steps + ' wire step' + (split.steps === 1 ? '' : 's') +
+          (split.wall ? ' \\u00b7 ' + fmtSpan(split.wall) : '') +
+          (t.usage && t.usage.cost ? ' \\u00b7 ' + fmtCost(t.usage.cost) : '') + '</div>' +
+        '</div>';
+
+      // ---- toolbar: detail level (MAP/READ/FULL), kind filter, search ----
+      const lvlBtn = (v, lbl, tip) => '<button class="tj-lvl' + (tjLevel === v ? ' active' : '') + '" data-tjlvl="' + v + '" title="' + tip + '">' + lbl + '</button>';
+      const kindBtn = k => '<button class="tj-kind' + (tjFilter === k ? ' active' : '') + '" data-tjkind="' + k + '"' +
+        (k !== 'all' ? ' style="--tjc:' + (TJ_KIND_COLOR[k] || 'var(--text-faint)') + '"' : '') + '>' + k + '</button>';
+      const toolbar = '<div class="tj-toolbar">' +
+        '<span class="tj-lvls" title="detail level \\u2014 the stream is always complete; the level decides what earns a row">' +
+          lvlBtn('map', 'map', 'skeleton: the human\\u2019s turns and the tool calls') +
+          lvlBtn('read', 'read', 'drop the budget banners and bare thinking; keep the substance') +
+          lvlBtn('full', 'full', 'every record') + '</span>' +
+        '<span class="tj-kinds">' + TJ_KINDS.map(kindBtn).join('') + '</span>' +
+        '<input type="text" class="tj-search" id="tj-search" placeholder="find in trajectory\\u2026" value="' + escapeHtml(tjQuery) + '">' +
+        (leveled.hidden ? '<span class="tj-hidden">' + leveled.hidden + ' hidden at this level</span>' : '') +
+        '</div>';
+
+      // ---- the record stream ----
+      let rows = '';
+      let lastOrd = -2;
+      for (const r of shown) {
+        if (r.ord !== lastOrd && r.ord != null) {
+          rows += '<div class="tj-turn">turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + '</div>';
+          lastOrd = r.ord;
+        }
+        const isTool = r.kind === 'tool';
+        rows += '<a class="tj-row tj-k-' + r.kind + (r.think ? ' tj-think' : '') + (r.err ? ' tj-err' : '') +
+            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
+          tjBadge(r) +
+          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(r.label) + '</span>' +
+          (isTool && r.detail ? '<span class="tj-arrow">\\u2192</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
+          '<span class="tj-gap"></span>' +
+          '<span class="tj-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' +
+        '</a>';
+      }
+      if (!shown.length) rows = '<div class="cx-note">no records match this filter</div>';
+
+      trajectoryEl.innerHTML = head + toolbar +
+        '<div class="tj-body"><div class="tj-list">' + rows + '</div>' +
+        '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], results) + '</aside></div>';
+
+      const list = trajectoryEl.querySelector('.tj-list');
+      if (list && same) list.scrollTop = prevTop;
+      const detailEl2 = trajectoryEl.querySelector('#tj-detail');
+      // Row click -> open in the inspector (no navigation, like requests).
+      trajectoryEl.querySelectorAll('.tj-row').forEach(a => {
+        a.addEventListener('click', (e) => {
+          e.preventDefault();
+          tjSel = +a.dataset.tj;
+          trajectoryEl.querySelectorAll('.tj-row.sel').forEach(x => x.classList.remove('sel'));
+          a.classList.add('sel');
+          if (!detailEl2) return;
+          detailEl2.innerHTML = renderTjDetail(tjRecs[tjSel], results);
+          detailEl2.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
+        });
+      });
+      // Level / kind / search controls re-render (cheap; the walk is memo-free
+      // but the thread is small relative to the page).
+      trajectoryEl.querySelectorAll('[data-tjlvl]').forEach(b => b.addEventListener('click', () => {
+        tjLevel = b.dataset.tjlvl; localStorage.setItem('cctrace-tj-level', tjLevel); renderTrajectory(t);
+      }));
+      trajectoryEl.querySelectorAll('[data-tjkind]').forEach(b => b.addEventListener('click', () => {
+        tjFilter = b.dataset.tjkind; renderTrajectory(t);
+      }));
+      const search = trajectoryEl.querySelector('#tj-search');
+      if (search && searchFocused) { search.focus(); try { search.setSelectionRange(caret, caret); } catch {} }
+      if (search) search.addEventListener('input', () => {
+        tjQuery = search.value;
+        renderTrajectory(t);
+      });
+    }
+
+    // Browser fold state survives re-renders: category opens by cat id,
+    // item opens by "cat:index" (a live pair appends steps; the browsed
+    // step's items are stable for a picked pair).
+    const ctxOpenItems = {};
+    // Scrubbing the history chart walks a different request body per bar;
+    // a one-slot cache re-walked the SAME bodies on every pass back. Small
+    // LRU instead — the walk is an index over blocks already in memory, so
+    // a handful of them is cheap, and the thrash is gone.
+    const ctxGraphCache = new Map();
+    const CTX_GRAPH_KEEP = 12;
+    let ctxGraphAt = null;   // pairId the graph pane currently shows
+    // Provenance for the pane rows: the current thread's spine with its
+    // turn sigs (computed once per spine length) and the graph pair's
+    // window turns (one slot — the pane renders many rows against one
+    // window). ctxCurThread lets the provenance link re-render the view.
+    let ctxSince = null;
+    let ctxCurThread = null;
+    // "since turn 04 · step 2": the request that first carried this row's
+    // turn into the window (semantica's provenance trail, cctrace-style:
+    // an origin is a wire request). Content-verified against the spine
+    // (ctxOriginTurn). A user-role turn — the prompt, a tool result, an
+    // injection — entered with the NEXT request, whose reply is the step
+    // named ("since"); an assistant turn IS a step's reply ("from").
+    // Envelope rows (system, schemas) have no turn and say nothing.
+    function ctxSinceHtml(node) {
+      const c = ctxSince;
+      if (!c || !ctxGraphAt) return '';
+      let n = node;
+      while (n && !n.item && n.kids && n.kids.length) n = n.kids[0];
+      const it = n && n.item;
+      if (!it || it.ti == null || it.ti < 0) return '';
+      if (c.winPair !== ctxGraphAt) {
+        const p = pairOf(ctxGraphAt);
+        c.win = p ? ctxWindowTurns(p) : [];
+        c.winPair = ctxGraphAt;
+        // Where this request's window ENDS in the spine: the reply it
+        // produced (anchors the content match — see ctxOriginTurn).
+        let end = c.spine.length;
+        for (let i = 0; i < c.spine.length; i++) { const tt = c.spine[i]; if (tt && tt.role === 'assistant' && tt.pairId === ctxGraphAt) { end = i; break; } }
+        c.winEnd = end;
+      }
+      const vi = ctxOriginTurn(c.spine, c.win, it.ti, c.sigs, c.winEnd);
+      if (vi < 0) return '';
+      const origin = c.spine[vi];
+      let pid = null;
+      if (origin.role === 'assistant') {
+        // A reply is its own step — an unattributed one names nothing
+        // rather than borrowing the next step's address.
+        if (origin.pairId && c.addr[origin.pairId]) pid = origin.pairId;
+      } else {
+        for (let i = vi; i < c.spine.length && !pid; i++) {
+          const tt = c.spine[i];
+          if (tt && tt.role === 'assistant' && tt.pairId && c.addr[tt.pairId]) pid = tt.pairId;
+        }
+      }
+      if (!pid) return '';
+      const lbl = ctxOrdLbl(c.addr, pid);
+      if (!lbl) return '';
+      const verb = c.spine[vi].role === 'assistant' ? 'from' : 'since';
+      return '<span class="cx-since" role="button" tabindex="0" data-cxpin="' + escapeHtml(pid) + '" data-tip="' +
+        escapeHtml((verb === 'from' ? 'the reply of ' : 'in the window since ') + lbl + ' \\u2014 the request that first carried it') +
+        '\\n> click to pin that step">' + verb + ' ' + escapeHtml(lbl) + '</span>';
+    }
+    function ctxGraphOf(pairId) {
+      let g = ctxGraphCache.get(pairId);
+      if (g === undefined) {
+        const p = pairOf(pairId);
+        g = p ? contextGraph(p) : null;
+        ctxGraphCache.set(pairId, g);
+        while (ctxGraphCache.size > CTX_GRAPH_KEEP) ctxGraphCache.delete(ctxGraphCache.keys().next().value);
+      }
+      return g;
+    }
+
+    // The step the browser (and the detail strip) shows when nothing is
+    // hovered: the pinned bar, else the newest non-failed step.
+    function ctxFocusStep(steps) {
+      if (ctxPinned) { for (const s of steps) if (s.pairId === ctxPinned) return s; }
+      for (let i = steps.length - 1; i >= 0; i--) if (!steps[i].failed) return steps[i];
+      return steps[steps.length - 1] || null;
+    }
+
+    // ---- the margin: the balance, then the ledger ----
+    // The sheet's totals, re-reconciled on every scrub, in a column that
+    // never scrolls away. The window this thread is measured against —
+    // set by renderContextView, read here so a hover repaint doesn't have
+    // to re-resolve it.
+    let ctxWin = 0;
+
+    // The reconciliation: what chars/4 is worth against the number the
+    // provider actually billed. This is the check the sheet owes — on
+    // code-heavy bodies the estimate reads well under, and saying so is
+    // the honest form of showing both numbers.
+    function ctxReconLine(s) {
+      if (!s) return '';
+      if (s.stub) return 'request body folded by cctrace <b>compact</b> \\u2014 composition gone, usage kept';
+      if (s.actualIn == null) {
+        return s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
+          : 'no usage reported \\u2014 the bar is the estimate alone';
+      }
+      if (!s.est) return '';
+      const d = (s.est - s.actualIn) / s.actualIn * 100;
+      const est = '\\u2248' + fmtCompact(s.est) + ' estimated \\u00b7 chars/4 ';
+      if (Math.abs(d) < 2) return est + '<b>matches</b> the bill';
+      return est + 'reads <b>' + Math.abs(Math.round(d)) + '% ' + (d < 0 ? 'under' : 'over') + '</b>';
+    }
+
+    function renderCtxMargin(s, addr) {
+      if (!s) return '<div class="cx-note">nothing to reconcile yet</div>';
+      const at = ctxOrdLbl(addr, s.pairId);
+      const total = ctxStepTotal(s);
+      const pctWin = ctxWin ? Math.min(100, (total / ctxWin) * 100) : 0;
+      // The headline is the provider's number when the wire reported one;
+      // the estimate only when it is all we have, and then it wears the
+      // \u2248 that says so.
+      const known = s.actualIn != null;
+      let h = '<div class="cx-mblock"><div class="cx-bal">' +
+        '<span class="cx-bal-n">' + (known ? '' : '\\u2248') + fmtCompact(total) +
+        '<span class="cx-bal-u">' + (known ? 'prompt tokens' : 'estimated') + '</span></span>' +
+        '<span class="cx-bal-d">' + escapeHtml((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : '')) + '</span>';
+      // the bar: six segments against the window when we know it, against
+      // themselves when we do not — never a made-up denominator
+      const segW = ctxWin ? pctWin : 100;
+      let segs = '';
+      if (s.sums && s.est) {
+        for (const c of CTX_CATS) {
+          const v = s.sums[c.id];
+          if (!v) continue;
+          segs += '<span class="cx-seg" style="width:' + ((v / s.est) * segW).toFixed(2) + '%;background:' + c.color + '"></span>';
+        }
+      } else segs = '<span class="cx-seg" style="width:' + segW.toFixed(2) + '%;background:var(--border)"></span>';
+      h += '<div class="cx-bar">' + segs + '</div>' +
+        '<div class="cx-bal-foot">' +
+        (ctxWin ? '<span class="cx-bal-pct">' + Math.round(pctWin) + '% of context used</span>' : '<span class="cx-bal-pct">window unknown</span>') +
+        (ctxWin ? '<span class="cx-bal-win">of ' + fmtCompact(ctxWin) + '</span>' : '') +
+        '</div>';
+      const recon = ctxReconLine(s);
+      if (recon) h += '<div class="cx-recon">' + recon + '</div>';
+      h += '</div></div>';
+
+      // ---- the ledger: six lines, each one a zoom into the graph ----
+      if (s.sums && s.est) {
+        h += '<div class="cx-mblock"><div class="cx-mlabel">composition<span class="cx-mlabel-r">click a line to zoom the graph</span></div>';
+        for (const c of CTX_CATS) {
+          const v = s.sums[c.id];
+          const pct = (v / s.est) * 100;
+          const tip = c.label + '\\n\\u2248' + fmtCompact(v) + ' \\u00b7 ' + (pct >= 0.5 ? Math.round(pct) + '%' : '<1%') + ' of this request' +
+            '\\n---\\n> click to zoom the graph to this category';
+          h += '<a class="cx-crow' + (ctxFocusKey === 'c:' + c.id ? ' sel' : '') + '" href="#"' +
+            ' data-cxnode="c:' + c.id + '" data-cxkids="' + (v ? 1 : 0) + '" data-tip="' + escapeHtml(tip) + '">' +
+            '<span class="cx-crow-label"><span class="cx-dot" style="--cx:' + c.color + '"></span><span>' + c.label + '</span></span>' +
+            '<span class="cx-track"><span class="cx-fill" style="--cx:' + c.color + ';width:' + Math.min(100, pct).toFixed(1) + '%"></span></span>' +
+            '<span class="cx-crow-n">\\u2248' + fmtCompact(v) + '</span>' +
+            '<span class="cx-crow-pct">' + (pct >= 0.5 ? Math.round(pct) + '%' : v ? '&lt;1%' : '0%') + '</span></a>';
+        }
+        h += '</div>';
+      }
+
+      // ---- this step: the reference line, and the way out to the wire ----
+      h += '<div class="cx-mblock"><div class="cx-mlabel">this step</div>' +
+        '<div class="cx-dhead">' +
+        (s.t ? '<span>' + fmtTime(new Date(s.t * 1000)) + '</span>' : '') +
+        (s.actualIn != null ? '<span>output ' + fmtCompact(s.out) + '</span>' : '') +
+        (s.cacheRead > 0 && s.actualIn ? '<span class="ok">' + Math.round((s.cacheRead / s.actualIn) * 100) + '% cached</span>'
+          : s.actualIn != null ? '<span class="warn">cold \\u2014 no cache read</span>' : '') +
+        ctxTurnLink(s, addr) +
+        '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.pairId) + '">wire \\u2192</a>' +
+        '</div></div>';
+
+      // top tool schemas: where the tools budget goes, in the margin
+      // because it is a standing cost, not an event
+      const fp = pairOf(s.pairId);
+      if (fp && !s.stub) {
+        try {
+          const env = ctxEnvelope(fp.request.body || {}, wireDialect(fp) || 'anthropic');
+          const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 5);
+          if (ranked.length) {
+            h += '<div class="cx-mblock"><div class="cx-mlabel">heaviest tool schemas<span class="cx-mlabel-r">of ' + env.tools.length + '</span></div>' +
+              '<div class="cx-topt">' + ranked.map(x => escapeHtml(x.name) + ' <b>\\u2248' + fmtCompact(x.tokens) + '</b>').join('<br>') + '</div></div>';
+          }
+        } catch (e) { /* an unparseable envelope costs the block, never the page */ }
+      }
+      return h;
+    }
+
+    function renderCtxEvents(events, addr) {
+      const kinds = {};
+      for (const ev of events) kinds[ev.kind] = (kinds[ev.kind] || 0) + 1;
+      let chips = '<button class="cx-fchip' + (ctxEvFilter === 'all' ? ' active' : '') + '" data-evf="all">all ' + events.length + '</button>';
+      for (const k of ['inject', 'compact', 'model', 'tools', 'system']) {
+        if (!kinds[k]) continue;
+        chips += '<button class="cx-fchip' + (ctxEvFilter === k ? ' active' : '') + '" data-evf="' + k + '">' + k + ' ' + kinds[k] + '</button>';
+      }
+      const list = events.filter(ev => ctxEvFilter === 'all' || ev.kind === ctxEvFilter);
+      // Newest first — the question is "what just changed my window".
+      // A recurring injector (the per-step token-budget banner fires on
+      // EVERY step) would otherwise bury the events that only happened
+      // once. Adjacent runs of the same kind+label collapse into one row:
+      // \u00d7N, the summed delta, the span. Chronology survives, because a
+      // genuinely different event between two occurrences breaks the run.
+      const rolled = [];
+      for (let i = list.length - 1; i >= 0; i--) {
+        const ev = list[i];
+        const key = ev.kind + '|' + (ev.label || '') + '|' + (ev.mode || '');
+        const top = rolled[rolled.length - 1];
+        if (top && top.key === key) {
+          top.n++;
+          top.tokens += ev.tokens || 0;
+          top.t0 = ev.t;
+          continue;
+        }
+        rolled.push({ key, ev, n: 1, tokens: ev.tokens || 0, t0: ev.t });
+      }
+      let rows = '';
+      const CAP = 200;
+      for (let n = 0; n < rolled.length && n < CAP; n++) {
+        const run = rolled[n];
+        const ev = run.ev;
+        let glyph = '+', label = '', delta = run.tokens;
+        if (ev.kind === 'inject') { label = ev.label || 'context'; }
+        else if (ev.kind === 'compact') {
+          glyph = '\\u2702';
+          label = (ev.mode === 'rewind' ? 'history rewound' : ev.mode === 'rewrite' ? 'context rewritten (continuation summary)' : 'context compacted') +
+            (ev.fromTurns ? ' \\u00b7 ' + ev.fromTurns + ' \\u2192 ' + ev.toTurns + ' turns' : '');
+        }
+        else if (ev.kind === 'model') { glyph = '\\u21c4'; label = shortModel(ev.from) + ' \\u2192 ' + shortModel(ev.to); delta = 0; }
+        else if (ev.kind === 'tools') { glyph = '\\u00b1'; label = 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools'; }
+        else if (ev.kind === 'system') { glyph = '\\u00b1'; label = 'system prompt changed'; }
+        const at = ctxOrdLbl(addr, ev.pairId);
+        const tip = label + (run.n > 1
+          ? '\\n' + run.n + ' occurrences, most recent shown' +
+            (run.t0 && run.t0 !== ev.t ? '\\n' + fmtTime(new Date(run.t0 * 1000)) + ' \\u2192 ' + fmtTime(new Date(ev.t * 1000)) : '') +
+            (run.tokens ? '\\n' + fmtCompact(Math.abs(run.tokens)) + ' tokens in total' : '')
+          : '');
+        // The delta rides WITH the label: it is what this event did to the
+        // window (content), not how it travelled (transport). \u00d7N, the
+        // turn address and the clock hold the right edge \u2014 ui.md's row
+        // grammar. A delta parked 800px from its own label is a saccade,
+        // not a column.
+        rows += '<div class="cx-ev">' +
+          '<span class="cx-ev-glyph">' + glyph + '</span>' +
+          '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
+          '<span class="cx-ev-label" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>' +
+          (delta ? '<span class="cx-delta ' + (delta > 0 ? 'plus' : 'minus') + '">' + (delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(delta)) + '</span>' : '<span class="cx-delta"></span>') +
+          '<span class="cx-ev-gap"></span>' +
+          (run.n > 1 ? '<span class="cx-ev-n">\\u00d7' + run.n + '</span>' : '') +
+          '<span class="cx-ev-at"><a href="#/p/' + encodeURIComponent(ev.pairId) + '" title="open the wire request">' + escapeHtml(at || 'wire') + '</a></span>' +
+          (ev.t ? '<span class="cx-ev-time">' + fmtTime(new Date(ev.t * 1000)) + '</span>' : '') +
+          '</div>';
+      }
+      if (!rows) rows = '<div class="cx-more">no context events' + (ctxEvFilter !== 'all' ? ' of this kind' : '') + '</div>';
+      if (rolled.length > CAP) rows += '<div class="cx-more">+' + (rolled.length - CAP) + ' older rows not shown</div>';
+      return '<div class="cx-h4-right" id="cx-ev-chips" style="display:flex;gap:4px;flex-wrap:wrap;padding-bottom:6px">' + chips + '</div>' + rows;
+    }
+
+    function ctxItemBody(it) {
+      if (it.kind === 'tool') {
+        const d = it.b && it.b.description ? '<div class="block-note">' + escapeHtml(String(it.b.description).slice(0, 600)) + '</div>' : '';
+        return d + preBlock(formatJson(it.b));
+      }
+      try { return renderBlock(it.b, false); } catch (e) { return brokenItem('context item', '', e); }
+    }
+
+    // ---- the context graph ----
+    // The assembled window as a weighted tree: category -> group -> item,
+    // every node bar drawn on ONE scale (share of this request), so the
+    // nesting sums visually and "what is eating my context" is a scan.
+    // (This was the "context browser"; it never browsed anything — it
+    // decomposes a single request, and the shape IS the answer.)
+    // Returns an HTML fragment, not text: "<1%" written raw would parse
+    // as the start of a tag (the fragment checker caught exactly that).
+    function ctxPctStr(tokens, est) {
+      if (!est) return '';
+      const p = (tokens / est) * 100;
+      return p >= 0.5 ? Math.round(p) + '%' : tokens ? '&lt;1%' : '0%';
+    }
+
+    // Depth tints: each level fades toward the surface, so the hierarchy
+    // reads without a second hue. Capped at a TINT (never the raw data
+    // color) because these nodes carry text and var(--text) has to stay
+    // legible on them in both themes — full saturation stays the
+    // composition bar's job, which carries no text. The full-strength hue
+    // is still stated, as a 2px left edge on every node.
+    const CX_TINT = [62, 62, 44, 28];
+    function ctxNodeBg(color, depth) {
+      if (!color) return 'var(--bg-surface)';
+      return 'color-mix(in srgb, ' + color + ' ' + (CX_TINT[depth] || 28) + '%, var(--bg-surface))';
+    }
+
+    function ctxFlameTip(n) {
+      const bits = [n.label];
+      if (n.tail) {
+        bits.push(n.tail + ' nodes too thin to draw \\u2014 \\u2248' + fmtCompact(n.tokens) + ' between them');
+        bits.push('they are counted here, never dropped');
+        return bits.join('\\n');
+      }
+      bits.push('\\u2248' + fmtCompact(n.tokens) + ' \\u00b7 ' + ctxPctStr(n.tokens, ctxFlameTotal) + ' of this request');
+      if (n.n > 1) bits.push(n.n + ' items');
+      if (n.err) bits.push(n.err + ' returned is_error');
+      bits.push('---');
+      bits.push(n.root ? '> the whole of what you are looking at'
+        : n.hasKids ? '> click to zoom in' : '> click to open its content below');
+      return bits.join('\\n');
+    }
+
+    // ---- the context graph ----
+    // An ICICLE: rows top-down, width = tokens, every child inside its
+    // parent's span. The flame-graph idiom, because "what is eating my
+    // context window" IS a profiling question and this audience reads
+    // profiles natively. Row 1 is the six categories in CTX_CATS order —
+    // the same six the composition bar above shows, in the same order and
+    // the same hues: the graph IS that bar growing downward into its
+    // parts, which is why it belongs to this page and not to a chart
+    // library. Click a node to zoom, the breadcrumb to come back, a leaf
+    // to open its exact bytes underneath.
+    let ctxFlameTotal = 0;
+    // What the graph pane currently shows, so zoom/select can repaint it
+    // in place without going back through the whole view render.
+    let ctxLast = { step: null, addr: null };
+    function renderCtxGraph(s, addr) {
+      ctxGraphAt = s ? s.pairId : null;
+      ctxLast = { step: s, addr };
+      if (!s) return '<div class="cx-note">nothing to open yet</div>';
+      if (s.stub) {
+        return '<div class="cx-note">this step\\u2019s request body was folded by cctrace compact \\u2014 its composition is gone (the kept request of the epoch holds the full history)' +
+          (s.actualIn != null ? ' \\u00b7 actual prompt ' + fmtCompact(s.actualIn) : '') + '</div>';
+      }
+      const g = ctxGraphOf(s.pairId);
+      if (!g || !g.est) return '<div class="cx-note">request not loaded</div>';
+      ctxFlameTotal = g.est;
+      // No head here. The margin beside this chart already names the step,
+      // its estimate, its billed prompt and both links — a second copy is
+      // the third-rendering habit this layout exists to break.
+      let h = '';
+
+      const fl = ctxFlameLayout(g, { sort: ctxSort, focus: ctxFocusKey });
+      // A focus key that no longer resolves (the picked step changed) fell
+      // back to the root — say so by dropping the stale key, so the next
+      // click starts from where the reader actually is.
+      if (ctxFocusKey && fl.focus.key !== ctxFocusKey) ctxFocusKey = '';
+      // Resolve the selection BEFORE drawing, so the selected node wears its
+      // outline on the first paint. A key from another step (scrubbing the
+      // history chart) falls back to the heaviest group \u2014 the section opens
+      // ON the answer instead of asking the reader to go find it.
+      if (!ctxSelKey || !ctxFlameFind(fl.root, ctxSelKey)) ctxSelKey = ctxFlameDefault(g);
+      // breadcrumb: the zoom's way home, one clickable segment per level
+      let crumbs = '';
+      for (let i = 0; i < fl.path.length; i++) {
+        const p = fl.path[i];
+        crumbs += (i ? '<span class="cx-crumb-sep">\\u203a</span>' : '') +
+          (i === fl.path.length - 1
+            ? '<span class="cx-crumb cur">' + escapeHtml(p.label) + '</span>'
+            : '<a class="cx-crumb" href="#" data-cxzoom="' + escapeHtml(p.key) + '">' + escapeHtml(p.label) + '</a>');
+      }
+      // Only when zoomed: at the root the crumb is one unclickable word
+      // that row 0 of the graph already says.
+      if (fl.path.length > 1) {
+        h += '<div class="cx-crumbs">' + crumbs +
+          '<span class="cx-crumb-hint">zoomed \\u2014 percentages stay against the whole request</span></div>';
+      }
+
+      let flame = '';
+      for (let r = 0; r < fl.rows.length; r++) {
+        let cells = '';
+        for (const n of fl.rows[r]) {
+          const sel = n.key === ctxSelKey;
+          cells += '<span class="cx-fn' + (sel ? ' sel' : '') + (n.tail ? ' tailn' : '') + (n.err && !n.hasKids ? ' errn' : '') + '"' +
+            ' style="left:' + n.x.toFixed(3) + '%;width:' + n.w.toFixed(3) + '%;' +
+            'background:' + ctxNodeBg(n.color, r === 0 ? 1 : r) +
+            (n.color ? ';box-shadow:inset 2px 0 0 ' + n.color + ',inset -1px 0 0 var(--bg)' : '') + '"' +
+            // Keyboard reaches the nodes that can say what they are; the
+            // slivers are reached by zooming their parent, which is what
+            // zoom is for. 75 labelled tab stops beats 400 unlabelled ones.
+            (n.tail ? '' : ' data-cxnode="' + escapeHtml(n.key) + '" data-cxkids="' + (n.hasKids ? 1 : 0) + '"' +
+              (n.lbl ? ' tabindex="0" role="button"' : '')) +
+            ' data-tip="' + escapeHtml(ctxFlameTip(r === 0 ? { ...n, root: 1 } : n)) + '">' +
+            (n.lbl ? '<span class="cx-fn-l">' + escapeHtml(n.label) + '</span>' +
+              // Metrics drop before the label does: a node clipped to "F"
+              // says nothing, and the hover carries every number anyway.
+              (n.n > 1 && !n.tail && n.w >= 14 ? '<span class="cx-fn-n">\\u00d7' + n.n + '</span>' : '') +
+              (n.w >= 10 ? '<span class="cx-fn-t">\\u2248' + fmtCompact(n.tokens) + '</span>' : '') : '') +
+            '</span>';
+        }
+        flame += '<div class="cx-frow" style="z-index:' + (9 - r) + '">' + cells + '</div>';
+      }
+      h += '<div class="cx-flame">' + flame + '</div>';
+      h += '<div class="cx-pane" id="cx-pane">' + renderCtxPane(fl) + '</div>';
+      return h;
+    }
+
+    // The detail pane under the graph: whatever node is selected, opened.
+    // A leaf gives its exact bytes; a group gives its items as folds; a
+    // container gives its children ranked, each one click from a zoom.
+    // Selection defaults to the heaviest group, so the section opens ON
+    // the answer instead of asking the reader to go find it.
+    function renderCtxPane(fl) {
+      const path = ctxSelKey ? ctxFlameFind(fl.root, ctxSelKey) : null;
+      const hit = path && path[path.length - 1];
+      if (!hit) return '<div class="cx-note">pick a node above to open it</div>';
+      const head = '<div class="cx-pane-h">' +
+        '<span class="cx-dot" style="--cx:' + (hit.color || 'var(--text-faint)') + '"></span>' +
+        '<span class="cx-pane-t">' + escapeHtml(hit.label) + '</span>' +
+        (hit.n > 1 ? '<span class="cx-pane-n">' + hit.n + ' items</span>' : '') +
+        '<span class="cx-pane-tok">\\u2248' + fmtCompact(hit.tokens) + ' \\u00b7 ' + ctxPctStr(hit.tokens, ctxFlameTotal) + ' of the request</span>' +
+        '</div>';
+      // a leaf: its exact bytes, already open — that is what was asked for
+      if (hit.item) {
+        let body = '';
+        try { body = ctxItemBody(hit.item); } catch (e) { body = brokenItem('context item', '', e); }
+        return head + '<div class="cx-pane-body">' + body + '</div>';
+      }
+      const kids = hit.kids || [];
+      if (!kids.length) return head + '<div class="cx-note">nothing under this node</div>';
+      // a group: its items as lazy folds (a category: its groups, ranked)
+      if (kids[0].item || !(kids[0].kids || []).length) {
+        // The graph is the answer; the pane is the drill-down. Dumping 177
+        // rows under a 72px chart would put the flat list back, so: the
+        // heaviest handful, said out loud, and every other node is one
+        // click away IN the graph.
+        const CAP = 15;
+        const ranked = kids.slice().sort((a, b) => b.tokens - a.tokens);
+        // Shed what the pane head already says: under a group called
+        // "Bash", 15 rows of "tool_result | Bash -> ..." is one fact
+        // repeated 30 times. The kind column survives only where it
+        // VARIES (an assistant turn mixes text/thinking/tool_use).
+        const kinds = {};
+        for (const k of kids) kinds[(k.item && k.item.kind) || 'item'] = 1;
+        const showKind = Object.keys(kinds).length > 1;
+        let rows = '';
+        for (let i = 0; i < ranked.length && i < CAP; i++) {
+          const k = ranked[i];
+          const open = ctxOpenItems[k.key];
+          const lbl = k.label;
+          rows += '<details class="fold cx-item' + (k.err ? ' cx-item-err' : '') + '"' + (open ? ' open' : '') +
+            ' data-cxitem="' + escapeHtml(k.key) + '">' +
+            '<summary>' + (showKind ? '<span class="fold-title">' + escapeHtml((k.item && k.item.kind) || 'item') + '</span>' : '') +
+            '<span class="fold-hint">' + escapeHtml(lbl) + '</span>' +
+            '<span class="cx-item-n">\\u2248' + fmtCompact(k.tokens) + '</span>' +
+            '<span class="cx-prow-gap"></span>' + ctxSinceHtml(k) +
+            '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
+        }
+        if (ranked.length > CAP) rows += '<div class="cx-more">the ' + CAP + ' heaviest of ' + ranked.length +
+          ' \\u2014 pick any node in the graph above to open it</div>';
+        return head + rows;
+      }
+      let rows = '';
+      const ranked = kids.slice().sort((a, b) => b.tokens - a.tokens);
+      for (const k of ranked.slice(0, 40)) {
+        rows += '<a class="cx-prow" href="#" data-cxzoom="' + escapeHtml(k.key) + '">' +
+          '<span class="cx-prow-l">' + escapeHtml(k.label) + '</span>' +
+          (k.n > 1 ? '<span class="cx-fn-n">×' + k.n + '</span>' : '') +
+          '<span class="cx-wt"><span class="cx-wf" style="width:' + (hit.tokens ? Math.min(100, (k.tokens / hit.tokens) * 100) : 0).toFixed(2) + '%;background:' + (k.color || 'var(--text-faint)') + '"></span></span>' +
+          '<span class="cx-item-n">≈' + fmtCompact(k.tokens) + ' · ' + ctxPctStr(k.tokens, ctxFlameTotal) + '</span>' +
+          '<span class="cx-prow-gap"></span>' + ctxSinceHtml(k) + '</a>';
+      }
+      if (ranked.length > 40) rows += '<div class="cx-more">+' + (ranked.length - 40) + ' more</div>';
+      return head + rows;
+    }
+
+    // Fill a pane item's body on first expand — one tool-result group can
+    // hold a megabyte; only what the reader opens is rendered. Keys are the
+    // flame's node keys, stable across steps, so what you opened stays open
+    // while you scrub the history chart.
+    // The provenance link pins the step it names (a path chip is a focus
+    // control, not a picture). Capture phase: the link sits inside a zoom
+    // row / a fold summary, and pinning must win over zooming or toggling.
+    const ctxPinFromLink = (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('[data-cxpin]') : null;
+      if (!a || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (!ctxCurThread) return;
+      ctxPinned = a.dataset.cxpin;
+      renderContextView(ctxCurThread);
+    };
+    contextEl.addEventListener('click', ctxPinFromLink, true);
+    contextEl.addEventListener('keydown', ctxPinFromLink, true);
+    contextEl.addEventListener('toggle', (e) => {
+      const det = e.target;
+      if (!det || !det.dataset || !det.dataset.cxitem) return;
+      ctxOpenItems[det.dataset.cxitem] = det.open;
+      if (!det.open) return;
+      const body = det.querySelector(':scope > .fold-body');
+      if (!body || body.dataset.filled) return;
+      const g = ctxGraphAt ? ctxGraphOf(ctxGraphAt) : null;
+      if (!g) return;
+      const node = ctxFlameFind(ctxFlameTree(g, ctxSort !== 'order'), det.dataset.cxitem);
+      const it = node && node[node.length - 1].item;
+      if (!it) return;
+      body.dataset.filled = '1';
+      try { body.innerHTML = ctxItemBody(it); }
+      catch (err) { body.innerHTML = brokenItem('context item', '', err); }
+    }, true);
+
+    // Zoom + select. One delegated listener on the section, because the
+    // flame re-renders on every hover-scrub and per-node handlers would be
+    // rebound hundreds of times a second.
+    contextEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const t = e.target && e.target.dataset && e.target.dataset.cxnode != null ? e.target : null;
+      if (!t) return;
+      e.preventDefault();
+      t.click();
+    });
+    contextEl.addEventListener('click', (e) => {
+      const t = e.target && e.target.closest ? e.target.closest('[data-cxzoom],[data-cxnode]') : null;
+      if (!t) return;
+      e.preventDefault();
+      if (t.dataset.cxzoom != null) {
+        ctxFocusKey = t.dataset.cxzoom === 'root' ? '' : t.dataset.cxzoom;
+      } else {
+        // A node with children zooms; a leaf opens. Both select, so the
+        // pane always names where you are.
+        ctxSelKey = t.dataset.cxnode;
+        if (t.dataset.cxkids === '1') ctxFocusKey = t.dataset.cxnode;
+      }
+      const gr = document.getElementById('cx-graph');
+      if (gr && ctxLast.step) {
+        // a zoom/select CHANGES what the pane shows, so its old scroll is
+        // meaningless — but the margin beside it did not move.
+        const tops = ctxCaptureTops();
+        delete tops['cx-pane'];
+        gr.innerHTML = renderCtxGraph(ctxLast.step, ctxLast.addr);
+        ctxRestoreTops(tops);
+      }
+      // the ledger row wears the zoom too — margin and chart are one
+      // selection, whichever side the click came from
+      if (ctxLast.step) ctxRepaintMargin(ctxLast.step, ctxLast.addr);
+      tipDetachedGuard(); // the node under the cursor was just replaced
+    });
+
+    // ---- threads in this trace (the multi-session picker) ----
+    // One trace routinely holds several sessions (a /clear rotates the sid,
+    // a resume merges a prior run) and each session several threads (the
+    // chat, its subagents, utility probes). The context tab used to show
+    // exactly one of them with no way across; this strip is both the
+    // switcher and the comparison: peak assembled context per thread, all
+    // bars on ONE scale, so "which session is running hot" is a glance.
+    // Peaks are provider-reported prompt tokens; the % is against each
+    // thread's OWN model window (per-model correct), the bar against the
+    // largest peak on show (comparable).
+    function renderCtxThreads(threads, sel) {
+      const live = threads.filter(x => (x.pairIds || []).length);
+      if (live.length < 2) return '';
+      const stats = {};
+      let scale = 1;
+      for (const x of live) {
+        const st = ctxThreadStat(x);
+        stats[x.key] = st;
+        if (st.peak > scale) scale = st.peak;
+      }
+      const bySid = {};
+      const sids = [];
+      for (const x of live) {
+        const sid = x.sessionId || '';
+        if (!bySid[sid]) { bySid[sid] = []; sids.push(sid); }
+        bySid[sid].push(x);
+      }
+      const lastAt = (g) => { let m = 0; for (const x of g) m = Math.max(m, x.lastAt || x.firstAt || 0); return m; };
+      sids.sort((a, b) => lastAt(bySid[b]) - lastAt(bySid[a]) || (a < b ? -1 : a > b ? 1 : 0));
+      let rows = '';
+      for (const sid of sids) {
+        const g = bySid[sid].slice().sort((a, b) => (a.firstAt || 0) - (b.firstAt || 0));
+        if (sids.length > 1) {
+          rows += '<div class="cx-sess"><span class="sess-sid" data-mask="sid">' + escapeHtml(sid ? sid.slice(0, 8) : 'no session id') + '</span>' +
+            '<span class="cx-sess-n">' + g.length + ' thread' + (g.length === 1 ? '' : 's') + '</span>' +
+            (lastAt(g) ? '<span class="cx-sess-t">' + fmtDateTime(new Date(lastAt(g) * 1000)) + '</span>' : '') + '</div>';
+        }
+        for (const x of g) {
+          const st = stats[x.key];
+          const w = ctxWindowOf(x);
+          const pct = w && st.peak && st.peak <= w ? Math.round((st.peak / w) * 100) : 0;
+          const tip = threadTitle(x) + '\\npeak assembled context ' + fmtCompact(st.peak) +
+            (w ? ' \\u00b7 ' + pct + '% of a ' + fmtCompact(w) + ' window' : ' \\u00b7 window unknown') +
+            (st.cuts ? '\\n' + st.cuts + ' compaction/rewind boundar' + (st.cuts === 1 ? 'y' : 'ies') : '') +
+            '\\n---\\n> click to open this thread\\u2019s context';
+          rows += '<a class="cx-th' + (x.key === sel.key ? ' selected' : '') + '" href="' + ctxHash(x.key) + '"' +
+            ' data-tip="' + escapeHtml(tip) + '">' +
+            '<span class="tkind tkind-' + x.kind + '">' + x.kind + '</span>' +
+            '<span class="cx-th-label">' + escapeHtml(x.label) + '</span>' +
+            '<span class="cx-th-bar"><span class="cx-th-fill" style="width:' + ((st.peak / scale) * 100).toFixed(1) + '%"></span></span>' +
+            '<span class="cx-th-n">' + fmtCompact(st.peak) + '</span>' +
+            '<span class="cx-th-pct">' + (pct ? pct + '%' : '\\u00b7') + '</span>' +
+            '<span class="cx-th-cut">' + (st.cuts ? '\\u2702' + st.cuts : '') + '</span></a>';
+        }
+      }
+      return '<div class="cx-mblock"><div class="cx-mlabel">other threads<span class="cx-mlabel-r">' +
+        sids.length + ' session' + (sids.length === 1 ? '' : 's') + ' \\u00b7 peak, one scale</span></div>' +
+        '<div class="cx-thlist">' + rows + '</div></div>';
+    }
+
+    // The scroll containers the ledger layout added: the margin itself
+    // (it can outrun a short viewport), its thread list, and the graph's
+    // pane. One list, so a fourth one is a one-line change and not a
+    // fourth forgotten scroll reset.
+    const CTX_SCROLLERS = ['cx-margin', 'cx-pane'];
+    function ctxCaptureTops() {
+      const out = {};
+      for (const id of CTX_SCROLLERS) {
+        const el = document.getElementById(id);
+        if (el && el.scrollTop) out[id] = el.scrollTop;
+      }
+      const th = contextEl.querySelector('.cx-thlist');
+      if (th && th.scrollTop) out.thlist = th.scrollTop;
+      return out;
+    }
+    function ctxRestoreTops(tops) {
+      if (!tops) return;
+      for (const id of CTX_SCROLLERS) {
+        const el = tops[id] != null && document.getElementById(id);
+        if (el) el.scrollTop = tops[id];
+      }
+      const th = tops.thlist != null && contextEl.querySelector('.cx-thlist');
+      if (th) th.scrollTop = tops.thlist;
+    }
+
+    // The margin redraws on every scrub — the balance ticking as you move
+    // down the trajectory IS the form. Its own scroll survives (a long
+    // thread list must not jump), and the threads block is left alone:
+    // only the balance/ledger/step region depends on the picked step.
+    function ctxRepaintMargin(s, addr) {
+      const el = document.getElementById('cx-bal');
+      if (!el) return;
+      const box = document.getElementById('cx-margin');
+      const top = box ? box.scrollTop : 0;
+      el.innerHTML = renderCtxMargin(s, addr);
+      if (box) box.scrollTop = top;
+    }
+
+    let ctxThreadKey = null;
+    let ctxGraphTimer = 0;
+    function renderContextView(t) {
+      // Switching threads drops the pin (it names a pair of the OLD
+      // thread); granularity and the events filter are preferences and stay.
+      if (ctxThreadKey !== t.key) { ctxThreadKey = t.key; ctxPinned = null; }
+      const d = ctxData(t);
+      const tl = d.tl;
+      const addr = d.addr;
+      const steps = tl.steps;
+      ctxCurThread = t;
+      if (!ctxSince || ctxSince.key !== t.key || ctxSince.n !== t.turns.length) {
+        ctxSince = { key: t.key, n: t.turns.length, spine: t.turns, sigs: t.turns.map(x => ctxTurnSig(x && x.blocks)), addr, winPair: null, win: null, winEnd: 0 };
+      } else ctxSince.addr = addr;
+      if (!steps.length) {
+        contextEl.innerHTML = '<div class="empty">No model calls in this thread yet.</div>';
+        return;
+      }
+      const focus = ctxFocusStep(steps);
+      // ---- head: thread identity + the stats row ----
+      const injN = tl.events.filter(ev => ev.kind === 'inject').length;
+      const compEvs = tl.events.filter(ev => ev.kind === 'compact');
+      let reclaimed = 0;
+      for (const ev of compEvs) if (ev.tokens < 0) reclaimed += -ev.tokens;
+      let win = ctxWindowOf(t);
+      const cur = focus && !focus.stub ? focus : null;
+      const anchor = focus ? ctxStepTotal(focus) : 0;
+      // Sanity: a provider-reported prompt LARGER than the resolved window
+      // proves the window wrong (stale catalog, an unlisted long-context
+      // tier). Show no denominator rather than "100% of context used".
+      if (win && anchor > win) win = 0;
+      let head = '<div class="cx-head">' +
+        '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
+        '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
+        modelChip(t) +
+        (t.sessionId ? '<span class="sess-sid" data-mask="sid">' + escapeHtml(t.sessionId.slice(0, 8)) + '</span>' : '') +
+        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
+        '</div>';
+      // No chips row. Every count reads as the caption of the thing it
+      // counts \u2014 steps and turns caption the trajectory, injections and
+      // compactions caption the events \u2014 and est/prompt/window are the
+      // margin's balance, stated once. A strip of eight orphan numbers
+      // under the head was the old page's third copy of its own totals.
+      // "turns" is overloaded on this page \u2014 the thread label counts
+      // MESSAGE turns (122), the addresses count WORKING LOOPS (04). Name
+      // both in full here so the vocabulary the addresses use is taught,
+      // not guessed.
+      const loops = loopCountOf(t);
+      const trajCap = steps.length + ' wire request' + (steps.length === 1 ? '' : 's') +
+        ' \u00b7 ' + loops + ' working loop' + (loops === 1 ? '' : 's') +
+        ' \u00b7 \u2702 marks compaction/rewind \u00b7 hover to scrub, click to pin';
+      const evCap = [
+        injN ? injN + ' injection' + (injN === 1 ? '' : 's') : '',
+        compEvs.length ? compEvs.length + ' compaction' + (compEvs.length === 1 ? '' : 's') : '',
+        reclaimed ? fmtCompact(reclaimed) + ' reclaimed' : '',
+      ].filter(Boolean).join(' \u00b7 ') || 'when and why the window grew or was reclaimed';
+
+      ctxWin = win;
+
+      // ---- the trajectory: the steps as a countable population ----
+      const turnBars = ctxGran === 'turn' ? ctxAggregateTurns(steps, addr) : null;
+      const maxT = Math.max(1, tl.maxTotal);
+      let cols = '';
+      const bar = (s, extra, lbl) => {
+        const total = ctxStepTotal(s);
+        const hpct = Math.max(2, (total / maxT) * 100);
+        return '<span class="cx-colw' + (s.pairId === ctxPinned ? ' pinned' : '') + (s.mark ? ' cut' : '') +
+          '" data-cxbar="' + escapeHtml(s.pairId) + '"' +
+          ' data-tip="' + escapeHtml(ctxBarTip(s, addr, extra)) + '">' +
+          (s.mark ? '<span class="cx-mark">\\u2702</span>' : '') +
+          '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%">' +
+          ctxColSegs(s) + '</span>' +
+          (lbl ? '<span class="cx-tlbl">' + escapeHtml(lbl) + '</span>' : '') + '</span>';
+      };
+      if (turnBars) {
+        for (const tb of turnBars) {
+          const extra = tb.steps > 1 ? tb.steps + ' steps in this turn' + (tb.failed ? ' \\u00b7 ' + tb.failed + ' failed' : '') : '';
+          const s = tb.mark && !tb.last.mark ? { ...tb.last, mark: tb.mark } : tb.last;
+          // The dsh chart labels turn bars beneath — same numbering as the
+          // outline's ordinals, so the axis reads T-for-turn at a glance.
+          const lbl = tb.ord != null ? (tb.ord + 1 < 10 ? '0' + (tb.ord + 1) : '' + (tb.ord + 1)) : '';
+          cols += bar(s, extra, lbl);
+        }
+      } else {
+        for (const s of steps) cols += bar(s, '', '');
+      }
+      // The limit, drawn only when the limit is in PLAY. A dashed ceiling
+      // eight times above the tallest bar is a line about nothing; once
+      // the thread is past half its window it is the only line that
+      // matters. 132px chart, 14px top padding — same numbers as the CSS.
+      // The chart is scaled to this thread's own peak and says so. It does
+      // NOT draw the window as a second line: occupancy against the model's
+      // limit is the margin's balance, stated once — a second denominator
+      // in the same picture is the duplication this layout exists to kill.
+      let hist = '<div class="cx-chart-wrap"><span class="cx-scale">' + fmtCompact(maxT) + '</span>' +
+        '<div class="cx-chart" id="cx-chart">' + cols + '</div></div>';
+
+      // ---- assemble: the margin reconciles, the canvas scrolls ----
+      // A live capture re-renders this whole view on every pair arrival, so
+      // every scroll position in it must survive — the page's own, the
+      // chart's (which also STICKS to the newest edge when it was there),
+      // and the three inner panes the ledger layout added. Yanking a reader
+      // back to the top of a list they were reading is the one thing
+      // ui.md's terminal semantics forbid outright.
+      const scroll = contextEl.scrollTop;
+      const oldChart = document.getElementById('cx-chart');
+      const chartScroll = oldChart ? (oldChart.scrollLeft + oldChart.clientWidth >= oldChart.scrollWidth - 8 ? -1 : oldChart.scrollLeft) : -1;
+      const keepTops = ctxCaptureTops();
+      // ...except the pane's, when the STEP changed under it (←/→ walking
+      // the pin, a thread switch): its old offset points into content that
+      // is no longer there. A live pair arriving on the same step keeps it.
+      if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
+      const margin = '<aside class="cx-margin" id="cx-margin">' +
+        '<div id="cx-bal">' + renderCtxMargin(focus, addr) + '</div>' +
+        renderCtxThreads(getThreads(), t) +
+        '</aside>';
+      const canvas = '<div class="cx-canvas">' +
+        '<div class="cx-section"><h4>trajectory <span class="cx-h4-hint">' + escapeHtml(trajCap) + '</span>' +
+          '<span class="cx-h4-right">' +
+          '<button class="cx-fchip' + (ctxGran === 'step' ? ' active' : '') + '" data-cxgran="step">step</button>' +
+          '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn">turn</button>' +
+          '</span></h4>' + hist + '</div>' +
+        '<div class="cx-section"><h4>inside this step <span class="cx-h4-hint">decomposed from the captured request body \\u2014 exact, not reconstructed \\u00b7 width is tokens, rows are levels \\u00b7 click to zoom, a leaf opens below</span>' +
+          '<span class="cx-h4-right">' +
+          '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first \\u2014 what is eating the window">by size</button>' +
+          '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order \\u2014 how the window was assembled">in order</button>' +
+          '</span></h4><div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div></div>' +
+        '<div class="cx-section"><h4>what changed it <span class="cx-h4-hint">' + escapeHtml(evCap) + '</span></h4><div id="cx-events">' + renderCtxEvents(tl.events, addr) + '</div></div>' +
+        '</div>';
+      contextEl.innerHTML = head + '<div class="cx-cols">' + margin + canvas + '</div>';
+      contextEl.scrollTop = scroll;
+      ctxRestoreTops(keepTops);
+      const chart = document.getElementById('cx-chart');
+      if (chart) chart.scrollLeft = chartScroll >= 0 ? chartScroll : chart.scrollWidth;
+      tipDetachedGuard();
+
+      // granularity toggle
+      contextEl.querySelectorAll('[data-cxgran]').forEach(btn => {
+        btn.onclick = () => {
+          ctxGran = btn.dataset.cxgran;
+          localStorage.setItem('cctrace-ctx-gran', ctxGran);
+          renderContextView(t);
+        };
+      });
+      // graph sort lens: size (what is eating the window) vs wire order
+      contextEl.querySelectorAll('[data-cxsort]').forEach(btn => {
+        btn.onclick = () => {
+          ctxSort = btn.dataset.cxsort;
+          localStorage.setItem('cctrace-ctx-sort', ctxSort);
+          renderContextView(t);
+        };
+      });
+      // events filter
+      contextEl.querySelectorAll('[data-evf]').forEach(btn => {
+        btn.onclick = () => {
+          ctxEvFilter = btn.dataset.evf;
+          renderContextView(t);
+        };
+      });
+      // bars: hover drives the detail strip + the browser (dsh's linked
+      // scrub); click pins; leaving the chart restores the pinned/newest.
+      const stepById = {};
+      for (const s of steps) stepById[s.pairId] = s;
+      // The detail strip follows the pointer instantly (a dozen rows); the
+      // GRAPH is a full decomposition of a possibly-400k-token body, so it
+      // lands on a short settle — scrubbing 100 bars must not rebuild 100
+      // trees. Landing on the bar you stopped at is what the eye wants
+      // anyway.
+      const preview = (s, now) => {
+        ctxRepaintMargin(s, addr);
+        clearTimeout(ctxGraphTimer);
+        const paint = () => {
+          const gr = document.getElementById('cx-graph');
+          if (gr) gr.innerHTML = renderCtxGraph(s, addr);
+        };
+        if (now) paint(); else ctxGraphTimer = setTimeout(paint, 90);
+      };
+      contextEl.querySelectorAll('[data-cxbar]').forEach(el => {
+        el.addEventListener('mouseenter', () => { const s = stepById[el.dataset.cxbar]; if (s) preview(s); });
+        el.addEventListener('click', () => {
+          ctxPinned = ctxPinned === el.dataset.cxbar ? null : el.dataset.cxbar;
+          renderContextView(t);
+        });
+      });
+      if (chart) chart.addEventListener('mouseleave', () => preview(ctxFocusStep(steps), true));
+    }
     // pairs whose response completed at or before the cursor are visible,
     // everything after doesn't exist yet. Both panes rebuild from the
     // visible subset via the normal buildSession path; playback is a
@@ -4792,11 +6585,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = replaySpan(pairs);
       if (!span) { rpMarks.innerHTML = ''; return; }
       const dur = Math.max(1, span.t1 - span.t0);
+      // Context boundaries across EVERY thread: where the window collapsed
+      // (compaction, rewrite, rewind). On the timeline these are the
+      // trajectory's axis breaks — the moment the agent's memory changed
+      // shape, which the per-pair ticks alone never showed.
+      const cuts = {};
+      for (const t of getThreads()) for (const c of (t.compactions || [])) if (c.pairId) cuts[c.pairId] = 1;
       let html = '';
       for (const p of pairs) {
         const x = ((pairEndMs(p) - span.t0) / dur) * 100;
         const err = !p.response || p.response.status >= 400;
-        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
+        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') +
+          (cuts[p.id] ? ' cut' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
       }
       rpMarks.innerHTML = html;
     }

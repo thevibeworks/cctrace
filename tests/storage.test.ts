@@ -1,11 +1,11 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync, readdirSync, statSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync, appendFileSync, existsSync, readFileSync, readdirSync, statSync, utimesSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { gunzipSync, gzipSync } from "zlib";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, purgePairsById, human, archiveTrace, planStaleSweep,
+  planPurge, applyPurge, purgePairsById, human, archiveTrace, planStaleSweep, sweepOrphanTmps, TMP_ORPHAN_MS,
 } from "../src/storage";
 import { parseTraceText } from "../src/history";
 
@@ -108,8 +108,8 @@ describe("merge", () => {
     writeFileSync(join(dir, "trace-B.jsonl"), jl(convPair("b1", SID_B, 400), utilityPair("u1", 401)));
   });
 
-  test("groups by session, dedupes, sorts by time", () => {
-    const plan = planMerge(dir);
+  test("groups by session, dedupes, sorts by time", async () => {
+    const plan = await planMerge(dir);
     const a = plan.sessions.find((s) => s.id === SID_A)!;
     expect(a.pairCount).toBe(3);
     expect(a.dupes).toBe(1);
@@ -118,15 +118,15 @@ describe("merge", () => {
     expect(plan.unattributable).toBe(1);
   });
 
-  test("only fully-attributed sources are prune-able (utility trace spared)", () => {
-    const plan = planMerge(dir);
+  test("only fully-attributed sources are prune-able (utility trace spared)", async () => {
+    const plan = await planMerge(dir);
     const names = plan.subsumed.map((f) => f.name).sort();
     expect(names).toEqual(["trace-A1.jsonl", "trace-A2.jsonl"]);
     expect(names).not.toContain("trace-B.jsonl"); // carries the utility pair
   });
 
-  test("apply writes merged files; --prune removes subsumed sources", () => {
-    const plan = planMerge(dir);
+  test("apply writes merged files; --prune removes subsumed sources", async () => {
+    const plan = await planMerge(dir);
     const res = applyMerge(plan, { prune: true });
     const out = join(dir, "session-2d5c0d3b.jsonl");
     expect(existsSync(out)).toBe(true);
@@ -136,17 +136,17 @@ describe("merge", () => {
     expect(res.pruned.sort()).toEqual(["trace-A1.jsonl", "trace-A2.jsonl"]);
   });
 
-  test("apply without --prune keeps all sources", () => {
-    applyMerge(planMerge(dir), { prune: false });
+  test("apply without --prune keeps all sources", async () => {
+    applyMerge(await planMerge(dir), { prune: false });
     expect(existsSync(join(dir, "trace-A1.jsonl"))).toBe(true);
   });
 
   // Regression: a previous merge's output is an input — a re-run after
   // --prune must union with it, never overwrite it with the new subset.
-  test("re-merge after --prune keeps the previously merged pairs", () => {
-    applyMerge(planMerge(dir), { prune: true }); // session A -> a1,a2,a3; sources pruned
+  test("re-merge after --prune keeps the previously merged pairs", async () => {
+    applyMerge(await planMerge(dir), { prune: true }); // session A -> a1,a2,a3; sources pruned
     writeFileSync(join(dir, "trace-A3.jsonl"), jl(convPair("a4", SID_A, 400)));
-    const plan2 = planMerge(dir);
+    const plan2 = await planMerge(dir);
     const a = plan2.sessions.find((s) => s.id === SID_A)!;
     expect(a.existing).toBe(3);
     applyMerge(plan2, { prune: true });
@@ -154,21 +154,21 @@ describe("merge", () => {
     expect(parseTraceText(readFileSync(out, "utf8")).map((p) => p.id)).toEqual(["a1", "a2", "a3", "a4"]);
   });
 
-  test("unions with a gzip-archived previous output", () => {
+  test("unions with a gzip-archived previous output", async () => {
     rmSync(join(dir, "trace-A1.jsonl"));
     rmSync(join(dir, "trace-A2.jsonl"));
     rmSync(join(dir, "trace-B.jsonl"));
     writeFileSync(join(dir, "session-2d5c0d3b.jsonl.gz"), gzipSync(jl(convPair("a1", SID_A, 100))));
     writeFileSync(join(dir, "trace-new.jsonl"), jl(convPair("a2", SID_A, 200)));
-    applyMerge(planMerge(dir), { prune: false });
+    applyMerge(await planMerge(dir), { prune: false });
     const out = join(dir, "session-2d5c0d3b.jsonl");
     expect(parseTraceText(readFileSync(out, "utf8")).map((p) => p.id)).toEqual(["a1", "a2"]);
   });
 
-  test("prefix-colliding session ids get distinct output files", () => {
+  test("prefix-colliding session ids get distinct output files", async () => {
     const SID_A2 = "2d5c0d3b-9999-8888-7777-666666666666"; // shares SID_A's first 8 chars
     writeFileSync(join(dir, "trace-C.jsonl"), jl(convPair("c1", SID_A2, 500)));
-    const plan = planMerge(dir);
+    const plan = await planMerge(dir);
     const names = plan.sessions.map((s) => s.outName);
     expect(new Set(names).size).toBe(names.length);
   });
@@ -176,9 +176,9 @@ describe("merge", () => {
   // Regression: parseTraceText silently skips torn/invalid lines — a file
   // carrying one must never count as "fully absorbed", or the damaged line's
   // bytes would vanish with the prune.
-  test("a source with a torn line is never prune-able", () => {
+  test("a source with a torn line is never prune-able", async () => {
     appendFileSync(join(dir, "trace-A2.jsonl"), '{"id":"half-written');
-    const plan = planMerge(dir);
+    const plan = await planMerge(dir);
     expect(plan.subsumed.map((f) => f.name)).toEqual(["trace-A1.jsonl"]);
     const a = plan.sessions.find((s) => s.id === SID_A)!;
     expect(a.pairs.map((p) => p.id)).toEqual(["a1", "a2", "a3"]); // still merges what parsed
@@ -186,10 +186,10 @@ describe("merge", () => {
 
   // Regression: an existing output the plan can't fully read must block its
   // session — applyMerge would replace it with only what the parser could see.
-  test("a damaged previous output blocks the merge instead of being overwritten", () => {
+  test("a damaged previous output blocks the merge instead of being overwritten", async () => {
     const out = join(dir, "session-2d5c0d3b.jsonl");
     writeFileSync(out, jl(convPair("a0", SID_A, 50)) + '{"id":"torn-prior');
-    const plan = planMerge(dir);
+    const plan = await planMerge(dir);
     expect(plan.sessions.map((s) => s.id)).not.toContain(SID_A);
     expect(plan.blocked).toHaveLength(1);
     expect(plan.blocked[0]!.outName).toBe("session-2d5c0d3b.jsonl");
@@ -200,9 +200,9 @@ describe("merge", () => {
     expect(existsSync(join(dir, "trace-A1.jsonl"))).toBe(true);
   });
 
-  test("an unreadable archived previous output blocks the merge", () => {
+  test("an unreadable archived previous output blocks the merge", async () => {
     writeFileSync(join(dir, "session-2d5c0d3b.jsonl.gz"), "not gzip at all");
-    const plan = planMerge(dir);
+    const plan = await planMerge(dir);
     expect(plan.sessions.map((s) => s.id)).not.toContain(SID_A);
     expect(plan.blocked[0]!.reason).toContain("unreadable");
     expect(existsSync(join(dir, "trace-A1.jsonl"))).toBe(true);
@@ -210,8 +210,8 @@ describe("merge", () => {
 
   // Regression: a live capture may append pairs between plan and apply —
   // those exist in no merged output, so the source must survive --prune.
-  test("prune keeps a source that grew since the plan", () => {
-    const plan = planMerge(dir);
+  test("prune keeps a source that grew since the plan", async () => {
+    const plan = await planMerge(dir);
     appendFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a9", SID_A, 900)));
     const res = applyMerge(plan, { prune: true });
     expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(true);
@@ -226,12 +226,12 @@ describe("scoped merge (exit auto-merge)", () => {
   const scoped = (...sids: string[]) => planMerge(dir, { sessionIds: new Set(sids), fragmentedOnly: true });
   const ids = (path: string) => parseTraceText(readFileSync(path, "utf8")).map((p) => p.id);
 
-  test("merges only the scoped session; another session's files are untouched", () => {
+  test("merges only the scoped session; another session's files are untouched", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
     writeFileSync(join(dir, "trace-B1.jsonl"), jl(convPair("b1", SID_B, 300)));
     writeFileSync(join(dir, "trace-B2.jsonl"), jl(convPair("b2", SID_B, 400)));
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     expect(plan.sessions.map((s) => s.id)).toEqual([SID_A]);
     applyMerge(plan, { prune: true });
     expect(ids(join(dir, "session-2d5c0d3b.jsonl"))).toEqual(["a1", "a2"]);
@@ -244,10 +244,10 @@ describe("scoped merge (exit auto-merge)", () => {
   // lands in a session this plan writes", not "every pair has some session id".
   // A file also holding an unmerged session's pairs must survive — they would
   // exist in no output.
-  test("a source holding an unmerged session's pairs is never pruned", () => {
+  test("a source holding an unmerged session's pairs is never pruned", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-mixed.jsonl"), jl(convPair("a2", SID_A, 200), convPair("b1", SID_B, 300)));
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     expect(plan.subsumed.map((f) => f.name)).toEqual(["trace-A1.jsonl"]);
     const res = applyMerge(plan, { prune: true });
     expect(res.pruned).toEqual(["trace-A1.jsonl"]);
@@ -256,21 +256,21 @@ describe("scoped merge (exit auto-merge)", () => {
     expect(ids(join(dir, "trace-mixed.jsonl"))).toEqual(["a2", "b1"]);      // and still on disk
   });
 
-  test("a fresh single-file session is left exactly as written", () => {
+  test("a fresh single-file session is left exactly as written", async () => {
     const path = join(dir, "trace-A1.jsonl");
     writeFileSync(path, jl(convPair("a1", SID_A, 100)));
     const before = readFileSync(path, "utf8");
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     expect(plan.sessions).toHaveLength(0);
     expect(applyMerge(plan, { prune: true })).toMatchObject({ written: [], pruned: [] });
     expect(readdirSync(dir)).toEqual(["trace-A1.jsonl"]);
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
-  test("a session spanning several runs unions deduped and prunes its sources", () => {
+  test("a session spanning several runs unions deduped and prunes its sources", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100), convPair("a2", SID_A, 200)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200), convPair("a3", SID_A, 300)));
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     expect(plan.sessions[0]!.dupes).toBe(1);
     const res = applyMerge(plan, { prune: true });
     expect(res.written).toEqual(["session-2d5c0d3b.jsonl"]);
@@ -280,21 +280,21 @@ describe("scoped merge (exit auto-merge)", () => {
 
   // One source is enough when a previous merge already claimed this session:
   // that's the resumed-session case the auto-merge exists for.
-  test("an existing session file makes a single new trace worth merging", () => {
+  test("an existing session file makes a single new trace worth merging", async () => {
     const out = join(dir, "session-2d5c0d3b.jsonl");
     writeFileSync(out, jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     expect(plan.sessions[0]!.existing).toBe(1);
     applyMerge(plan, { prune: true });
     expect(ids(out)).toEqual(["a1", "a2"]);
     expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(false);
   });
 
-  test("utility pairs keep their trace out of the prune set", () => {
+  test("utility pairs keep their trace out of the prune set", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200), utilityPair("u1", 201)));
-    const res = applyMerge(scoped(SID_A), { prune: true });
+    const res = applyMerge(await scoped(SID_A), { prune: true });
     expect(res.pruned).toEqual(["trace-A1.jsonl"]);
     expect(existsSync(join(dir, "trace-A2.jsonl"))).toBe(true);
   });
@@ -303,12 +303,12 @@ describe("scoped merge (exit auto-merge)", () => {
   // before parsing, so unrelated traces are never JSON-parsed and the
   // nothing-to-consolidate case concludes without parsing anything at all —
   // the exit used to sit in a full-dir parse with zero output, looking hung.
-  test("scoped plan never parses files that don't mention a target sid", () => {
+  test("scoped plan never parses files that don't mention a target sid", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
     writeFileSync(join(dir, "trace-B1.jsonl"), jl(convPair("b1", SID_B, 300)));
     const events: any[] = [];
-    const plan = planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true, onProgress: (ev) => events.push(ev) });
+    const plan = await planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true, onProgress: (ev) => events.push(ev) });
     expect(plan.sessions.map((s) => s.id)).toEqual([SID_A]);
     expect(events.filter((e) => e.phase === "scan").map((e) => e.name).sort())
       .toEqual(["trace-A1.jsonl", "trace-A2.jsonl", "trace-B1.jsonl"]);
@@ -316,31 +316,31 @@ describe("scoped merge (exit auto-merge)", () => {
       .toEqual(["trace-A1.jsonl", "trace-A2.jsonl"]);
   });
 
-  test("nothing-to-consolidate concludes from the scan alone — no parse, no read", () => {
+  test("nothing-to-consolidate concludes from the scan alone — no parse, no read", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-B1.jsonl"), jl(convPair("b1", SID_B, 300)));
     const events: any[] = [];
-    const plan = planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true, onProgress: (ev) => events.push(ev) });
+    const plan = await planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true, onProgress: (ev) => events.push(ev) });
     expect(plan.sessions).toHaveLength(0);
     expect(events.filter((e) => e.phase === "read")).toHaveLength(0);
   });
 
-  test("a .zst prior output keeps a single-trace session in scope", () => {
+  test("a .zst prior output keeps a single-trace session in scope", async () => {
     const prior = jl(convPair("a1", SID_A, 100));
     writeFileSync(join(dir, "session-2d5c0d3b.jsonl.zst"), Bun.zstdCompressSync(Buffer.from(prior)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
-    const plan = planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true });
+    const plan = await planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true });
     expect(plan.sessions).toHaveLength(1);
     expect(plan.sessions[0]!.existing).toBe(1);
     applyMerge(plan, { prune: true });
     expect(ids(join(dir, "session-2d5c0d3b.jsonl"))).toEqual(["a1", "a2"]);
   });
 
-  test("applyMerge reports each session write via onProgress", () => {
+  test("applyMerge reports each session write via onProgress", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
     const events: any[] = [];
-    applyMerge(scoped(SID_A), { prune: true, onProgress: (ev) => events.push(ev) });
+    applyMerge(await scoped(SID_A), { prune: true, onProgress: (ev) => events.push(ev) });
     expect(events.filter((e) => e.phase === "write")).toEqual([
       { phase: "write", name: "session-2d5c0d3b.jsonl", pairs: 2 },
     ]);
@@ -348,10 +348,10 @@ describe("scoped merge (exit auto-merge)", () => {
 
   // A concurrent capture appending to a source between plan and apply: its
   // tail is in no output, so the file must survive.
-  test("a source that grew since the plan is skipped, not truncated", () => {
+  test("a source that grew since the plan is skipped, not truncated", async () => {
     writeFileSync(join(dir, "trace-A1.jsonl"), jl(convPair("a1", SID_A, 100)));
     writeFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a2", SID_A, 200)));
-    const plan = scoped(SID_A);
+    const plan = await scoped(SID_A);
     appendFileSync(join(dir, "trace-A2.jsonl"), jl(convPair("a9", SID_A, 900)));
     const res = applyMerge(plan, { prune: true });
     expect(res.skipped).toEqual(["trace-A2.jsonl"]);
@@ -639,5 +639,68 @@ describe("human", () => {
     expect(human(512)).toBe("512 B");
     expect(human(1536)).toBe("1.5 KB");
     expect(human(60 * 1024 * 1024)).toBe("60.0 MB");
+  });
+});
+
+describe("sweepOrphanTmps", () => {
+  test("removes idle cctrace-minted .tmp files, keeps fresh ones and foreign names", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cctrace-tmpsweep-"));
+    try {
+      const now = Date.now();
+      const dead = join(dir, "trace-1.jsonl.zst.4242.tmp");
+      const deadMerge = join(dir, "session-abcdef12.jsonl.tmp");
+      const live = join(dir, "trace-2.jsonl.zst.99.tmp");
+      const foreign = join(dir, "notes.tmp");
+      for (const f of [dead, deadMerge, live, foreign]) writeFileSync(f, "x");
+      const past = (now - TMP_ORPHAN_MS - 60_000) / 1000;
+      utimesSync(dead, past, past);
+      utimesSync(deadMerge, past, past);
+      utimesSync(foreign, past, past);
+      expect(sweepOrphanTmps(dir, now).sort()).toEqual(["session-abcdef12.jsonl.tmp", "trace-1.jsonl.zst.4242.tmp"]);
+      expect(existsSync(dead)).toBe(false);
+      expect(existsSync(live)).toBe(true);
+      expect(existsSync(foreign)).toBe(true);
+      expect(sweepOrphanTmps(dir, now)).toEqual([]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe("merge: in-memory union cap", () => {
+  const SID_A = "aaaaaaaa-0000-4000-8000-000000000001";
+  const SID_B = "bbbbbbbb-0000-4000-8000-000000000002";
+  const pair = (id: string, sid: string, ts: number) => JSON.stringify({
+    id, timestamp: ts,
+    request: { method: "POST", url: "https://api.anthropic.com/v1/messages", headers: {}, body: { metadata: { user_id: JSON.stringify({ device_id: "d", session_id: sid }) } }, timestamp: ts },
+    response: { status: 200, headers: {}, body: {}, timestamp: ts + 1 },
+  }) + "\n";
+  test("a session whose source decodes past the cap is blocked with the reason; the rest still merge; nothing of it is pruned", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cctrace-mergecap-"));
+    try {
+      writeFileSync(join(dir, "trace-A1.jsonl"), pair("a1", SID_A, 100));
+      writeFileSync(join(dir, "trace-A2.jsonl"), pair("a2", SID_A, 200) + "x".repeat(4096) + "\n"); // over a 2 KB cap
+      writeFileSync(join(dir, "trace-B1.jsonl"), pair("b1", SID_B, 300));
+      writeFileSync(join(dir, "trace-B2.jsonl"), pair("b2", SID_B, 400));
+      const plan = await planMerge(dir, { sessionIds: new Set([SID_A, SID_B]), fragmentedOnly: true, maxSourceBytes: 2048 });
+      expect(plan.sessions.map((s) => s.shortId)).toEqual(["bbbbbbbb"]);
+      expect(plan.blocked).toHaveLength(1);
+      expect(plan.blocked[0]!.outName).toBe("session-aaaaaaaa.jsonl");
+      expect(plan.blocked[0]!.reason).toMatch(/trace-A2\.jsonl decodes to .* over the 2\.0 KB in-memory union cap/);
+      expect(plan.subsumed.map((f) => f.name).sort()).toEqual(["trace-B1.jsonl", "trace-B2.jsonl"]);
+      // unscoped: the file itself is named, other files still plan
+      const all = await planMerge(dir, { maxSourceBytes: 2048 });
+      expect(all.blocked.map((b) => b.outName)).toEqual(["trace-A2.jsonl"]);
+      expect(all.sessions.map((s) => s.shortId).sort()).toEqual(["aaaaaaaa", "bbbbbbbb"]); // A from A1 alone
+      expect(all.subsumed.map((f) => f.name)).not.toContain("trace-A2.jsonl");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("a scoped plan with only over-cap candidates concludes nothing to consolidate, with the block recorded", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cctrace-mergecap2-"));
+    try {
+      writeFileSync(join(dir, "trace-A1.jsonl"), pair("a1", SID_A, 100) + "x".repeat(4096) + "\n");
+      writeFileSync(join(dir, "trace-A2.jsonl"), pair("a2", SID_A, 200));
+      const plan = await planMerge(dir, { sessionIds: new Set([SID_A]), fragmentedOnly: true, maxSourceBytes: 2048 });
+      expect(plan.sessions).toEqual([]);
+      expect(plan.blocked.map((b) => b.outName)).toEqual(["session-aaaaaaaa.jsonl"]);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

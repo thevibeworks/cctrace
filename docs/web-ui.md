@@ -40,9 +40,54 @@ offline snapshots -- same UI, three ways in.
   the context collapse in turns and tokens; superseded exchanges
   (rewinds, edits, injected recaps) sit grey at the ordinal they
   occupied. Every turn links back to its wire request; tokens, timing,
-  cost, exact model ids, and effort levels live in hovers. A masked
-  screen-share mode (header eye toggle) blurs session ids and account
-  values.
+  cost, exact model ids, and effort levels live in hovers. Image
+  attachments render as real thumbnails (click for full size) -- the bytes
+  were already in the trace; remote image URLs are named, never fetched.
+  A masked screen-share mode (header eye toggle) blurs session ids and
+  account values.
+- **Context view** -- what the model is actually carrying around, and what
+  is eating the window, laid out as a ledger. A sticky MARGIN states the
+  balance for the picked step and never scrolls away: its prompt tokens, a
+  six-color bar scaled against the model's context window, how far the
+  chars/4 estimate reads under or over the billed prompt, and the six
+  categories as ledger lines (system prompt, tool schemas, your messages,
+  injected context, assistant replies, tool results) -- click a line to
+  zoom the graph to it. Under them the step's links out, the top tool
+  schemas by size, and, on a trace holding several sessions, the other
+  threads: peak assembled context per thread, one scale, click to switch.
+  The CANVAS beside it: a trajectory chart with one stacked bar per
+  request (or per turn) where ✂ and an amber axis break mark compactions
+  and rewinds -- watch the bars drop; the picked step as a context graph
+  -- an icicle where width is tokens and rows are levels, decomposing it
+  into category -> group -> item, with tool results grouped by the tool
+  that made them, schemas by MCP server, injections by producer (click a
+  node to zoom, a leaf to open its exact bytes below; row 1 is the
+  margin's own six categories, so the graph reads as that bar growing
+  downward); and the events -- every injection with its producer --
+  AGENTS.md, system reminders, recaps -- every compaction with the tokens
+  it reclaimed, every model switch and tool-schema change, each linked to
+  its wire request.
+  Because cctrace sits on the wire, every step is exact -- the captured
+  request body IS the assembled context -- and every figure is anchored to
+  the provider-reported prompt tokens of that same request. Estimates wear
+  ≈ and never replace actuals.
+- **Trajectory view** -- the agent's path as one linear, time-anchored
+  stream of records, borrowed from the DeepSeek Harness web UI's
+  Trajectory tab: system prompt, the human's turns, the context the
+  harness injected (inline, first-class, at the moment it entered), the
+  model's thinking, each tool call fused with its result, the reply --
+  kind-badged, in spine order, every record linked to its wire pair and
+  addressed turn NN . step N exactly as the Sessions outline and the
+  Context view address it. A record list beside an inspector that reuses
+  the detail panel's own block renderers. Three detail levels, filtering
+  only, never summarizing (the toolbar says how many rows it hid): MAP is
+  the skeleton (system, the human, the tool calls), READ drops the token
+  budget banners and bare thinking, FULL is everything. A kind filter
+  isolates one record type -- context-only is the context trajectory: you
+  watch context enter the window inline with the reasoning that consumed
+  it -- plus search. A strip on top shows where the thread's wall-clock
+  went (model / tools / waiting / between turns), the same split the
+  Sessions view's "time" chip carries; every figure is a wire timestamp.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,

@@ -371,6 +371,34 @@ export function liveLogFiles(dataDir: string, nowMs = Date.now()): Set<string> {
   return out;
 }
 
+// ---- exit-seal jobs ----
+//
+// A finishing run hands its housekeeping (archive, merge, sweep) to a
+// detached helper through a job file in the data dir root,
+// `seal-<run>-<ts>.json` (cli.ts `sealTrace` / `runSeal`). The helper
+// heartbeats the job's mtime while it works and unlinks it when done, so a
+// job nobody has touched for SEAL_JOB_IDLE_MS is one whose helper died —
+// the terminal or container the run lived in went away first (measured
+// 2026-08-26: 56 of 58 jobs in a real data dir, 33 GB of traces left
+// plain). The next live run re-spawns them; `cctrace compress` finishes
+// them inline.
+
+export const SEAL_JOB_IDLE_MS = 10 * 60_000;
+export const isSealJob = (name: string) => /^seal-.*\.json$/.test(name);
+
+/** Seal jobs in `dataDir` idle for `idleMs` or longer — orphaned helpers. */
+export function staleSealJobs(dataDir: string, nowMs = Date.now(), idleMs = SEAL_JOB_IDLE_MS): string[] {
+  let names: string[];
+  try { names = readdirSync(dataDir); } catch { return []; }
+  const out: string[] = [];
+  for (const n of names) {
+    if (!isSealJob(n)) continue;
+    const path = join(dataDir, n);
+    try { const st = statSync(path); if (st.isFile() && nowMs - st.mtimeMs >= idleMs) out.push(path); } catch { /* gone */ }
+  }
+  return out.sort();
+}
+
 export interface AdoptResult {
   moved: AdoptMove[];
   /** Bytes the moved files occupy at the target (== bytes unless archived). */

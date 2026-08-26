@@ -8,6 +8,64 @@ with a why adapts to new cases; a naked ban fossilizes into style police.
 The live rules are in `docs/design/ui.md`. This file is the graveyard behind
 them — what we tried and rejected, so it stays rejected.
 
+## 2026-08-24 rejected: the Context view as five stacked reports
+The view shipped as head + chips, then `current composition`, `context
+history`, `context events`, `context graph` — five equal-weight h4
+sections down a 1100px ribbon on a 1440px screen. Three things were wrong
+and only the third is about looks. (1) The page's own answer arrived
+FIFTH: "what is eating my window" sat below the fold behind three
+sections you had to scroll past. (2) The same six numbers were rendered
+THREE times on the way there — the composition legend, the detail strip's
+six tracked rows, and row 1 of the icicle — roughly 500px of vertical
+space that said nothing new, plus a chips row repeating est/prompt/window
+a fourth time. (3) 340px of the viewport was dead while a 17-bar chart
+sat pinned at 9px per bar in a 1000px field, reading as broken rather
+than small.
+Why the ledger instead: the page has a real invariant — six categories
+sum to the assembled window, chars/4 reconciles against the provider's
+billed prompt, the whole sits against the model's limit — and a sheet
+with a balance that must close gets a margin that states it and never
+scrolls away. That kills all three at once: the balance is stated once
+(margin), the answer is beside it (canvas, first viewport), and the width
+is used. The ledger lines survive as the one LIST of the six because they
+are the invariant the chart stops showing the moment you zoom; each line
+is also the zoom control, so the margin is navigation, not decorative
+totals (the staging's own named trap).
+It also made the view match the product: requests is list|detail,
+sessions is rail|convo. Context was the only full-width ribbon, and a
+view that is shaped differently from its siblings reads as a different
+product.
+Reuse: state a number ONCE per view; if it appears in a headline, a
+legend and a chart, two of the three are decoration. Rank sections by the
+question the page exists to answer, not by the order the data was built
+in. And when a surface has an invariant that must close, the invariant is
+the layout.
+Expires: if the categories ever stop summing to the whole — the margin
+would then be reconciling nothing.
+
+## 2026-08-24 rejected: the context decomposition as nested folds
+The Context view's per-step breakdown shipped as six collapsible category
+folds -> group folds -> item rows, each with a small weight bar. It was
+correct and it was not a graph: a 200-row list that buried its own answer
+(`Read x25 ~139k`, 54% of that window, sat somewhere in the middle of a
+scroll). Renaming it "context graph" without changing the form would have
+been the costume. Why the icicle instead: "what is eating my context
+window" is a PROFILING question, this audience reads flame graphs
+natively, and it is the one hierarchy chart whose labels stay legible --
+and here the labels (Bash, Read, token budget) ARE the answer. A treemap
+encodes area more honestly but can only whisper a label on hover; a
+sunburst is the reflex this territory predicts and reads worse at every
+level. The fold list did not die, it demoted: it is now the pane UNDER the
+graph, scoped to the selected node and capped at the heaviest 15.
+Reuse: when a surface is named for a form, it owes the form. If the answer
+is "which of these is biggest", encode size as size -- a number in a list
+makes the reader do the comparison the picture should have done. And check
+what the neighbouring component already is: the composition bar directly
+above was row 1 of an icicle all along, which is what made this the
+page's own chart rather than a library's.
+Expires: if the categories ever stop summing to the whole (a graph of
+parts-of-a-whole is only honest while the parts are the whole).
+
 ## 2026-07-20 rejected: inline per-turn metrics on outline rows
 Numbers (tokens, cost, ttft, duration) sat inline on each turn row next to the
 message text. Why: they fought the text for the same pixels — the row's one

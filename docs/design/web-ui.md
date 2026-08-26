@@ -3,7 +3,9 @@
 (Moved verbatim from CLAUDE.md 2026-07-30 — the behavior spec for ui.ts.
 Design rules live in ui.md; read that before adding UI.)
 
-One self-contained page (`getLiveHtml` in `ui.ts`) serves both the live view
+One self-contained page (`getLiveHtml` in `ui.ts`) — four view tabs:
+Requests, Sessions, Context, and Trajectory (the thread as a linear stream
+of records, docs/design/trajectory.md) — serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
 The header identifies the run: traced client (icon + name chip — quiet
 generic monograms in `CLIENT_ICONS`, not vendor logos — from
@@ -76,7 +78,7 @@ rotating verb while in flight, 160ms fade on action change. Wall-clock times ren
 (`fmtTime`/`fmtDateTime`). The category filter bar shows only categories
 the trace actually contains (a codex run never shows Count Tokens), the
 active one staying visible even at zero. Live-arrived rows get one 160ms
-opacity fade (the motion budget lives in docs/design/ui.md). Two views,
+opacity fade (the motion budget lives in docs/design/ui.md). Three views,
 hash-routed:
 
 - **Requests** (`#`, `#/p/<id>`): one row per request. The toolbar's Select
@@ -138,7 +140,11 @@ hash-routed:
   prompt size, first token / first byte delay with its share of
   wall-clock, output tok/s (computed over post-first-token streaming time
   when ttft is known), and a cost tooltip broken down by component; the
-  Sessions view shows per-turn and per-thread cost and ttft, plus error
+  Sessions view shows per-turn and per-thread cost and ttft, a `time`
+  chip breaking the thread's wall-clock into model / tools / waiting /
+  between-turns time read off the wire alone (dsh Trajectory's lanes via
+  `threadTimeSplit`; each assistant role bar also carries its own step's
+  tools/waiting time), plus error
   metrics aggregated per thread and per session (buildSession's usage:
   wireErrors = no response / 4xx-5xx / in-stream error events, truncated
   streams, toolErrors over toolUses for a rate — reported separately
@@ -257,6 +263,21 @@ hash-routed:
   healthy cache hit, amber weak <90%/cold/miss, red failed) — then
   ordinal + message text, nothing else inline: all metrics live in the
   hover; user rows read in full text color, finals muted, mids faint.
+  Every row CLOSES with the trajectory gutter (`.tctx`, borrowed from
+  dsh's Trajectory tab, which reads an agent's path as a shape): a 30px
+  track per wire step, filled to how full the window was, the fill split
+  into the prefix read from CACHE (green) and what was billed FRESH
+  (amber). Stacked down the rail that column IS the thread's context
+  trajectory — it climbs, a ✂ boundary row drops it, the step after is
+  all-amber (cold), then green again. Non-wire rows (the human's prompts,
+  superseded/failed runs) get an invisible spacer so the column holds.
+  Every figure is provider-reported; the denominator is the model's
+  context window when models.dev knows it, else this thread's own peak
+  (same anchored-prompt > window guard as the Context view), and the
+  hover NAMES which — "context 212k · 61% of a 1m window" vs "…of this
+  thread's peak". The replay track carries the same story at trace scale:
+  a compaction/rewind pair gets a distinct full-height `.rp-mark.cut`
+  beside the per-pair ticks.
   The thread/session model chip wears the identifier color (--text-method,
   same as METHOD and tool names) and its hover carries the wire facts:
   exact model id(s), requested effort level(s), 1m-context beta when the
@@ -442,6 +463,96 @@ hash-routed:
   never rebuilt by a pair landing elsewhere — thread switches and
   misaligned node counts fall back to the full innerHTML rewrite with
   positional fold restore); snapshots open at the top.
+- **Context** (`#/context[/<sid8-or-key>[/<key>]]`): what the model's
+  context window was assembled from, request by request — the full spec is
+  docs/design/context-view.md (the idea owes dsh-context; cctrace's edge is
+  that every captured request body IS the assembled context, so every step
+  is exact and anchored to that pair's provider-reported prompt tokens).
+  Same key grammar and thread resolution as Sessions (`resolveThreadSel`),
+  selection shared both ways (tab switches keep the thread; the convo
+  chips row carries "context →", the context head "sessions →"). The page
+  is a LEDGER: a sticky 320px margin beside a canvas, the same two-pane
+  grammar Requests (list|detail) and Sessions (rail|convo) already use.
+
+  The **margin** (`renderCtxMargin`, repainted on every scrub via
+  `ctxRepaintMargin`, which swaps `#cx-bal` and leaves the threads block
+  alone) is the balance: the picked step's provider-reported prompt at
+  display scale (the one 24px number ui.md licenses), a six-segment bar
+  scaled against the model's window from the models.dev catalog
+  (limit.context, 1m honored via the anthropic-beta header, and a sanity
+  guard drops the denominator when the anchored prompt exceeds it — a
+  stale catalog must never render "100% used"), "N% of context used", and
+  the RECONCILIATION — how far chars/4 reads under or over the billed
+  prompt ("≈134k estimated · chars/4 reads 49% under"), or the failed /
+  compact-stub reason instead. Under it the LEDGER: the six categories,
+  always all six, always in CTX_CATS order, with weight, ≈tokens and % —
+  the page's one LIST of those numbers (the icicle's row 1 is a chart: it
+  reorders under the size lens and vanishes when you zoom), and every line
+  is also a control carrying the flame's own node key
+  (`data-cxnode="c:<id>"`), so clicking it zooms the graph and the line
+  wears `.sel` while that zoom holds. Then "this step" (clock, output,
+  cache share, `turn NN · step N →` and `wire →`), the heaviest tool
+  schemas, and — when the trace holds more than one thread — **other
+  threads**: every thread's PEAK assembled context (provider-reported),
+  grouped by session, all bars on one scale, the % against each thread's
+  own model window. It sits at the foot of the margin so switching sheets
+  never needs a scroll. At ≤960px the margin unsticks into a multi-column
+  band above the canvas (`columns: 300px`, blocks `break-inside: avoid`).
+
+  The **canvas** is three sections, each named for what the reader gets:
+  trajectory (one stacked column per step or per turn — toggle persisted
+  in localStorage `cctrace-ctx-gran` — height anchored to actual prompt
+  tokens and scaled to this thread's own peak, segment split from the
+  estimate, columns `flex: 1 1 9px` up to 22px so a short thread fills the
+  canvas, ✂ plus a full-height amber axis break on compaction/rewind
+  steps — the amber `.rp-mark.cut` already uses — dashed red = failed
+  request whose bar shows what was SENT; hover scrubs the margin
+  immediately and the graph on a short settle, click pins, ←/→ walk the
+  pin; chart scroll position survives live re-renders and sticks to the
+  newest edge; it does NOT draw the window as a second line, because
+  occupancy against the limit is the margin's balance, stated once);
+  what changed it (newest first, filter chips, producer-labeled
+  injections, compactions with the actual-anchored reclaim delta, model
+  switches, tool-schema/system changes, the token delta beside the LABEL
+  because it is what the event did to the window, with ×N, the turn·step
+  wire link and the clock holding the right edge — the outline's numbering
+  via loopTurns); and inside this step (the picked step as an ICICLE —
+  rows top-down, width =
+  tokens, every child inside its parent's span; row 1 is the composition
+  bar's own six categories in the same order and hues, so the graph reads
+  as that bar growing downward into its parts. Grouping is the question
+  each category answers: tool results by the tool that produced them,
+  schemas by MCP server vs built-ins, injections by producer, the system
+  prompt per block, the conversation per turn. Click a node to zoom
+  (breadcrumb home; percentages stay against the whole request), a leaf to
+  open its bytes in the pane below. Nodes wear depth TINTS with the full
+  hue as a 2px left edge — they carry text; metrics drop before the label
+  does; slivers merge into one countable "+N smaller"; red marks a leaf
+  that failed, never a group that contains one; tips fly UP so they don't
+  cover the rows being scrubbed; labelled nodes are keyboard-reachable.
+  Under it the pane: the selected node opened — a leaf's exact bytes, or a
+  group's heaviest 15 items as lazy renderBlock folds, or a container's
+  children ranked. "by size" / "in order" lens ranks INSIDE a category
+  (never the categories), persisted in `cctrace-ctx-sort`; compact stubs
+  say "composition unavailable" + their surviving usage; the pane scrolls
+  inside itself so an open tool result cannot push the events off the
+  sheet). The section carries no head of its own — the margin beside it
+  already names the step, its estimate, its billed prompt and both links;
+  the one thing that head said which the margin does not, "decomposed
+  from the captured request body — exact, not reconstructed", lives in
+  the section hint.
+
+  Counts caption the thing they count (`91 wire requests · 8 working
+  loops` on the trajectory, `132 injections · 1 compaction · 4.7k
+  reclaimed` on the events) instead of an orphan chips row under the head,
+  and "turns" is spelled out both ways because the thread label counts
+  MESSAGE turns while the addresses count WORKING LOOPS. Data layer is
+  src/context.ts (contextComposition/contextItems/contextGraph/
+  ctxFlameLayout/contextTimeline/ctxAggregateTurns + CTX_CATS), pure and
+  unit-tested apart from the DOM — layout is data, the view only turns
+  rows into positioned spans — and inlined via
+  toString like session.ts, so snapshots and view pages carry the whole
+  thing offline.
 - **Replay** (inside the Sessions view): a time cursor over the same data —
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the

@@ -54,7 +54,7 @@ Key commands:
 - [README](https://raw.githubusercontent.com/thevibeworks/cctrace/main/README.md): overview, quick start, comparison, security model
 - [Install & options](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/install.md): install methods, runtime, prerequisites, full options table, `--` pass-through
 - [Capture modes](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/capture-modes.md): mitm/base-url/node, tunnel scope model, proxy internals, output format
-- [Web UI](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/web-ui.md): row chips, sessions view, replay, cost, continuity, multi-instance
+- [Web UI](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/web-ui.md): row chips, sessions view, context view, replay, cost, continuity, multi-instance
 - [Saved traces](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/traces.md): view/clean/merge/compress/purge/compact + housekeeping guarantees
 - [Clients](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/clients.md): codex/grok/kimi/opencode wire notes, third-party Anthropic-compatible providers
 - [CHANGELOG](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CHANGELOG.md): released changes

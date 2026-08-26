@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import { basename, dirname, join, relative, resolve } from "path";
-import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync, utimesSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type Capturer } from "./capture";
@@ -16,7 +16,7 @@ import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTr
 import { planTitles, setTitle, cleanTitle, titleFor, titleLookup, mainSessionId, type TitleJob } from "./title";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
-  registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, LEGACY_DIRNAME, type TraceDirs, type Rebase,
+  registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, staleSealJobs, LEGACY_DIRNAME, type TraceDirs, type Rebase,
 } from "./store";
 import { registerInstance, patchEntry, listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, DEFAULT_PORT, PORT_WALK, type InstanceHandle, type InstanceInfo } from "./instances";
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
@@ -28,7 +28,7 @@ import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
 import {
   planClean, applyClean, planMerge, applyMerge, planCompress, applyCompress,
-  planPurge, applyPurge, purgePairsById, human, archiveTrace, planStaleSweep, type MergeProgress, type ArchiveStamp,
+  planPurge, applyPurge, purgePairsById, human, archiveTrace, planStaleSweep, sweepOrphanTmps, type MergeProgress, type ArchiveStamp,
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
@@ -898,7 +898,7 @@ async function runMerge(args: string[]) {
   const { values: v } = parseStorageArgs("merge", args, { prune: { type: "boolean" } }, "cctrace merge [--dir DIR | --all] [--prune] [--yes]");
   await forStorageDirs(v, async (logDir) => {
     const onProgress = mergeProgressPrinter();
-    const plan = planMerge(logDir, { onProgress });
+    const plan = await planMerge(logDir, { onProgress });
     for (const b of plan.blocked) {
       log(`Skipped ${b.outName}: ${b.reason} — merge never overwrites what it can't fully read`, C.yellow);
     }
@@ -942,6 +942,10 @@ async function runCompress(args: string[]) {
     { "older-than": { type: "string" }, "keep-jsonl": { type: "boolean" } },
     "cctrace compress [--dir DIR | --all] [--older-than DAYS] [--keep-jsonl] [--yes]",
   );
+  // Orphaned exit seals first (merge + archive their runs left undone), so
+  // the plan below sees what is actually still plain. Applying, not
+  // planning: these are the jobs their own runs already committed to.
+  if (v.yes) await recoverSeals("inline");
   await forStorageDirs(v, async (logDir) => {
     const olderThan = v["older-than"] != null ? parseInt(v["older-than"] as string, 10) : undefined;
     if (olderThan != null && (isNaN(olderThan) || olderThan < 0)) {
@@ -1496,12 +1500,12 @@ interface AutoMergeOutcome {
   written: { path: string; priorArchive: ArchiveStamp | null }[];
 }
 
-function autoMergeOnExit(opts: RunOpts, logFile: string, sids: Set<string>): AutoMergeOutcome {
+async function autoMergeOnExit(opts: RunOpts, logFile: string, sids: Set<string>): Promise<AutoMergeOutcome> {
   const none: AutoMergeOutcome = { absorbedInto: null, written: [] };
   try {
     if (!sids.size) return none;
     const onProgress = mergeProgressPrinter();
-    const plan = planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true, onProgress });
+    const plan = await planMerge(opts.logDir, { sessionIds: sids, fragmentedOnly: true, onProgress });
     for (const b of plan.blocked) log(`Auto-merge skipped ${b.outName}: ${b.reason}`, C.dim);
     if (!plan.sessions.length) return none;
     const res = applyMerge(plan, { prune: true, onProgress });
@@ -1519,42 +1523,37 @@ function autoMergeOnExit(opts: RunOpts, logFile: string, sids: Set<string>): Aut
   }
 }
 
+type CompressProgress = ReturnType<typeof compressProgressPrinter>;
+
 /**
- * Archive this run's final trace file plus every session file the merge
- * wrote, then sweep the dir for plain traces a killed run left behind.
- * Returns the archive path of `traceFile` when it was archived (so the
- * receipt/tombstone can point at it), else null.
+ * Archive one plain trace to `.zst` (union path if an archive already
+ * exists, decode-verified before the plain source goes). Returns the
+ * archive path, or null when nothing was archived.
  */
-async function restTracesOnExit(opts: RunOpts, traceFile: string, mergeWritten: AutoMergeOutcome["written"]): Promise<string | null> {
-  const onProgress = compressProgressPrinter();
-  const rest = async (path: string, supersedesArchive: ArchiveStamp | null | undefined): Promise<string | null> => {
-    // Two attempts: a pair can still land during the first pass (a tunnel
-    // closing as the child dies logs its meta pair late), which the archive
-    // step detects and refuses to seal; by the second pass the writers are
-    // done.
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const res = await archiveTrace(path, { supersedesArchive, onProgress });
-      if (res.archived.length) {
-        const a = res.archived[0]!;
-        log(`Archived ${basename(path)} → ${basename(path)}.zst (${human(a.before)} → ${human(a.after)})`, C.dim);
-        return `${path}.zst`;
-      }
-      if (!res.skipped.length) return null; // nothing to do (empty / not a .jsonl)
-      if (attempt === 1) log(`Left ${basename(path)} uncompressed (still being written, or an archive that can't be unioned) — cctrace compress catches it`, C.dim);
+async function restFile(path: string, supersedesArchive: ArchiveStamp | null | undefined, onProgress: CompressProgress): Promise<string | null> {
+  // Two attempts: a pair can still land during the first pass (a tunnel
+  // closing as the child dies logs its meta pair late), which the archive
+  // step detects and refuses to seal; by the second pass the writers are
+  // done.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await archiveTrace(path, { supersedesArchive, onProgress });
+    if (res.archived.length) {
+      const a = res.archived[0]!;
+      log(`Archived ${basename(path)} → ${basename(path)}.zst (${human(a.before)} → ${human(a.after)})`, C.dim);
+      return `${path}.zst`;
     }
-    return null;
-  };
-  let rested: string | null = null;
-  try {
-    const written = new Map(mergeWritten.map((w) => [resolve(w.path), w.priorArchive]));
-    for (const [p, stamp] of written) {
-      const out = await rest(p, stamp);
-      if (p === resolve(traceFile)) rested = out;
-    }
-    if (!written.has(resolve(traceFile))) rested = await rest(traceFile, undefined);
-  } catch (err) {
-    log(`Archive skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
+    if (!res.skipped.length) return null; // nothing to do (empty / not a .jsonl)
+    if (attempt === 1) log(`Left ${basename(path)} uncompressed (still being written, or an archive that can't be unioned) — cctrace compress catches it`, C.dim);
   }
+  return null;
+}
+
+/**
+ * Sweep the project dir for what killed runs and killed helpers left
+ * behind: plain traces nobody live claims (idle > a day), and the `.tmp`
+ * of an archive that died mid-write (idle > an hour).
+ */
+async function sweepLeftovers(opts: RunOpts, traceFile: string, onProgress: CompressProgress): Promise<void> {
   try {
     const exclude = liveLogFiles(DATA_DIR);
     exclude.add(resolve(traceFile));
@@ -1563,30 +1562,56 @@ async function restTracesOnExit(opts: RunOpts, traceFile: string, mergeWritten: 
       const res = await applyCompress(plan, { keepJsonl: false, onProgress });
       if (res.archived.length) log(`Archived ${res.archived.length} leftover trace(s) from earlier runs (${human(res.before)} → ${human(res.after)})`, C.dim);
     }
+    const tmps = sweepOrphanTmps(opts.logDir);
+    if (tmps.length) log(`Removed ${tmps.length} orphaned .tmp of an interrupted archive: ${tmps.join(", ")}`, C.dim);
   } catch (err) {
     log(`Leftover sweep skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim);
   }
-  return rested;
 }
 
 /**
- * The exit housekeeping — merge this run's session, archive it and the
- * merge outputs, sweep the dir's stale leftovers — as one unit, given the
- * session ids this run saw. Returns the final trace path. Runs inline OR
- * in the detached seal helper; both call this.
+ * The exit housekeeping — archive this run's trace, merge its session,
+ * archive the merge outputs, sweep the dir's leftovers — as one unit,
+ * given the session ids this run saw. Returns the final trace path. Runs
+ * inline OR in the detached seal helper; both call this.
+ *
+ * ARCHIVE FIRST. The helper lives exactly as long as the terminal or
+ * container the run lived in, and that routinely goes away within a minute
+ * of the prompt returning. The archive is one streamed pass over the run's
+ * own file (seconds); the merge scan decompresses every archive in the
+ * project dir looking for the session ids (measured 96 s on a 73-file
+ * dir). Merge-first lost that race nearly every time — 56 of 58 seal jobs
+ * in a real data dir were orphaned with their trace still plain, 33 GB of
+ * it — so the space win is banked before the slow part starts. The merge
+ * reads the fresh `.zst` as a source like any other.
  */
-async function sealTrace(opts: RunOpts, logFile: string, sids: Set<string>): Promise<string> {
+async function sealTrace(opts: RunOpts, logFile: string, sids: Set<string>, extraFiles: string[] = []): Promise<string> {
   let traceFile = logFile;
-  let mergeWritten: AutoMergeOutcome["written"] = [];
+  const onProgress = compressProgressPrinter();
+  for (const f of extraFiles) {
+    if (opts.noCompress || !existsSync(f)) continue;
+    try { await restFile(f, undefined, onProgress); } catch { /* the sweep gets it later */ }
+  }
+  // A recovered job may find its trace already archived (a manual compress
+  // ran in between): carry on from the archive, don't report it missing.
+  if (!existsSync(logFile) && existsSync(`${logFile}.zst`)) traceFile = `${logFile}.zst`;
+  else if (!opts.noCompress) {
+    try { traceFile = (await restFile(logFile, undefined, onProgress)) ?? logFile; }
+    catch (err) { log(`Archive skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim); }
+  }
   if (!opts.fresh && !opts.noAutoMerge) {
-    const merged = autoMergeOnExit(opts, logFile, sids);
-    mergeWritten = merged.written;
+    const merged = await autoMergeOnExit(opts, traceFile, sids);
     if (merged.absorbedInto) traceFile = merged.absorbedInto;
+    if (!opts.noCompress) {
+      for (const w of merged.written) {
+        try {
+          const out = await restFile(w.path, w.priorArchive, onProgress);
+          if (out && resolve(w.path) === resolve(traceFile)) traceFile = out;
+        } catch (err) { log(`Archive skipped: ${err instanceof Error ? err.message : String(err)}`, C.dim); }
+      }
+    }
   }
-  if (!opts.noCompress) {
-    const rested = await restTracesOnExit(opts, traceFile, mergeWritten);
-    if (rested) traceFile = rested;
-  }
+  if (!opts.noCompress) await sweepLeftovers(opts, traceFile, onProgress);
   return traceFile;
 }
 
@@ -1603,7 +1628,18 @@ interface SealJob {
   fresh: boolean;
   noAutoMerge: boolean;
   sids: string[];
+  /** Other runs' traces folded into this job by recovery (same project
+   * dir): archived first, alongside logFile; their sids are in `sids`. */
+  extraFiles?: string[];
+  /** Times recovery has re-run this job. A helper that keeps dying (a
+   * crash no try/catch sees) must not be re-spawned forever. */
+  attempts?: number;
 }
+
+/** After this many recoveries the job is dropped — its trace is still on
+ * disk in whatever state the last attempt left it; `cctrace compress`
+ * archives what is plain. */
+const SEAL_MAX_ATTEMPTS = 3;
 
 /** argv that re-invokes THIS cctrace (compiled binary, or bun + entry). */
 function selfExecArgv(extra: string[]): string[] {
@@ -1616,17 +1652,135 @@ function selfExecArgv(extra: string[]): string[] {
  * trace ended up. Quiet (its parent already printed the receipt); disk
  * only, no network. Never throws out — housekeeping is best-effort.
  */
-async function runSeal(jobPath: string): Promise<void> {
-  let job: SealJob;
-  try { job = JSON.parse(readFileSync(jobPath, "utf8")); } catch { return; }
-  try {
-    const opts = { logDir: job.logDir, readDirs: job.readDirs, noCompress: job.noCompress, fresh: job.fresh, noAutoMerge: job.noAutoMerge } as RunOpts;
-    const finalPath = await sealTrace(opts, job.logFile, new Set(job.sids));
-    if (job.runId && resolve(finalPath) !== resolve(job.logFile)) {
-      patchEntry(job.dataDir, job.runId, { logFile: resolve(finalPath) });
+async function runSealJobs(jobPaths: string[]): Promise<void> {
+  // Heartbeat: a job's mtime says "a helper is on this". One that stops
+  // moving is an orphan — the next live run re-spawns it (recoverSeals).
+  // Every job still queued is touched, not just the one in progress, or a
+  // long first job would make the rest look orphaned mid-queue.
+  const pending = new Set(jobPaths);
+  const touch = () => { const t = new Date(); for (const p of pending) { try { utimesSync(p, t, t); } catch { /* gone */ } } };
+  touch();
+  const beat = setInterval(touch, SEAL_HEARTBEAT_MS);
+  for (const jobPath of jobPaths) {
+    let job: SealJob | null = null;
+    try { job = JSON.parse(readFileSync(jobPath, "utf8")); } catch { /* unreadable: drop it */ }
+    if (job) {
+      try {
+        const opts = { logDir: job.logDir, readDirs: job.readDirs, noCompress: job.noCompress, fresh: job.fresh, noAutoMerge: job.noAutoMerge } as RunOpts;
+        const finalPath = await sealTrace(opts, job.logFile, new Set(job.sids), job.extraFiles ?? []);
+        if (job.runId && resolve(finalPath) !== resolve(job.logFile)) {
+          patchEntry(job.dataDir, job.runId, { logFile: resolve(finalPath) });
+        }
+      } catch { /* best-effort */ }
     }
-  } catch { /* best-effort */ }
-  try { unlinkSync(jobPath); } catch { /* ignore */ }
+    pending.delete(jobPath);
+    try { unlinkSync(jobPath); } catch { /* ignore */ }
+  }
+  clearInterval(beat);
+}
+
+/** How often the seal helper touches its job file. */
+const SEAL_HEARTBEAT_MS = 30_000;
+
+/** Hand a seal job to a helper that outlives this process AND its
+ * terminal session (setsid via `detached`): closing the tab that ran the
+ * session must not kill the archive. A container being torn down still
+ * does — that is what recoverSeals is for. */
+function spawnSealHelper(jobPaths: string[]): void {
+  const [cmd, ...args] = selfExecArgv(["__seal", ...jobPaths]);
+  const proc = spawn(cmd!, args, { detached: true, stdio: "ignore" });
+  proc.on("error", () => { /* the job stays on disk; recoverSeals re-spawns it */ });
+  proc.unref();
+}
+
+/**
+ * Fold the stale jobs that share a project dir into one: the merge scan
+ * is per dir (it decompresses every archive there looking for session
+ * ids), so N orphans from one project must cost one scan, not N. The
+ * newest job keeps its identity (runId, logFile — its tombstone gets
+ * re-pointed); the others contribute their trace (archived first, like
+ * the own file) and their sids, and are unlinked once the folded job is
+ * on disk. A tombstone whose job was folded still opens: findTraceCarrier
+ * resolves the .zst / session-file forms at read time.
+ */
+function foldSealJobs(jobPaths: string[]): string[] {
+  const groups = new Map<string, { path: string; job: SealJob }[]>();
+  const out: string[] = [];
+  for (const path of jobPaths) {
+    let job: SealJob;
+    try { job = JSON.parse(readFileSync(path, "utf8")); } catch { out.push(path); continue; } // unreadable: the helper drops it
+    const key = resolve(job.logDir);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({ path, job });
+  }
+  for (const entries of groups.values()) {
+    if (entries.length === 1) { out.push(entries[0]!.path); continue; }
+    entries.sort((a, b) => basename(b.job.logFile).localeCompare(basename(a.job.logFile))); // newest trace first
+    const lead = entries[0]!;
+    const sids = new Set<string>();
+    const extra: string[] = [];
+    for (const e of entries) {
+      for (const s of e.job.sids) sids.add(s);
+      for (const f of e.job.extraFiles ?? []) extra.push(f);
+      if (e !== lead) extra.push(e.job.logFile);
+    }
+    const attempts = Math.max(...entries.map((e) => e.job.attempts ?? 0));
+    const folded: SealJob = { ...lead.job, sids: [...sids], extraFiles: [...new Set(extra)], attempts };
+    const foldedPath = join(dirname(lead.path), `seal-recover-${lead.job.runId ?? process.pid}-${Date.now()}.json`);
+    try {
+      writeFileSync(foldedPath, JSON.stringify(folded));
+      for (const e of entries) { try { unlinkSync(e.path); } catch { /* ignore */ } }
+      out.push(foldedPath);
+    } catch {
+      for (const e of entries) out.push(e.path); // couldn't fold: run them as they are
+    }
+  }
+  return out;
+}
+
+/**
+ * Finish the exit seals whose helper died before it was done: every
+ * `seal-*.json` in the data dir idle longer than SEAL_JOB_IDLE_MS, folded
+ * per project dir. A live run hands them to ONE detached helper that works
+ * through them in order (its own startup stays instant); `cctrace compress
+ * --yes` runs them inline. Each job is touched first so two starters in
+ * the same window don't both claim it. Best-effort, quiet when there is
+ * nothing to do.
+ */
+async function recoverSeals(mode: "detached" | "inline"): Promise<number> {
+  const all = staleSealJobs(DATA_DIR);
+  if (!all.length) return 0;
+  // Claim = count the attempt and rewrite (which also moves the mtime).
+  // A job past its attempts is dropped here, with a line saying so.
+  const stale: string[] = [];
+  for (const j of all) {
+    let job: SealJob | null = null;
+    try { job = JSON.parse(readFileSync(j, "utf8")); } catch { /* unreadable: the helper drops it */ }
+    const attempts = (job?.attempts ?? 0) + 1;
+    if (attempts > SEAL_MAX_ATTEMPTS) {
+      log(`Giving up on the exit seal of ${job ? basename(job.logFile) : basename(j)} after ${SEAL_MAX_ATTEMPTS} attempts — cctrace compress archives whatever it left plain`, C.yellow);
+      try { unlinkSync(j); } catch { /* ignore */ }
+      continue;
+    }
+    try { if (job) writeFileSync(j, JSON.stringify({ ...job, attempts })); else { const t = new Date(); utimesSync(j, t, t); } } catch { /* claimed by someone else */ }
+    stale.push(j);
+  }
+  if (!stale.length) return 0;
+  const jobs = foldSealJobs(stale);
+  if (mode === "detached") {
+    log(`Finishing ${stale.length} interrupted exit seal(s) from earlier runs in the background`, C.dim);
+    try { spawnSealHelper(jobs); } catch { /* next time */ }
+    return stale.length;
+  }
+  log(`Finishing ${stale.length} interrupted exit seal(s) from earlier runs (${jobs.length} project dir(s))`, C.cyan);
+  for (const j of jobs) {
+    try {
+      const job = JSON.parse(readFileSync(j, "utf8")) as SealJob;
+      log(`  ${basename(job.logFile)}${job.extraFiles?.length ? ` +${job.extraFiles.length} more` : ""} in ${job.logDir}`, C.dim);
+    } catch { /* unreadable: the helper drops it */ }
+    await runSealJobs([j]);
+  }
+  return stale.length;
 }
 
 function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void, runId?: string) {
@@ -1717,8 +1871,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
         const job: SealJob = { dataDir: DATA_DIR, runId, logFile: resolve(logFile), logDir: opts.logDir, readDirs: opts.readDirs, noCompress: opts.noCompress, fresh: opts.fresh, noAutoMerge: opts.noAutoMerge, sids: [...sids] };
         const jobPath = join(DATA_DIR, `seal-${runId ?? process.pid}-${startedAt}.json`);
         writeFileSync(jobPath, JSON.stringify(job));
-        const proc = Bun.spawn(selfExecArgv(["__seal", jobPath]), { stdin: "ignore", stdout: "ignore", stderr: "ignore" });
-        proc.unref();
+        spawnSealHelper([jobPath]);
         detached = true;
         log(`Sealing in the background (merge + archive) — reopen anytime: cctrace view ${basename(logFile).replace(/\.jsonl$/, "")}`, C.dim);
       } catch {
@@ -1828,6 +1981,9 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       startedAt: new Date().toISOString(),
     });
     liveInstance = instance;
+    // Earlier runs whose exit seal died with their container: finish them
+    // now, off the hot path. Cheap when there are none (one readdir).
+    void recoverSeals("detached");
     // Capture runs leave a tombstone, not a deletion: the finished run stays
     // findable (view picker's "recent runs elsewhere", future trace library).
     process.on("exit", () => instance?.tombstone());
@@ -2039,7 +2195,7 @@ async function main() {
   // subcommand — dispatched before anything else, does its housekeeping and
   // exits.
   if (ARGV_HEAD === "__seal") {
-    await runSeal(RAW_ARGV[1] ?? "");
+    await runSealJobs(RAW_ARGV.slice(1));
     process.exit(0);
   }
   if (SUBCOMMAND) {

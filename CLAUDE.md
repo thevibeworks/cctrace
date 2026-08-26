@@ -61,14 +61,37 @@ src/
 │                   #   diff = what changed on the wire between observations)
 ├── icons.ts        # Per-client icon glyphs — ONE source for every surface that
 │                   #   labels a CLI (trace view header, dashboard rows)
-├── ui.ts           # The whole web UI: Requests list + detail panel + Sessions view
+├── ui.ts           # The whole web UI: Requests list + detail panel +
+│                   #   Sessions + Context + Trajectory views (four tabs)
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
 │                   #   table as the offline fallback (inlined into UI)
 ├── pricing-catalog.ts # models.dev api.json fetch — 24h-TTL fail-soft cache in
 │                   #   the data dir, filtered to anthropic/openai/xai
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
-├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI)
+├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI).
+│                   #   threadTimeSplit: where a thread's wall-clock went
+│                   #   (model/tools/waiting/between) off attributed pairs —
+│                   #   dsh Trajectory's lanes, the Sessions "time" chip
+├── context.ts      # The context layer (inlined into UI): per-request window
+│                   #   composition (6 categories), per-thread timeline +
+│                   #   events (injections/compactions/model/tool changes),
+│                   #   and the CONTEXT GRAPH — the assembled window as a
+│                   #   weighted tree, category -> group -> item (tool
+│                   #   results by tool, schemas by MCP server, injections
+│                   #   by producer, conversation by turn). Every request
+│                   #   body IS the assembled context, so steps are exact
+│                   #   and anchored to that pair's usage. The sessions
+│                   #   rail carries the same data as the trajectory
+│                   #   gutter. Pane rows carry PROVENANCE — the wire
+│                   #   request that first carried an item into the window
+│                   #   (ctxOriginTurn, content-verified against the spine;
+│                   #   semantica's fact->source trail), clickable to pin
+│                   #   that step. trajectoryRecords: the thread as one
+│                   #   linear stream of records (system/user/CONTEXT-inline/
+│                   #   assistant/tool call+result) for the Trajectory view -
+│                   #   dsh's Trajectory tab, MAP/READ/FULL from archify
+│                   #   (docs/design/context-view.md, docs/design/trajectory.md)
 ├── vendor/
 │   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 ├── html.ts         # Static HTML generator (legacy node mode only)
@@ -253,23 +276,34 @@ the way Claude Code keys `~/.claude/projects/` (path with non-[A-Za-z0-9-]
 project tree. The data dir is what containers sharing `$HOME` already
 share (the registry lives there), so a run traced in one container opens
 from any other; `--dir DIR` still overrides (write there, read only there).
-A live run writes plain `.jsonl`; at exit it archives its trace and every
-session file the auto-merge wrote to `.jsonl.zst` (`restTracesOnExit` in
-cli.ts → `archiveTrace`/`applyCompress`: streamed, decode-verified before
-the plain source is unlinked, two attempts because a tunnel closing as the
-child dies can log its meta pair mid-compress) and sweeps the dir for
-plain leftovers of killed runs (`planStaleSweep`: minted `trace-*`/
-`session-*` names only, idle > 24h, not this run's file, not any
-heartbeat-fresh registry logFile — matched as recorded AND as mapped into
-this side's store dir, `liveLogFiles` in store.ts). The supersedes
+A live run writes plain `.jsonl`; at exit it archives its trace to
+`.jsonl.zst` FIRST (`sealTrace` in cli.ts → `restFile` → `archiveTrace`/
+`applyCompress`: streamed, decode-verified before the plain source is
+unlinked, two attempts because a tunnel closing as the child dies can log
+its meta pair mid-compress), THEN auto-merges its sessions (the fresh
+`.zst` reads like any source; the id scan streams via `traceLines` and a
+session with a source over `MERGE_MAX_SOURCE_BYTES` = 1 GiB is blocked
+with the reason, never attempted), archives what the merge wrote, and
+sweeps the dir for plain leftovers of killed runs (`planStaleSweep`:
+minted `trace-*`/`session-*` names only, idle > 24h, not this run's file,
+not any heartbeat-fresh registry logFile — matched as recorded AND as
+mapped into this side's store dir, `liveLogFiles` in store.ts) and the
+`.tmp` of a killed archive (`sweepOrphanTmps`, idle > 1h). The supersedes
 overwrite is stamped (`ArchiveStamp` from planMerge: overwrite only while
 the archive on disk is the one the plan saw), the union path is
-damage-aware, temp names carry the pid. `--no-compress` opts out. The exit
-seal (merge + archive + stale sweep) runs in a DETACHED helper
-(`cctrace __seal <job>`, `sealTrace` in cli.ts) so the shell returns the
-moment the plain trace is safe; the helper re-points the run's tombstone at
-the archive when done (`patchEntry`). `CCTRACE_SYNC_SEAL=1` forces inline;
-static mode seals inline (its snapshot needs the pairs). Legacy `./.cctrace` dirs are read for continuity
+damage-aware, temp names carry the pid. `--no-compress` opts out. The
+seal runs in a DETACHED helper (`cctrace __seal <job...>`, one
+`seal-<run>-<ts>.json` per run in the data dir root) spawned in its own
+session (setsid) so the shell returns the moment the plain trace is safe
+and a closed terminal doesn't kill it; the helper heartbeats the job file
+and re-points the run's tombstone at the archive when done (`patchEntry`).
+A container torn down mid-seal orphans the job: every live run's startup
+re-spawns jobs idle > 10 min (`recoverSeals`, folded per project dir so N
+orphans cost one scan, one sequential helper, 3 attempts then dropped out
+loud) and `cctrace compress --yes` finishes them inline first. Archive-
+first is the load-bearing order: with merge-first, 56 of 58 helpers in a
+real data dir died with 33 GB still plain (2026-08-26). `CCTRACE_SYNC_SEAL=1`
+forces inline; static mode seals inline (its snapshot needs the pairs). Legacy `./.cctrace` dirs are read for continuity
 (`resolveTraceDirs` → `readDirs`, threaded through history/view/server)
 and print a one-line `cctrace adopt` hint; `adopt` moves them in
 (rename / EXDEV copy+verify, skips live + fresh + name-collisions, re-points

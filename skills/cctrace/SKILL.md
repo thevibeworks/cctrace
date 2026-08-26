@@ -147,6 +147,41 @@ session) — the link a statusline can afford to print. Hash-routed views:
   visually marked, and a subagent fold links to its reconstructed thread.
   Nav: `g`/`G` top/bottom, `j`/`k` turns, `p`/`u` user prompts, `s` system
   prompt (same jumps on the on-page rail).
+- **Context** (`#/context[/<sid8-or-key>[/<key>]]`): what the model's
+  context window is assembled from, request by request — the "what is
+  eating the window" view, laid out as a ledger. A sticky left MARGIN
+  carries the balance for the picked step: its prompt tokens, a six-color
+  bar against the model's context window, how far the chars/4 estimate
+  reads under or over the billed prompt, and six ledger lines (system
+  prompt, tool schemas, user messages, injected context, assistant
+  replies, tool results) — click any line to zoom the graph to it. Below
+  those, the step's links out (`turn NN · step N →`, `wire →`), the
+  heaviest tool schemas, and — on multi-session traces — the other
+  threads, peak assembled context on one scale, click to switch.
+  The CANVAS beside it: trajectory (a stacked bar per request or per
+  turn, ✂ plus an amber axis break at compaction/rewind, hover scrubs the
+  margin and the graph, click pins), inside this step (an icicle — width
+  is tokens, rows are levels — decomposing the step into category →
+  group → item, tool results by tool, schemas by MCP server, injections
+  by producer; click a node to zoom, a leaf to open its exact bytes in
+  the pane below; "by size" or "in order"), and what changed it
+  (injections with producer labels, compactions with the reclaimed token
+  delta, model switches, tool-schema changes — each linked to its wire
+  request). Estimates carry ≈ and sit next to the provider-reported
+  prompt tokens. Selection is shared with the Sessions view, and a step
+  links back to its turn there.
+- **Trajectory** (`#/trajectory[/<sid8-or-key>]`): the thread as one
+  linear, time-anchored stream of records — system prompt, the human's
+  turns, harness-injected CONTEXT inline at the moment it entered, the
+  model's thinking, each tool call fused with its result, the reply —
+  kind-badged, in spine order, turn/step addressed like the Sessions
+  outline and the Context view. Two panes: record list | inspector. A
+  detail level filters, never summarizes, and says how many rows it hid:
+  MAP (system + the human + tool calls), READ (drops budget banners and
+  bare thinking), FULL (everything). A kind filter isolates one record
+  type (context-only IS the context trajectory) plus search. The time
+  lanes on top (model / tools / waiting / between turns) are the same
+  wire-timestamp split the Sessions "time" chip carries.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
   the scrubber is a minimap (turns tall, errors red). Pausing writes a

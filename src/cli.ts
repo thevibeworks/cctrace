@@ -35,7 +35,7 @@ import { CATEGORIES, categorizeUrl } from "./categorize";
 import { traceSummary, type TraceStats } from "./report";
 import { setIdentityRedaction } from "./redact";
 import { parseArgs } from "util";
-import type { TracePair } from "./types";
+import type { TracePair, TraceStart } from "./types";
 
 // Live-UI port: DEFAULT_PORT (8722 — TRAC on a phone keypad) lives in
 // instances.ts so the discovery sweep and the allocation walk stay one list.
@@ -1365,6 +1365,8 @@ interface RunOpts {
 
 interface LogSink {
   onPair: (pair: TracePair) => void;
+  /** A forwarded model call with no response yet — live state only. */
+  onStart: (start: TraceStart) => void;
   /** Write the categorized HTML report from everything collected. */
   writeHtml: () => Promise<string>;
   /** This run's pairs (no prior-run merges) — feeds the exit summary. */
@@ -1404,7 +1406,13 @@ function logPaths(opts: RunOpts): { logFile: string; htmlFile: string } {
   };
 }
 
-function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: (pair: TracePair) => void): LogSink {
+function makeLogSink(
+  opts: RunOpts,
+  logFile: string,
+  htmlFile: string,
+  ingest?: (pair: TracePair) => void,
+  ingestStart?: (start: TraceStart) => void,
+): LogSink {
   if (resolve(opts.logDir) === projectTraceDir(DATA_DIR, process.cwd())) ensureProjectDir(DATA_DIR, process.cwd());
   else if (!existsSync(opts.logDir)) mkdirSync(opts.logDir, { recursive: true });
   writeFileSync(logFile, "");
@@ -1420,6 +1428,14 @@ function makeLogSink(opts: RunOpts, logFile: string, htmlFile: string, ingest?: 
       collected.push(pair);
       appendFileSync(logFile, JSON.stringify(pair) + "\n");
       ingest?.(pair);
+    },
+    // The live "the model is thinking now" signal. Same client label as the
+    // pairs, and it never touches the trace file: a start is state, not wire
+    // data — the pair that follows is the record. Static/legacy-node runs
+    // have no live server, so it goes nowhere.
+    onStart: (start: TraceStart) => {
+      start.client = CLIENT.name;
+      ingestStart?.(start);
     },
     // The snapshot merges prior-run pairs of the same Claude session (and any
     // --with files) so a --continue'd session's .html is complete on its own.
@@ -1908,6 +1924,7 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs: string[], opts: RunOpts) {
   const { logFile, htmlFile } = logPaths(opts);
   let ingest: ((pair: TracePair) => void) | undefined;
+  let ingestStart: ((start: TraceStart) => void) | undefined;
   let liveInstance: InstanceHandle | null = null;
   // --continue/--resume: the resumed session id isn't on the wire until the
   // first request, but we can GUESS it now — an explicit `--resume <id>`
@@ -1968,6 +1985,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       },
     });
     ingest = server.ingest;
+    ingestStart = server.ingestStart;
     instance = registerInstance(DATA_DIR, {
       id: instanceId,
       pid: process.pid,
@@ -1994,7 +2012,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     }
   }
 
-  const sink = makeLogSink(opts, logFile, htmlFile, ingest);
+  const sink = makeLogSink(opts, logFile, htmlFile, ingest, ingestStart);
   const targetHost = process.env.ANTHROPIC_BASE_URL
     ? new URL(process.env.ANTHROPIC_BASE_URL).host
     : "api.anthropic.com";
@@ -2022,6 +2040,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   });
   const capturer = await createCapturer(mode, {
     onPair: sink.onPair,
+    onStart: sink.onStart,
     logAll: opts.logAll,
     cacheDir: MITM_CA_DIR,
     targetHost,

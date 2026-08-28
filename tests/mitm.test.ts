@@ -3,7 +3,7 @@ import { startMitm, externalBodyStub, EXTERNAL_BODY_CAP, parseUpstreamProxy, par
 import * as http from "http";
 import { ensureCerts, isInterceptHost, migrateCaDir, buildCaBundle, systemCaBundle } from "../src/certs";
 import { createCapturer } from "../src/capture";
-import type { TracePair } from "../src/types";
+import type { TracePair, TraceStart } from "../src/types";
 import { join } from "path";
 import { tmpdir } from "os";
 import { existsSync, rmSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync } from "fs";
@@ -503,6 +503,83 @@ describe("websocket upgrade refusal", () => {
     expect(pairs.length).toBe(1);
     expect(pairs[0]!.response?.status).toBe(501);
     expect(pairs[0]!.request.url).toBe("https://chatgpt.com/backend-api/codex/responses");
+  });
+});
+
+// Live state (docs/design/replay-stage.md): a model call announces itself when
+// it is FORWARDED — the page's "the model is thinking now". The upstream here
+// is a closed port, so the fetch fails fast and the pair lands on the error
+// path; that is the sharpest version of the invariant that matters — whatever
+// happens next, the pair carries the id the start already announced.
+describe("mitm: live start events", () => {
+  function closedPort(): Promise<number> {
+    return new Promise((resolve) => {
+      const srv = net.createServer();
+      srv.listen(0, "127.0.0.1", () => {
+        const port = (srv.address() as net.AddressInfo).port;
+        srv.close(() => resolve(port));
+      });
+    });
+  }
+
+  // CONNECT -> TLS -> one raw HTTP request through the terminator.
+  function tlsRequest(proxyPort: number, targetPort: number, method: string, path: string): Promise<void> {
+    return new Promise((resolve) => {
+      const sock = net.connect(proxyPort, "127.0.0.1", () => {
+        sock.write(`CONNECT 127.0.0.1:${targetPort} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n\r\n`);
+      });
+      let buf = "";
+      let established = false;
+      const onData = (d: Buffer) => {
+        buf += d.toString("latin1");
+        if (established || !buf.includes("\r\n\r\n")) return;
+        established = true;
+        sock.removeListener("data", onData);
+        const tlsSock = tls.connect({ socket: sock, rejectUnauthorized: false }, () => {
+          tlsSock.write(
+            `${method} ${path} HTTP/1.1\r\nHost: 127.0.0.1:${targetPort}\r\n` +
+            "Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+          );
+        });
+        tlsSock.on("data", () => { tlsSock.destroy(); resolve(); });
+        tlsSock.on("close", () => resolve());
+        tlsSock.on("error", () => resolve());
+      };
+      sock.on("data", onData);
+      sock.on("error", () => resolve());
+      setTimeout(() => resolve(), 4000);
+    });
+  }
+
+  test("a messages request starts with the id its pair will carry; probes and other paths don't", async () => {
+    const target = await closedPort();
+    const pairs: TracePair[] = [];
+    const starts: TraceStart[] = [];
+    const mitm = track(await startMitm({
+      caDir,
+      onPair: (p) => pairs.push(p),
+      onStart: (s) => starts.push(s),
+      interceptHosts: ["127.0.0.1"],
+    }));
+    for (const [method, path] of [
+      ["POST", "/v1/messages"],
+      ["POST", "/v1/messages/count_tokens"],
+      ["GET", "/api/oauth/profile"],
+    ] as Array<[string, string]>) {
+      await tlsRequest(mitm.port, target, method, path);
+    }
+    await Bun.sleep(200); // captures settle
+
+    expect(pairs.length).toBe(3);
+    expect(starts.length).toBe(1);
+    const msg = pairs.find((p) => p.request.url.endsWith("/v1/messages"))!;
+    expect(starts[0]!.id).toBe(msg.id);
+    expect(starts[0]!.method).toBe("POST");
+    expect(starts[0]!.url).toBe(msg.request.url);
+    // Same unit as request.timestamp (epoch seconds).
+    expect(starts[0]!.ts).toBe(msg.request.timestamp);
+    // Ids stay unique now that they are minted before the forward.
+    expect(new Set(pairs.map((p) => p.id)).size).toBe(3);
   });
 });
 

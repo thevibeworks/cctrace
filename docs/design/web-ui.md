@@ -642,6 +642,25 @@ hash-routed:
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
+- **Live wire** (WebSocket `/ws`, served pages only — a snapshot has none):
+  `init` on connect (`{ pairs, traceBytes, starts }`, the whole state, re-sent
+  wholesale when a speculative preload is evicted), `pair` per capture
+  (`{ pair, traceBytes }`), `history` when a continuity merge or `--with`
+  load lands (`{ pairs }`), `purged` after a select-to-purge (`{ ids }`),
+  and `start` — a model call that has been FORWARDED and has no response
+  yet, the "the model is thinking now" state:
+  `{ type: "start", start: { id, url, method, ts, client } }` (`TraceStart`
+  in src/types.ts — `id` is the id the eventual pair carries, `ts` is epoch
+  SECONDS like `request.timestamp`, `client` is stamped by the CLI's log
+  sink exactly like `pair.client`). Only MESSAGES-category calls start: a
+  count_tokens probe, oauth or telemetry is not a state (both proxies gate
+  on `categorizeUrl`). The server holds the open ones (`ingestStart` beside
+  `ingest` from createServer), replays them in `init.starts` — always
+  present, `[]` when nothing is in flight — so a page connecting
+  mid-request still knows, and drops one when the pair with its id lands or
+  after 10 minutes. A start is never written to the trace: it is live
+  state, not wire data, so snapshots and `cctrace view` pages say nothing
+  about "now" (docs/design/replay-stage.md).
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
   `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.

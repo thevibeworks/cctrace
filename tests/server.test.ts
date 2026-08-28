@@ -242,6 +242,74 @@ describe("session dump", () => {
   });
 });
 
+// Live state (docs/design/replay-stage.md): a forwarded model call reaches
+// the page as a `start` before its response exists, and stays in `init` until
+// the pair with that id lands — a page that connects mid-request must still
+// know the model is thinking.
+describe("live start events", () => {
+  type Msg = { type: string; [k: string]: any };
+  const sockets: WebSocket[] = [];
+  afterAll(() => { for (const ws of sockets) try { ws.close(); } catch {} });
+
+  function connectWs(): Promise<{ wait: (pred: (m: Msg) => boolean) => Promise<Msg> }> {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
+      sockets.push(ws);
+      const msgs: Msg[] = [];
+      const waiters: Array<{ pred: (m: Msg) => boolean; ok: (m: Msg) => void }> = [];
+      ws.onmessage = (e) => {
+        const m = JSON.parse(String(e.data)) as Msg;
+        msgs.push(m);
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (waiters[i]!.pred(m)) waiters.splice(i, 1)[0]!.ok(m);
+        }
+      };
+      ws.onerror = () => reject(new Error("ws error"));
+      ws.onopen = () => resolve({
+        wait: (pred) => new Promise<Msg>((ok, fail) => {
+          const seen = msgs.find(pred);
+          if (seen) return ok(seen);
+          const t = setTimeout(() => fail(new Error("timed out waiting for a message")), 2000);
+          waiters.push({ pred, ok: (m) => { clearTimeout(t); ok(m); } });
+        }),
+      });
+    });
+  }
+
+  const START = {
+    id: "start-pair-1",
+    url: "https://api.anthropic.com/v1/messages",
+    method: "POST",
+    ts: 1755000000,
+    client: "claude",
+  };
+
+  test("a start broadcasts to connected pages and rides the next init", async () => {
+    const a = await connectWs();
+    await a.wait((m) => m.type === "init");
+    server.ingestStart(START);
+    const got = await a.wait((m) => m.type === "start");
+    expect(got.start).toEqual(START);
+
+    // A page opening mid-request learns about it from init.
+    const b = await connectWs();
+    const init = await b.wait((m) => m.type === "init");
+    expect(init.starts.map((s: any) => s.id)).toContain(START.id);
+    expect(init.starts.find((s: any) => s.id === START.id)).toEqual(START);
+  });
+
+  test("the pair retires the start — later inits carry none", async () => {
+    server.ingest(pair(START.id));
+    const c = await connectWs();
+    const init = await c.wait((m) => m.type === "init");
+    expect(init.starts).toEqual([]);
+    // And a late duplicate of an already-answered request stays retired.
+    server.ingestStart(START);
+    const d = await connectWs();
+    expect((await d.wait((m) => m.type === "init")).starts).toEqual([]);
+  });
+});
+
 describe("dashboard", () => {
   test("/dashboard serves the central page; /api/runs lists tombstones with traceExists", async () => {
     const html = await (await fetch(`${base}/dashboard`)).text();

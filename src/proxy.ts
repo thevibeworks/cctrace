@@ -1,12 +1,19 @@
+import { categorizeUrl } from "./categorize";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
-import type { TracePair } from "./types";
+import type { TracePair, TraceStart } from "./types";
 
 export interface ProxyConfig {
   port?: number;
   targetHost?: string;
   targetScheme?: string;
   onPair: (pair: TracePair) => void;
+  /**
+   * A model call was forwarded and has no response yet — the live "thinking
+   * now" signal, carrying the id the eventual pair will have. Fail-soft: a
+   * throwing sink can never cost the forward.
+   */
+  onStart?: (start: TraceStart) => void;
   logAll?: boolean;
 }
 
@@ -27,6 +34,14 @@ export function startProxy(config: ProxyConfig): ProxyServer {
   // Single redaction choke point — no pair reaches a sink unredacted.
   const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
 
+  // Live state, not a pair: only a MESSAGES-category request is a "the model
+  // is thinking" moment (a count_tokens probe is not). Same predicate the
+  // pair's category comes from; fail-soft, the hint never costs the request.
+  const emitStart = (id: string, method: string, url: string, ts: number) => {
+    if (!config.onStart || categorizeUrl(url) !== "messages") return;
+    try { config.onStart({ id, url, method, ts }); } catch {}
+  };
+
   const server = Bun.serve({
     port: config.port ?? 0,
     // Bun's 10s idleTimeout default kills long requests (/compact waits
@@ -42,6 +57,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       const targetUrl = `${scheme}://${targetHost}${url.pathname}${url.search}`;
       const shouldLog = logAll || url.pathname.includes("/v1/messages");
       const startTime = Date.now();
+      // Minted before the forward so the live `start` event and the pair that
+      // eventually lands carry the SAME id (see mitm.ts).
+      let captureId = "";
+      if (shouldLog) {
+        pairCount++;
+        captureId = `${Date.now()}_${pairCount.toString(36)}`;
+      }
 
       const reqHeaders: Record<string, string> = {};
       req.headers.forEach((v, k) => { reqHeaders[k] = v; });
@@ -62,6 +84,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       delete fetchHeaders["content-length"];
 
       let upstreamRes: Response;
+      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
       try {
         upstreamRes = await fetch(targetUrl, {
           method: req.method,
@@ -71,9 +94,8 @@ export function startProxy(config: ProxyConfig): ProxyServer {
         });
       } catch (err) {
         if (shouldLog) {
-          pairCount++;
           onPair({
-            id: `${Date.now()}_${pairCount.toString(36)}`,
+            id: captureId,
             request: {
               timestamp: startTime / 1000,
               method: req.method,
@@ -97,9 +119,8 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       if (!upstreamRes.body) {
         // Empty-body success (204/304). Record it so the trace is complete.
         if (shouldLog) {
-          pairCount++;
           onPair({
-            id: `${Date.now()}_${pairCount.toString(36)}`,
+            id: captureId,
             request: {
               timestamp: startTime / 1000,
               method: req.method,
@@ -132,8 +153,6 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       }
 
       const { stream: clientStream, captured } = captureTee(upstreamRes.body);
-      pairCount++;
-      const captureId = `${Date.now()}_${pairCount.toString(36)}`;
       const resStatus = upstreamRes.status;
       const resHeaders = Object.fromEntries(fwdHeaders.entries());
       const ct = upstreamRes.headers.get("content-type") || "";

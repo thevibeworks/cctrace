@@ -73,9 +73,11 @@ src/
 ├── replay.ts       # Session replay: the time cursor primitives (visibleAt,
 │                   #   boundaries, tick ladder, slices) + the STAGE readings
 │                   #   of a cursor — sessionLanes (human/model/tools/agents/
-│                   #   harness over wall-clock), stateAt/stateCounts (the
-│                   #   observed state machine), beatAt (the step's calls
-│                   #   fused with results), chaptersOf (working loops).
+│                   #   harness over wall-clock), stateAt/nowAt (the observed
+│                   #   state at the cursor, read into one NOW line),
+│                   #   soFar (the tally behind it), axisTicks (the strip's
+│                   #   clock ruler), beatAt (the step's calls fused with
+│                   #   results, plus its loop's head), chaptersOf (loops).
 │                   #   Pure, inlined into the UI (docs/design/replay-stage.md)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
 │                   #   table as the offline fallback (inlined into UI)

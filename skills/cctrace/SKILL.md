@@ -196,13 +196,17 @@ session) — the link a statusline can afford to print. Hash-routed views:
   session as it happened; `[`/`]` jump between working loops; `Space` plays
   at 1/2/8/60x (idle gaps compressed). The scrubber is a TRAJECTORY: five
   lanes over wall-clock (human prompts · model requests · tools · subagents
-  stacked · harness cuts/failures); wheel zooms around the cursor and the
-  strip labels spans as you zoom in; click a span to jump there. The left
-  pane carries the agent's observed state diagram (human -> model -> tools /
-  agents / waiting -> reply, counts as of the cursor, current transition
-  lit) and the BEAT — this step's tool calls fused with results, spawns,
-  the reply, the window delta. `F` hides the chrome for presenting; Esc
-  peels present -> replay -> view. Pausing writes a
+  stacked · harness cuts/failures) under a clock axis, everything right of
+  the playhead dimmed and every thread but the selected one ghosted; wheel
+  zooms around the cursor and the strip labels spans as you zoom in; click
+  a span to jump there. The left pane carries the NOW line (the observed
+  state at the cursor — model/tools/agents/waiting/human/failed/idle —
+  what is running and since when), the BEAT (this step's tool calls fused
+  with results, spawns, the reply, the window delta, and the prompt that
+  started the loop) and the call tally so far. On a LIVE run replay tails:
+  `⏭` / `End` park the cursor at the live edge and it follows every pair
+  that lands, with the conversation scrolled to the moment. `F` hides the
+  chrome for presenting; Esc peels present -> replay -> view. Pausing writes a
   shareable deep link: `#/session/<key>/@<pair-id>` opens paused at that
   exact moment — use these links to point a human at "the turn where it went
   wrong". Shift+drag on the scrubber selects a SLICE (a range): both panes

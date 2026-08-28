@@ -370,8 +370,7 @@ export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
   for (const x of L.model || []) {
     if (key && x.threadKey !== key) continue;
     // Half-open, like every span here: at exactly t1 the reply is visible
-    // (visibleAt) and the gap that follows owns the cursor — the same
-    // instant stateCounts credits the outgoing transition.
+    // (visibleAt) and the gap that follows owns the cursor.
     if (x.t0 <= cursor && cursor < x.t1 && (!m || x.t0 > m.t0)) m = x;
     if (x.t1 <= cursor && x.t1 >= lastT) { lastT = x.t1; lastItem = x; lastKind = "end"; }
   }

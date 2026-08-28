@@ -129,9 +129,11 @@ to protect that feeling.
   and the slice spanning every lane, never scrolled away. Reading depth is
   a function of zoom (map / read / full on `data-depth`), not a toggle.
   The playhead is the page's ONE motion owner while replaying: nothing
-  else tweens, counts, or ticks — a still frame is always complete. The
-  stage's diagram is fixed geometry: a node or edge with zero observations
-  goes faint, never hidden (hiding shifts the picture).
+  else tweens, counts, or ticks — a still frame is always complete (the
+  now dot's heartbeat is the one exception, and only while a request is
+  actually in flight). The FUTURE is what dims — the veil right of the
+  playhead — never the past: tinting what the reader is looking at costs
+  the data its contrast.
 - The dashboard (`src/dashboard.ts`) is part of this design system, not a
   side page: same variable block, same type scale, same lowercase labels,
   same small-button grammar for its group-by control, and the same client

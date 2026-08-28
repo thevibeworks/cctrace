@@ -71,9 +71,10 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   `/model` epochs, compaction boundaries, superseded exchanges -- and
   **replay**: step or play back any captured session, deep-link any
   moment -- on a stage: lanes over time (prompts, requests, tools,
-  subagents, cuts), the agent's observed state diagram with the current
-  transition lit, and the beat of what it did at this step. Live, the
-  model node lights the moment a request leaves.
+  subagents, cuts) under a clock axis, a NOW line naming what the agent
+  is doing at the cursor and since when, and the beat of what it did at
+  this step. On a live run replay TAILS: the cursor follows the newest
+  landed pair and the conversation follows the cursor.
 - **Context insights, DevTools-shaped.** A Context view shows the agent's
   window over time. An interactive **overview** owns the top and never
   scrolls away: one stacked column per wire request, colored by the six

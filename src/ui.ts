@@ -2762,10 +2762,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 replay is a STAGE \\u2014 five lanes over wall-clock (human, model, tools, agents, harness); wheel to zoom, and the strip says more as you zoom; click a span to jump there\\n' +
-        '\\u00b7 the agent\\u2019s observed state machine \\u2014 human \\u2192 model \\u2192 tools / agents / waiting \\u2192 reply, counts and time as of the cursor, the transition just taken lit; nothing inferred\\n' +
-        '\\u00b7 the BEAT \\u2014 what the agent did at this step: every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
-        '\\u00b7 live thinking-now \\u2014 a request is announced as it is forwarded, so the model node lights the moment the call goes out, not when the reply lands\\n' +
+        '\\u00b7 replay is a STAGE \\u2014 a clock axis over five lanes of wall-clock (human, model, tools, agents, harness); the selected thread draws full, the future is dimmed; wheel to zoom, click a span to jump there\\n' +
+        '\\u00b7 the NOW line \\u2014 what the agent is doing at the cursor, what is running, and since when; nothing inferred, nothing ticking\\n' +
+        '\\u00b7 the BEAT \\u2014 what the agent did at this step: the prompt that started the loop, every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
+        '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor follows every pair that lands, with the conversation scrolled to the moment\\n' +
         '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';

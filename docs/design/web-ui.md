@@ -638,29 +638,51 @@ hash-routed:
   (zero-width window) clears instead of filtering everything out; ✕ on
   the chip clears; Esc exits replay and the slice with it. Works
   identically in snapshots (export hidden — no server); live captures
-  extend the track and "live ⤓" re-attaches the tail. P1+P2+slices
+  extend the track and the transport's live chip re-attaches the tail.
+  P1+P2+slices
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
 - **The replay stage** (docs/design/replay-stage.md — the rules live
-  there): the track is `#rp-lanes`, five lanes x wall-clock (human points,
-  model spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
+  there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
+  `axisTicks` in the page's local time, a major tick dropping a rule
+  through every lane) over five lanes x wall-clock (human points, model
+  spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
   failed ✗), built from `sessionLanes` over the FULL threads (not the
   cursored ones) and positioned with the same `(t - t0)/dur` math the
-  marks used; playhead, fill and slice span every lane. Wheel zooms
-  around the cursor (1x-32x, the same helper the context overview uses)
-  and sets `data-depth` map/read/full; click a span seeks to its pair's
-  END (the boundary where it became visible). While replaying, `#stage`
-  sits at the top of `#threads` above the rail: a fixed six-node inline
-  SVG (human, model, tools, agents, waiting, reply) with counts/time as of
-  the cursor from `stateCounts`, the current state and transition lit via
-  `stateAt`; under it the beat from `beatAt` (caption, tool rows fused
-  with results via the detail panel's own renderers, spawn rows, reply
-  line, stated reasoning, window delta). `[`/`]` walk `chaptersOf`; `F`
-  toggles `body.present` (chrome hidden, type scale unchanged); Esc peels
-  present -> replay -> view. Open `start`s (below) draw as a dashed model
-  span to the newest known time and light the model node with the live
-  dot's heartbeat — never a ticking clock.
+  marks used; playhead, veil and slice span every lane. The rail's
+  selected thread draws full and every other thread's items carry
+  `.other` (~30%); `#rp-veil` dims everything RIGHT of the playhead — a
+  replay never shows what has not happened. Wheel zooms around the cursor
+  (1x-32x, the same helper the context overview uses) and sets
+  `data-depth` map/read/full; click a span seeks to its pair's END (the
+  boundary where it became visible). While replaying, `#stage` sits at
+  the top of `#threads` above the rail, three blocks: the NOW line
+  (`#stage-now`, `nowAt` — a dot in the lane color, the state, what is
+  running, the held duration where the extent is a wire fact, and the
+  absolute clock it began at; click seeks to the step that opened it),
+  the beat from `beatAt` (caption, the loop's head, tool rows fused with
+  results via the detail panel's own renderers, spawn rows, reply line,
+  stated reasoning, window delta) and `.st-sofar` from `soFar` (the call
+  tally as of the cursor — the only place the per-tool count is stated).
+  `[`/`]` walk `chaptersOf`; `F` toggles `body.present` (chrome hidden,
+  type scale unchanged); Esc peels present -> replay -> view. Open
+  `start`s (below) draw as a dashed model span to the newest known time
+  and beat the now dot — never a ticking clock.
+- **Replay TAILS a live run.** The transport is
+  `[⏮][▶][⏭] 1x 2x 8x 60x  <local clock> · +<offset> / <length>  [live]
+  [✕ exit]`. `⏭` / `End` seek the end of the tape — on a live page the
+  live edge. A `pair` frame measures `wasAtEdge` (cursor >=
+  `replaySpan(pairs).t1 - 0.5`) and `wasAtBottom` (`convoAtBottom`)
+  BEFORE ingest: at the edge the cursor moves to the new edge, the now
+  line and the beat follow (the beat gets the page's 160ms live-arrived
+  fade once), and the convo sticks to its bottom only if the reader was
+  there. Behind the edge nothing moves and the `#rp-live` chip flips from
+  `● live` to a `⤓ live` button that snaps back. `history` frames never
+  move the cursor. Every other cursor change (seek, step, chapter,
+  playback tick) scrolls the convo to its bottom instantly — the bottom
+  IS the moment. Reading pages (snapshot / `cctrace view`) have no live
+  chip: there is no edge to chase.
 - **Live wire** (WebSocket `/ws`, served pages only — a snapshot has none):
   `init` on connect (`{ pairs, traceBytes, starts }`, the whole state, re-sent
   wholesale when a speculative preload is evicted), `pair` per capture

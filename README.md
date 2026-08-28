@@ -104,6 +104,16 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
 
   Traces holding several sessions compare their peaks on one
   scale. Anchored to provider-reported tokens -- the wire, not a guess.
+- **Where the quota goes.** The overview carries a third track: what each
+  step cost, stacked cache read / cache write / input / output -- and an
+  amber `$` on the steps that bought their prefix twice. The margin says
+  where the money went (per component, per model), counts those bumps and
+  names each cause off the wire: cache expired (1h ttl, 15h idle), prefix
+  changed (tool schemas changed), retry after 529 -- each with what a warm
+  cache would have saved. Beside it, the account's quota as the client
+  polled it: 5h / 7d / model-scoped, percent, when it resets, and how far
+  it moved across this trace. Every dollar is an estimate from catalog
+  rates; every cause is a wire fact.
 - **The trajectory, in the timeline.** Every step on the sessions rail
   carries a track: how full the window was, split into the prefix read
   from cache and what was billed fresh. Down the rail that column is the

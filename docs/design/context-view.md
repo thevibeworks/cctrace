@@ -179,6 +179,11 @@ The page is a DevTools shell: an interactive overview that owns the time
 axis, a margin that reconciles the balance, and ONE deck at a time
 answering a different question about the same selection.
 
+Three readings ride that one selection: what the window HELD (context),
+where the wall-clock WENT (time), and what it COST (cost, added later —
+docs/design/cost.md). All three are tracks on the same axis under the
+same brush, with their totals in the margin; none of them is a tab.
+
 That is a verdict on two shipped arrangements. 0.44 put five equal-weight
 sections down a 1100px ribbon and made the answer arrive fifth, below the
 fold. 0.45's ledger fixed the margin but left the canvas a scroll of
@@ -193,16 +198,19 @@ by clicking a tab to ask a different question about them.
     │      ▁▂▃▄▅▆▇█  CTX   one column per step, stacked by category  │
     │ 249k ░░░▓▓▓▓░░░ ← the brush: drag, resize, pan, dim outside    │
     │ 2m24s ▁_▁__▃_▁  TIME model / tools / waiting, same x axis      │
+    │ ≈$6.85 ▁▁▂█▁▁▁  COST read / write / input / output, $ = bump   │
     ├──────────────────┬─────────────────────────────────────────────┤
     │ MARGIN (scrolls) │ [window] [stream] [events]     deck controls│
     │ 260k             │                                             │
     │ 37% of 200k ▓░░  │  window — the pinned step as an icicle      │
     │ ≈137k · 47% under│  stream — every record, injections inline   │
-    │ ── composition ──│  events — what grew or reclaimed it         │
+    │ ── composition ──│  events — what grew, reclaimed or re-bought │
     │ six ledger lines │                                             │
     │ ── this step ────│                                             │
     │ ── tool schemas ─│                                             │
+    │ ── money went ───│                                             │
     │ ── time went ────│                                             │
+    │ ── quota ────────│                                             │
     │ ── other threads │                                             │
     └──────────────────┴─────────────────────────────────────────────┘
 
@@ -246,6 +254,14 @@ Two tracks on one x axis, under one brush.
   a track whose colors are never named is a decoration. This is the
   per-step waterfall the 0.44 doc listed as a follow-up; the head strip
   it replaces was the honest small version of the same shape.
+- **cost** — what that step cost, stacked cache read / cache write /
+  input / output (a cool-to-hot ramp, never the six category hues), the
+  same pixel floor, the gutter stating the dearest column. Drawn only
+  when the catalog priced at least one step of the thread. A step that
+  re-bought a prefix a warm cache would have read wears an amber `$` the
+  way a compaction wears ✂ — the tooltip names the cause off the wire
+  (expired against its TTL / prefix changed / retry after a failure) and
+  what warm would have saved. Rules and precedence: docs/design/cost.md.
 
 **Columns are equal-width and gapless**, and the *bar* inside each column
 is what gets capped (28px), not the column. That is load-bearing: the
@@ -306,8 +322,19 @@ The whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
 - **this step** — clock, output, cache share, and both ways out (`turn NN
   · step N →` into the sessions rail, `wire →` to the captured pair).
 - **heaviest tool schemas** — the standing cost, top 5 of N.
+- **where the money went** — the thread's bill by component and by
+  model, and the legend for the overview's cost track; the bumps line
+  ("3 cost bumps · ≈$6.5 over warm") is a control that opens the events
+  deck filtered to `cost`. `N steps unpriced` when the catalog did not
+  know a model. The balance's "this step" block gained the same reading
+  for one step: `≈$0.42 this step · 97% from cache`.
 - **where the time went** — the thread's model / tools / waiting /
   between-turns totals, and the legend for the overview's time track.
+- **quota** — the account limits as the client last polled them (5h / 7d
+  / model-scoped, percent, ABSOLUTE reset time), the credits row, and the
+  movement across this trace. Per TRACE, not per thread, so it sits
+  outside `#cx-bal` and does not repaint on a scrub; nothing renders for
+  clients that never poll.
 - **other threads** — the multi-session picker, quietest block in the
   margin, because switching sheets must not need a scroll.
 
@@ -357,8 +384,10 @@ now attributed to the request that CARRIED it into the window (`addr[v]
 provenance already names, so its `wire →` link resolves too.
 
 **3. events** — what changed the window, newest first, scoped to the
-range, with the kind chips (inject / compact / model / tools / system) in
-the deck bar. Each row: glyph, kind, label (producer for injections —
+range, with the kind chips (inject / compact / cost / model / tools /
+system) in the deck bar. A `cost` row is a bump: the cause in words, and
+DOLLARS in the delta slot (`≈+$1.29`) because the amount is what the
+reader is hunting; the hover states the counterfactual in tokens. Each row: glyph, kind, label (producer for injections —
 AGENTS.md, environment context, recap, the reminder's own opening
 words), then the token delta (+amber = grew, −green = reclaimed) *beside
 the label*, because the delta is what the event did to the window
@@ -604,6 +633,12 @@ context route renders in ~45ms, the sessions route in ~35ms.
   truth) with a dashed red outline and no fake usage.
 - Unlabeled history drops still get a ✂ (the drop is real) without
   claiming a mode the session layer didn't verify.
+- Every dollar is an estimate from catalog rates and wears `≈`; an
+  unpriced model draws no track, no block and no $0. A bump's CAUSE is a
+  wire fact (a gap against a TTL, a status code, a same-step event) —
+  when nothing on the wire explains it, the row says "cause not on the
+  wire" instead of guessing. Quota is what the client polled, stamped
+  with when it polled it, in absolute wall-clock.
 
 ## Not done / follow-ups
 
@@ -624,6 +659,9 @@ context route renders in ~45ms, the sessions route in ~35ms.
   affordable only if the walk is made incremental first.
 - Cross-thread graph diff ("what does this session carry that the other
   doesn't") — the data is there; the question is whether anyone asks it.
+- Cost bumps are listed, never aggregated by cause ("expiry cost you ≈$4,
+  prefix changes ≈$9"); cross-run cost trends belong on /dashboard, not
+  here (docs/design/cost.md).
 - The graph's zoom and selection are page state, not URL state: you cannot
   link someone to "the Bash node of turn 37". The route grammar has room
   (`#/context/<key>/=<deck>/<node>`) but nobody has asked yet. The DECK is

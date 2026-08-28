@@ -96,6 +96,23 @@ offline snapshots -- same UI, three ways in.
   request body IS the assembled context -- and every figure is anchored to
   the provider-reported prompt tokens of that same request. Estimates wear
   ≈ and never replace actuals.
+
+  **Cost and quota** ride the same selection. The overview grows a third
+  track: what each step cost, stacked cache read / cache write / input /
+  output (most of a session's spend is re-reading the window, so the read
+  band is usually the bar). Steps that bought their prefix twice wear an
+  amber `$`, and the margin's "where the money went" block gives the
+  split per component and per model, the pinned step's own bill
+  ("≈$0.42 this step . 97% from cache"), and a bumps line that opens the
+  events deck filtered to them. Each bump names its cause from the wire --
+  cache expired (with the ttl and how long it idled), prefix changed (the
+  system prompt, the tool schemas, a compaction, a model switch), or a
+  retry after a request that failed and never banked its write -- with
+  what a warm cache would have saved. A "quota" block shows the account
+  limits as the client last polled them (5h / 7d / model-scoped, percent,
+  absolute reset time, and the movement across this trace); clients that
+  never poll show none. Every dollar is an estimate from catalog rates
+  and says so; unpriced models show nothing rather than $0.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
   wire request), `[`/`]` jump between working loops, `Space` plays at

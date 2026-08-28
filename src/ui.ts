@@ -2017,7 +2017,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed).&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed).&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
         <div id="rp-gut"></div>
         <div id="rp-scroll">
           <div id="rp-lanes-track">
@@ -2793,6 +2793,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             openStarts.set(msg.start.id, msg.start);
             rpLiveRefresh();
           }
+        } else if (msg.type === 'start-end') {
+          // The server gave up on an in-flight request (no pair after its
+          // TTL) — the one retirement a page cannot see for itself.
+          if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           if (!ingestPair(msg.pair)) return;
@@ -7303,13 +7307,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '\\n---\\n> click seeks to the end of this request';
         model += bar('model' + (x.err ? ' err' : ''), x.t0, x.t1, x.t1, tip, '', '');
       }
-      // a request still in flight: dashed, running to the newest known time
+      // a request still in flight: a dashed stub hugging the live edge.
+      // Its start is normally the newest known time, so its true extent is
+      // zero width — a marker with a floor, never a duration claim (the
+      // tip says when it started; nothing here reads the clock).
       openStarts.forEach((st) => {
         const t = (st && st.ts ? st.ts : 0) * 1000;
         if (!t) return;
         const tip = 'model \\u00b7 in flight\\nstarted ' + clock(t) +
           '\\n---\\n> no response yet \\u2014 the strip ends at the newest known time';
-        model += bar('model open', t, span.t1, t, tip, '', '');
+        const w = Math.max(0, ((span.t1 - t) / dur) * 100);
+        model += '<span class="rp-span model open" data-rpt="' + t + '" style="right:0;width:max(' + w.toFixed(3) + '%,12px)"' +
+          ' data-tip="' + escapeHtml(tip) + '"></span>';
       });
 
       // tools + waiting: the SAME gap lane, classified by whether the
@@ -7393,6 +7402,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Live: the capture grew (a pair landed, a request started). Redraw the
     // strip and keep the newest edge in view when the reader was already
     // there — terminal semantics, never yank a strip being read.
+    // The strip's label gating (.w24) is measured against the frame at
+    // render time, so a resized window re-renders it — debounced, replay
+    // only, and a re-render is a still frame (no motion budget spent).
+    let rpResizeTimer = null;
+    window.addEventListener('resize', () => {
+      if (!replay.active) return;
+      clearTimeout(rpResizeTimer);
+      rpResizeTimer = setTimeout(() => renderReplayStrip(true), 150);
+    });
+
     function rpLiveRefresh() {
       if (!replay.active) return;
       const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;

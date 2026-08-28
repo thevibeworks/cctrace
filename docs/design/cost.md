@@ -117,11 +117,18 @@ Inherited from ui.md and docs/design/context-view.md, applied here:
 - **Overview, third track** (`cx-cost`): one column per overview column
   (step or turn granularity, same `cols` the other two tracks use), stacked
   cache read / cache write / input / output bottom-up, scaled against the
-  thread's dearest column, floor `max(2px, …)`. The gutter states the top of
-  scale (`≈$6.85 · cost`). A bump column wears an amber `$` mark the way a
-  compaction wears `✂`, positioned absolutely so the mark never shortens the
-  bar. Brush, hover-scrub, click-pin and dimming work exactly as on the
-  other tracks (same `data-cxbar` / `data-cxc` / `.out`).
+  thread's dearest column THAT IS NOT A BUMP, floor `max(2px, …)`. The
+  gutter states that top of scale (`≈$0.42 · cost`). A bump is an outlier
+  by definition — on the real trace one $6.85 step over 262 at ~$0.20 — and
+  scaling to it flattened every other column to the floor, which erased the
+  trend the track exists to show (seen in Chrome, 2026-08-28). A bump column
+  clips at full height instead: it already wears the amber `$` mark the way
+  a compaction wears `✂` (positioned absolutely so the mark never shortens
+  the bar), and its tooltip states the real figure and that it is off
+  scale. When every priced column is a bump there is nothing to clip
+  against and the scale is the plain maximum. Brush, hover-scrub, click-pin
+  and dimming work exactly as on the other tracks (same `data-cxbar` /
+  `data-cxc` / `.out`).
 - **Colors**: four variables in both themes — `--cost-read`, `--cost-write`,
   `--cost-input`, `--cost-output`. A cool-to-hot RAMP, not six categorical
   hues: the cost track must not read as a second composition track, and the

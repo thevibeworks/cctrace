@@ -9,7 +9,7 @@ import { wireDialect, openaiCompleted } from "./dialects/openai";
 //
 // Measured on real traces: 70-85% of a session's estimated cost is cache
 // READS (re-reading the window every step), output ~10%, fresh input ~0%.
-// The interesting part is the tail: a 5% hit on a 341k prompt cost ~$3.07
+// The interesting part is the tail: a 5% hit on a 341k prompt cost ≈$6.48
 // more than a warm one would have.
 //
 // Like context.ts, every exported function is inlined into the web UI via
@@ -125,7 +125,7 @@ export function costEvents(threadPairs: any[], events?: any[]): any[] {
     const cut = dialect === "openai" ? !openaiCompleted(p) : !ci.stopReason;
     const cur = {
       end: (p.request.timestamp || 0) * 1000 + (typeof p.duration === "number" ? p.duration : 0),
-      unbanked: !resp || resp.status >= 400 || !!ci.error || !!resp.truncated || cut,
+      unbanked: !resp || resp.status >= 400 || !!ci.error || !!p.truncated || cut,
       status: resp ? resp.status : null,
       write1h: (ci.cacheWrite1h || 0) > 0,
     };

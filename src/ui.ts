@@ -6833,9 +6833,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // The third track: what each step cost. Drawn only when the catalog
       // priced at least one step of this thread — a track of empty columns
       // states nothing.
-      let maxCost = 0;
+      // The scale is the dearest column that is NOT a bump. A bump is an
+      // outlier by definition (one $6.85 step over 262 at ~$0.20), and
+      // scaling to it flattens the trend the track exists to show. A bump
+      // column clips at full height instead: it already wears the $ mark
+      // and its tooltip states the real figure and that it is off scale.
+      let maxCost = 0, maxAll = 0;
       const spend = [];
-      for (const c of cols) { const x = ctxColCost(c, steps, bumpBy); spend.push(x); if (x.total > maxCost) maxCost = x.total; }
+      for (const c of cols) {
+        const x = ctxColCost(c, steps, bumpBy);
+        spend.push(x);
+        if (x.total > maxAll) maxAll = x.total;
+        if (!x.bump && x.total > maxCost) maxCost = x.total;
+      }
+      if (!maxCost) maxCost = maxAll; // every priced column is a bump: nothing to clip against
       const hasCost = maxCost > 0;
       let ctxCols = '', timeCols = '', costCols = '';
       for (let i = 0; i < N; i++) {
@@ -6866,11 +6877,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (s.cacheRead > 0 && s.actualIn) bits.push(Math.round((s.cacheRead / s.actualIn) * 100) + '% of the prompt came from cache');
           else if (s.actualIn != null) bits.push('cold \\u2014 nothing came from cache');
           if (cc.bump) bits.push(ctxBumpLabel(cc.bump) + ' \\u00b7 \\u2248' + fmtCost(cc.bump.extra) + ' over warm');
+          const clipped = cc.total > maxCost;
+          if (clipped) bits.push('off scale \\u2014 the track tops out at \\u2248' + fmtCost(maxCost) + ', the dearest step that was not a bump');
           costCols += '<span class="cx-cw' + out + '" data-cxbar="' + escapeHtml(s.pairId) + '" data-cxc="' + i + '"' +
             ' data-tip="' + escapeHtml(bits.join('\\n') + '\\n---\\n> every dollar is an estimate from catalog rates') + '">' +
             (cc.bump ? '<span class="cx-cmark">$</span>' : '') +
             (cc.total
-              ? '<span class="cx-cb" style="height:max(2px,' + ((cc.total / maxCost) * 100).toFixed(2) + '%)">' + csegs + '</span>'
+              ? '<span class="cx-cb" style="height:max(2px,' + Math.min(100, (cc.total / maxCost) * 100).toFixed(2) + '%)">' + csegs + '</span>'
               : '') + '</span>';
         }
         if (!hasTime) continue;
@@ -7016,7 +7029,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (last.credits) {
         const d = Math.pow(10, last.credits.decimalPlaces);
-        h += '<div class="cx-mrow"><span>credits</span><span class="cx-mrow-n" data-mask="credits">' +
+        h += '<div class="cx-mrow"><span>credits</span><span class="cx-mrow-n" data-mask="usage">' +
           escapeHtml((last.credits.used / d) + '/' + (last.credits.limit / d) + ' ' + last.credits.currency) + '</span></div>';
       }
       if (polls.length > 1) {

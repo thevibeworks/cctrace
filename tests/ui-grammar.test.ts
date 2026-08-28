@@ -1230,6 +1230,24 @@ describe("context view", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
+  test("a stream search that matches nothing says so instead of throwing", () => {
+    // 0.45.0 review: the empty branch referenced an undeclared name, so one
+    // unmatched keystroke froze the deck on the previous render.
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/=stream");
+    const search = page.els["tj-search"];
+    search.value = "zzz-nothing-in-this-stream";
+    // One dispatch: the stub reuses the element by id, so every repaint
+    // re-registers the listener and a loop over the live list never ends.
+    const onInput = (search.listeners.input || [])[0];
+    expect(onInput).toBeDefined();
+    onInput!({} as any);
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("no records match this filter");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
   test("the old #/trajectory route lands on the stream deck and rewrites itself", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
     page.goto("#/trajectory");

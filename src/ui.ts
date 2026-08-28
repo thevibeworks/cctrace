@@ -2660,11 +2660,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 the Context view, rebuilt \\u2014 an interactive overview on top (context per request + where its time went, one x axis): drag to select a range, wheel to zoom, click to pin a step\\n' +
-        '\\u00b7 three readings of that selection \\u2014 the WINDOW (the pinned step decomposed as an icicle), the STREAM (every record the run produced, injections inline, MAP / READ / FULL), the EVENTS (what grew or reclaimed it)\\n' +
-        '\\u00b7 a margin that reconciles \\u2014 the provider\\u2019s prompt against the chars/4 estimate against the model\\u2019s limit, repainted on every scrub\\n' +
-        '\\u00b7 provenance \\u2014 every item in the graph says which turn first carried it into the window; click to pin that step\\n' +
-        '\\u00b7 the exit seal survives your terminal \\u2014 archive first, helper in its own session, orphaned seals recovered by the next run\\n' +
+        '\\u00b7 replay is a STAGE \\u2014 five lanes over wall-clock (human, model, tools, agents, harness); wheel to zoom, and the strip says more as you zoom; click a span to jump there\\n' +
+        '\\u00b7 the agent\\u2019s observed state machine \\u2014 human \\u2192 model \\u2192 tools / agents / waiting \\u2192 reply, counts and time as of the cursor, the transition just taken lit; nothing inferred\\n' +
+        '\\u00b7 the BEAT \\u2014 what the agent did at this step: every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
+        '\\u00b7 live thinking-now \\u2014 a request is announced as it is forwarded, so the model node lights the moment the call goes out, not when the reply lands\\n' +
+        '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -2799,8 +2799,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
+          // The response retires its start even when the page rejects the
+          // pair — the server retires silently on land, nothing else would.
+          if (msg.pair && msg.pair.id) openStarts.delete(msg.pair.id);
           if (!ingestPair(msg.pair)) return;
-          openStarts.delete(msg.pair.id); // the response retires its start
           renderStats();
           renderCats();
           renderCtx();
@@ -2842,6 +2844,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           for (let i = pairs.length - 1; i >= 0; i--) if (gone.has(pairs[i].id)) pairs.splice(i, 1);
           for (const id of gone) selIds.delete(id);
           sessionCache = { key: '', threads: [] };
+          // The replay caches key on pairs.length: a purge of k followed by
+          // k arrivals would otherwise serve the purged picture again.
+          fullCache = { key: '', threads: [] };
+          laneCache = { key: '', lanes: null };
+          rpStripKey = '';
           if (detailId && gone.has(detailId)) location.hash = '';
           render();
           updateSelBar();
@@ -5907,7 +5914,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="tj-tok">≈' + fmtCompact(r.tokens) + '</span>' +
         '</a>';
       }
-      if (!shown.length) rows = '<div class="cx-note">no records match this ' + (inRange ? 'range/filter' : 'filter') + '</div>';
+      if (!shown.length) rows = '<div class="cx-note">no records match this ' + (bounds ? 'range/filter' : 'filter') + '</div>';
       return '<div class="tj-body"><div class="tj-list" id="tj-list">' + rows + '</div>' +
         '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], tjResults) + '</aside></div>';
     }
@@ -7559,7 +7566,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1)) return { node: 'model', edge: 'agents>model' };
         return { node: 'model', edge: '' };
       }
-      return { node: 'reply', edge: st.item ? 'model>reply' : '' };
+      // Idle at the live edge after a tool_use reply: the wire saw no
+      // model>reply (the reply's stop was tool_use, the next request has
+      // not started) — light the node, not an edge the counts read as 0.
+      return { node: 'reply', edge: st.item && st.item.next === 'reply' ? 'model>reply' : '' };
     }
 
     // The thread the stage reads: the selection, resolved against the WHOLE

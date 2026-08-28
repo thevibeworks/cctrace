@@ -618,11 +618,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #rp-lanes[data-depth="full"] .rp-point .rp-lbl,
     #rp-lanes[data-depth="read"] .rp-mk,
     #rp-lanes[data-depth="full"] .rp-mk { display: inline; }
-    #rp-fill {
-      position: absolute; left: 0; top: 0; bottom: 0; width: 0;
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    /* the CLOCK row: a ruler in the page's local time. A hairline with its
+       label to the right; a major tick (the first of a calendar day) names
+       the date and drops a rule through every lane below. */
+    #rp-axis { position: relative; height: var(--rp-lh); overflow: hidden; }
+    .rp-tick {
+      position: absolute; top: 0; height: var(--rp-lh);
+      border-left: 1px solid var(--border); padding-left: 3px;
+      font-size: 10px; line-height: var(--rp-lh); color: var(--text-faint);
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .rp-tick.major { color: var(--text-muted); border-left-color: var(--text-faint); }
+    /* drawn BEFORE the lanes so the spans read over it, never under */
+    #rp-rules { position: absolute; left: 0; right: 0; top: var(--rp-lh); bottom: 0; pointer-events: none; }
+    .rp-rule { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); opacity: 0.55; }
+    /* the VEIL: the future is dimmed. A replay never shows the reader
+       something that has not happened — the same statement the convo
+       makes, made on the strip. (The rev-1 accent-tinted PAST cost the
+       model spans their contrast exactly where the reader looks.) */
+    #rp-veil {
+      position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+      background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
       pointer-events: none;
     }
+    /* the selected thread draws full, every other thread ghosts: the shape
+       of the whole capture stays readable, the selected loop is the picture */
+    #rp-lanes-body .other { opacity: 0.3; }
     /* the slice band: a selected range of the timeline (shift+drag) */
     #rp-slice {
       position: absolute; top: 0; bottom: 0; display: none;
@@ -645,12 +666,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        (compaction / rewind). The trajectory's axis break, full height. */
     .rp-mark.cut { background: var(--amber); color: var(--amber); opacity: 0.85; }
     .rp-mark.err { background: var(--red); color: var(--red); }
+    /* the playhead: the page's ONE moving thing while replaying. A halo in
+       the strip's own surface color so it reads over a span of any hue, and
+       a flag on the clock row so the eye finds it in a dense region. */
     #rp-handle {
       position: absolute; top: 0; bottom: 0; width: 2px; left: 0;
       background: var(--accent); pointer-events: none;
-      box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+      box-shadow: 0 0 0 1px var(--bg-surface);
+    }
+    #rp-handle::before {
+      content: ''; position: absolute; top: 0; left: -2px;
+      border-left: 3px solid transparent; border-right: 3px solid transparent;
+      border-top: 5px solid var(--accent);
     }
     #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* the live chip: at the edge it is STATE (a green dot, the header status
+       dot's own green), behind it is the control that snaps back. Live runs
+       only — a saved trace has no edge to chase. */
+    #rp-live { display: inline-flex; align-items: center; }
+    #rp-live .at-edge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--text-faint); white-space: nowrap;
+    }
+    #rp-live .at-edge::before {
+      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); flex-shrink: 0;
+    }
     /* ---- the stage (#stage): the now line, the beat, the tally ----
        Top of the threads column while replaying (the rail stays under it:
        the strip is time navigation, the rail is still the outline). The
@@ -2048,7 +2089,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the stage (state diagram + the beat) at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the stage (what is happening now + the beat) at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
       <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
@@ -2060,12 +2101,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed).&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
         <div id="rp-gut"></div>
         <div id="rp-scroll">
           <div id="rp-lanes-track">
+            <div id="rp-axis"></div>
+            <div id="rp-rules"></div>
             <div id="rp-lanes-body"></div>
-            <div id="rp-fill"></div>
+            <div id="rp-veil"></div>
             <div id="rp-slice"></div>
             <div id="rp-handle"></div>
           </div>
@@ -2074,6 +2117,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <div class="rp-transport">
         <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
         <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
+        <button class="rp-btn" id="rp-end" title="jump to the end of the tape&#10;On a live run that is the live edge — replay tails from there.&#10;> key: End">⏭</button>
         <span class="rp-speeds">
           <button class="rp-speed active" data-speed="1">1x</button>
           <button class="rp-speed" data-speed="2">2x</button>
@@ -2082,6 +2126,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         </span>
         <span id="rp-time">0:00 / 0:00</span>
         <span id="rp-slice-chip"></span>
+        <span id="rp-live"></span>
         <button class="rp-btn" id="rp-exit"></button>
       </div>
     </div>
@@ -2351,9 +2396,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpScroll = document.getElementById('rp-scroll');
     const rpTrack = document.getElementById('rp-lanes-track');
     const rpBody = document.getElementById('rp-lanes-body');
-    const rpFill = document.getElementById('rp-fill');
+    const rpAxis = document.getElementById('rp-axis');
+    const rpRules = document.getElementById('rp-rules');
+    const rpVeil = document.getElementById('rp-veil');
     const rpHandle = document.getElementById('rp-handle');
     const rpTime = document.getElementById('rp-time');
+    const rpEnd = document.getElementById('rp-end');
+    const rpLive = document.getElementById('rp-live');
     const rpSlice = document.getElementById('rp-slice');
     const pulseEl = document.getElementById('pulse');
     const rpSliceChip = document.getElementById('rp-slice-chip');
@@ -3474,8 +3523,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           updateReplayHash();
         } else if (e.key === 'End' && replay.active) {
           e.preventDefault();
-          seekReplay(replaySpan(pairs).t1);
-          updateReplayHash();
+          seekEnd();
         }
       }
     });
@@ -4218,6 +4266,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       renderThreadsPane(threads, sel);
       renderConvoPane(sel);
+      // The strip ghosts every thread but the selected one, so a rail click
+      // repaints it — keyed on the selection, so this is a no-op otherwise.
+      if (replay.active) renderReplayStrip();
       if (pendingSessionFocus) {
         pendingSessionFocus = false;
         focusThreadsPane();
@@ -7510,6 +7561,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       refreshReplay();
     }
 
+    // The end of the tape. On a live page that IS the live edge — the
+    // cursor parks there and tails from then on (the ws pair branch).
+    function seekEnd() {
+      const span = rpSpan();
+      if (!span) return;
+      if (!replay.active) enterReplay(span.t1);
+      else seekReplay(span.t1);
+      updateReplayHash();
+    }
+
     function fmtClock(ms) {
       const s = Math.max(0, Math.round(ms / 1000));
       const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -7570,10 +7631,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let rpStripKey = '';
     function renderReplayStrip(force) {
       const span = rpSpan();
-      if (!span) { rpGut.innerHTML = ''; rpBody.innerHTML = ''; rpStripKey = ''; return; }
+      if (!span) { rpGut.innerHTML = ''; rpAxis.innerHTML = ''; rpRules.innerHTML = ''; rpBody.innerHTML = ''; rpStripKey = ''; return; }
+      // The thread the rail has selected draws FULL; every other thread's
+      // items ghost. Same resolution the stage uses — one selection, two
+      // surfaces.
+      const selT = stageThread();
+      const selKey = selT ? selT.key : '';
       // The cursor is NOT in the key — it moves the handle, never the lanes.
       const key = pairs.length + '|' + (sliceActive() ? replay.sliceA + '-' + replay.sliceB : '-') +
-        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1;
+        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1 + '|' + selKey;
       if (rpStripKey === key && !force) return;
       rpStripKey = key;
       const L = laneData();
@@ -7598,6 +7664,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           (ln ? '<span class="rp-lbl n">' + escapeHtml(ln) + '</span>' : '') + '</span>';
       };
       const lane = (name, inner) => '<div class="rp-lane" data-lane="' + name + '">' + inner + '</div>';
+      const oth = (k) => (selKey && k !== selKey ? ' other' : '');
+
+      // the clock row: a ruler in the page's local time. axisTicks never
+      // reads a clock of its own — the page hands it the zone, so a
+      // rendered snapshot draws the same ruler wherever it is opened.
+      let axis = '';
+      let rules = '';
+      for (const k of axisTicks(span.t0, span.t1, trackW || frameW, new Date().getTimezoneOffset())) {
+        axis += '<span class="rp-tick' + (k.major ? ' major' : '') + '" style="left:' + pct(k.t) + '%">' +
+          escapeHtml(k.label) + '</span>';
+        if (k.major) rules += '<i class="rp-rule" style="left:' + pct(k.t) + '%"></i>';
+      }
 
       // human: a POINT at the start of the request that carried the prompt
       let human = '';
@@ -7605,7 +7683,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const tip = 'human \\u00b7 turn ' + ord(x.ord) + '\\n' + clock(x.t) +
           (x.label ? '\\n' + x.label : '') +
           '\\n---\\n> click seeks to the end of the request that carried it';
-        human += '<span class="rp-point" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
+        human += '<span class="rp-point' + oth(x.threadKey) + '" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-lbl">' + escapeHtml(x.label || '') + '</span></span>';
       }
 
@@ -7615,7 +7693,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const tip = 'model \\u00b7 turn ' + ord(x.ord) + ' step ' + x.step + '\\n' + clock(x.t0) +
           '\\n' + fmtSpan(x.t1 - x.t0) + (x.stop ? ' \\u00b7 stop ' + x.stop : '') +
           '\\n---\\n> click seeks to the end of this request';
-        model += bar('model' + (x.err ? ' err' : ''), x.t0, x.t1, x.t1, tip, '', '');
+        model += bar('model' + (x.err ? ' err' : '') + oth(x.threadKey), x.t0, x.t1, x.t1, tip, '', '');
       }
       // a request still in flight: a dashed stub hugging the live edge.
       // Its start is normally the newest known time, so its true extent is
@@ -7640,13 +7718,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const tip = 'tools \\u00b7 ' + g.count + ' call' + (g.count === 1 ? '' : 's') + '\\n' + clock(g.t0) +
           '\\n' + fmtSpan(g.t1 - g.t0) + (uniq.length ? '\\n' + uniq.join(', ') : '') +
           '\\n---\\n> one gap covers parallel calls \\u2014 the wire has no per-call time';
-        tools += bar('tools', g.t0, g.t1, seekOf(g.pairId, g.t0), tip,
+        tools += bar('tools' + oth(g.threadKey), g.t0, g.t1, seekOf(g.pairId, g.t0), tip,
           uniq.map(n => n.slice(0, 1)).join(''), uniq.join(' '));
       }
       for (const g of L.waiting) {
         const tip = 'waiting\\n' + clock(g.t0) + '\\n' + fmtSpan(g.t1 - g.t0) +
           '\\n---\\n> no tool call \\u2014 the harness came back on its own';
-        tools += bar('waiting', g.t0, g.t1, seekOf(g.pairId, g.t0), tip, '', 'waiting');
+        tools += bar('waiting' + oth(g.threadKey), g.t0, g.t1, seekOf(g.pairId, g.t0), tip, '', 'waiting');
       }
 
       // agents: child threads stacked on the rows sessionLanes assigned,
@@ -7659,7 +7737,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const label = a.label || a.agentType || 'subagent';
         const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
           '\\n---\\n> click seeks to where its work landed';
-        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : ''), a.t0, a.t1, a.t1, tip, '', label);
+        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') + oth(a.parentKey), a.t0, a.t1, a.t1, tip, '', label);
       }
 
       // harness: moments, not spans — a compaction and a failed request.
@@ -7667,19 +7745,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const c of L.cuts) {
         const tip = 'compaction' + (c.mode ? ' \\u00b7 ' + c.mode : '') + '\\n' + clock(c.t) +
           '\\n---\\n> the context window collapsed here';
-        harness += '<span class="rp-mark cut" data-rpt="' + c.t + '" style="left:' + pct(c.t) + '%"' +
+        harness += '<span class="rp-mark cut' + oth(c.threadKey) + '" data-rpt="' + c.t + '" style="left:' + pct(c.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2702</span></span>';
       }
       for (const f of L.failed) {
         const tip = 'failed request' + (f.status ? ' \\u00b7 ' + f.status : '') + '\\n' + clock(f.t) +
           '\\n---\\n> it produced no turn; the retry is the next request';
-        harness += '<span class="rp-mark err" data-rpt="' + f.t + '" style="left:' + pct(f.t) + '%"' +
+        harness += '<span class="rp-mark err' + oth(f.threadKey) + '" data-rpt="' + f.t + '" style="left:' + pct(f.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2717</span></span>';
       }
 
       // Fixed geometry: an empty lane stays, labelled — a client with no
       // spawn tool reads as zero agents, never as a missing row.
-      let gut = '<span class="rp-glbl">human</span><span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
+      let gut = '<span class="rp-glbl">clock</span><span class="rp-glbl">human</span>' +
+        '<span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
       let body = lane('human', human) + lane('model', model) + lane('tools', tools);
       const nrows = Math.max(1, arows.length);
       for (let i = 0; i < nrows; i++) {
@@ -7690,6 +7769,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       gut += '<span class="rp-glbl">harness</span>';
       body += lane('harness', harness);
       rpGut.innerHTML = gut;
+      rpAxis.innerHTML = axis;
+      rpRules.innerHTML = rules;
       rpBody.innerHTML = body;
       rpLanes.dataset.depth = rpDepth();
       rpTrack.style.width = (replay.zoom > 1 ? (replay.zoom * 100).toFixed(2) : '100') + '%';
@@ -7739,9 +7820,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       const dur = Math.max(1, span.t1 - span.t0);
       const frac = Math.min(1, Math.max(0, (replay.cursor - span.t0) / dur));
-      rpFill.style.width = (frac * 100).toFixed(3) + '%';
+      // the veil covers the FUTURE: from the playhead to the right edge
+      rpVeil.style.left = (frac * 100).toFixed(3) + '%';
       rpHandle.style.left = (frac * 100).toFixed(3) + '%';
-      rpTime.textContent = fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      // The terminal the human is looking at shows wall-clock: the absolute
+      // local time first, the tape offset after it.
+      rpTime.textContent = fmtTime(new Date(replay.cursor)) + ' \\u00b7 +' +
+        fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      renderLiveChip();
       // The slice band + chip: the selected window, its size, and the two
       // actions it affords (export the artifact, clear the selection).
       if (sliceActive()) {
@@ -7771,6 +7857,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       renderReplayStrip();
       rpFollowHandle(frac);
+    }
+
+    // The live chip: STATE while the cursor sits at the newest landed pair
+    // (the page is tailing), a CONTROL when the reader is behind. Never on a
+    // reading page — a saved trace has no edge to chase.
+    function renderLiveChip() {
+      if (!rpLive) return;
+      if (IS_READING) { rpLive.innerHTML = ''; return; }
+      const s = replaySpan(pairs);
+      const atEdge = !!s && replay.cursor >= s.t1 - 0.5;
+      rpLive.innerHTML = atEdge
+        ? '<span class="at-edge" data-tip="live\\nthe cursor is at the newest landed pair \\u2014 the next one moves it, and the conversation follows">live</span>'
+        : '<button class="rp-btn" id="rp-live-btn" data-tip="back to the live edge\\nthe capture has moved on; this snaps the cursor to the newest landed pair\\n---\\n> key: End">\\u2913 live</button>';
+      const b = document.getElementById('rp-live-btn');
+      if (b) b.onclick = seekEnd;
     }
 
     function refreshReplay() {
@@ -8015,6 +8116,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       seekReplay(replaySpan(pairs).t0);
       updateReplayHash();
     };
+    rpEnd.onclick = seekEnd;
     rpPlay.onclick = () => {
       if (replay.playing) { pausePlayback(); updateReplayHash(); }
       else startPlayback();

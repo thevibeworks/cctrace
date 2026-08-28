@@ -52,6 +52,7 @@ import {
   continuationSummaryTurn,
   loopTurns,
   threadTimeSplit,
+  isSpawnTool,
   escHtml,
   diffHunk,
   richToolBody,
@@ -98,6 +99,12 @@ import {
   anchorAt,
   nextTick,
   sliceWindow,
+  stepOutcome,
+  sessionLanes,
+  stateAt,
+  stateCounts,
+  beatAt,
+  chaptersOf,
 } from "./replay";
 
 // The whole web UI lives in this file: one self-contained HTML page serving
@@ -168,6 +175,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       --green: #3fb950; --red: #f85149; --amber: #d29922; --purple: #a371f7;
       --status-ok: #238636; --status-warn: #9e6a03; --status-err: #da3633;
       --btn-bg: #21262d; --hover: #1f2428;
+      /* Where wall-clock went: model / tools / waiting. One wire fact, one
+         hue, wherever it is drawn — the context overview's time track and
+         the replay strip's lanes. Deliberately theme-independent (these
+         are data colors, not chrome) and mid-tone enough to read on both
+         backgrounds. */
+      --lane-model: #4184e4; --lane-tools: #39c5cf; --lane-waiting: #d29922;
+      --lane-ink: #0d1117;   /* text ON a lane span: the hues never flip, so neither does the ink */
       color-scheme: dark;
     }
     @media (prefers-color-scheme: light) {
@@ -513,14 +527,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #replay-toggle { display: none; }
     body.view-session #replay-toggle { display: inline-block; }
     body.replaying #replay-toggle { background: var(--accent); border-color: var(--accent); color: #fff; }
+    /* Two rows: the trajectory strip over the transport. Both are FRAME —
+       they scope the panes below and must never scroll away with them. */
     #replay-bar {
-      display: none; align-items: center; gap: 8px;
+      display: none; flex-direction: column; align-items: stretch; gap: 6px;
       padding: 7px 16px;
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
       font-size: 12px;
     }
     body.replaying #replay-bar { display: flex; }
+    .rp-transport { display: flex; align-items: center; gap: 8px; }
     .rp-btn {
       font: inherit; font-size: 12px; line-height: 1;
       background: var(--btn-bg); border: 1px solid var(--border);
@@ -537,46 +554,92 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .rp-speed:hover { color: var(--text); }
     .rp-speed.active { color: var(--accent); border-color: var(--border); background: var(--bg); }
-    #rp-track {
-      flex: 1; min-width: 80px; position: relative; height: 24px;
-      cursor: pointer; touch-action: none;
+    /* ---- the trajectory strip: lanes x wall-clock ---- */
+    /* One row per actor, one x axis, one playhead. The label gutter names
+       every lane (a lane whose meaning is unstated is a decoration); the
+       track scrolls horizontally inside the frame when zoomed. */
+    #rp-lanes { --rp-lh: 13px; display: flex; align-items: flex-start; gap: 6px; }
+    #rp-gut { flex: 0 0 56px; display: flex; flex-direction: column; }
+    .rp-glbl {
+      height: var(--rp-lh); line-height: var(--rp-lh);
+      font-size: 10px; color: var(--text-faint);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    #rp-track::before {
+    #rp-scroll { flex: 1; min-width: 80px; overflow-x: auto; overflow-y: hidden; }
+    #rp-lanes-track { position: relative; cursor: pointer; touch-action: none; user-select: none; }
+    /* clipped: a label running past the last span must not grow the
+       strip's scrollable width */
+    .rp-lane { position: relative; height: var(--rp-lh); overflow: hidden; }
+    .rp-lane::before {
       content: ''; position: absolute; left: 0; right: 0; top: 50%;
-      border-top: 1px solid var(--border);
+      border-top: 1px solid var(--border); opacity: 0.5;
     }
+    /* every span is a wire timestamp: [t0, t1] of a pair, a gap, or a
+       child thread. min-width keeps a 40ms call clickable. */
+    .rp-span {
+      position: absolute; top: 2px; bottom: 2px; min-width: 2px;
+      border-radius: 2px; overflow: hidden;
+      font-size: 10px; line-height: calc(var(--rp-lh) - 4px);
+      color: var(--lane-ink); padding: 0 2px; white-space: nowrap;
+    }
+    .rp-span.model { background: var(--lane-model); }
+    .rp-span.tools { background: var(--lane-tools); }
+    /* waiting is the same gap lane, dimmed: the harness came back on its
+       own, nothing was called */
+    .rp-span.waiting { background: var(--lane-waiting); opacity: 0.45; }
+    .rp-span.agent { background: var(--purple); }
+    .rp-span.agent.more { opacity: 0.4; }
+    .rp-span.open { background: none; border: 1px dashed var(--lane-model); color: var(--text-muted); }
+    .rp-span.err { outline: 1px solid var(--red); outline-offset: -1px; }
+    .rp-point {
+      position: absolute; top: 1px; bottom: 1px; width: 2px;
+      transform: translateX(-1px);
+      background: var(--accent); font-size: 10px; color: var(--text-muted);
+      line-height: calc(var(--rp-lh) - 2px); white-space: nowrap;
+    }
+    .rp-point .rp-lbl { position: absolute; left: 5px; top: 0; }
+    /* reading depth is a function of zoom, never a toggle: map = shapes,
+       read = initials and marks, full = names. The markup always carries
+       the labels; only CSS decides. .w24 = wide enough to hold one. */
+    .rp-lbl, .rp-mk { display: none; }
+    #rp-lanes[data-depth="read"] .rp-span.w24 .rp-lbl.i,
+    #rp-lanes[data-depth="full"] .rp-span.w24 .rp-lbl.n,
+    #rp-lanes[data-depth="full"] .rp-point .rp-lbl,
+    #rp-lanes[data-depth="read"] .rp-mk,
+    #rp-lanes[data-depth="full"] .rp-mk { display: inline; }
     #rp-fill {
       position: absolute; left: 0; top: 0; bottom: 0; width: 0;
-      background: color-mix(in srgb, var(--accent) 14%, transparent);
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
       pointer-events: none;
     }
     /* the slice band: a selected range of the timeline (shift+drag) */
     #rp-slice {
       position: absolute; top: 0; bottom: 0; display: none;
-      background: color-mix(in srgb, var(--accent) 22%, transparent);
+      background: color-mix(in srgb, var(--accent) 16%, transparent);
       border-left: 1px solid var(--accent); border-right: 1px solid var(--accent);
       pointer-events: none;
     }
     #rp-slice-chip { display: none; align-items: center; gap: 6px; font-size: 11px;
       color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
     #rp-slice-chip .rp-btn { font-size: 10px; padding: 3px 7px; }
-    #rp-marks { position: absolute; inset: 0; pointer-events: none; }
+    /* the harness lane: marks, not spans — a compaction and a failed
+       request are moments, and both surfaces paint them the same. */
     .rp-mark {
-      position: absolute; top: 50%; width: 2px; height: 7px;
-      transform: translate(-1px, -50%);
-      background: var(--text-faint); opacity: 0.7;
+      position: absolute; top: 0; bottom: 0; width: 1px;
+      transform: translateX(-0.5px);
+      font-size: 10px; line-height: var(--rp-lh);
     }
-    .rp-mark.turn { height: 13px; background: var(--accent); opacity: 0.9; }
-    .rp-mark.err { background: var(--red); opacity: 1; }
+    .rp-mark .rp-mk { position: absolute; left: 2px; top: 0; }
     /* a context boundary on the timeline: where the window collapsed
        (compaction / rewind). The trajectory's axis break, full height. */
-    .rp-mark.cut { height: 17px; width: 1px; background: var(--amber); opacity: 0.85; }
+    .rp-mark.cut { background: var(--amber); color: var(--amber); opacity: 0.85; }
+    .rp-mark.err { background: var(--red); color: var(--red); }
     #rp-handle {
-      position: absolute; top: 2px; bottom: 2px; width: 2px; left: 0;
+      position: absolute; top: 0; bottom: 0; width: 2px; left: 0;
       background: var(--accent); pointer-events: none;
       box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
     }
-    #rp-time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* boot placeholder: a verb while the wire loads (ccx tradition) */
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
     .bw-star { color: var(--accent); display: inline-block; animation: bwPulse 1.6s ease-in-out infinite; }
@@ -1861,7 +1924,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · shift+drag selects a slice · Esc exits">⏵ replay</button>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened, with the trajectory strip — lanes over wall-clock — above it.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there · Esc exits">⏵ replay</button>
       <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
@@ -1873,23 +1936,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
-      <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
-      <span class="rp-speeds">
-        <button class="rp-speed active" data-speed="1">1x</button>
-        <button class="rp-speed" data-speed="2">2x</button>
-        <button class="rp-speed" data-speed="8">8x</button>
-        <button class="rp-speed" data-speed="60">60x</button>
-      </span>
-      <div id="rp-track" title="timeline&#10;Ticks are wire requests, tall marks are turns, red marks are errors.&#10;> drag to scrub · shift+drag selects a slice">
-        <div id="rp-fill"></div>
-        <div id="rp-slice"></div>
-        <div id="rp-marks"></div>
-        <div id="rp-handle"></div>
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed).&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+        <div id="rp-gut"></div>
+        <div id="rp-scroll">
+          <div id="rp-lanes-track">
+            <div id="rp-lanes-body"></div>
+            <div id="rp-fill"></div>
+            <div id="rp-slice"></div>
+            <div id="rp-handle"></div>
+          </div>
+        </div>
       </div>
-      <span id="rp-time">0:00 / 0:00</span>
-      <span id="rp-slice-chip"></span>
-      <button class="rp-btn" id="rp-exit"></button>
+      <div class="rp-transport">
+        <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
+        <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
+        <span class="rp-speeds">
+          <button class="rp-speed active" data-speed="1">1x</button>
+          <button class="rp-speed" data-speed="2">2x</button>
+          <button class="rp-speed" data-speed="8">8x</button>
+          <button class="rp-speed" data-speed="60">60x</button>
+        </span>
+        <span id="rp-time">0:00 / 0:00</span>
+        <span id="rp-slice-chip"></span>
+        <button class="rp-btn" id="rp-exit"></button>
+      </div>
     </div>
     <div id="session-main">
       <aside id="threads"></aside>
@@ -1983,6 +2053,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let ctxFocusKey = '';       // context graph zoom (a node key; falls back to root)
     let ctxSelKey = '';         // context graph selection (drives the detail pane)
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
+    // Requests FORWARDED with no response yet, keyed by the id the eventual
+    // pair carries (the server's start events). Live state only: a
+    // snapshot has none, and the id is dropped the moment its pair lands.
+    const openStarts = new Map();
     let sessionCache = { key: '', threads: [] };
 
     // pairId -> pair. The session/context layers resolve pair ids inside
@@ -2092,6 +2166,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${anchorAt.toString()}
     ${nextTick.toString()}
 
+    // The stage layer (docs/design/replay-stage.md), injected from
+    // src/replay.ts + src/session.ts: the trace as lanes over wall-clock,
+    // the observed state machine, the beat. Pure, unit-tested there.
+    ${isSpawnTool.toString()}
+    ${stepOutcome.toString()}
+    ${sessionLanes.toString()}
+    ${stateAt.toString()}
+    ${stateCounts.toString()}
+    ${beatAt.toString()}
+    ${chaptersOf.toString()}
+
     // Session reconstruction, injected from src/session.ts.
     ${firstUserText.toString()}
     ${threadSig.toString()}
@@ -2127,9 +2212,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpPlay = document.getElementById('rp-play');
     const rpRestart = document.getElementById('rp-restart');
     const rpExit = document.getElementById('rp-exit');
-    const rpTrack = document.getElementById('rp-track');
+    const rpLanes = document.getElementById('rp-lanes');
+    const rpGut = document.getElementById('rp-gut');
+    const rpScroll = document.getElementById('rp-scroll');
+    const rpTrack = document.getElementById('rp-lanes-track');
+    const rpBody = document.getElementById('rp-lanes-body');
     const rpFill = document.getElementById('rp-fill');
-    const rpMarks = document.getElementById('rp-marks');
     const rpHandle = document.getElementById('rp-handle');
     const rpTime = document.getElementById('rp-time');
     const rpSlice = document.getElementById('rp-slice');
@@ -2603,16 +2691,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           pairs.length = 0;
           for (const p of msg.pairs) ingestPair(p);
+          // Requests in flight when this page connected: the server hands
+          // them over so a page that arrives MID-request knows the model is
+          // working, instead of waiting for a start event it already missed.
+          openStarts.clear();
+          for (const s of msg.starts || []) if (s && s.id) openStarts.set(s.id, s);
           for (const p of pairs) {
+            openStarts.delete(p.id);
             const s = extractSessionId(p, CLIENT_WIRE);
             if (s) liveSids.add(s);
           }
           render();
           route();
           renderPulse();
+        } else if (msg.type === 'start') {
+          // A model call was forwarded and has no response yet. The strip
+          // draws it as an open span to the newest known time; nothing
+          // else on the page reads it, and no timer ticks it.
+          if (msg.start && msg.start.id && !openStarts.has(msg.start.id)) {
+            openStarts.set(msg.start.id, msg.start);
+            rpLiveRefresh();
+          }
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           if (!ingestPair(msg.pair)) return;
+          openStarts.delete(msg.pair.id); // the response retires its start
           renderStats();
           renderCats();
           renderCtx();
@@ -2632,12 +2735,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
-          if (replay.active) renderReplayBar(); // track grows at the right edge
+          rpLiveRefresh(); // the strip grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
             if (!known.has(p.id)) ingestPair(p);
+            openStarts.delete(p.id);
             const s = extractSessionId(p, CLIENT_WIRE);
             if (s) liveSids.add(s);
           }
@@ -2961,7 +3065,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
               replay.active = true;
               document.body.classList.add('replaying');
               tailPill.classList.remove('show');
-              renderReplayMarks(true);
+              renderReplayStrip(true);
             }
             renderReplayBar();
           }
@@ -4021,9 +4125,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         // A tip dropped below a 17px icicle row covers the rows underneath
         // it — the very ones being scrubbed (same scar as the threads
-        // pane, docs/design/ui.md). Flame anchors open UPWARD, falling
-        // back down only when there is no room above.
-        const flame = t.closest ? t.closest('.cx-flame') : null;
+        // pane, docs/design/ui.md). Flame and lane anchors open UPWARD,
+        // falling back down only when there is no room above.
+        const flame = t.closest ? t.closest('.cx-flame, #rp-lanes') : null;
         let y = flame && r.top - th - 6 >= 8 ? r.top - th - 6 : r.bottom + 6;
         if (y + th > window.innerHeight - 8) y = Math.max(8, r.top - th - 6);
         tipEl.style.left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 12)) + 'px';
@@ -6354,8 +6458,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let ctxGraphTimer = 0;
     const CTX_ZOOM_MAX = 32;
     // The time track's hues: the same three the sessions thread header's
-    // "time" chip already uses, so model/tools/waiting is one vocabulary.
-    const CX_TIME_C = { model: '#4184e4', tools: '#39c5cf', waiting: '#d29922' };
+    // "time" chip already uses, so model/tools/waiting is one vocabulary —
+    // and the same variables the replay strip's lanes paint with.
+    const CX_TIME_C = { model: 'var(--lane-model)', tools: 'var(--lane-tools)', waiting: 'var(--lane-waiting)' };
 
     // ---- the overview's columns ----
     // One entry per drawn column, each carrying the STEP SPAN it covers
@@ -6699,6 +6804,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       wireCtxOverview(t, steps, addr, cols);
     }
 
+    // Wheel zoom around the cursor, shared by every horizontal overview
+    // (the context overview's tracks, the replay strip's lanes): the
+    // point under the pointer stays put while the track's WIDTH grows,
+    // so the reader zooms into what they were looking at. shift/ctrl are
+    // left to the browser (native horizontal scroll, page zoom).
+    function wireWheelZoom(scrollEl, trackEl, o) {
+      if (!scrollEl || !trackEl || !scrollEl.addEventListener) return;
+      scrollEl.addEventListener('wheel', (e) => {
+        if (e.shiftKey || e.ctrlKey || !e.deltaY) return;
+        e.preventDefault();
+        const r = scrollEl.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const before = (scrollEl.scrollLeft + x) / Math.max(1, trackEl.offsetWidth);
+        const cur = o.get();
+        const next = Math.max(1, Math.min(o.max, cur * (e.deltaY < 0 ? 1.25 : 0.8)));
+        if (Math.abs(next - cur) < 0.001) return;
+        o.set(next);
+        o.apply();
+        scrollEl.scrollLeft = before * trackEl.offsetWidth - x;
+      }, { passive: false });
+    }
+
     // ---- the overview's interaction (the DevTools part) ----
     // Hover scrubs, click pins, drag brushes a range, the handles resize
     // it, the window pans it, the wheel zooms around the cursor. All of it
@@ -6826,18 +6953,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const z = document.getElementById('cx-ov-z');
         if (z) z.textContent = ctxZoom > 1 ? ctxZoom.toFixed(1) + '×' : 'fit';
       };
-      scroll.addEventListener('wheel', (e) => {
-        if (e.shiftKey || e.ctrlKey || !e.deltaY) return;
-        e.preventDefault();
-        const r = scroll.getBoundingClientRect();
-        const x = e.clientX - r.left;
-        const before = (scroll.scrollLeft + x) / Math.max(1, tracks.offsetWidth);
-        const next = Math.max(1, Math.min(CTX_ZOOM_MAX, ctxZoom * (e.deltaY < 0 ? 1.25 : 0.8)));
-        if (Math.abs(next - ctxZoom) < 0.001) return;
-        ctxZoom = next;
-        applyZoom();
-        scroll.scrollLeft = before * tracks.offsetWidth - x;
-      }, { passive: false });
+      wireWheelZoom(scroll, tracks, {
+        max: CTX_ZOOM_MAX,
+        get: () => ctxZoom,
+        set: (z) => { ctxZoom = z; },
+        apply: applyZoom,
+      });
       contextEl.querySelectorAll('[data-cxzoomb]').forEach(b => b.addEventListener('click', () => {
         const k = b.dataset.cxzoomb;
         if (k === 'fit') { ctxZoom = 1; ctxRange = null; applyZoom(); renderContextView(t); return; }
@@ -6849,8 +6970,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // everything after doesn't exist yet. Both panes rebuild from the
     // visible subset via the normal buildSession path; playback is a
     // setTimeout ladder over response-end boundaries with idle compression.
-    const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null };
+    const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null, zoom: 1 };
     const IDLE_CAP_MS = 2000;
+    const RP_ZOOM_MAX = 32;    // 1 = the whole capture fits the frame
+    const RP_AGENT_ROWS = 4;   // visible agent rows; deeper ones fold into "+k more"
 
     // The slice: a selected range of the timeline (shift+drag on the track).
     // While set, the session rebuilds from the window's pairs only and
@@ -6886,7 +7009,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.body.classList.add('replaying');
       tailPill.classList.remove('show');
       if (view !== 'session') { location.hash = '#/session'; }
-      renderReplayMarks(true);
+      renderReplayStrip(true);
       refreshReplay();
       updateReplayHash();
     }
@@ -6896,6 +7019,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       replay.active = false;
       replay.sliceA = null;
       replay.sliceB = null;
+      replay.zoom = 1;
       document.body.classList.remove('replaying');
       if (view === 'session') {
         showSession(sessionSelKey);
@@ -6965,33 +7089,199 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return (h > 0 ? h + ':' + mm + ':' : mm + ':') + ss;
     }
 
-    // Minimap marks: one per pair at its response end — turns tall + accent,
-    // errors red, everything else a quiet tick. Rebuilt when pairs arrive.
-    let rpMarksN = -1;
-    function renderReplayMarks(force) {
-      if (rpMarksN === pairs.length && !force) return;
-      rpMarksN = pairs.length;
-      const span = replaySpan(pairs);
-      if (!span) { rpMarks.innerHTML = ''; return; }
-      const dur = Math.max(1, span.t1 - span.t0);
-      // Context boundaries across EVERY thread: where the window collapsed
-      // (compaction, rewrite, rewind). On the timeline these are the
-      // trajectory's axis breaks — the moment the agent's memory changed
-      // shape, which the per-pair ticks alone never showed.
-      const cuts = {};
-      for (const t of getThreads()) for (const c of (t.compactions || [])) if (c.pairId) cuts[c.pairId] = 1;
-      let html = '';
-      for (const p of pairs) {
-        const x = ((pairEndMs(p) - span.t0) / dur) * 100;
-        const err = !p.response || p.response.status >= 400;
-        html += '<span class="rp-mark' + (isTurnPair(p) ? ' turn' : '') + (err ? ' err' : '') +
-          (cuts[p.id] ? ' cut' : '') + '" style="left:' + x.toFixed(3) + '%"></span>';
+    // ---- the trajectory strip (#rp-lanes) ----
+    // Lanes x wall-clock: the human's prompts, the model's requests, the
+    // tool/waiting gaps, the subagents stacked, the harness marks. Every
+    // position is the same (t - t0) / dur the playhead uses, so the
+    // handle, the fill and the spans share ONE axis.
+
+    // The strip reads the WHOLE capture, never the cursored session:
+    // scrubbing must not redraw the trajectory being scrubbed over.
+    // Cached on the capture's length + the slice (buildSession over a long
+    // trace is not a per-frame cost).
+    let laneCache = { key: '', lanes: null };
+    function laneData() {
+      const key = pairs.length + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
+      if (laneCache.key !== key) {
+        laneCache = { key, lanes: sessionLanes(buildSession(slicePairs(pairs), CLIENT_WIRE).threads, pairOf) };
       }
-      rpMarks.innerHTML = html;
+      return laneCache.lanes;
+    }
+
+    // The strip's axis: the capture's span, stretched to cover a request
+    // still in flight. The right edge is the newest KNOWN time — never
+    // Date.now(), which would make a rendered page depend on when it is read.
+    function rpSpan() {
+      const s = replaySpan(pairs);
+      let t0 = s ? s.t0 : Infinity;
+      let t1 = s ? s.t1 : -Infinity;
+      openStarts.forEach((st) => {
+        const t = (st && st.ts ? st.ts : 0) * 1000;
+        if (!t) return;
+        if (t < t0) t0 = t;
+        if (t > t1) t1 = t;
+      });
+      if (t0 === Infinity) return null;
+      return { t0, t1: Math.max(t0, t1) };
+    }
+
+    // Reading depth is a function of zoom, not a toggle: shapes, then
+    // initials and marks, then names. CSS decides off data-depth.
+    function rpDepth() { return replay.zoom < 2 ? 'map' : (replay.zoom < 8 ? 'read' : 'full'); }
+
+    let rpStripKey = '';
+    function renderReplayStrip(force) {
+      const span = rpSpan();
+      if (!span) { rpGut.innerHTML = ''; rpBody.innerHTML = ''; rpStripKey = ''; return; }
+      // The cursor is NOT in the key — it moves the handle, never the lanes.
+      const key = pairs.length + '|' + (sliceActive() ? replay.sliceA + '-' + replay.sliceB : '-') +
+        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1;
+      if (rpStripKey === key && !force) return;
+      rpStripKey = key;
+      const L = laneData();
+      const dur = Math.max(1, span.t1 - span.t0);
+      // Label visibility needs the span's width in PIXELS at this zoom, so
+      // the width class is computed here and re-computed when zoom changes.
+      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
+      const trackW = frameW * replay.zoom;
+      const pct = (t) => (((t - span.t0) / dur) * 100).toFixed(3);
+      const ord = (n) => (n + 1 < 10 ? '0' : '') + (n + 1);
+      const clock = (t) => fmtTime(new Date(t)) + ' \\u00b7 +' + fmtClock(t - span.t0);
+      const seekOf = (pairId, fallback) => {
+        const p = pairOf(pairId);
+        return p ? pairEndMs(p) : fallback;
+      };
+      const bar = (cls, a, b, seek, tip, li, ln) => {
+        const w = Math.max(0, ((b - a) / dur) * 100);
+        return '<span class="rp-span ' + cls + (((b - a) / dur) * trackW >= 24 ? ' w24' : '') +
+          '" data-rpt="' + seek + '" style="left:' + pct(a) + '%;width:' + w.toFixed(3) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '">' +
+          (li ? '<span class="rp-lbl i">' + escapeHtml(li) + '</span>' : '') +
+          (ln ? '<span class="rp-lbl n">' + escapeHtml(ln) + '</span>' : '') + '</span>';
+      };
+      const lane = (name, inner) => '<div class="rp-lane" data-lane="' + name + '">' + inner + '</div>';
+
+      // human: a POINT at the start of the request that carried the prompt
+      let human = '';
+      for (const x of L.human) {
+        const tip = 'human \\u00b7 turn ' + ord(x.ord) + '\\n' + clock(x.t) +
+          (x.label ? '\\n' + x.label : '') +
+          '\\n---\\n> click seeks to the end of the request that carried it';
+        human += '<span class="rp-point" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '"><span class="rp-lbl">' + escapeHtml(x.label || '') + '</span></span>';
+      }
+
+      // model: the pair itself, [request start, response end]
+      let model = '';
+      for (const x of L.model) {
+        const tip = 'model \\u00b7 turn ' + ord(x.ord) + ' step ' + x.step + '\\n' + clock(x.t0) +
+          '\\n' + fmtSpan(x.t1 - x.t0) + (x.stop ? ' \\u00b7 stop ' + x.stop : '') +
+          '\\n---\\n> click seeks to the end of this request';
+        model += bar('model' + (x.err ? ' err' : ''), x.t0, x.t1, x.t1, tip, '', '');
+      }
+      // a request still in flight: dashed, running to the newest known time
+      openStarts.forEach((st) => {
+        const t = (st && st.ts ? st.ts : 0) * 1000;
+        if (!t) return;
+        const tip = 'model \\u00b7 in flight\\nstarted ' + clock(t) +
+          '\\n---\\n> no response yet \\u2014 the strip ends at the newest known time';
+        model += bar('model open', t, span.t1, t, tip, '', '');
+      });
+
+      // tools + waiting: the SAME gap lane, classified by whether the
+      // reply made calls (threadTimeSplit's own rule); waiting is dimmed.
+      let tools = '';
+      for (const g of L.tools) {
+        const uniq = [];
+        for (const n of g.names || []) if (n && uniq.indexOf(n) === -1) uniq.push(n);
+        const tip = 'tools \\u00b7 ' + g.count + ' call' + (g.count === 1 ? '' : 's') + '\\n' + clock(g.t0) +
+          '\\n' + fmtSpan(g.t1 - g.t0) + (uniq.length ? '\\n' + uniq.join(', ') : '') +
+          '\\n---\\n> one gap covers parallel calls \\u2014 the wire has no per-call time';
+        tools += bar('tools', g.t0, g.t1, seekOf(g.pairId, g.t0), tip,
+          uniq.map(n => n.slice(0, 1)).join(''), uniq.join(' '));
+      }
+      for (const g of L.waiting) {
+        const tip = 'waiting\\n' + clock(g.t0) + '\\n' + fmtSpan(g.t1 - g.t0) +
+          '\\n---\\n> no tool call \\u2014 the harness came back on its own';
+        tools += bar('waiting', g.t0, g.t1, seekOf(g.pairId, g.t0), tip, '', 'waiting');
+      }
+
+      // agents: child threads stacked on the rows sessionLanes assigned,
+      // capped — the rest fold into one row rather than growing the frame.
+      const arows = [];
+      let folded = 0;
+      for (const a of L.agents) {
+        const r = a.row < RP_AGENT_ROWS ? a.row : RP_AGENT_ROWS;
+        if (r === RP_AGENT_ROWS) folded++;
+        const label = a.label || a.agentType || 'subagent';
+        const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
+          '\\n---\\n> click seeks to where its work landed';
+        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : ''), a.t0, a.t1, a.t1, tip, '', label);
+      }
+
+      // harness: moments, not spans — a compaction and a failed request.
+      let harness = '';
+      for (const c of L.cuts) {
+        const tip = 'compaction' + (c.mode ? ' \\u00b7 ' + c.mode : '') + '\\n' + clock(c.t) +
+          '\\n---\\n> the context window collapsed here';
+        harness += '<span class="rp-mark cut" data-rpt="' + c.t + '" style="left:' + pct(c.t) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2702</span></span>';
+      }
+      for (const f of L.failed) {
+        const tip = 'failed request' + (f.status ? ' \\u00b7 ' + f.status : '') + '\\n' + clock(f.t) +
+          '\\n---\\n> it produced no turn; the retry is the next request';
+        harness += '<span class="rp-mark err" data-rpt="' + f.t + '" style="left:' + pct(f.t) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2717</span></span>';
+      }
+
+      // Fixed geometry: an empty lane stays, labelled — a client with no
+      // spawn tool reads as zero agents, never as a missing row.
+      let gut = '<span class="rp-glbl">human</span><span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
+      let body = lane('human', human) + lane('model', model) + lane('tools', tools);
+      const nrows = Math.max(1, arows.length);
+      for (let i = 0; i < nrows; i++) {
+        gut += '<span class="rp-glbl">' +
+          (i === 0 ? 'agents' : (i === RP_AGENT_ROWS ? '+' + folded + ' more' : '')) + '</span>';
+        body += lane('agents', arows[i] || '');
+      }
+      gut += '<span class="rp-glbl">harness</span>';
+      body += lane('harness', harness);
+      rpGut.innerHTML = gut;
+      rpBody.innerHTML = body;
+      rpLanes.dataset.depth = rpDepth();
+      rpTrack.style.width = (replay.zoom > 1 ? (replay.zoom * 100).toFixed(2) : '100') + '%';
+    }
+
+    // The playhead stays reachable during playback, but the strip only
+    // scrolls when the handle LEAVES the frame — following it continuously
+    // would be constant motion (ui.md 5).
+    function rpFollowHandle(frac) {
+      if (!rpScroll.getBoundingClientRect) return;
+      const frameW = rpScroll.getBoundingClientRect().width || 0;
+      const trackW = frameW * replay.zoom;
+      if (!frameW || trackW <= frameW + 1) return;
+      const x = frac * trackW;
+      const at = rpScroll.scrollLeft || 0;
+      if (x >= at + 8 && x <= at + frameW - 8) return;
+      rpScroll.scrollLeft = Math.max(0, Math.min(trackW - frameW, x - frameW / 2));
+    }
+
+    // Live: the capture grew (a pair landed, a request started). Redraw the
+    // strip and keep the newest edge in view when the reader was already
+    // there — terminal semantics, never yank a strip being read.
+    function rpLiveRefresh() {
+      if (!replay.active) return;
+      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
+      const atEdge = !!frameW && (rpScroll.scrollLeft || 0) + frameW >= frameW * replay.zoom - 2;
+      renderReplayStrip(true);
+      renderReplayBar();
+      if (atEdge) rpScroll.scrollLeft = Math.max(0, frameW * replay.zoom - frameW);
     }
 
     function renderReplayBar() {
-      const span = replaySpan(pairs);
+      // The strip's axis, not the pairs' — the handle must sit on the same
+      // scale as the lanes it points into (an open request stretches both).
+      const span = rpSpan();
       if (!span) return;
       const dur = Math.max(1, span.t1 - span.t0);
       const frac = Math.min(1, Math.max(0, (replay.cursor - span.t0) / dur));
@@ -7025,7 +7315,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         rpSliceChip.style.display = 'none';
         rpSliceChip.innerHTML = '';
       }
-      renderReplayMarks();
+      renderReplayStrip();
+      rpFollowHandle(frac);
     }
 
     function refreshReplay() {
@@ -7071,9 +7362,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     let rpDragging = false;
     let rpSliceDrag = false;
+    let rpClickSeek = null;   // a span was pressed: a click jumps, a drag scrubs
+    let rpDownX = 0;
     function timeFromPointer(e) {
-      const span = replaySpan(pairs);
+      const span = rpSpan();
       if (!span) return null;
+      // The track's visual rect already accounts for the strip's own
+      // horizontal scroll, so zoomed scrubbing needs no extra math.
       const rect = rpTrack.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
       return span.t0 + frac * (span.t1 - span.t0);
@@ -7097,13 +7392,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       rpDragging = true;
+      rpDownX = e.clientX;
+      // A press on a SPAN defers: a click jumps to that pair's end (the
+      // boundary where it became visible), a drag from it still scrubs.
+      const el = e.target && e.target.closest ? e.target.closest('[data-rpt]') : null;
+      const t = el ? parseFloat(el.dataset.rpt) : NaN;
+      if (isFinite(t)) { rpClickSeek = t; return; }
+      rpClickSeek = null;
       seekFromPointer(e);
     });
     rpTrack.addEventListener('pointermove', (e) => {
       if (rpSliceDrag) {
         const t = timeFromPointer(e);
         if (t != null) { replay.sliceB = t; renderReplayBar(); }
-      } else if (rpDragging) seekFromPointer(e);
+      } else if (rpDragging) {
+        if (rpClickSeek != null) {
+          if (Math.abs(e.clientX - rpDownX) < 3) return; // a wiggle is still a click
+          rpClickSeek = null;
+        }
+        seekFromPointer(e);
+      }
     });
     rpTrack.addEventListener('pointerup', () => {
       if (rpSliceDrag) {
@@ -7116,8 +7424,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         updateReplayHash();
         return;
       }
+      if (rpClickSeek != null) { seekReplay(rpClickSeek); rpClickSeek = null; }
       rpDragging = false;
       updateReplayHash();
+    });
+    // Wheel zooms the strip around the cursor, 1x fit to 32x — the same
+    // helper the context overview uses. Deeper zoom is deeper reading:
+    // the width class and data-depth are recomputed on every step.
+    wireWheelZoom(rpScroll, rpTrack, {
+      max: RP_ZOOM_MAX,
+      get: () => replay.zoom,
+      set: (z) => { replay.zoom = z; },
+      apply: () => renderReplayStrip(true),
     });
 
     // ---- Select-to-purge ----

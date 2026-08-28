@@ -170,15 +170,21 @@ describe("page meta", () => {
     expect(html).toContain("function renderInstances");
   });
 
-  // Session replay is a time cursor over the same page — the transport bar
-  // markup and the inlined timeline primitives must both ship.
+  // Session replay is a time cursor over the same page — the trajectory
+  // strip, the transport bar and the inlined primitives must all ship.
   test("the page wires the replay machinery", () => {
     const html = renderSnapshot([]);
     expect(html).toContain('id="replay-bar"');
-    expect(html).toContain('id="rp-track"');
+    expect(html).toContain('id="rp-lanes"');
+    expect(html).toContain('id="rp-lanes-track"');
     expect(html).toContain('id="replay-toggle"');
     expect(html).toContain("function visibleAt");
     expect(html).toContain("function nextTick");
     expect(html).toContain("function anchorAt");
+    // the stage data layer rides along, inlined from src/replay.ts
+    expect(html).toContain("function sessionLanes");
+    expect(html).toContain("function stateAt");
+    expect(html).toContain("function beatAt");
+    expect(html).toContain("function chaptersOf");
   });
 });

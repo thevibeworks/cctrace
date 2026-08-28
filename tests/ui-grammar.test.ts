@@ -826,7 +826,7 @@ describe("find in session (toolbar)", () => {
 });
 
 describe("context boundaries on the replay timeline", () => {
-  test("a compaction gets its own mark on the track, beside the per-pair ticks", () => {
+  test("a compaction gets its own mark in the harness lane", () => {
     const long: { role: string; content: unknown }[] = [];
     for (let i = 0; i < 12; i++) {
       long.push({ role: "user", content: "prompt " + i });
@@ -840,10 +840,109 @@ describe("context boundaries on the replay timeline", () => {
     const ws = page.sockets[0]!;
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [before, after] }) });
     page.goto("#/session/aaaabbbb/@k1..k2");
-    const marks = page.els["rp-marks"].innerHTML as string;
-    expect(marks).toContain("rp-mark turn cut");
-    expect((marks.match(/rp-mark/g) || []).length).toBe(2);
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    // The cut is amber on both surfaces — one compaction, one class.
+    expect(body).toContain('class="rp-mark cut"');
+    expect((body.match(/rp-mark/g) || []).length).toBe(1);
+    expect(body).toContain('data-lane="harness"');
     expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+});
+
+// The strip is the trace's SHAPE: five lanes over wall-clock, drawn from
+// sessionLanes. Its markup is built from captured wire content (tool names,
+// agent labels, the human's own words), so it gets the same hostile-fixture
+// grammar treatment as every other generated fragment.
+describe("the trajectory strip (#rp-lanes)", () => {
+  const AGENT_SYS = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+  const PROMPT = "Explore </script><script>alert(1)</script> and report [1mback[0m";
+  const TASK = {
+    type: "tool_use",
+    id: "tu_a",
+    name: "Task",
+    input: { subagent_type: "Explore", description: "<img src=x onerror=alert(2)>", prompt: PROMPT },
+  };
+  const BASH = { type: "tool_use", id: "tu_b", name: "Bash", input: { command: "bun test" } };
+  const HEAD = "map the repo [1mfast[0m & <b>well</b>";
+
+  // p1 calls Bash -> p2 (result in) spawns a subagent -> a1 is the child ->
+  // p4 fails 429 -> p5 is the retry that answers.
+  function fixture(): TracePair[] {
+    const h1 = [{ role: "user", content: HEAD }];
+    const h2 = [...h1, { role: "assistant", content: [BASH] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_b", content: "ok" }] }];
+    const h3 = [...h2, { role: "assistant", content: [TASK] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_a", content: "done" }] }];
+    const p1 = msgPair("p1", { reqBody: { messages: h1 }, resBody: { content: [BASH], stop_reason: "tool_use" } });
+    const p2 = msgPair("p2", { reqBody: { messages: h2 }, resBody: { content: [TASK], stop_reason: "tool_use" } });
+    const a1 = msgPair("p3", {
+      reqBody: { system: [{ type: "text", text: AGENT_SYS }], messages: [{ role: "user", content: [{ type: "text", text: PROMPT }] }] },
+      resBody: { content: [{ type: "text", text: "child reply" }] },
+    });
+    const p4 = msgPair("p4", { reqBody: { messages: h3 } });
+    (p4.response as { status: number }).status = 429;
+    (p4.response as { body: unknown }).body = { error: { type: "overloaded_error", message: "slow down" } };
+    const p5 = msgPair("p5", { reqBody: { messages: h3 }, resBody: { content: [{ type: "text", text: "all done" }] } });
+    return [p1, p2, a1, p4, p5];
+  }
+
+  test("replaying, the strip draws every lane and its gutter, and parses", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
+    const gut = page.els["rp-gut"].innerHTML as string;
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    // The gutter names every lane — a lane whose meaning is unstated is
+    // decoration (and the geometry is fixed, so none of them can vanish).
+    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(gut).toContain(">" + l + "<");
+    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
+    // one point per loop head across every thread: the human's prompt and
+    // the dispatch that heads the child (its thread's own first turn)
+    expect((body.match(/class="rp-point"/g) || []).length).toBe(2);
+    expect((body.match(/rp-span model/g) || []).length).toBe(4); // p1 p2 p5 + the child's own
+    // the Bash gap is a tools span carrying its initials AND its name
+    expect(body).toContain("rp-span tools");
+    expect(body).toContain('class="rp-lbl i">B<');
+    expect(body).toContain('class="rp-lbl n">Bash<');
+    // the verified spawn is an agent span; the 429 is a harness mark
+    expect(body).toContain("rp-span agent");
+    expect(body).toContain('class="rp-mark err"');
+    // every span is clickable and carries a tip
+    expect(body).toContain("data-rpt=");
+    expect(body).toContain("data-tip=");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("not replaying, the strip is inert markup and nothing renders into it", () => {
+    const html = renderSnapshot(fixture());
+    expect(html).toContain('id="rp-lanes"');
+    expect(html).toContain('data-depth="map"');
+    expect(html).toContain('id="rp-lanes-body"');
+    const page = bootSnapshotPage(html);
+    page.goto("#/session");
+    expect(page.els["rp-lanes-body"].innerHTML).toBe("");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a live start draws an open span; the pair that answers it retires it", () => {
+    const fix = fixture();
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    // init carries the starts already in flight when the page connected
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix.slice(0, 4), starts: [] }) });
+    page.goto("#/session/aaaabbbb/@p4");
+    expect(page.els["rp-lanes-body"].innerHTML).not.toContain("rp-span model open");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p5", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1005 } }) });
+    const open = page.els["rp-lanes-body"].innerHTML as string;
+    expect(open).toContain("rp-span model open");
+    expect(open).toContain("in flight");
+    // the response retires the start — no double-drawn request
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[4] }) });
+    expect(page.els["rp-lanes-body"].innerHTML).not.toContain("rp-span model open");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
   });
 });
 

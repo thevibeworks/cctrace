@@ -7758,6 +7758,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
 
       // agents: child threads stacked on the rows sessionLanes assigned,
+      // In focus when the selected thread spawned them OR is one of them —
+      // a child selected in the rail keeps its own span full.
       // capped — the rest fold into one row rather than growing the frame.
       const arows = [];
       let folded = 0;
@@ -7767,7 +7769,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const label = a.label || a.agentType || 'subagent';
         const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
           '\\n---\\n> click seeks to where its work landed';
-        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') + oth(a.parentKey), a.t0, a.t1, a.t1, tip, '', label);
+        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') + (selKey && a.parentKey !== selKey && a.threadKey !== selKey ? ' other' : ''), a.t0, a.t1, a.t1, tip, '', label);
       }
 
       // harness: moments, not spans — a compaction and a failed request.

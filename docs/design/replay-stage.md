@@ -115,8 +115,11 @@ Bash call) is `agents` for the lane; the now line names both.
 `stateAt` is the one reading of this table; the strip, the now line and
 the live edge all consume it. Precedence is actor-first: a request in
 flight is `model` even while children run (`agentsRunning` still reports
-them); then a child span; then the gap the reply opened; then the hole,
-named.
+them); then a child span (a tools gap that overlaps a running child
+reads `agents` — the coarser fact); then the gap the reply opened; then
+the hole, named. Every span is half-open: at exactly a pair's end the
+reply is visible and the GAP owns the instant, so a click on a tools
+span (which seeks to the pair's end) reads `tools`, never `model`.
 
 ## Data layer (src/replay.ts unless noted; pure, toString-inlined, unit-tested)
 
@@ -171,9 +174,9 @@ axisTicks(t0, t1, px, tzOffsetMin) -> [{ t, label, major }]   // NEW (rev 2)
 with it. `soFar` keeps the one figure nothing else states — which tools
 were called, how often, so far — for the stage footer.
 
-`axisTicks` picks the coarsest step from `1s 5s 15s 30s 1m 2m 5m 10m 15m
-30m 1h 2h 6h 12h 1d` that lands ticks >= 72px apart at the given track
-width, aligned to the LOCAL clock (tzOffsetMin is the page's
+`axisTicks` picks the FINEST step from `1s 5s 15s 30s 1m 2m 5m 10m 15m
+30m 1h 2h 6h 12h 1d` whose ticks still land >= 72px apart at the given
+track width (4h at 1400px -> 15m at 87px; 10m would be 58px), aligned to the LOCAL clock (tzOffsetMin is the page's
 `getTimezoneOffset()`; the function itself never reads a Date). Labels
 are `HH:MM` (`HH:MM:SS` under 1m); a tick that is the first of a calendar
 day is `major` and reads `MM-DD HH:MM`. Ticks are never estimated —
@@ -259,10 +262,17 @@ Session view, `body.replaying`. No new tab.
   edge, and tailing resumes. `Home` / `End` do the same as ⏮ / ⏭.
 - The clock reads the cursor's absolute local time AND its offset —
   the terminal the human is looking at shows wall-clock, not offsets.
+  `<length>` is the STRIP's axis (`rpSpan`: the capture stretched to
+  cover an open `start`), so on a live page with a request in flight
+  the offset reads short of the length even when the cursor is at the
+  edge — "at the edge" is measured against the newest COMPLETED pair
+  (`replaySpan(pairs).t1`), never against the strip's right edge.
 - `[live]` is a state chip on live pages only: `● live` (green dot, the
   same green the status dot uses) while the cursor is at the edge and
   tailing; `⤓ live` (a quiet button) when the reader is behind — click
-  snaps to the edge. Reading pages (view / snapshot) have no such chip.
+  snaps to the edge. Reading pages (view / snapshot) render nothing
+  into it (the skeleton `<span id="rp-live">` stays, empty, like the
+  slice chip).
 - `✕ exit` exits replay (Esc). It no longer doubles as "back to live":
   exiting is exiting, snapping to the edge is ⏭.
 

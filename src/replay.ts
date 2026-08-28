@@ -508,8 +508,8 @@ export function soFar(lanes: any, cursor: number, threadKey?: any): any {
 }
 
 /**
- * The strip's clock ruler: the coarsest-that-fits ladder step whose ticks
- * land >= 72px apart at this track width, aligned to the LOCAL calendar.
+ * The strip's clock ruler: the FINEST ladder step whose ticks still land
+ * >= 72px apart at this track width, aligned to the LOCAL calendar.
  *
  * `tzOffsetMin` is the page's `getTimezoneOffset()` — the function never
  * reads a clock of its own, so a rendered page's ruler does not depend on

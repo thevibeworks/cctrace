@@ -924,31 +924,44 @@ describe("context view", () => {
     }),
   ];
 
-  test("the sheet ships: a reconciling margin beside three canvas sections", () => {
+  test("the shell ships: an overview on top, a reconciling margin, one deck", () => {
     const html = renderSnapshot(CTX_PAIRS);
     expect(html).toContain('id="tab-context"');
     expect(html).toContain('id="context-view"');
+    // the Trajectory tab folded into this page — it was a reading, not a view
+    expect(html).not.toContain('id="tab-trajectory"');
+    expect(html).not.toContain('id="trajectory-view"');
     const page = bootSnapshotPage(html);
     page.goto("#/context");
     expect(page.errors).toEqual([]);
     const cx = page.els["context-view"].innerHTML;
-    // the two-pane sheet: a sticky margin that reconciles, a canvas that scrolls
+    // the overview: the page's time axis, above the two-pane shell
+    expect(cx).toContain('id="cx-ov"');
+    expect(cx).toContain('id="cx-tracks"');
+    expect(cx).toContain('id="cx-brush"');
+    expect(cx).toContain('id="cx-ov-scroll"');
+    expect(cx).toContain("drag to select");
+    expect(cx).toContain("wheel to zoom");
+    // the shell: a margin that reconciles beside a deck that scrolls
     expect(cx).toContain('class="cx-cols"');
     expect(cx).toContain('id="cx-margin"');
-    expect(cx).toContain('class="cx-canvas"');
+    expect(cx).toContain('class="cx-canvas mode-window"');
+    expect(cx).toContain('id="cx-deck"');
+    // three readings of ONE selection, window first
+    expect(cx).toContain('data-cxmode="window"');
+    expect(cx).toContain('data-cxmode="stream"');
+    expect(cx).toContain('data-cxmode="events"');
+    expect((cx.match(/class="cx-mode active"/g) || []).length).toBe(1);
     // the margin's balance: the headline, the bar, the reconciliation
     expect(cx).toContain("cx-bal-n");
     expect(cx).toContain("of context used");
     expect(cx).toContain("cx-recon");
-    // the canvas's three sections, each named for what the reader gets
-    expect(cx).toContain("trajectory");
-    expect(cx).toContain("inside this step");
-    expect(cx).toContain("what changed it");
     // counts caption the thing they count — never an orphan chips row
     expect(cx).toContain("wire request");
     expect(cx).toContain("working loop");
-    // one bar per wire request
-    expect((cx.match(/data-cxbar=/g) || []).length).toBe(2);
+    // one column per wire request, each addressable by the brush
+    expect((cx.match(/data-cxbar=/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(cx).toContain('data-cxc="0"');
     // the ledger names all six categories, and every line is a zoom
     for (const label of ["system prompt", "tool schemas", "user messages", "injected context", "assistant replies", "tool results"]) {
       expect(cx).toContain(label);
@@ -956,6 +969,68 @@ describe("context view", () => {
     expect((cx.match(/class="cx-crow[ "]/g) || []).length).toBe(6);
     expect(cx).toContain('data-cxnode="c:toolResult"');
     expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the granularity, zoom and brush controls all live on the overview", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('data-cxgran="step"');
+    expect(cx).toContain('data-cxgran="turn"');
+    expect(cx).toContain('data-cxzoomb="in"');
+    expect(cx).toContain('data-cxzoomb="out"');
+    expect(cx).toContain('data-cxzoomb="fit"');
+    // no range brushed yet: no brush window, no caption — never a fake selection
+    expect(cx).toContain('id="cx-brush"></div>');
+    expect(cx).not.toContain("esc clears<");
+    expect(cx).not.toContain("cx-brush-win");
+    // the gutter names each track and states its own top of scale
+    expect(cx).toContain('class="cx-ov-gn">ctx<');
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the stream deck is the old Trajectory tab, scoped to this page", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/=stream");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-canvas mode-stream"');
+    // the record stream: rows with kind badges, the inspector beside them
+    expect(cx).toContain('class="tj-list"');
+    expect(cx).toContain('id="tj-detail"');
+    expect(cx).toContain('class="tj-badge"');
+    expect(cx).toContain("USER");
+    expect(cx).toContain("CONTEXT"); // the reminder is the harness's, not the human's
+    expect(cx).toContain("TOOL");
+    // archify's MAP/READ/FULL, and the kind filter
+    expect(cx).toContain('data-tjlvl="map"');
+    expect(cx).toContain('data-tjlvl="read"');
+    expect(cx).toContain('data-tjlvl="full"');
+    expect(cx).toContain('data-tjkind="context"');
+    // ...but no second head: the page head and the margin already say it
+    expect(cx).not.toContain("tj-head");
+    expect(cx).not.toContain("tj-counts");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the old #/trajectory route lands on the stream deck and rewrites itself", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/trajectory");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-canvas mode-stream"');
+    expect(cx).toContain('class="tj-list"');
+  });
+
+  test("where the time went is a margin block, and a track on the overview", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("where the time went");
+    expect(cx).toContain('class="cx-time"'); // the second overview track
+    expect(cx).toContain('class="cx-ov-gn">time<');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
   });
 
   test("the six numbers are rendered ONCE as a list: no legend, no detail strip", () => {
@@ -973,7 +1048,7 @@ describe("context view", () => {
 
   test("an injected reminder shows as an inject event and in the graph's inject items", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     // the event row names the reminder's opening words
     expect(cx).toContain("Recalled memory");
@@ -997,7 +1072,7 @@ describe("context view", () => {
       resBody: { usage: { input_tokens: 300, output_tokens: 10 } },
     });
     const page = bootSnapshotPage(renderSnapshot([before, after]));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("cx-mark"); // ✂ above the post-compact bar
     expect(cx).toContain("cx-colw cut"); // ...and the axis-break rule down the bar
@@ -1023,7 +1098,7 @@ describe("context view", () => {
       resBody: { model: "claude-fable-5" },
     });
     const page = bootSnapshotPage(renderSnapshot([p1, p2]));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("opus-4-6 → fable-5");
   });
@@ -1064,7 +1139,7 @@ describe("context view", () => {
     expect(cats).toEqual(["tools", "user", "assistant", "toolResult"]); // no system block in this fixture
     // the ledger states all six, always, in the same order — it is the
     // invariant the chart stops showing the moment you zoom
-    const margin = cx.slice(cx.indexOf('id="cx-margin"'), cx.indexOf('class="cx-canvas"'));
+    const margin = cx.slice(cx.indexOf('id="cx-margin"'), cx.indexOf('class="cx-canvas'));
     expect([...margin.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]))
       .toEqual(["system", "tools", "user", "inject", "assistant", "toolResult"]);
     // a container node zooms, a leaf opens
@@ -1130,7 +1205,7 @@ describe("context view", () => {
       pairsOut.push(msgPair("e" + i, { reqBody: { messages: msgs.slice() } }));
     }
     const page = bootSnapshotPage(renderSnapshot(pairsOut));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     // the chips still count every raw event...
     expect(cx).toContain("inject 6");

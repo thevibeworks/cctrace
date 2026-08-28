@@ -62,7 +62,10 @@ src/
 ├── icons.ts        # Per-client icon glyphs — ONE source for every surface that
 │                   #   labels a CLI (trace view header, dashboard rows)
 ├── ui.ts           # The whole web UI: Requests list + detail panel +
-│                   #   Sessions + Context + Trajectory views (four tabs)
+│                   #   Sessions + Context views (three tabs). Context is a
+│                   #   DevTools-shaped shell: an interactive overview
+│                   #   (two tracks, one brush) driving three decks —
+│                   #   window / stream / events
 ├── replay.ts       # Session replay timeline primitives (inlined into UI)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
 │                   #   table as the offline fallback (inlined into UI)
@@ -72,7 +75,8 @@ src/
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI).
 │                   #   threadTimeSplit: where a thread's wall-clock went
 │                   #   (model/tools/waiting/between) off attributed pairs —
-│                   #   dsh Trajectory's lanes, the Sessions "time" chip
+│                   #   the Sessions "time" chip, the context overview's
+│                   #   time track (per-step, via byPair) and its margin
 ├── context.ts      # The context layer (inlined into UI): per-request window
 │                   #   composition (6 categories), per-thread timeline +
 │                   #   events (injections/compactions/model/tool changes),
@@ -89,9 +93,9 @@ src/
 │                   #   semantica's fact->source trail), clickable to pin
 │                   #   that step. trajectoryRecords: the thread as one
 │                   #   linear stream of records (system/user/CONTEXT-inline/
-│                   #   assistant/tool call+result) for the Trajectory view -
-│                   #   dsh's Trajectory tab, MAP/READ/FULL from archify
-│                   #   (docs/design/context-view.md, docs/design/trajectory.md)
+│                   #   assistant/tool call+result) — the context view's
+│                   #   STREAM deck, MAP/READ/FULL from archify
+│                   #   (docs/design/context-view.md)
 ├── vendor/
 │   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 ├── html.ts         # Static HTML generator (legacy node mode only)

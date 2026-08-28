@@ -71,34 +71,41 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   `/model` epochs, compaction boundaries, superseded exchanges -- and
   **replay**: step or play back any captured session, deep-link any
   moment.
-- **Context insights.** A Context view shows what the model's window is
-  assembled from, request by request, laid out as a ledger: a sticky
-  margin states the balance -- prompt tokens, a six-color composition bar
-  against the model's context window, how far the chars/4 estimate reads
-  under the billed prompt, and the six categories as lines you click to
-  zoom -- while the canvas beside it carries the trajectory (✂ marks
-  compactions; watch the bars drop), the picked step as a **context
-  graph** -- an icicle where width is tokens and rows are levels,
-  decomposing it into category -> group -> item, with tool results
-  grouped by the tool that made them, schemas by MCP server, injections
-  by producer -- and every injection/compaction/model-switch as an event.
-  `Bash x189, 38% of the window` is the widest block on the row, not a
-  number you had to go find; click it to zoom, click a leaf to read the
-  exact bytes. Traces holding several sessions compare their peaks on one
+- **Context insights, DevTools-shaped.** A Context view shows the agent's
+  window over time. An interactive **overview** owns the top and never
+  scrolls away: one stacked column per wire request, colored by the six
+  things a window is made of, ✂ marking the compactions, and a second
+  track showing where that step's wall-clock went (model / tools /
+  waiting). Drag across it to select a range, drag the handles to resize
+  it, wheel to zoom in, click a column to pin a step. A margin beside it
+  states the balance for that step -- prompt tokens, a six-color
+  composition bar against the model's context window, how far the chars/4
+  estimate reads under the billed prompt, and the six categories as lines
+  you click to zoom. Then the selection is read three ways, one deck at a
+  time:
+  - **window** -- the pinned step as a **context graph**: an icicle where
+    width is tokens and rows are levels, decomposing the request into
+    category -> group -> item, with tool results grouped by the tool that
+    made them, schemas by MCP server, injections by producer.
+    `Bash x189, 38% of the window` is the widest block on the row, not a
+    number you had to go find; click it to zoom, click a leaf to read the
+    exact bytes, and every row says which turn first carried it in.
+  - **stream** -- the agent's path as one linear list of records: system
+    prompt, your turns, the context the harness injected (inline, at the
+    moment it entered), the model's thinking, each tool call fused with
+    its result, the reply. MAP / READ / FULL filters it down to the
+    skeleton or up to everything without ever summarizing; a kind filter
+    isolates just the injections -- the context trajectory.
+  - **events** -- every injection, compaction, model switch and
+    tool-schema change, with what it did to the window.
+
+  Traces holding several sessions compare their peaks on one
   scale. Anchored to provider-reported tokens -- the wire, not a guess.
 - **The trajectory, in the timeline.** Every step on the sessions rail
   carries a track: how full the window was, split into the prefix read
   from cache and what was billed fresh. Down the rail that column is the
   agent's context trajectory -- it climbs, a compaction drops it, the next
   step runs cold, then warms again.
-- **The trajectory, as a stream.** A Trajectory view renders a thread as
-  one linear, time-anchored list of records: system prompt, your turns,
-  the context the harness injected (inline, at the moment it entered),
-  the model's thinking, each tool call fused with its result, the reply.
-  MAP / READ / FULL filters it down to the skeleton or up to everything
-  without ever summarizing; a kind filter isolates just the injections
-  (the context trajectory), and a strip on top shows where the wall-clock
-  went: model, tools, waiting, between turns.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **One dashboard for everything.** `/dashboard` on any instance shows every

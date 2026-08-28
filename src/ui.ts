@@ -1390,61 +1390,54 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       content: ''; flex: 1; border-top: 1px solid var(--border);
     }
     .agent-note a { color: var(--accent); }
-    /* ---- Context view: the ledger that reconciles ----
-       THESIS: the assembled window is a sheet that must close. Six
-       categories sum to the whole, the estimate reconciles against the
-       provider's reported prompt, and the whole sits against the model's
-       limit — so the balance is stated ONCE, in a margin that never
-       scrolls away, and the page refuses the stacked-report arrangement
-       that made the answer arrive fifth, below the fold.
+    /* ---- Context view: an overview that drives three decks ----
+       THESIS: this page has ONE subject (the agent's context window over
+       time) and ONE selection (a pinned step + a brushed range). Every
+       question a reader has about it — what is in the window, what the
+       agent did, what changed it — is a READING of that selection, never
+       a different place to navigate to. So: a DevTools shell. An
+       interactive overview owns the time axis and belongs to the FRAME
+       (scrolling away the control that scopes the content under it is
+       the thing a stacked report gets wrong); a margin states the
+       balance that must close — six categories summing to the assembled
+       window, the estimate reconciled against the provider's prompt, the
+       whole against the model's limit — and never scrolls away; one deck
+       at a time answers the question.
+       This replaces two shipped mistakes: a 1100px ribbon of five
+       equal-weight sections (0.44) that made the answer arrive fifth,
+       and a fourth TAB (Trajectory) for a second reading of the same
+       thread, which cost the reader their thread and their step to ask a
+       different question about them.
        OWN-WORLD: the trace viewer's own material (docs/design/ui.md) —
        GitHub-dark tokens, system mono, 11/12/13 + 9/10 micro, one accent,
        the six fixed data hues. Its device is the RULE: hairline section
        rules and a ruled margin, never a card.
-       STORY: how full is the window -> what is filling it -> when did it
-       change -> which of my sessions is worst.
-       FIRST VIEWPORT: sticky left margin — occupancy, the reconciliation,
-       six ledger rows bound to the picked step, each one a zoom into the
-       chart. Right: the trajectory strip, then the icicle directly under
-       it, then its pane. The answer is above the fold.
-       FORM: staging "Ledger That Reconciles", dealt #1 of 3, roll
-       5c1855a3, raised by the spec sheet's bound margin and the proof
-       sheet's raised outliers.
+       STORY: how full is the window -> what is filling it -> what the
+       agent did -> when did it change -> which of my sessions is worst.
        Category colors are DATA colors (fixed hex from CTX_CATS in
        src/context.ts, same rule as the request-category chips); accent
        stays interactive-only. */
-    #context-view { display: none; flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px 24px; }
-    body.view-context #context-view { display: block; }
+    #context-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
+    body.view-context #context-view { display: flex; }
     body.view-context #split { display: none; }
     body.view-context .cats { display: none; }
     body.view-context #tb-list, body.view-context #tb-page { display: none; }
 
-    /* ---- Trajectory view: the thread as a linear stream of records ---- */
-    #trajectory-view { display: none; flex: 1; min-height: 0; flex-direction: column; }
-    body.view-trajectory #trajectory-view { display: flex; }
-    body.view-trajectory #split { display: none; }
-    body.view-trajectory .cats { display: none; }
-    body.view-trajectory #tb-list, body.view-trajectory #tb-page, body.view-trajectory #tb-find, body.view-trajectory #tb-trace { display: none; }
-    .tj-head { padding: 10px 16px 8px; border-bottom: 1px solid var(--border); }
-    .tj-title { display: flex; align-items: baseline; gap: 10px; }
-    .tj-t-label { font-size: 13px; color: var(--text); font-weight: 600; }
-    .tj-t-meta { font-size: 11px; color: var(--text-faint); }
-    .tj-title .turn-wire { margin-left: auto; }
-    .tj-lanes { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin: 8px 0 5px; background: var(--bg-surface); }
-    .tj-lane { min-width: 2px; }
-    .tj-lane-key { display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px; color: var(--text-faint); }
-    .tj-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-    .tj-counts { font-size: 11px; color: var(--text-faint); margin-top: 6px; }
-    .tj-toolbar { display: flex; align-items: center; gap: 12px; padding: 7px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    /* ---- the record stream (the "stream" deck) ----
+       The thread as one linear stream of records — system, the human,
+       the CONTEXT the harness injected inline, the model’s thinking,
+       each tool call fused with its result, the reply. It used to be its
+       own tab; it is a READING of the same selection, so it is a deck. */
+    .tj-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .tj-lvls, .tj-kinds { display: inline-flex; gap: 2px; }
     .tj-lvl, .tj-kind { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text-faint); border: 1px solid var(--border); padding: 2px 8px; border-radius: 5px; cursor: pointer; }
     .tj-lvl.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .tj-kind.active { color: var(--text); border-color: var(--tjc, var(--accent)); background: color-mix(in srgb, var(--tjc, var(--accent)) 14%, transparent); }
-    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 180px; }
+    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 170px; }
     .tj-hidden { font-size: 10px; color: var(--text-faint); }
-    .tj-body { flex: 1; min-height: 0; display: flex; }
+    .tj-body { flex: 1; min-height: 0; display: flex; margin: 0 -16px; }
     .tj-list { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 0 24px; }
-    .tj-detail { width: 40%; max-width: 560px; min-width: 300px; border-left: 1px solid var(--border); overflow-y: auto; padding: 10px 14px 24px; }
+    .tj-detail { width: 40%; max-width: 560px; min-width: 280px; border-left: 1px solid var(--border); overflow-y: auto; padding: 10px 14px 24px; }
     .tj-turn { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
     .tj-row { display: flex; align-items: center; gap: 8px; padding: 3px 16px; text-decoration: none; color: var(--text); border-left: 2px solid transparent; font-size: 12px; }
     .tj-row:hover { background: var(--hover); }
@@ -1461,34 +1454,46 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tj-dh { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
     .tj-dh-addr { font-size: 11px; color: var(--text-faint); }
     .tj-dh-tok { margin-left: auto; font-size: 11px; color: var(--text-faint); }
-    @media (max-width: 900px) {
-      .tj-body { flex-direction: column; }
-      .tj-detail { width: auto; max-width: none; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
-    }
-    /* the sheet: a ruled margin that reconciles, a canvas that scrolls.
-       The same two-pane grammar the requests (list|detail) and sessions
-       (rail|convo) views already use — this view was the odd ribbon out. */
-    .cx-cols { display: flex; align-items: flex-start; gap: 20px; }
+    /* the shell: a fixed head, the OVERVIEW that never scrolls away, then
+       a ruled margin that reconciles beside a deck that scrolls. The
+       same two-pane grammar the requests (list|detail) and sessions
+       (rail|convo) views already use, with one addition: the overview is
+       the page's time axis and every deck below reads its selection, so
+       it belongs to the frame, not to the scroll. */
+    .cx-cols { flex: 1; min-height: 0; display: flex; align-items: stretch; }
     .cx-margin {
-      flex: 0 0 320px; min-width: 0; position: sticky; top: 0; align-self: flex-start;
-      max-height: calc(100vh - 120px); overflow-y: auto;
-      padding-right: 16px; border-right: 1px solid var(--border);
+      flex: 0 0 300px; min-width: 0; overflow-y: auto;
+      padding: 12px 16px 24px; border-right: 1px solid var(--border);
     }
-    .cx-canvas { flex: 1; min-width: 0; }
-    .cx-section { margin-bottom: 20px; }
-    /* ruled sections: the ledger's own device. The first needs no rule —
-       it sits directly under the head's own hairline. */
-    .cx-canvas > .cx-section + .cx-section { border-top: 1px solid var(--border); padding-top: 14px; }
-    .cx-section > h4 {
-      color: var(--text-muted); font-size: 10px; text-transform: uppercase;
-      margin-bottom: 6px; display: flex; align-items: baseline; gap: 10px;
-    }
-    .cx-h4-hint { color: var(--text-faint); text-transform: none; font-size: 10px; font-weight: 400; }
-    .cx-h4-right { margin-left: auto; display: inline-flex; gap: 4px; }
+    .cx-canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 0 16px 24px; }
+    /* stream mode owns its own scrolling (list | inspector, each its own
+       column) — the canvas must not add a second scrollbar around it. */
+    .cx-canvas.mode-stream { overflow: hidden; padding-bottom: 0; }
+    .cx-deck { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: 10px; }
     .cx-head {
-      display: flex; align-items: center; gap: 8px; font-size: 12px;
-      padding-bottom: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border);
+      flex: none; display: flex; align-items: center; gap: 8px; font-size: 12px;
+      padding: 10px 16px 8px; border-bottom: 1px solid var(--border);
     }
+    /* ---- the deck switcher: three readings of ONE selection ----
+       Not tabs. The page has one subject (this thread's context) and one
+       selection (the pinned step + the brushed range); these are the
+       three questions you can ask it — what is in the window, what the
+       agent did, what changed it. */
+    .cx-modes {
+      flex: none; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;
+      padding: 8px 0 7px; border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 4; background: var(--bg);
+    }
+    .cx-mode {
+      font: inherit; font-size: 11px; background: none; cursor: pointer;
+      border: 1px solid transparent; border-radius: 5px; color: var(--text-faint); padding: 3px 10px;
+    }
+    .cx-mode:hover { color: var(--text); background: var(--hover); }
+    .cx-mode.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-mode-n { color: var(--text-faint); font-size: 10px; margin-left: 4px; font-variant-numeric: tabular-nums; }
+    .cx-mode-r { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .cx-deck-hint { flex: none; font-size: 10px; color: var(--text-faint); padding: 7px 0 3px; }
+    .cx-deck-hint b { color: var(--text-muted); font-weight: 400; }
     .cx-head .thread-label { color: var(--text); }
     .cx-goto { margin-left: auto; color: var(--accent); font-size: 11px; text-decoration: none; flex: none; }
     .cx-goto:hover { text-decoration: underline; }
@@ -1513,6 +1518,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; background: var(--cx, var(--text-faint)); }
     .cx-topt { padding-top: 8px; font-size: 10px; color: var(--text-faint); line-height: 1.6; }
     .cx-topt b { color: var(--text-muted); font-weight: 500; }
+    /* where the thread's wall-clock went: the time track's totals, and the
+       legend that names its three hues */
+    .cx-lanes { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin: 2px 0 6px; background: var(--bg-surface); }
+    .cx-lane { min-width: 2px; }
+    .cx-lane-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--text-faint); }
+    .cx-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
     /* the margin's own section labels — quieter than the canvas's h4s,
        because the margin is one continuous sheet, not stacked reports */
     .cx-mlabel {
@@ -1530,28 +1541,69 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        sibling is #cx-bal itself and the rule above cannot reach it. */
     .cx-mblock + .cx-mblock,
     #cx-bal + .cx-mblock { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
-    /* ---- the trajectory: every step as a countable population ----
-       One column per step (or turn), newest at the right, outliers
-       (compaction cuts, failed requests) raised out of the row so the
-       trouble is findable without reading every bar. Columns GROW to
-       fill the canvas when a thread is short — a 17-bar chart pinned to
-       9px in a 1000px field reads as broken, not as small. */
-    .cx-chart-wrap { position: relative; padding-left: 42px; }
-    .cx-scale {
-      position: absolute; left: 0; top: 0; width: 38px; text-align: right;
-      z-index: 1; pointer-events: none;
-      font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+    /* ---- the OVERVIEW: the page's time axis, DevTools-shaped ----
+       Two tracks on one x axis — the assembled context per step, then
+       where that step's wall-clock went — under one brush. Drag to
+       select a range, wheel to zoom, drag the handles to resize, drag
+       the window to pan, click a column to pin it. Everything below
+       reads that selection: the PIN drives the balance and the window
+       deck, the RANGE scopes the stream and the events.
+       Columns are equal-width and GAPLESS on purpose: the brush overlay
+       positions its edges at i/N of the track, which is only exact when
+       every column occupies exactly 1/N of it (a 2px gap drifts the
+       overlay by a column-width across 100 steps). The breathing room
+       moved inside the column, where it costs the geometry nothing. */
+    .cx-ov { --cx-ov-h: 116px; --cx-ov-th: 24px; flex: none; border-bottom: 1px solid var(--border); padding: 0 16px 7px; }
+    .cx-ov-bar {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 7px 0 6px; font-size: 10px; color: var(--text-faint);
     }
-    .cx-chart {
-      display: flex; align-items: flex-end; gap: 2px; height: 132px;
-      overflow-x: auto; overflow-y: hidden; padding: 14px 2px 2px;
-      border-bottom: 1px solid var(--border);
+    .cx-ov-sel { color: var(--accent); }
+    .cx-ov-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+    .cx-ov-z { font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+    .cx-ov-body { display: flex; align-items: stretch; gap: 6px; }
+    /* the gutter names each track and states its own top of scale — a
+       track whose height means something unstated is a decoration */
+    .cx-ov-gut { flex: 0 0 38px; display: flex; flex-direction: column; text-align: right; }
+    .cx-ov-gl {
+      display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;
+      font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums; line-height: 1.35;
     }
+    .cx-ov-gn { text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
+    .cx-ov-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+    .cx-ov-tracks { position: relative; touch-action: none; user-select: none; }
+    .cx-chart { display: flex; align-items: flex-end; height: var(--cx-ov-h); padding-top: 13px; }
     .cx-colw {
       display: flex; flex-direction: column; align-items: center;
       justify-content: flex-end; height: 100%; cursor: pointer;
-      flex: 1 1 9px; min-width: 5px; max-width: 22px;
+      flex: 1 1 0; min-width: 0;
     }
+    .cx-colw.out { opacity: 0.32; }
+    /* The COLUMN always takes exactly 1/N of the track (the brush's
+       geometry depends on it) — the BAR inside it is what gets capped, so
+       a five-step thread reads as five slim bars across the axis instead
+       of a 110px huddle in a 1000px field, and every column keeps a
+       full-width hit target. */
+    /* the time track: where THIS step's wall-clock went (model, then the
+       gap to the next request — tools when the reply made calls, waiting
+       when the harness came back on its own). Same x, same brush; the
+       totals and the legend live in the margin. */
+    .cx-time { display: flex; align-items: flex-end; height: var(--cx-ov-th); border-top: 1px solid var(--border); padding-top: 2px; }
+    .cx-tw { display: flex; align-items: flex-end; justify-content: center; height: 100%; flex: 1 1 0; min-width: 0; cursor: pointer; }
+    .cx-tw.out { opacity: 0.32; }
+    .cx-tb { display: flex; flex-direction: column-reverse; width: calc(100% - 2px); min-width: 1px; max-width: 28px; border-radius: 1px 1px 0 0; overflow: hidden; }
+    .cx-tb > span { width: 100%; }
+    /* the brush: two dim panels and a window with grab handles */
+    .cx-brush { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+    .cx-brush-dim { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); }
+    .cx-brush-win {
+      position: absolute; top: 0; bottom: 0;
+      border-left: 1px solid var(--accent); border-right: 1px solid var(--accent);
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
+    .cx-brush-h { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; pointer-events: auto; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+    .cx-brush-h.l { left: -4px; }
+    .cx-brush-h.r { right: -4px; }
     /* the raised outlier: a cut is an axis break, drawn full height. AMBER,
        because that is what .rp-mark.cut already paints this exact wire fact
        on the replay track — one compaction, one color, both surfaces. (The
@@ -1564,7 +1616,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .cx-mark { font-size: 9px; line-height: 1.2; color: var(--amber); }
     .cx-col {
-      display: flex; flex-direction: column-reverse; width: 100%;
+      display: flex; flex-direction: column-reverse; width: calc(100% - 2px); min-width: 1px; max-width: 28px;
       border-radius: 1px 1px 0 0; overflow: hidden;
     }
     .cx-colw:hover .cx-col, .cx-colw.pinned .cx-col { outline: 1px solid var(--accent); outline-offset: 1px; }
@@ -1726,13 +1778,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-th-n { flex: 0 0 42px; text-align: right; color: var(--text); }
     .cx-th-pct { flex: 0 0 28px; text-align: right; color: var(--text-faint); }
     .cx-th-cut { flex: 0 0 22px; text-align: right; color: var(--purple); font-size: 9px; }
-    /* Narrow tier: the margin unsticks and becomes the sheet's top block.
-       960px is the page's established breakpoint (threads rail, detail). */
+    /* Narrow tier: the margin unsticks and becomes the sheet's top block,
+       and the two-column decks stack. 960px is the page's established
+       breakpoint (threads rail, detail). */
     @media (max-width: 960px) {
-      .cx-cols { display: block; }
+      .cx-cols { display: block; overflow-y: auto; }
       .cx-margin {
-        position: static; max-height: none; overflow: visible;
-        padding: 0 0 14px; margin-bottom: 14px;
+        flex: none; overflow: visible;
+        padding: 12px 16px 14px; margin-bottom: 14px;
         border-right: none; border-bottom: 1px solid var(--border);
         /* a band of columns, not one stretched sheet: a ledger row spread
            across 1400px puts 800px of nothing between label and amount.
@@ -1740,10 +1793,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
            and leave dead cells; columns just pack. */
         columns: 300px; column-gap: 28px;
       }
+      .cx-canvas, .cx-canvas.mode-stream { overflow: visible; }
       #cx-bal { display: block; }
       .cx-mblock { break-inside: avoid; padding-bottom: 14px; }
       .cx-mblock + .cx-mblock,
       #cx-bal + .cx-mblock { padding-top: 0; margin-top: 0; border-top: none; }
+      .tj-body { flex-direction: column; }
+      .tj-list { max-height: 58vh; }
+      .tj-detail { width: auto; max-width: none; min-width: 0; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
     }
     /* the rail's trajectory gutter: per-step context occupancy, split into
        the cached prefix and what was billed fresh (session view) */
@@ -1782,8 +1839,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="tabs">
       <button class="tab active" id="tab-requests">requests</button>
       <button class="tab" id="tab-session">sessions</button>
-      <button class="tab" id="tab-context" title="context&#10;What the model&#8217;s context window is assembled from, request by request &#8212; composition, history, events, and a per-step browser.">context</button>
-      <button class="tab" id="tab-trajectory" title="trajectory&#10;The agent&#8217;s path as one linear stream of records &#8212; system, the human, the CONTEXT the harness injected inline, the model&#8217;s thinking, each tool call fused with its result, the reply. Where the time went, at MAP / READ / FULL detail.">trajectory</button>
+      <button class="tab" id="tab-context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it">context</button>
     </span>
     <span class="tb-group" id="tb-list">
       <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
@@ -1844,7 +1900,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <div id="pulse"></div>
   </div>
   <div id="context-view"></div>
-  <div id="trajectory-view"></div>
 
   <script>${markedSrc}</script>
   <script>
@@ -1906,9 +1961,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session + context views
     let ctxGran = localStorage.getItem('cctrace-ctx-gran') === 'turn' ? 'turn' : 'step';
-    let ctxPinned = null;       // pinned step's pairId (context history chart)
+    let ctxPinned = null;       // pinned step's pairId (the overview's click)
     let ctxEvFilter = 'all';    // context events filter
     let ctxSort = localStorage.getItem('cctrace-ctx-sort') === 'order' ? 'order' : 'size';
+    // The three readings of one selection. The deck is a preference, so it
+    // survives reloads and thread switches; the RANGE and the ZOOM belong
+    // to the thread you are looking at and reset when it changes.
+    const CTX_MODES = ['window', 'stream', 'events'];
+    let ctxMode = localStorage.getItem('cctrace-ctx-mode') || 'window';
+    if (CTX_MODES.indexOf(ctxMode) === -1) ctxMode = 'window';
+    function setCtxMode(m) {
+      if (CTX_MODES.indexOf(m) === -1) return;
+      ctxMode = m;
+      localStorage.setItem('cctrace-ctx-mode', m);
+    }
+    // The brush: an inclusive [i0, i1] over the thread's flat step list
+    // (never over the turn columns), so the granularity toggle re-draws
+    // the same selection instead of silently meaning something else.
+    let ctxRange = null;
+    let ctxZoom = 1;            // 1 = fit; >1 = the overview is N screens wide
     let ctxFocusKey = '';       // context graph zoom (a node key; falls back to root)
     let ctxSelKey = '';         // context graph selection (drives the detail pane)
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
@@ -2073,8 +2144,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const tabRequests = document.getElementById('tab-requests');
     const tabSession = document.getElementById('tab-session');
     const tabContext = document.getElementById('tab-context');
-    const tabTrajectory = document.getElementById('tab-trajectory');
-    const trajectoryEl = document.getElementById('trajectory-view');
     const contextEl = document.getElementById('context-view');
 
     // Dashboard link: only meaningful when a server answers /dashboard —
@@ -2422,10 +2491,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 the Trajectory view \\u2014 a thread as one time-anchored stream of records: system, your turns, injected context inline, thinking, tool call + result, reply; MAP / READ / FULL\\n' +
-        '\\u00b7 the Context view \\u2014 what the window is assembled from, request by request: a ledger margin against the model\\u2019s limit, an icicle graph of the step, every injection and compaction as an event\\n' +
+        '\\u00b7 the Context view, rebuilt \\u2014 an interactive overview on top (context per request + where its time went, one x axis): drag to select a range, wheel to zoom, click to pin a step\\n' +
+        '\\u00b7 three readings of that selection \\u2014 the WINDOW (the pinned step decomposed as an icicle), the STREAM (every record the run produced, injections inline, MAP / READ / FULL), the EVENTS (what grew or reclaimed it)\\n' +
+        '\\u00b7 a margin that reconciles \\u2014 the provider\\u2019s prompt against the chars/4 estimate against the model\\u2019s limit, repainted on every scrub\\n' +
         '\\u00b7 provenance \\u2014 every item in the graph says which turn first carried it into the window; click to pin that step\\n' +
-        '\\u00b7 where the time went \\u2014 model / tools / waiting / between turns, off wire timestamps, on the Sessions chip and the Trajectory strip\\n' +
         '\\u00b7 the exit seal survives your terminal \\u2014 archive first, helper in its own session, orphaned seals recovered by the next run\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
@@ -2563,7 +2632,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
-          if (view === 'trajectory') showTrajectory(sessionSelKey);
           if (replay.active) renderReplayBar(); // track grows at the right edge
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
@@ -2578,7 +2646,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
-          if (view === 'trajectory') showTrajectory(sessionSelKey);
         } else if (msg.type === 'purged') {
           // Pairs deleted via select-to-purge (this page or another one on
           // the same server): drop them everywhere and re-render.
@@ -2592,7 +2659,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           refreshDetailNav();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
-          if (view === 'trajectory') showTrajectory(sessionSelKey);
         }
       };
     }
@@ -2901,25 +2967,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         }
         showSession(key, sub);
-      } else if ((m = h.match(/^#\\/context(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
-        // #/context[/<sid8-or-thread-key>[/<thread-key>]] — same key grammar
-        // as the sessions view; the selection is SHARED with it, so tab
-        // switches keep the conversation in focus.
+      } else if ((m = h.match(/^#\\/context(?:\\/([^/@=][^/]*))?(?:\\/([^/@=][^/]*))?(?:\\/=(\\w+))?$/))) {
+        // #/context[/<sid8-or-thread-key>[/<thread-key>]][/=<deck>] — same
+        // key grammar as the sessions view; the selection is SHARED with
+        // it, so tab switches keep the conversation in focus. The deck
+        // (window|stream|events) rides an '='-marked tail segment so it
+        // can never be mistaken for a thread key.
         let key = m[1] || null;
         if (key) { try { key = decodeURIComponent(key); } catch {} }
         let sub = m[2] || null;
         if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
+        if (m[3]) setCtxMode(m[3]);
         setView('context');
         showContext(key, sub);
       } else if ((m = h.match(/^#\\/trajectory(?:\\/([^/@][^/]*))?(?:\\/([^/@][^/]*))?$/))) {
-        // #/trajectory[/<sid8-or-thread-key>[/<thread-key>]] — same key
-        // grammar and shared selection as sessions/context.
+        // The Trajectory tab folded into the context page (0.45): the
+        // record stream is one of its three decks, not a second view of
+        // the same thread. Old links keep working — they land on the
+        // stream and rewrite themselves to the context route.
         let key = m[1] || null;
         if (key) { try { key = decodeURIComponent(key); } catch {} }
         let sub = m[2] || null;
         if (sub) { try { sub = decodeURIComponent(sub); } catch {} }
-        setView('trajectory');
-        showTrajectory(key, sub);
+        setCtxMode('stream');
+        setView('context');
+        showContext(key, sub);
+        history.replaceState(null, '', ctxHash(sessionSelKey, 'stream'));
       } else {
         setView('requests');
         closeDetail();
@@ -2937,23 +3010,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (v !== 'requests' && selMode) setSelMode(false);
       document.body.classList.toggle('view-session', v === 'session');
       document.body.classList.toggle('view-context', v === 'context');
-      document.body.classList.toggle('view-trajectory', v === 'trajectory');
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
       tabContext.classList.toggle('active', v === 'context');
-      tabTrajectory.classList.toggle('active', v === 'trajectory');
     }
     tabRequests.onclick = () => { location.hash = ''; };
     tabSession.onclick = () => { location.hash = '#/session'; };
     // The context tab keeps the sessions view's selection — same thread,
     // different lens.
-    tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey); };
-    tabTrajectory.onclick = () => { location.hash = tjHash(sessionSelKey); };
-    function ctxHash(key) {
-      return '#/context' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
-    }
-    function tjHash(key) {
-      return '#/trajectory' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
+    tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey, ctxMode); };
+    function ctxHash(key, mode) {
+      return '#/context' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '') +
+        (mode && mode !== 'window' ? '/=' + mode : '');
     }
 
     function openDetail(id) {
@@ -3050,12 +3118,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
       if (view === 'context') {
-        if (e.key === 'Escape') { location.hash = ''; return; }
+        const ctxThread = () => getThreads().find(x => x.key === sessionSelKey);
+        if (e.key === 'Escape') {
+          // Escape peels one layer at a time: the brushed range, then the
+          // zoom, then the view. Dropping straight out of a page you have
+          // scoped is the thing that makes a reader stop scoping.
+          const t = ctxThread();
+          if (ctxRange && t) { ctxRange = null; renderContextView(t); return; }
+          if (ctxZoom > 1 && t) { ctxZoom = 1; renderContextView(t); return; }
+          location.hash = '';
+          return;
+        }
+        if (e.key === '1' || e.key === '2' || e.key === '3') {
+          const t = ctxThread();
+          if (!t) return;
+          setCtxMode(CTX_MODES[+e.key - 1]);
+          history.replaceState(null, '', ctxHash(t.key, ctxMode));
+          renderContextView(t);
+          return;
+        }
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-          // Walk the pinned step through the history chart — the keyboard
-          // face of click-to-pin.
+          // Walk the pinned step through the overview — the keyboard face
+          // of click-to-pin.
           e.preventDefault();
-          const t = getThreads().find(x => x.key === sessionSelKey);
+          const t = ctxThread();
           if (!t) return;
           const steps = ctxData(t).tl.steps;
           if (!steps.length) return;
@@ -5128,7 +5214,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'wire requests whose reply matches no turn in the reconstruction (reply superseded before it entered history)');
       // The context view is the same thread through the other lens — what
       // each request's window was assembled from.
-      chips += '<a class="turn-wire" href="' + ctxHash(t.key) + '" title="context view\\nComposition, per-request history, events, and a per-step browser for this thread\\u2019s context window.">context \\u2192</a>';
+      chips += '<a class="turn-wire" href="' + ctxHash(t.key, ctxMode) + '" title="context view\\nThis thread\\u2019s context window over time \\u2014 an interactive overview, then the window decomposed, the record stream, or what changed it.">context \\u2192</a>';
       // The pane renders as a PARTS array — one string per top-level node —
       // so live re-renders can patch only the nodes whose html actually
       // changed (see the apply step below).
@@ -5450,7 +5536,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (s.mark === 'compact') bits.push('\\u2702 compaction \\u2014 the history above was folded');
       else if (s.mark === 'rewrite') bits.push('\\u2702 full rewrite \\u2014 history replaced by a continuation summary');
       else if (s.mark === 'rewind') bits.push('\\u2702 rewind \\u2014 history stepped back to an earlier point');
-      return bits.join('\\n') + '\\n---\\n> click to pin \\u00b7 hover previews the browser';
+      return bits.join('\\n') + '\\n---\\n> hover previews \\u00b7 click pins \\u00b7 drag selects a range';
     }
 
     function showContext(key, sub) {
@@ -5464,12 +5550,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderContextView(sel);
     }
 
-    // ---- Trajectory view: the thread as one linear stream of records ----
-    // (dsh's Trajectory tab, in cctrace's terms — trajectoryRecords in
-    // src/context.ts). Two panes like requests (list | inspector); the
-    // list is the agent's PATH, every record a row with context injections
-    // inline; the inspector opens the picked record's full block. The level
-    // toggle (archify's MAP/READ/FULL) filters, never summarizes.
+    // ---- the record stream (the "stream" deck) ----
+    // The thread as one linear stream of records — trajectoryRecords in
+    // src/context.ts. It shipped as its own tab in 0.44 and that was the
+    // error this rebuild corrects: it is not a second view of a thread,
+    // it is a READING of the same selection the overview owns. So it is a
+    // deck beside "window" and "events", scoped by the brushed range, and
+    // the thread identity / the time totals it used to carry in its own
+    // head now live where they belong (the page head, the margin).
+    // The level toggle (archify's MAP/READ/FULL) filters, never summarizes.
     let tjLevel = localStorage.getItem('cctrace-tj-level') || 'full';
     if (tjLevel !== 'full' && tjLevel !== 'read' && tjLevel !== 'map') tjLevel = 'full';
     let tjFilter = 'all';     // 'all' or a record kind
@@ -5477,19 +5566,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let tjSel = null;         // selected record index (_i), preserved across re-renders
     let tjCurThread = null;
     let tjRecs = [];          // the current thread's full records (each carries _i)
+    let tjResults = {};       // tool_use id -> result, for the inspector
     const TJ_KIND_COLOR = { system: '#8957e5', user: '#3fb950', context: '#db61a2', assistant: '#4184e4', tool: '#39c5cf' };
     const TJ_KINDS = ['all', 'user', 'context', 'assistant', 'tool'];
-
-    function showTrajectory(key, sub) {
-      const threads = getThreads();
-      if (!threads.length) {
-        trajectoryEl.innerHTML = '<div class="empty">No model calls captured yet.</div>';
-        return;
-      }
-      const sel = resolveThreadSel(threads, key, sub);
-      sessionSelKey = sel.key;
-      renderTrajectory(sel);
-    }
 
     function tjBadge(r) {
       const k = r.kind;
@@ -5503,11 +5582,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // else its block. The head names kind, turn.step, weight, and the wire.
     function renderTjDetail(r, results) {
       if (!r) return '<div class="cx-note">pick a record to open it</div>';
-      const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' \\u00b7 step ' + r.step : '') : '';
-      const wire = r.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(r.pairId) + '" title="open the wire request that carried this record">wire \\u2192</a>' : '';
+      const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' · step ' + r.step : '') : '';
+      const wire = r.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(r.pairId) + '" title="open the wire request that carried this record">wire →</a>' : '';
       const head = '<div class="tj-dh">' + tjBadge(r) +
         (addr ? '<span class="tj-dh-addr">' + addr + '</span>' : '') +
-        '<span class="tj-dh-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' + wire + '</div>';
+        '<span class="tj-dh-tok">≈' + fmtCompact(r.tokens) + '</span>' + wire + '</div>';
       let body = '';
       try {
         if (r.kind === 'system') body = renderSystem((r.block && r.block.blocks) || []);
@@ -5517,76 +5596,77 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return head + '<div class="tj-dbody">' + body + '</div>';
     }
 
-    function renderTrajectory(t) {
-      const same = tjCurThread && tjCurThread.key === t.key;
-      const prevTop = same ? (trajectoryEl.querySelector('.tj-list') || {}).scrollTop || 0 : 0;
-      // A live pair re-renders the whole view; the search box must survive
-      // it with focus and caret (the input handler's own re-render too).
-      const prevSearch = trajectoryEl.querySelector('#tj-search');
-      const searchFocused = !!prevSearch && document.activeElement === prevSearch;
-      const caret = searchFocused ? prevSearch.selectionStart : 0;
-      if (!same) tjSel = null; // a record index means nothing in another thread
-      tjCurThread = t;
-      tjRecs = trajectoryRecords(t);
-      tjRecs.forEach((r, i) => { r._i = i; });
-      // A results index for the inspector's tool renderer (tool_use -> result).
-      const results = {};
-      for (const r of tjRecs) if (r.kind === 'tool' && r.block && r.block.id) results[r.block.id] = r.result;
-      if (tjSel == null || tjSel >= tjRecs.length) tjSel = tjRecs.length ? 0 : null;
-
-      const leveled = trajectoryAtLevel(tjRecs, tjLevel);
-      let shown = leveled.records;
-      if (tjFilter !== 'all') shown = shown.filter(r => r.kind === tjFilter);
-      const q = tjQuery.trim().toLowerCase();
-      if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
-
-      // ---- head: identity + where the time went (the trajectory shape) ----
-      const model = t.model || (t.models && Object.keys(t.models)[0]) || '?';
-      const sid = t.sessionId ? t.sessionId.slice(0, 8) : '';
-      const split = threadTimeSplit(t, pairOf);
-      let lanes = '';
-      if (split.steps > 1 && split.wall > 0) {
-        const seg = (v, c, lbl) => v > 0 ? '<span class="tj-lane" style="flex:' + v + ';background:' + c + '" title="' + lbl + ' ' + fmtSpan(v) + '"></span>' : '';
-        const gapMs = Math.max(0, split.wall - split.model - split.tools - split.waiting - split.between);
-        lanes = '<div class="tj-lanes">' +
-          seg(split.model, '#4184e4', 'model') + seg(split.tools, '#39c5cf', 'tools') +
-          seg(split.waiting, '#d29922', 'waiting') + seg(split.between, 'var(--border)', 'between turns') +
-          (gapMs ? seg(gapMs, 'var(--border)', 'other') : '') + '</div>' +
-          '<div class="tj-lane-key">' +
-          '<span><i style="background:#4184e4"></i>model ' + fmtSpan(split.model) + '</span>' +
-          (split.tools ? '<span><i style="background:#39c5cf"></i>tools ' + fmtSpan(split.tools) + '</span>' : '') +
-          (split.waiting ? '<span><i style="background:#d29922"></i>waiting ' + fmtSpan(split.waiting) + '</span>' : '') +
-          (split.between ? '<span><i style="background:var(--border)"></i>between ' + fmtSpan(split.between) + '</span>' : '') +
-          '</div>';
-      }
-      const head = '<div class="tj-head">' +
-        '<div class="tj-title">' +
-          '<span class="tj-t-label" data-mask>' + escapeHtml(t.label || 'thread') + '</span>' +
-          '<span class="tj-t-meta">' + escapeHtml(shortModel(model) || model) +
-            (sid ? ' \\u00b7 <span data-mask>' + escapeHtml(sid) + '</span>' : '') + '</span>' +
-          '<a class="turn-wire" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
-        '</div>' + lanes +
-        '<div class="tj-counts">' + tjRecs.length + ' records \\u00b7 ' +
-          split.steps + ' wire step' + (split.steps === 1 ? '' : 's') +
-          (split.wall ? ' \\u00b7 ' + fmtSpan(split.wall) : '') +
-          (t.usage && t.usage.cost ? ' \\u00b7 ' + fmtCost(t.usage.cost) : '') + '</div>' +
-        '</div>';
-
-      // ---- toolbar: detail level (MAP/READ/FULL), kind filter, search ----
+    // The stream deck's own controls — level, kind, search — for the deck
+    // bar's right side. They belong to this reading, not to the page.
+    function renderStreamControls(hidden) {
       const lvlBtn = (v, lbl, tip) => '<button class="tj-lvl' + (tjLevel === v ? ' active' : '') + '" data-tjlvl="' + v + '" title="' + tip + '">' + lbl + '</button>';
       const kindBtn = k => '<button class="tj-kind' + (tjFilter === k ? ' active' : '') + '" data-tjkind="' + k + '"' +
         (k !== 'all' ? ' style="--tjc:' + (TJ_KIND_COLOR[k] || 'var(--text-faint)') + '"' : '') + '>' + k + '</button>';
-      const toolbar = '<div class="tj-toolbar">' +
-        '<span class="tj-lvls" title="detail level \\u2014 the stream is always complete; the level decides what earns a row">' +
-          lvlBtn('map', 'map', 'skeleton: the human\\u2019s turns and the tool calls') +
+      return '<span class="tj-toolbar">' +
+        (hidden ? '<span class="tj-hidden">' + hidden + ' hidden at this level</span>' : '') +
+        '<span class="tj-lvls" title="detail level — the stream is always complete; the level decides what earns a row">' +
+          lvlBtn('map', 'map', 'skeleton: the human’s turns and the tool calls') +
           lvlBtn('read', 'read', 'drop the budget banners and bare thinking; keep the substance') +
           lvlBtn('full', 'full', 'every record') + '</span>' +
         '<span class="tj-kinds">' + TJ_KINDS.map(kindBtn).join('') + '</span>' +
-        '<input type="text" class="tj-search" id="tj-search" placeholder="find in trajectory\\u2026" value="' + escapeHtml(tjQuery) + '">' +
-        (leveled.hidden ? '<span class="tj-hidden">' + leveled.hidden + ' hidden at this level</span>' : '') +
-        '</div>';
+        '<input type="text" class="tj-search" id="tj-search" placeholder="find in stream…" value="' + escapeHtml(tjQuery) + '">' +
+        '</span>';
+    }
 
-      // ---- the record stream ----
+    // Build the thread's records once per render. Returns the leveled set
+    // (records + how many the level hid), which the deck bar captions.
+    let tjCache = { key: '', n: -1 };
+    function tjBuild(t) {
+      if (!tjCurThread || tjCurThread.key !== t.key) tjSel = null; // an index means nothing in another thread
+      tjCurThread = t;
+      // The deck bar states the record count in every mode, so this walk
+      // runs on every render — memoized on (thread, spine length), which
+      // is exactly what a live pair changes.
+      const n = (t.turns || []).length;
+      if (tjCache.key !== t.key || tjCache.n !== n) {
+        tjRecs = trajectoryRecords(t);
+        tjRecs.forEach((r, i) => { r._i = i; });
+        tjResults = {};
+        for (const r of tjRecs) if (r.kind === 'tool' && r.block && r.block.id) tjResults[r.block.id] = r.result;
+        tjCache = { key: t.key, n };
+      }
+      if (tjSel == null || tjSel >= tjRecs.length) tjSel = tjRecs.length ? 0 : null;
+      return trajectoryAtLevel(tjRecs, tjLevel);
+    }
+
+    // The brushed range, in RECORD space. The stream is one contiguous run
+    // in spine order, so a range of wire steps is a contiguous SLICE of
+    // it: from the first record attributed to the range's first step to
+    // the last attributed to its last. It cannot be a pairId membership
+    // test — most of a long spine has no wire pair of its own (the
+    // history came in on request bodies whose own requests were never
+    // captured, or live in a prior trace), and keeping every
+    // unattributed record made a 5-of-26 brush drop 47 rows out of 417.
+    // Bounds are computed over the FULL record list, so the slice means
+    // the same thing at every detail level.
+    function tjRangeBounds(ids) {
+      if (!ids) return null;
+      let lo = -1, hi = -1;
+      for (let i = 0; i < tjRecs.length; i++) {
+        const id = tjRecs[i].pairId;
+        if (id && ids[id]) { if (lo === -1) lo = i; hi = i; }
+      }
+      return lo === -1 ? { lo: 0, hi: -1 } : { lo, hi };
+    }
+
+    // The stream, as HTML, sliced to the brushed range — the same
+    // selection the overview shows, so a dragged window and the rows
+    // under it can never disagree.
+    function renderCtxStream(leveled, bounds) {
+      let shown = leveled.records;
+      if (bounds) shown = shown.filter(r => r._i >= bounds.lo && r._i <= bounds.hi);
+      if (tjFilter !== 'all') shown = shown.filter(r => r.kind === tjFilter);
+      const q = tjQuery.trim().toLowerCase();
+      if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
+      // A pick outside the slice would leave the inspector showing a
+      // record the list does not have — land on the slice's first row
+      // instead. An in-slice pick is the reader's and survives.
+      if (bounds && shown.length && (tjSel == null || tjSel < bounds.lo || tjSel > bounds.hi)) tjSel = shown[0]._i;
       let rows = '';
       let lastOrd = -2;
       for (const r of shown) {
@@ -5599,45 +5679,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
           tjBadge(r) +
           '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(r.label) + '</span>' +
-          (isTool && r.detail ? '<span class="tj-arrow">\\u2192</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
+          (isTool && r.detail ? '<span class="tj-arrow">→</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
           '<span class="tj-gap"></span>' +
-          '<span class="tj-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' +
+          '<span class="tj-tok">≈' + fmtCompact(r.tokens) + '</span>' +
         '</a>';
       }
-      if (!shown.length) rows = '<div class="cx-note">no records match this filter</div>';
+      if (!shown.length) rows = '<div class="cx-note">no records match this ' + (inRange ? 'range/filter' : 'filter') + '</div>';
+      return '<div class="tj-body"><div class="tj-list" id="tj-list">' + rows + '</div>' +
+        '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], tjResults) + '</aside></div>';
+    }
 
-      trajectoryEl.innerHTML = head + toolbar +
-        '<div class="tj-body"><div class="tj-list">' + rows + '</div>' +
-        '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], results) + '</aside></div>';
-
-      const list = trajectoryEl.querySelector('.tj-list');
-      if (list && same) list.scrollTop = prevTop;
-      const detailEl2 = trajectoryEl.querySelector('#tj-detail');
-      // Row click -> open in the inspector (no navigation, like requests).
-      trajectoryEl.querySelectorAll('.tj-row').forEach(a => {
+    // The stream's own wiring. Row clicks open the inspector in place (no
+    // navigation, like the requests list); the level/kind/search controls
+    // repaint just the deck, so the overview above never flickers.
+    function wireCtxStream(root, repaint) {
+      const detail = root.querySelector('#tj-detail');
+      root.querySelectorAll('.tj-row').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           tjSel = +a.dataset.tj;
-          trajectoryEl.querySelectorAll('.tj-row.sel').forEach(x => x.classList.remove('sel'));
+          root.querySelectorAll('.tj-row.sel').forEach(x => x.classList.remove('sel'));
           a.classList.add('sel');
-          if (!detailEl2) return;
-          detailEl2.innerHTML = renderTjDetail(tjRecs[tjSel], results);
-          detailEl2.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
+          if (!detail) return;
+          detail.innerHTML = renderTjDetail(tjRecs[tjSel], tjResults);
+          detail.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
         });
-      });
-      // Level / kind / search controls re-render (cheap; the walk is memo-free
-      // but the thread is small relative to the page).
-      trajectoryEl.querySelectorAll('[data-tjlvl]').forEach(b => b.addEventListener('click', () => {
-        tjLevel = b.dataset.tjlvl; localStorage.setItem('cctrace-tj-level', tjLevel); renderTrajectory(t);
-      }));
-      trajectoryEl.querySelectorAll('[data-tjkind]').forEach(b => b.addEventListener('click', () => {
-        tjFilter = b.dataset.tjkind; renderTrajectory(t);
-      }));
-      const search = trajectoryEl.querySelector('#tj-search');
-      if (search && searchFocused) { search.focus(); try { search.setSelectionRange(caret, caret); } catch {} }
-      if (search) search.addEventListener('input', () => {
-        tjQuery = search.value;
-        renderTrajectory(t);
       });
     }
 
@@ -5826,7 +5892,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return h;
     }
 
-    function renderCtxEvents(events, addr) {
+    // The events deck's filter chips live in the deck bar, beside the mode
+    // buttons — the same place every other deck's controls sit.
+    function ctxEventChips(events) {
       const kinds = {};
       for (const ev of events) kinds[ev.kind] = (kinds[ev.kind] || 0) + 1;
       let chips = '<button class="cx-fchip' + (ctxEvFilter === 'all' ? ' active' : '') + '" data-evf="all">all ' + events.length + '</button>';
@@ -5834,6 +5902,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!kinds[k]) continue;
         chips += '<button class="cx-fchip' + (ctxEvFilter === k ? ' active' : '') + '" data-evf="' + k + '">' + k + ' ' + kinds[k] + '</button>';
       }
+      return chips;
+    }
+
+    function renderCtxEvents(events, addr) {
       const list = events.filter(ev => ctxEvFilter === 'all' || ev.kind === ctxEvFilter);
       // Newest first — the question is "what just changed my window".
       // A recurring injector (the per-step token-budget banner fires on
@@ -5891,9 +5963,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           (ev.t ? '<span class="cx-ev-time">' + fmtTime(new Date(ev.t * 1000)) + '</span>' : '') +
           '</div>';
       }
-      if (!rows) rows = '<div class="cx-more">no context events' + (ctxEvFilter !== 'all' ? ' of this kind' : '') + '</div>';
+      if (!rows) rows = '<div class="cx-more">no context events' + (ctxEvFilter !== 'all' ? ' of this kind' : '') + (ctxRange ? ' in this range' : '') + '</div>';
       if (rolled.length > CAP) rows += '<div class="cx-more">+' + (rolled.length - CAP) + ' older rows not shown</div>';
-      return '<div class="cx-h4-right" id="cx-ev-chips" style="display:flex;gap:4px;flex-wrap:wrap;padding-bottom:6px">' + chips + '</div>' + rows;
+      return rows;
     }
 
     function ctxItemBody(it) {
@@ -6157,6 +6229,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         ctxSelKey = t.dataset.cxnode;
         if (t.dataset.cxkids === '1') ctxFocusKey = t.dataset.cxnode;
       }
+      // A ledger line is a control on the GRAPH, and the margin is beside
+      // every deck. Clicking one from the stream or the events deck asks
+      // to see that category — so it brings the window deck with it.
+      if (ctxMode !== 'window' && ctxCurThread) {
+        setCtxMode('window');
+        renderContextView(ctxCurThread);
+        return;
+      }
       const gr = document.getElementById('cx-graph');
       if (gr && ctxLast.step) {
         // a zoom/select CHANGES what the pane shows, so its old scroll is
@@ -6217,7 +6297,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             (w ? ' \\u00b7 ' + pct + '% of a ' + fmtCompact(w) + ' window' : ' \\u00b7 window unknown') +
             (st.cuts ? '\\n' + st.cuts + ' compaction/rewind boundar' + (st.cuts === 1 ? 'y' : 'ies') : '') +
             '\\n---\\n> click to open this thread\\u2019s context';
-          rows += '<a class="cx-th' + (x.key === sel.key ? ' selected' : '') + '" href="' + ctxHash(x.key) + '"' +
+          rows += '<a class="cx-th' + (x.key === sel.key ? ' selected' : '') + '" href="' + ctxHash(x.key, ctxMode) + '"' +
             ' data-tip="' + escapeHtml(tip) + '">' +
             '<span class="tkind tkind-' + x.kind + '">' + x.kind + '</span>' +
             '<span class="cx-th-label">' + escapeHtml(x.label) + '</span>' +
@@ -6258,7 +6338,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     // The margin redraws on every scrub — the balance ticking as you move
-    // down the trajectory IS the form. Its own scroll survives (a long
+    // across the overview IS the form. Its own scroll survives (a long
     // thread list must not jump), and the threads block is left alone:
     // only the balance/ledger/step region depends on the picked step.
     function ctxRepaintMargin(s, addr) {
@@ -6272,10 +6352,197 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     let ctxThreadKey = null;
     let ctxGraphTimer = 0;
+    const CTX_ZOOM_MAX = 32;
+    // The time track's hues: the same three the sessions thread header's
+    // "time" chip already uses, so model/tools/waiting is one vocabulary.
+    const CX_TIME_C = { model: '#4184e4', tools: '#39c5cf', waiting: '#d29922' };
+
+    // ---- the overview's columns ----
+    // One entry per drawn column, each carrying the STEP SPAN it covers
+    // (i0..i1 into the flat step list). Step granularity is 1:1; turn
+    // granularity folds a working loop's steps into one column via the
+    // tested aggregator. The span is what lets the brush, the dimming and
+    // the range filter all speak one coordinate system regardless of which
+    // granularity is on screen.
+    function ctxColumns(steps, addr) {
+      if (ctxGran !== 'turn') {
+        return steps.map((s, i) => ({ s, i0: i, i1: i, n: 1, mark: s.mark || '', failed: s.failed ? 1 : 0, ord: (addr[s.pairId] || {}).ord, lbl: '' }));
+      }
+      const turns = ctxAggregateTurns(steps, addr);
+      const out = [];
+      let at = 0;
+      for (const tb of turns) {
+        const i0 = at, i1 = at + tb.steps - 1;
+        at = i1 + 1;
+        const s = tb.mark && !tb.last.mark ? { ...tb.last, mark: tb.mark } : tb.last;
+        out.push({
+          s, i0, i1, n: tb.steps, mark: tb.mark || s.mark || '', failed: tb.failed, ord: tb.ord,
+          lbl: tb.ord != null ? (tb.ord + 1 < 10 ? '0' + (tb.ord + 1) : '' + (tb.ord + 1)) : '',
+        });
+      }
+      return out;
+    }
+
+    // Per-step wall-clock, for the time track: the request's own duration
+    // (model), then the gap to the next request of the same working loop —
+    // tools when the reply made calls, waiting when the harness came back
+    // on its own. Every figure is a wire timestamp; nothing is estimated.
+    function ctxStepTime(s, split) {
+      const p = pairOf(s.pairId);
+      const b = (split && split.byPair && split.byPair[s.pairId]) || {};
+      return { model: (p && p.duration) || 0, tools: b.tools || 0, waiting: b.waiting || 0 };
+    }
+    function ctxColTime(col, steps, split) {
+      const out = { model: 0, tools: 0, waiting: 0 };
+      for (let i = col.i0; i <= col.i1 && i < steps.length; i++) {
+        const x = ctxStepTime(steps[i], split);
+        out.model += x.model; out.tools += x.tools; out.waiting += x.waiting;
+      }
+      out.total = out.model + out.tools + out.waiting;
+      return out;
+    }
+
+    function ctxOut(col) { return !!ctxRange && (col.i1 < ctxRange.i0 || col.i0 > ctxRange.i1); }
+
+    // The brush window, in column space. The range is stored in STEP
+    // indices, so a turn-granularity brush covers every column whose span
+    // touches it — the drawn edge never cuts a column in half.
+    function ctxBrushHtml(cols) {
+      if (!ctxRange || !cols.length) return '';
+      let c0 = -1, c1 = -1;
+      for (let i = 0; i < cols.length; i++) {
+        if (cols[i].i1 >= ctxRange.i0 && cols[i].i0 <= ctxRange.i1) { if (c0 === -1) c0 = i; c1 = i; }
+      }
+      if (c0 === -1) return '';
+      const a = (c0 / cols.length) * 100, b = ((c1 + 1) / cols.length) * 100;
+      return '<span class="cx-brush-dim" style="left:0;width:' + a.toFixed(3) + '%"></span>' +
+        '<span class="cx-brush-dim" style="left:' + b.toFixed(3) + '%;right:0"></span>' +
+        '<span class="cx-brush-win" style="left:' + a.toFixed(3) + '%;width:' + (b - a).toFixed(3) + '%">' +
+          '<span class="cx-brush-h l" data-edge="l"></span><span class="cx-brush-h r" data-edge="r"></span></span>';
+    }
+
+    // What the brush says out loud. A range that is not stated is a range
+    // the reader has to infer from a rectangle.
+    function ctxRangeCaption(steps, addr) {
+      if (!ctxRange) return '';
+      const n = ctxRange.i1 - ctxRange.i0 + 1;
+      const a = ctxOrdLbl(addr, steps[ctxRange.i0].pairId);
+      const b = ctxOrdLbl(addr, steps[Math.min(ctxRange.i1, steps.length - 1)].pairId);
+      const span = a && b ? (a === b ? a : a + ' → ' + b) : '';
+      return n + ' of ' + steps.length + ' selected' + (span ? ' · ' + span : '') + ' · esc clears';
+    }
+
+    function ctxTrackStyle() {
+      return 'width:' + (ctxZoom > 1 ? (ctxZoom * 100).toFixed(2) : '100') + '%';
+    }
+
+    // ---- the overview ----
+    // Two tracks on one x axis under one brush. It is the page's time
+    // axis: the PIN it sets drives the balance and the window deck, the
+    // RANGE it brushes scopes the stream and the events.
+    function renderCtxOverview(steps, addr, cols, maxT, split, loops) {
+      const N = cols.length;
+      let maxTime = 0;
+      const times = [];
+      const hasTime = !!(split && split.steps > 1 && split.wall > 0);
+      if (hasTime) {
+        for (const c of cols) { const x = ctxColTime(c, steps, split); times.push(x); if (x.total > maxTime) maxTime = x.total; }
+      }
+      let ctxCols = '', timeCols = '';
+      for (let i = 0; i < N; i++) {
+        const c = cols[i], s = c.s;
+        const total = ctxStepTotal(s);
+        const hpct = Math.max(2, (total / maxT) * 100);
+        const extra = c.n > 1 ? c.n + ' steps in this turn' + (c.failed ? ' · ' + c.failed + ' failed' : '') : '';
+        const out = ctxOut(c) ? ' out' : '';
+        ctxCols += '<span class="cx-colw' + (s.pairId === ctxPinned ? ' pinned' : '') + (c.mark ? ' cut' : '') + out +
+          '" data-cxbar="' + escapeHtml(s.pairId) + '" data-cxc="' + i + '"' +
+          ' data-tip="' + escapeHtml(ctxBarTip(s, addr, extra)) + '">' +
+          (c.mark ? '<span class="cx-mark">✂</span>' : '') +
+          '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%">' +
+          ctxColSegs(s) + '</span>' +
+          (c.lbl ? '<span class="cx-tlbl">' + escapeHtml(c.lbl) + '</span>' : '') + '</span>';
+        if (!hasTime) continue;
+        const x = times[i];
+        let segs = '';
+        for (const k of ['model', 'tools', 'waiting']) {
+          if (!x[k]) continue;
+          segs += '<span style="height:' + ((x[k] / x.total) * 100).toFixed(2) + '%;background:' + CX_TIME_C[k] + '"></span>';
+        }
+        const tip = (ctxOrdLbl(addr, s.pairId) || 'wire request') +
+          (x.total ? '\\nmodel ' + fmtSpan(x.model) +
+            (x.tools ? '\\ntools ' + fmtSpan(x.tools) : '') + (x.waiting ? '\\nwaiting ' + fmtSpan(x.waiting) : '')
+            : '\\nno duration on the wire for this step') +
+          '\\n---\\n> every figure is a wire timestamp';
+        timeCols += '<span class="cx-tw' + out + '" data-cxbar="' + escapeHtml(s.pairId) + '" data-cxc="' + i + '"' +
+          ' data-tip="' + escapeHtml(tip) + '">' +
+          (x.total && maxTime
+            ? '<span class="cx-tb" style="height:max(2px,' + ((x.total / maxTime) * 100).toFixed(2) + '%)">' + segs + '</span>'
+            : '') + '</span>';
+      }
+      const gut = '<div class="cx-ov-gut">' +
+        '<div class="cx-ov-gl" style="height:var(--cx-ov-h)"><span>' + fmtCompact(maxT) + '</span><span class="cx-ov-gn">ctx</span></div>' +
+        (hasTime ? '<div class="cx-ov-gl" style="height:var(--cx-ov-th)"><span>' + fmtSpan(maxTime) + '</span><span class="cx-ov-gn">time</span></div>' : '') +
+        '</div>';
+      const tracks = '<div class="cx-ov-tracks" id="cx-tracks" style="' + ctxTrackStyle() + '">' +
+        '<div class="cx-chart">' + ctxCols + '</div>' +
+        (hasTime ? '<div class="cx-time">' + timeCols + '</div>' : '') +
+        '<div class="cx-brush" id="cx-brush">' + ctxBrushHtml(cols) + '</div>' +
+        '</div>';
+      const cap = steps.length + ' wire request' + (steps.length === 1 ? '' : 's') +
+        ' · ' + loops + ' working loop' + (loops === 1 ? '' : 's') +
+        ' · drag to select · wheel to zoom · click pins';
+      const bar = '<div class="cx-ov-bar">' +
+        '<span>' + escapeHtml(cap) + '</span>' +
+        '<span class="cx-ov-sel" id="cx-ov-sel" data-tip="the brushed range \u2014 it scopes the stream and the events, never the balance\\n---\\n> drag inside it to move it \u00b7 drag an edge to resize \u00b7 esc clears">' +
+          escapeHtml(ctxRangeCaption(steps, addr)) + '</span>' +
+        '<span class="cx-ov-tools">' +
+          '<button class="cx-fchip' + (ctxGran === 'step' ? ' active' : '') + '" data-cxgran="step" title="one column per wire request">step</button>' +
+          '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn" title="one column per working loop — its deepest step is the face">turn</button>' +
+          '<button class="cx-fchip" data-cxzoomb="out" title="zoom out">−</button>' +
+          '<span class="cx-ov-z" id="cx-ov-z">' + (ctxZoom > 1 ? ctxZoom.toFixed(1) + '×' : 'fit') + '</span>' +
+          '<button class="cx-fchip" data-cxzoomb="in" title="zoom in">+</button>' +
+          '<button class="cx-fchip" data-cxzoomb="fit" title="fit the whole thread, clear the range">reset</button>' +
+        '</span></div>';
+      return '<div class="cx-ov" id="cx-ov">' + bar +
+        '<div class="cx-ov-body">' + gut + '<div class="cx-ov-scroll" id="cx-ov-scroll">' + tracks + '</div></div></div>';
+    }
+
+    // ---- where the thread's wall-clock went (margin block) ----
+    // The time track's totals and its legend. It lives in the margin
+    // because it is a standing total, not an event — and because a track
+    // whose colors are never named is a decoration.
+    function renderCtxTimeBlock(split) {
+      if (!split || split.steps < 2 || !split.wall) return '';
+      const other = Math.max(0, split.wall - split.model - split.tools - split.waiting - split.between);
+      const lanes = [
+        { k: 'model', v: split.model, c: CX_TIME_C.model },
+        { k: 'tools', v: split.tools, c: CX_TIME_C.tools },
+        { k: 'waiting', v: split.waiting, c: CX_TIME_C.waiting },
+        { k: 'between turns', v: split.between, c: 'var(--border)' },
+        { k: 'other', v: other, c: 'var(--border)' },
+      ].filter(x => x.v > 0);
+      if (!lanes.length) return '';
+      const seg = lanes.map(x => '<span class="cx-lane" style="flex:' + x.v + ';background:' + x.c + '" title="' + x.k + ' ' + fmtSpan(x.v) + '"></span>').join('');
+      const key = lanes.filter(x => x.k !== 'other').map(x =>
+        '<span><i style="background:' + x.c + '"></i>' + x.k + ' ' + fmtSpan(x.v) + '</span>').join('');
+      return '<div class="cx-mblock"><div class="cx-mlabel">where the time went<span class="cx-mlabel-r">' + fmtSpan(split.wall) + ' wall</span></div>' +
+        '<div class="cx-lanes">' + seg + '</div><div class="cx-lane-key">' + key + '</div></div>';
+    }
+
+    // ---- the deck: three readings of one selection ----
+    function ctxRangeIds(steps) {
+      if (!ctxRange) return null;
+      const ids = {};
+      for (let i = ctxRange.i0; i <= ctxRange.i1 && i < steps.length; i++) ids[steps[i].pairId] = 1;
+      return ids;
+    }
+
     function renderContextView(t) {
-      // Switching threads drops the pin (it names a pair of the OLD
-      // thread); granularity and the events filter are preferences and stay.
-      if (ctxThreadKey !== t.key) { ctxThreadKey = t.key; ctxPinned = null; }
+      // Switching threads drops the pin, the brush and the zoom — they name
+      // pairs and positions of the OLD thread. The deck, the granularity
+      // and the lenses are preferences and stay.
+      if (ctxThreadKey !== t.key) { ctxThreadKey = t.key; ctxPinned = null; ctxRange = null; ctxZoom = 1; }
       const d = ctxData(t);
       const tl = d.tl;
       const addr = d.addr;
@@ -6288,157 +6555,170 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         contextEl.innerHTML = '<div class="empty">No model calls in this thread yet.</div>';
         return;
       }
+      // A live capture appends steps under a held brush: clamp, never drop.
+      if (ctxRange) {
+        ctxRange.i0 = Math.max(0, Math.min(steps.length - 1, ctxRange.i0));
+        ctxRange.i1 = Math.max(ctxRange.i0, Math.min(steps.length - 1, ctxRange.i1));
+      }
       const focus = ctxFocusStep(steps);
-      // ---- head: thread identity + the stats row ----
-      const injN = tl.events.filter(ev => ev.kind === 'inject').length;
-      const compEvs = tl.events.filter(ev => ev.kind === 'compact');
-      let reclaimed = 0;
-      for (const ev of compEvs) if (ev.tokens < 0) reclaimed += -ev.tokens;
       let win = ctxWindowOf(t);
-      const cur = focus && !focus.stub ? focus : null;
       const anchor = focus ? ctxStepTotal(focus) : 0;
       // Sanity: a provider-reported prompt LARGER than the resolved window
       // proves the window wrong (stale catalog, an unlisted long-context
       // tier). Show no denominator rather than "100% of context used".
       if (win && anchor > win) win = 0;
-      let head = '<div class="cx-head">' +
+      ctxWin = win;
+
+      const split = threadTimeSplit(t, pairOf);
+      const cols = ctxColumns(steps, addr);
+      const maxT = Math.max(1, tl.maxTotal);
+      const inIds = ctxRangeIds(steps);
+      const evAll = inIds ? tl.events.filter(ev => inIds[ev.pairId]) : tl.events;
+
+      // ---- head ----
+      const head = '<div class="cx-head">' +
         '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
         '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
         modelChip(t) +
         (t.sessionId ? '<span class="sess-sid" data-mask="sid">' + escapeHtml(t.sessionId.slice(0, 8)) + '</span>' : '') +
-        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions \\u2192</a>' +
+        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions →</a>' +
         '</div>';
-      // No chips row. Every count reads as the caption of the thing it
-      // counts \u2014 steps and turns caption the trajectory, injections and
-      // compactions caption the events \u2014 and est/prompt/window are the
-      // margin's balance, stated once. A strip of eight orphan numbers
-      // under the head was the old page's third copy of its own totals.
-      // "turns" is overloaded on this page \u2014 the thread label counts
-      // MESSAGE turns (122), the addresses count WORKING LOOPS (04). Name
-      // both in full here so the vocabulary the addresses use is taught,
-      // not guessed.
-      const loops = loopCountOf(t);
-      const trajCap = steps.length + ' wire request' + (steps.length === 1 ? '' : 's') +
-        ' \u00b7 ' + loops + ' working loop' + (loops === 1 ? '' : 's') +
-        ' \u00b7 \u2702 marks compaction/rewind \u00b7 hover to scrub, click to pin';
-      const evCap = [
-        injN ? injN + ' injection' + (injN === 1 ? '' : 's') : '',
-        compEvs.length ? compEvs.length + ' compaction' + (compEvs.length === 1 ? '' : 's') : '',
-        reclaimed ? fmtCompact(reclaimed) + ' reclaimed' : '',
-      ].filter(Boolean).join(' \u00b7 ') || 'when and why the window grew or was reclaimed';
 
-      ctxWin = win;
-
-      // ---- the trajectory: the steps as a countable population ----
-      const turnBars = ctxGran === 'turn' ? ctxAggregateTurns(steps, addr) : null;
-      const maxT = Math.max(1, tl.maxTotal);
-      let cols = '';
-      const bar = (s, extra, lbl) => {
-        const total = ctxStepTotal(s);
-        const hpct = Math.max(2, (total / maxT) * 100);
-        return '<span class="cx-colw' + (s.pairId === ctxPinned ? ' pinned' : '') + (s.mark ? ' cut' : '') +
-          '" data-cxbar="' + escapeHtml(s.pairId) + '"' +
-          ' data-tip="' + escapeHtml(ctxBarTip(s, addr, extra)) + '">' +
-          (s.mark ? '<span class="cx-mark">\\u2702</span>' : '') +
-          '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%">' +
-          ctxColSegs(s) + '</span>' +
-          (lbl ? '<span class="cx-tlbl">' + escapeHtml(lbl) + '</span>' : '') + '</span>';
-      };
-      if (turnBars) {
-        for (const tb of turnBars) {
-          const extra = tb.steps > 1 ? tb.steps + ' steps in this turn' + (tb.failed ? ' \\u00b7 ' + tb.failed + ' failed' : '') : '';
-          const s = tb.mark && !tb.last.mark ? { ...tb.last, mark: tb.mark } : tb.last;
-          // The dsh chart labels turn bars beneath — same numbering as the
-          // outline's ordinals, so the axis reads T-for-turn at a glance.
-          const lbl = tb.ord != null ? (tb.ord + 1 < 10 ? '0' + (tb.ord + 1) : '' + (tb.ord + 1)) : '';
-          cols += bar(s, extra, lbl);
-        }
+      // ---- the deck bar + the picked deck ----
+      const leveled = tjBuild(t);
+      const injN = evAll.filter(ev => ev.kind === 'inject').length;
+      const compEvs = evAll.filter(ev => ev.kind === 'compact');
+      let reclaimed = 0;
+      for (const ev of compEvs) if (ev.tokens < 0) reclaimed += -ev.tokens;
+      const modeBtn = (m, n, tip) => '<button class="cx-mode' + (ctxMode === m ? ' active' : '') + '" data-cxmode="' + m + '" title="' + escapeHtml(tip) + '">' + m +
+        (n != null ? '<span class="cx-mode-n">' + n + '</span>' : '') + '</button>';
+      let right = '', hint = '', deck = '';
+      if (ctxMode === 'stream') {
+        right = renderStreamControls(leveled.hidden);
+        const bounds = tjRangeBounds(inIds);
+        hint = 'every record the run produced, in spine order — the harness’s injections <b>inline</b>, at the moment they entered the window' +
+          (bounds ? ' · sliced to the brushed range (' + Math.max(0, bounds.hi - bounds.lo + 1) + ' of ' + tjRecs.length + ' records)' : '');
+        deck = renderCtxStream(leveled, bounds);
+      } else if (ctxMode === 'events') {
+        right = '<span class="tj-toolbar">' + ctxEventChips(evAll) + '</span>';
+        hint = [
+          injN ? injN + ' injection' + (injN === 1 ? '' : 's') : '',
+          compEvs.length ? compEvs.length + ' compaction' + (compEvs.length === 1 ? '' : 's') : '',
+          reclaimed ? fmtCompact(reclaimed) + ' reclaimed' : '',
+        ].filter(Boolean).join(' · ') || 'when and why the window grew or was reclaimed';
+        deck = '<div id="cx-events">' + renderCtxEvents(evAll, addr) + '</div>';
       } else {
-        for (const s of steps) cols += bar(s, '', '');
+        right = '<span class="tj-toolbar">' +
+          '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first — what is eating the window">by size</button>' +
+          '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order — how the window was assembled">in order</button>' +
+          '</span>';
+        hint = 'the pinned step’s window, decomposed from the captured request body — <b>exact, not reconstructed</b> · width is tokens, rows are levels · click to zoom, a leaf opens below';
+        deck = '<div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div>';
       }
-      // The limit, drawn only when the limit is in PLAY. A dashed ceiling
-      // eight times above the tallest bar is a line about nothing; once
-      // the thread is past half its window it is the only line that
-      // matters. 132px chart, 14px top padding — same numbers as the CSS.
-      // The chart is scaled to this thread's own peak and says so. It does
-      // NOT draw the window as a second line: occupancy against the model's
-      // limit is the margin's balance, stated once — a second denominator
-      // in the same picture is the duplication this layout exists to kill.
-      let hist = '<div class="cx-chart-wrap"><span class="cx-scale">' + fmtCompact(maxT) + '</span>' +
-        '<div class="cx-chart" id="cx-chart">' + cols + '</div></div>';
+      const bar = '<div class="cx-modes">' +
+        modeBtn('window', null, 'what the model is carrying at the pinned step, decomposed') +
+        modeBtn('stream', tjRecs.length, 'every record the run produced, in order — injections inline') +
+        modeBtn('events', evAll.length, 'what grew or reclaimed the window') +
+        '<span class="cx-mode-r">' + right + '</span></div>';
 
-      // ---- assemble: the margin reconciles, the canvas scrolls ----
-      // A live capture re-renders this whole view on every pair arrival, so
-      // every scroll position in it must survive — the page's own, the
-      // chart's (which also STICKS to the newest edge when it was there),
-      // and the three inner panes the ledger layout added. Yanking a reader
-      // back to the top of a list they were reading is the one thing
-      // ui.md's terminal semantics forbid outright.
-      const scroll = contextEl.scrollTop;
-      const oldChart = document.getElementById('cx-chart');
-      const chartScroll = oldChart ? (oldChart.scrollLeft + oldChart.clientWidth >= oldChart.scrollWidth - 8 ? -1 : oldChart.scrollLeft) : -1;
-      const keepTops = ctxCaptureTops();
-      // ...except the pane's, when the STEP changed under it (←/→ walking
-      // the pin, a thread switch): its old offset points into content that
-      // is no longer there. A live pair arriving on the same step keeps it.
-      if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
       const margin = '<aside class="cx-margin" id="cx-margin">' +
         '<div id="cx-bal">' + renderCtxMargin(focus, addr) + '</div>' +
+        renderCtxTimeBlock(split) +
         renderCtxThreads(getThreads(), t) +
         '</aside>';
-      const canvas = '<div class="cx-canvas">' +
-        '<div class="cx-section"><h4>trajectory <span class="cx-h4-hint">' + escapeHtml(trajCap) + '</span>' +
-          '<span class="cx-h4-right">' +
-          '<button class="cx-fchip' + (ctxGran === 'step' ? ' active' : '') + '" data-cxgran="step">step</button>' +
-          '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn">turn</button>' +
-          '</span></h4>' + hist + '</div>' +
-        '<div class="cx-section"><h4>inside this step <span class="cx-h4-hint">decomposed from the captured request body \\u2014 exact, not reconstructed \\u00b7 width is tokens, rows are levels \\u00b7 click to zoom, a leaf opens below</span>' +
-          '<span class="cx-h4-right">' +
-          '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first \\u2014 what is eating the window">by size</button>' +
-          '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order \\u2014 how the window was assembled">in order</button>' +
-          '</span></h4><div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div></div>' +
-        '<div class="cx-section"><h4>what changed it <span class="cx-h4-hint">' + escapeHtml(evCap) + '</span></h4><div id="cx-events">' + renderCtxEvents(tl.events, addr) + '</div></div>' +
-        '</div>';
-      contextEl.innerHTML = head + '<div class="cx-cols">' + margin + canvas + '</div>';
-      contextEl.scrollTop = scroll;
+      const canvas = '<div class="cx-canvas mode-' + ctxMode + '" id="cx-canvas">' + bar +
+        '<div class="cx-deck-hint">' + hint + '</div>' +
+        '<div class="cx-deck" id="cx-deck">' + deck + '</div></div>';
+
+      // ---- assemble, preserving every position a live pair would steal ----
+      // A live capture re-renders this whole view on every pair arrival, so
+      // every scroll position in it must survive. Yanking a reader back to
+      // the top of a list they were reading is the one thing ui.md's
+      // terminal semantics forbid outright.
+      const oldOv = document.getElementById('cx-ov-scroll');
+      const ovLeft = oldOv ? (oldOv.scrollLeft + oldOv.clientWidth >= oldOv.scrollWidth - 8 ? -1 : oldOv.scrollLeft) : -1;
+      const oldCanvas = document.getElementById('cx-canvas');
+      const canvasTop = oldCanvas ? oldCanvas.scrollTop : 0;
+      const oldList = document.getElementById('tj-list');
+      const listTop = oldList ? oldList.scrollTop : 0;
+      const oldSearch = document.getElementById('tj-search');
+      const searchFocused = !!oldSearch && document.activeElement === oldSearch;
+      const caret = searchFocused ? oldSearch.selectionStart : 0;
+      const keepTops = ctxCaptureTops();
+      // ...except the graph pane's, when the STEP changed under it (←/→
+      // walking the pin, a thread switch): its old offset points into
+      // content that is no longer there. Same step, live pair: keep it.
+      if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
+
+      contextEl.innerHTML = head +
+        renderCtxOverview(steps, addr, cols, maxT, split, loopCountOf(t)) +
+        '<div class="cx-cols">' + margin + canvas + '</div>';
+
       ctxRestoreTops(keepTops);
-      const chart = document.getElementById('cx-chart');
-      if (chart) chart.scrollLeft = chartScroll >= 0 ? chartScroll : chart.scrollWidth;
+      const canvasEl = document.getElementById('cx-canvas');
+      if (canvasEl) canvasEl.scrollTop = canvasTop;
+      const listEl = document.getElementById('tj-list');
+      if (listEl) listEl.scrollTop = listTop;
+      const ov = document.getElementById('cx-ov-scroll');
+      // The overview sticks to the newest edge when it was already there —
+      // a live run's newest request must not walk off screen.
+      if (ov) ov.scrollLeft = ovLeft >= 0 ? ovLeft : ov.scrollWidth;
+      const search = document.getElementById('tj-search');
+      if (search && searchFocused) { search.focus(); try { search.setSelectionRange(caret, caret); } catch {} }
+      if (search) search.addEventListener('input', () => { tjQuery = search.value; repaintDeck(); });
       tipDetachedGuard();
 
-      // granularity toggle
-      contextEl.querySelectorAll('[data-cxgran]').forEach(btn => {
-        btn.onclick = () => {
-          ctxGran = btn.dataset.cxgran;
-          localStorage.setItem('cctrace-ctx-gran', ctxGran);
-          renderContextView(t);
-        };
-      });
-      // graph sort lens: size (what is eating the window) vs wire order
-      contextEl.querySelectorAll('[data-cxsort]').forEach(btn => {
-        btn.onclick = () => {
-          ctxSort = btn.dataset.cxsort;
-          localStorage.setItem('cctrace-ctx-sort', ctxSort);
-          renderContextView(t);
-        };
-      });
-      // events filter
-      contextEl.querySelectorAll('[data-evf]').forEach(btn => {
-        btn.onclick = () => {
-          ctxEvFilter = btn.dataset.evf;
-          renderContextView(t);
-        };
-      });
-      // bars: hover drives the detail strip + the browser (dsh's linked
-      // scrub); click pins; leaving the chart restores the pinned/newest.
-      const stepById = {};
-      for (const s of steps) stepById[s.pairId] = s;
+      // Repaint just the deck: the level/kind/search/sort/filter controls
+      // change ONE reading, and rebuilding the overview under the reader's
+      // cursor to change a filter is the flicker this shell exists to
+      // avoid.
+      function repaintDeck() { renderContextView(t); }
+
+      if (ctxMode === 'stream') wireCtxStream(contextEl, repaintDeck);
+      contextEl.querySelectorAll('[data-cxmode]').forEach(b => b.addEventListener('click', () => {
+        setCtxMode(b.dataset.cxmode);
+        history.replaceState(null, '', ctxHash(t.key, ctxMode));
+        renderContextView(t);
+      }));
+      contextEl.querySelectorAll('[data-tjlvl]').forEach(b => b.addEventListener('click', () => {
+        tjLevel = b.dataset.tjlvl; localStorage.setItem('cctrace-tj-level', tjLevel); repaintDeck();
+      }));
+      contextEl.querySelectorAll('[data-tjkind]').forEach(b => b.addEventListener('click', () => {
+        tjFilter = b.dataset.tjkind; repaintDeck();
+      }));
+      contextEl.querySelectorAll('[data-cxsort]').forEach(b => b.addEventListener('click', () => {
+        ctxSort = b.dataset.cxsort; localStorage.setItem('cctrace-ctx-sort', ctxSort); repaintDeck();
+      }));
+      contextEl.querySelectorAll('[data-evf]').forEach(b => b.addEventListener('click', () => {
+        ctxEvFilter = b.dataset.evf; repaintDeck();
+      }));
+      contextEl.querySelectorAll('[data-cxgran]').forEach(b => b.addEventListener('click', () => {
+        ctxGran = b.dataset.cxgran; localStorage.setItem('cctrace-ctx-gran', ctxGran); renderContextView(t);
+      }));
+
+      wireCtxOverview(t, steps, addr, cols);
+    }
+
+    // ---- the overview's interaction (the DevTools part) ----
+    // Hover scrubs, click pins, drag brushes a range, the handles resize
+    // it, the window pans it, the wheel zooms around the cursor. All of it
+    // repaints IN PLACE — a full re-render on every pointer move would
+    // rebuild a 400k-token decomposition sixty times a second.
+    function wireCtxOverview(t, steps, addr, cols) {
+      const tracks = document.getElementById('cx-tracks');
+      const scroll = document.getElementById('cx-ov-scroll');
+      if (!tracks || !scroll) return;
+      const N = cols.length;
+
       // The detail strip follows the pointer instantly (a dozen rows); the
       // GRAPH is a full decomposition of a possibly-400k-token body, so it
-      // lands on a short settle — scrubbing 100 bars must not rebuild 100
-      // trees. Landing on the bar you stopped at is what the eye wants
-      // anyway.
+      // lands on a short settle — scrubbing 100 columns must not rebuild
+      // 100 trees. Landing on the column you stopped at is what the eye
+      // wants anyway.
+      const stepById = {};
+      for (const s of steps) stepById[s.pairId] = s;
       const preview = (s, now) => {
+        if (!s) return;
         ctxRepaintMargin(s, addr);
         clearTimeout(ctxGraphTimer);
         const paint = () => {
@@ -6447,14 +6727,123 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         };
         if (now) paint(); else ctxGraphTimer = setTimeout(paint, 90);
       };
-      contextEl.querySelectorAll('[data-cxbar]').forEach(el => {
-        el.addEventListener('mouseenter', () => { const s = stepById[el.dataset.cxbar]; if (s) preview(s); });
-        el.addEventListener('click', () => {
-          ctxPinned = ctxPinned === el.dataset.cxbar ? null : el.dataset.cxbar;
-          renderContextView(t);
-        });
+      let hoverAt = null;
+      tracks.addEventListener('mouseover', (e) => {
+        const el = e.target && e.target.closest ? e.target.closest('[data-cxbar]') : null;
+        if (!el || el.dataset.cxbar === hoverAt) return;
+        hoverAt = el.dataset.cxbar;
+        preview(stepById[hoverAt]);
       });
-      if (chart) chart.addEventListener('mouseleave', () => preview(ctxFocusStep(steps), true));
+      scroll.addEventListener('mouseleave', () => { hoverAt = null; preview(ctxFocusStep(steps), true); });
+
+      const colAt = (clientX) => {
+        const r = tracks.getBoundingClientRect();
+        if (!r.width) return 0;
+        return Math.max(0, Math.min(N - 1, Math.floor(((clientX - r.left) / r.width) * N)));
+      };
+      const paintBrush = () => {
+        const br = document.getElementById('cx-brush');
+        if (br) br.innerHTML = ctxBrushHtml(cols);
+        tracks.querySelectorAll('[data-cxc]').forEach(el => {
+          el.classList.toggle('out', ctxOut(cols[+el.dataset.cxc]));
+        });
+        const cap = document.getElementById('cx-ov-sel');
+        if (cap) cap.textContent = ctxRangeCaption(steps, addr);
+      };
+      const setRange = (a, b) => {
+        const lo = cols[Math.min(a, b)], hi = cols[Math.max(a, b)];
+        ctxRange = { i0: lo.i0, i1: hi.i1 };
+        paintBrush();
+      };
+
+      let drag = null;
+      tracks.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        const handle = e.target && e.target.closest ? e.target.closest('.cx-brush-h') : null;
+        const c = colAt(e.clientX);
+        // Inside an existing range, a drag PANS it (DevTools' gesture);
+        // outside, it brushes a new one. Read off the column, not off an
+        // overlay — the overlay would steal hover from the very columns
+        // the reader just selected.
+        const inside = ctxRange && cols[c].i1 >= ctxRange.i0 && cols[c].i0 <= ctxRange.i1;
+        if (handle) drag = { kind: 'resize', edge: handle.dataset.edge, moved: true };
+        else if (inside) drag = { kind: 'pan', at: c, base: { i0: ctxRange.i0, i1: ctxRange.i1 }, moved: false };
+        else drag = { kind: 'new', anchor: c, moved: false };
+        try { tracks.setPointerCapture(e.pointerId); } catch (err) { /* no capture: the move handler still works */ }
+        e.preventDefault();
+      });
+      tracks.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const c = colAt(e.clientX);
+        if (drag.kind === 'new') {
+          // A click is not a drag: a 1-column wiggle must still pin.
+          if (!drag.moved && c === drag.anchor) return;
+          drag.moved = true;
+          setRange(drag.anchor, c);
+        } else if (drag.kind === 'resize') {
+          // Resizing from an edge: the OTHER edge is the anchor.
+          const anchor = drag.edge === 'l' ? ctxRange.i1 : ctxRange.i0;
+          const lo = Math.min(anchor, cols[c][drag.edge === 'l' ? 'i0' : 'i1']);
+          const hi = Math.max(anchor, cols[c][drag.edge === 'l' ? 'i0' : 'i1']);
+          ctxRange = { i0: lo, i1: hi };
+          paintBrush();
+        } else if (drag.kind === 'pan') {
+          const d = cols[c].i0 - cols[drag.at].i0;
+          if (!d) return;
+          drag.moved = true;
+          const w = drag.base.i1 - drag.base.i0;
+          let i0 = Math.max(0, Math.min(steps.length - 1 - w, drag.base.i0 + d));
+          ctxRange = { i0, i1: i0 + w };
+          paintBrush();
+        }
+      });
+      const endDrag = (e) => {
+        if (!drag) return;
+        const d = drag;
+        drag = null;
+        try { tracks.releasePointerCapture(e.pointerId); } catch (err) { /* never captured */ }
+        if (!d.moved && (d.kind === 'new' || d.kind === 'pan')) {
+          // A plain click PINS the column (and un-pins it on a second
+          // click) — the brush is for ranges, the click is for one step.
+          // True inside the range too: a click there is still a click.
+          const id = cols[d.kind === 'new' ? d.anchor : d.at].s.pairId;
+          ctxPinned = ctxPinned === id ? null : id;
+          renderContextView(t);
+          return;
+        }
+        // A finished brush changes what the stream/events decks count, so
+        // the deck (and only the deck) is rebuilt here.
+        renderContextView(t);
+      };
+      tracks.addEventListener('pointerup', endDrag);
+      tracks.addEventListener('pointercancel', endDrag);
+
+      // Wheel zooms around the cursor; shift+wheel is left to the browser
+      // (native horizontal scroll). Zoom is a WIDTH change on the track —
+      // the columns are flex:1, so nothing re-renders.
+      const applyZoom = () => {
+        tracks.setAttribute('style', ctxTrackStyle());
+        const z = document.getElementById('cx-ov-z');
+        if (z) z.textContent = ctxZoom > 1 ? ctxZoom.toFixed(1) + '×' : 'fit';
+      };
+      scroll.addEventListener('wheel', (e) => {
+        if (e.shiftKey || e.ctrlKey || !e.deltaY) return;
+        e.preventDefault();
+        const r = scroll.getBoundingClientRect();
+        const x = e.clientX - r.left;
+        const before = (scroll.scrollLeft + x) / Math.max(1, tracks.offsetWidth);
+        const next = Math.max(1, Math.min(CTX_ZOOM_MAX, ctxZoom * (e.deltaY < 0 ? 1.25 : 0.8)));
+        if (Math.abs(next - ctxZoom) < 0.001) return;
+        ctxZoom = next;
+        applyZoom();
+        scroll.scrollLeft = before * tracks.offsetWidth - x;
+      }, { passive: false });
+      contextEl.querySelectorAll('[data-cxzoomb]').forEach(b => b.addEventListener('click', () => {
+        const k = b.dataset.cxzoomb;
+        if (k === 'fit') { ctxZoom = 1; ctxRange = null; applyZoom(); renderContextView(t); return; }
+        ctxZoom = Math.max(1, Math.min(CTX_ZOOM_MAX, ctxZoom * (k === 'in' ? 1.5 : 1 / 1.5)));
+        applyZoom();
+      }));
     }
     // pairs whose response completed at or before the cursor are visible,
     // everything after doesn't exist yet. Both panes rebuild from the

@@ -109,11 +109,15 @@ to protect that feeling.
   amount parked 800px from the words it belongs to is a hunt, not a column.
 - Every view is two panes: a narrow left column that states what you are
   looking at, and a wide right column you work in — requests
-  (list | detail), sessions (rail | convo), context (ledger | canvas),
-  trajectory (record list | inspector).
-  The left column is fixed-measure and may stick; the right one scrolls.
+  (list | detail), sessions (rail | convo), context (ledger | deck, and
+  the deck's own stream is list | inspector).
+  The left column is fixed-measure; the right one scrolls.
   A view that is one full-width ribbon is the odd one out and reads as a
   different product.
+- A control that scopes what is below it belongs to the FRAME, not to the
+  scroll. The context overview brushes a range every deck under it reads;
+  scrolling it away would leave the reader looking at filtered content
+  with the filter off screen. Same rule as the toolbar and the tabs.
 - A number is stated ONCE per view. If the same figure appears in a
   headline, a legend and a chart, two of the three are decoration —
   delete them or make each a genuinely different form (a list that is

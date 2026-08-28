@@ -1,11 +1,12 @@
 # The Context view
 
-Status: shipped (0.44); re-staged as a ledger (0.45). The third page view
-(`#/context[/<key>]`, tab beside requests/sessions): what the model's
-context window was assembled from, request by request. The page is a SHEET
-— a sticky margin that states the balance and reconciles it on every
-scrub, beside a canvas carrying the trajectory, the icicle, and the events
-(§The form).
+Status: shipped 0.44 (ledger re-staging included); **rebuilt as a
+DevTools shell** — the Trajectory tab folded in and the trajectory bar
+made interactive. The third and last page view
+(`#/context[/<key>][/=<deck>]`, tab beside requests/sessions): the agent's
+context window over time. An interactive OVERVIEW owns the page's time
+axis; a MARGIN reconciles the balance; one DECK at a time answers a
+different question about what the overview has selected (§The form).
 
 ## Why (and where the idea comes from)
 
@@ -29,9 +30,16 @@ stats board, the six-category composition bar, the per-request stacked
 history chart with ✂ compaction marks, the context-events list, and the
 linked per-step decomposition (dsh's "browser"; ours is the context graph
 — see below). The sibling borrow is dsh's **Trajectory** tab, which reads
-an agent's path as a shape: that lands not as a fourth tab but as a gutter
-on the sessions rail, which is already cctrace's trajectory (§The
-trajectory gutter). What is NOT borrowed is its data problem: dsh folds
+an agent's path as a shape. That shipped as its own tab in 0.44 and was
+wrong: it is a READING of a thread, not a second thread. It is now the
+stream deck of this page (§The record stream), and the shape also rides
+the sessions rail as a gutter (§The trajectory gutter).
+The third upstream is **Chrome DevTools' Performance panel** — for the
+shell, not the pixels: an overview strip that never scrolls, a brushed
+range that scopes everything below it, wheel-zoom around the cursor, and
+detail decks that read the current selection instead of navigating away
+from it.
+What is NOT borrowed from dsh is its data problem: dsh folds
 a harness event log and must archive removed nodes to *approximately*
 reconstruct past steps. cctrace sits on the wire, and every captured
 `/v1/messages` (or Responses/Chat-Completions) request body IS the fully
@@ -151,46 +159,130 @@ events say "turn 04 · step 2" in the outline's numbering.
 
 ## The view (ui.ts)
 
-Route `#/context[/<sid8-or-thread-key>[/<thread-key>]]` — the key grammar
-and resolution are shared with the sessions view (`resolveThreadSel`), and
-so is the selection: switching tabs keeps the thread in focus. The convo
-pane carries a quiet "context →" link; the context head links back
-("sessions →").
+Route `#/context[/<sid8-or-thread-key>[/<thread-key>]][/=<deck>]` — the
+key grammar and resolution are shared with the sessions view
+(`resolveThreadSel`), and so is the selection: switching tabs keeps the
+thread in focus. The convo pane carries a quiet "context →" link; the
+context head links back ("sessions →"). The legacy `#/trajectory[/<key>]`
+route still resolves: it lands on the stream deck and rewrites itself to
+`#/context/<key>/=stream`.
 
-### The form: a ledger that reconciles
+The page is an app SHELL, not a scroll: `#context-view` is a flex column
+whose head and overview are fixed and whose margin and deck scroll
+themselves. That is what retired the `max-height: calc(100vh - 120px)`
+magic constant the sticky margin needed, and it is what lets the stream
+deck's list and inspector be their own scroll columns.
 
-The page is a SHEET with a margin, not a stack of reports. That is a
-verdict on the shipped 0.44 arrangement, which put five equal-weight
-sections down a 1100px ribbon and made the answer — *what is eating my
-window* — arrive fifth, below the fold, while the same six numbers were
-rendered three times on the way there (legend, detail strip, icicle row).
+### The form: an overview that drives three decks
 
-The invariant is real and it is what earns the form: the six categories
-sum to the assembled window, the chars/4 estimate reconciles against the
-provider's reported prompt, and the whole sits against the model's limit.
-A sheet with a balance that must close gets a margin that states it and
-never scrolls away.
+The page is a DevTools shell: an interactive overview that owns the time
+axis, a margin that reconciles the balance, and ONE deck at a time
+answering a different question about the same selection.
 
-    ┌─ head: kind · label · model · sid ───────── sessions → ─┐
-    ├──────────────────┬──────────────────────────────────────┤
-    │ MARGIN (sticky)  │ CANVAS (scrolls)                     │
-    │ 261k             │ trajectory  — how the window grew    │
-    │ 26% of 1.00m ▓░░ │ inside this step — the icicle        │
-    │ ≈134k · 49% under│   + the pane (its own scroll)        │
-    │ ── composition ──│ what changed it — the events         │
-    │ six ledger lines │                                      │
-    │ ── this step ────│                                      │
-    │ ── tool schemas ─│                                      │
-    │ ── other threads │                                      │
-    └──────────────────┴──────────────────────────────────────┘
+That is a verdict on two shipped arrangements. 0.44 put five equal-weight
+sections down a 1100px ribbon and made the answer arrive fifth, below the
+fold. 0.45's ledger fixed the margin but left the canvas a scroll of
+stacked reports — and it shipped a fourth tab, **Trajectory**, for a
+reading of the same thread. Two tabs for one subject is the error: a
+reader who has picked a thread and scrubbed to a step should not lose both
+by clicking a tab to ask a different question about them.
 
-The two-pane shape is not an import: it is the grammar the other two
-views already use (requests = list | detail, sessions = rail | convo).
-The context view was the odd full-width ribbon out.
+    ┌─ head: kind · label · model · sid ──────────────── sessions → ─┐
+    ├─ OVERVIEW (never scrolls) ─────────────────────────────────────┤
+    │ 88 wire requests · 8 loops · drag / wheel / click  [step|turn] │
+    │      ▁▂▃▄▅▆▇█  CTX   one column per step, stacked by category  │
+    │ 249k ░░░▓▓▓▓░░░ ← the brush: drag, resize, pan, dim outside    │
+    │ 2m24s ▁_▁__▃_▁  TIME model / tools / waiting, same x axis      │
+    ├──────────────────┬─────────────────────────────────────────────┤
+    │ MARGIN (scrolls) │ [window] [stream] [events]     deck controls│
+    │ 260k             │                                             │
+    │ 37% of 200k ▓░░  │  window — the pinned step as an icicle      │
+    │ ≈137k · 47% under│  stream — every record, injections inline   │
+    │ ── composition ──│  events — what grew or reclaimed it         │
+    │ six ledger lines │                                             │
+    │ ── this step ────│                                             │
+    │ ── tool schemas ─│                                             │
+    │ ── time went ────│                                             │
+    │ ── other threads │                                             │
+    └──────────────────┴─────────────────────────────────────────────┘
 
-**The margin** (`renderCtxMargin`, `.cx-margin`, 320px, `position: sticky`)
-is the whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
-`#cx-bal`; the threads block is outside it and stays put):
+Two selections, and they mean different things — which is why one page
+can carry all three readings without ambiguity:
+
+- **the PIN** is one step (click a column, or ←/→). It drives the
+  margin's balance and the window deck: *what was the model carrying at
+  this exact request*.
+- **the RANGE** is a brushed span of steps. It scopes the stream and the
+  events: *what happened across these requests*. It never touches the
+  balance, because a balance is a thing one request has.
+
+Nothing about that is decoration: the overview is a frame element, not
+the first thing in a scroll, because every deck below reads its
+selection. Scrolling away the control that scopes the content underneath
+is the thing DevTools got right and a stacked report gets wrong.
+
+#### The overview (`renderCtxOverview` / `wireCtxOverview`, `.cx-ov`)
+
+Two tracks on one x axis, under one brush.
+
+- **ctx** — one stacked column per step (or per turn — granularity
+  toggle, persisted in `cctrace-ctx-gran`), height = the anchored total,
+  scaled to this thread's own peak and labelled with it in the gutter.
+  Outliers are RAISED: a compaction/rewind wears ✂ *and* a full-height
+  dashed amber axis-break down the column (`.cx-colw.cut`) — amber
+  because `.rp-mark.cut` already paints this exact wire fact on the
+  replay track, and one compaction gets one color across both surfaces; a
+  failed request keeps its dashed red outline. It does NOT draw the model
+  window as a second line — occupancy against the limit is the margin's
+  balance, stated once.
+- **time** — where THAT step's wall-clock went: the request's own
+  duration (model), then the gap to the next request of the same working
+  loop (tools when the reply made calls, waiting when the harness came
+  back on its own) — `threadTimeSplit.byPair` in src/session.ts. Every
+  figure is a wire timestamp; nothing here is estimated. The floor is a
+  PIXEL, not a percent, so a 6-second step under a 2m24s outlier still
+  reads as a baseline the spikes rise out of. The totals and the legend
+  that names the three hues live in the margin (`renderCtxTimeBlock`) —
+  a track whose colors are never named is a decoration. This is the
+  per-step waterfall the 0.44 doc listed as a follow-up; the head strip
+  it replaces was the honest small version of the same shape.
+
+**Columns are equal-width and gapless**, and the *bar* inside each column
+is what gets capped (28px), not the column. That is load-bearing: the
+brush positions its edges at `i/N` of the track, which is only exact when
+every column occupies exactly `1/N` of it — a 2px gap drifts the overlay
+by a column width across 100 steps. The side effects are both wins: a
+five-step thread reads as five slim bars across the axis instead of a
+110px huddle in a 1000px field, and every column keeps a full-width hit
+target.
+
+Interactions, all repainting **in place** (a full re-render on every
+pointer move would rebuild a 400k-token decomposition sixty times a
+second):
+
+| gesture | what it does |
+| --- | --- |
+| hover | scrubs the margin instantly, the icicle on a 90ms settle; leaving restores the pinned/newest step |
+| click | pins that step (a second click un-pins) |
+| drag | brushes a range — the dim panels, the caption and the deck follow |
+| drag a handle | resizes the range from that edge, the other edge anchored |
+| drag the window | pans the range, keeping its width |
+| wheel | zooms around the cursor (1× fit … 32×); the track is a width change on a flex row, so nothing re-renders |
+| shift+wheel | left to the browser — native horizontal scroll |
+| `←` / `→` | walks the pinned step |
+| `Esc` | peels one layer: the range, then the zoom, then the view |
+| `1` / `2` / `3` | the three decks |
+
+The range is stored in **step indices**, never column indices, so
+flipping to turn granularity redraws the same selection instead of
+silently meaning something else. The caption states it out loud —
+`23 of 88 selected · turn 04 → turn 11 · esc clears` — because a range
+that is only a rectangle is a range the reader has to infer.
+
+#### The margin (`renderCtxMargin`, `.cx-margin`, 300px)
+
+The whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
+`#cx-bal`; the time and threads blocks are outside it and stay put):
 
 - **the balance** — the provider's prompt at display scale (`.cx-bal-n`,
   the one 24px number the design language licenses, see ui.md), the
@@ -208,56 +300,141 @@ is the whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
   control: clicking it zooms the graph to that category
   (`data-cxnode="c:<id>"`, the same node key the flame uses), and the
   line wears `.sel` while that zoom holds — margin and chart are one
-  selection whichever side the click came from.
+  selection whichever side the click came from. From the stream or the
+  events deck, clicking a ledger line brings the window deck with it:
+  it is a control on the graph, and the margin is beside every deck.
 - **this step** — clock, output, cache share, and both ways out (`turn NN
   · step N →` into the sessions rail, `wire →` to the captured pair).
 - **heaviest tool schemas** — the standing cost, top 5 of N.
+- **where the time went** — the thread's model / tools / waiting /
+  between-turns totals, and the legend for the overview's time track.
 - **other threads** — the multi-session picker, quietest block in the
   margin, because switching sheets must not need a scroll.
 
-Counts caption the thing they count — `91 wire requests · 8 working loops`
-on the trajectory, `132 injections · 1 compaction · 4.7k reclaimed` on the
-events — instead of a strip of orphan chips under the head. "Turns" is
-overloaded on this page (the thread label counts MESSAGE turns, the
-addresses count WORKING LOOPS), so both are named in full rather than
-guessed at.
-
-At ≤960px (the page's established breakpoint) the margin unsticks and
-becomes a multi-column band above the canvas — `columns: 300px`, blocks
+At ≤960px (the page's established breakpoint) the margin becomes a
+multi-column band above the deck — `columns: 300px`, blocks
 `break-inside: avoid`. Grid was tried and rejected: its rows take the
 tallest block's height and leave dead cells.
 
-**The canvas** is three sections, each named for what the reader gets:
+#### The decks
 
-1. **trajectory** — one stacked column per step (or per turn —
-   granularity toggle, persisted in `cctrace-ctx-gran`), height = anchored
-   total, scaled to this thread's own peak and labelled with it. Columns
-   `flex: 1 1 9px` up to 22px, so a 17-bar thread fills the canvas instead
-   of pinning 9px bars in a 1000px field and reading as broken. Outliers
-   are RAISED: a compaction/rewind wears ✂ *and* a full-height dashed
-   amber axis-break down the column (`.cx-colw.cut`) — amber because that
-   is what `.rp-mark.cut` already paints this exact wire fact on the
-   replay track, and one compaction gets one color across both surfaces;
-   a failed request keeps its dashed red outline. Hover scrubs the margin and the graph (dsh's linked
-   scrub); click pins; ←/→ walk the pinned step. The chart keeps its
-   scroll position across live re-renders and sticks to the newest edge.
-   It does NOT draw the model window as a second line — occupancy against
-   the limit is the margin's balance, stated once.
-2. **inside this step** — the icicle (below). It carries no head of its
-   own: the margin beside it already names the step, its estimate, its
-   billed prompt and both links. The one thing the head said that the
-   margin does not — *decomposed from the captured request body, exact,
-   not reconstructed* — moved into the section hint, because that is the
-   sentence separating this page from a harness-log reconstruction and it
-   should not be lost to a layout change.
-3. **what changed it** — the events, newest first, filter chips (inject /
-   compact / model / tools / system), each row: glyph, kind, label
-   (producer for injections — AGENTS.md, environment context, recap, the
-   reminder's own opening words), then the token delta (+amber = grew,
-   −green = reclaimed) *beside the label*, because the delta is what the
-   event did to the window (content); ×N, the turn·step link and the
-   wall-clock hold the right edge (transport). Capped at 200 rows with an
-   honest "+N older" line.
+One at a time, picked by a segmented control in the deck bar, persisted
+in `cctrace-ctx-mode` and addressable as `#/context/<key>/=<deck>` (the
+`=` marker keeps a deck name from ever being mistaken for a thread key).
+Each deck's own controls sit on the right of the same bar; a hint line
+under it says what the reader is looking at. Counts caption the thing
+they count — `216` on stream, `83` on events — instead of a strip of
+orphan chips under the head. "Turns" is overloaded on this page (the
+thread label counts MESSAGE turns, the addresses count WORKING LOOPS), so
+both are named in full rather than guessed at.
+
+**1. window** — the pinned step's context, decomposed as an icicle (see
+below) with its pane underneath. It carries no head of its own: the
+margin beside it already names the step, its estimate, its billed prompt
+and both links. The one thing the old head said that the margin does not
+— *decomposed from the captured request body, exact, not reconstructed* —
+is the deck hint, because that is the sentence separating this page from
+a harness-log reconstruction.
+
+**2. stream** — the thread as one linear stream of RECORDS
+(`trajectoryRecords`), sliced to the brushed range. This is the whole of
+what shipped as the Trajectory tab in 0.44, and the form is unchanged:
+every record is a row, in spine order, with the context the harness
+injected **inline at the moment it entered the window**. Two panes, the
+requests grammar (list | inspector).
+
+The range is a SLICE, not a membership test — from the first record
+attributed to the range's first step to the last attributed to its last
+(`tjRangeBounds`, computed over the full record list so the slice means
+the same thing at every detail level). It has to be: most of a long
+spine has no wire pair of its own, because the history arrived inside
+request bodies whose own requests were never captured (or live in a
+prior trace). Measured on a real 26-step thread, a pairId membership
+test dropped 47 rows out of 417 and read as broken; the slice drops 409.
+Two record kinds got a wire pair out of this: a user/injection turn is
+now attributed to the request that CARRIED it into the window (`addr[v]
+.pair` in trajectoryRecords), the same request its Context-pane
+provenance already names, so its `wire →` link resolves too.
+
+**3. events** — what changed the window, newest first, scoped to the
+range, with the kind chips (inject / compact / model / tools / system) in
+the deck bar. Each row: glyph, kind, label (producer for injections —
+AGENTS.md, environment context, recap, the reminder's own opening
+words), then the token delta (+amber = grew, −green = reclaimed) *beside
+the label*, because the delta is what the event did to the window
+(content); ×N, the turn·step link and the wall-clock hold the right edge
+(transport). Capped at 200 rows with an honest "+N older" line.
+
+### The record stream, in detail
+
+Borrowed from the DeepSeek Harness web UI's **Trajectory** tab, studied
+live (`dsh web`, not just the source — the form is the point). dsh reads
+a whole session as a dense record-level table: every record is a row —
+system prompt, the human's turns, the CONTEXT the harness injected
+(inline, first-class, at the moment it entered), the model's thinking,
+each tool call fused with its result, the reply — kind-badged, in order.
+
+The move cctrace was missing: **context injections as first-class inline
+rows woven into the reasoning flow.** The Sessions convo reads the
+conversation but folds tools and renders injections as sys-tagged user
+turns; the window deck reads one request's context as a composition.
+Neither shows the agent's path as a stream where you watch context
+*enter* the window inline with the reasoning that consumed it.
+
+cctrace's structural advantage over dsh's harness-event-log
+reconstruction: this is built from the reconstructed spine
+(`buildSession`'s `t.turns`), so it is exact and every record carries its
+wire pair.
+
+`trajectoryRecords(thread)` — pure, unit-tested, inlined into the page
+like session.ts. It walks `t.turns` and emits one record per block, in
+order. Record kinds mirror `CTX_CATS`, as a linear stream:
+
+| kind | what | how |
+| --- | --- | --- |
+| system | the system prompt | one record, blocks in the inspector |
+| user | the human's own words | user-turn text that `ctxTextCat` says is `user` |
+| context | harness-injected context | user-turn text that `ctxTextCat` says is `inject`, labeled by producer (`ctxInjectLabel`) — inline, at its position |
+| assistant | the model's thinking / reply | assistant text (`think:false`) and thinking (`think:true`) |
+| tool | a tool call fused with its result | a `tool_use`, `detail` = the `tool_result` preview, `err` = the result's `is_error` |
+
+A record: `{ kind, think, ord, step, label, detail, tokens, pairId, err,
+block, result, toolName }`. Turn/step addressing (`ord`, `step`) matches
+the Sessions outline and the rest of this page (`loopTurns`), so
+"turn 04 · step 2" means the same thing everywhere. `toolResultsOnly`
+turns never become their own records — their results are fused into the
+`tool` record via the tool_use id (`buildToolResultIndex`), the same
+fusion the convo pane does.
+
+The `user`/`context` split is the one that carries the whole reading: the
+same measured rule as the composition (`ctxTextCat` — the
+`<total_tokens>` budget banner and the SessionStart hook are injections,
+not the human), so the CONTEXT rows are honestly the harness's and the
+USER rows honestly the human's.
+
+**Progressive disclosure** (archify's MAP → READ → FULL, studied at
+tt-a1i.github.io/archify): `trajectoryAtLevel(records, level)` FILTERS,
+never summarizes — a hidden record is counted (`{ records, hidden }`),
+never folded into a lie. **full** = every record (default); **read** =
+drop the plumbing (budget / SessionStart banners, standalone thinking),
+keep system, the human, replies, tool calls and the substantive context;
+**map** = the skeleton (system, the human's turns, the tool calls). The
+deck bar states how many rows the level hid.
+
+The rows: a `turn NN` sticky divider opens each working loop; each row is
+`[badge] [label] [→ result] … [≈tokens]`, the badge and (for tools) the
+label colored by kind, thinking dimmed, an errored tool result in red.
+One row per record — the outline rule (identity per row; the amount rides
+the right edge). The inspector opens the picked record with the detail
+panel's own renderers (`renderSystem` / `renderBlockS` for a tool with
+its result / `renderBlock`), so a tool_use/thinking/text reads exactly as
+in the requests detail panel. A kind filter isolates one kind —
+**context only** is the killer use: the context trajectory alone.
+
+What is NOT borrowed: dsh's DevTools record inspector with
+Payload/Result/Schema/Timing tabs — cctrace reuses its existing block
+renderers instead, which already give payload+result+schema for a tool
+fold.
 
 ### The icicle
 
@@ -324,7 +501,7 @@ The picked step as an **icicle**: rows top-down,
    start-anchoring sent every repeat after a compaction to its first
    occurrence in the session. A turn that matches nothing, and an envelope
    row (system, schemas) that has no turn, say nothing rather than guess. The link is a
-   control: clicking it pins that step, so the trajectory and the icicle
+   control: clicking it pins that step, so the overview and the icicle
    jump to where the item came from — semantica's "the path is navigable,
    not a picture", in one line. The pane sheds any column the head already states —
    under a group called "Bash", 15 rows of "tool_result | Bash → …" is one
@@ -337,24 +514,27 @@ The picked step as an **icicle**: rows top-down,
    a category, never the categories themselves; re-ranking row 1 would
    break the correspondence with the bar.
 
-Both the detail strip and the graph head link BOTH ways: `wire` to the
-captured pair, and `turn NN · step N →` into the sessions timeline at that
-turn (`ctxTurnLink` / `window.ctxJumpTurn`, the reverse of the convo pane's
+The margin and every deck row link BOTH ways: `wire` to the captured
+pair, and `turn NN · step N →` into the sessions timeline at that turn
+(`ctxTurnLink` / `window.ctxJumpTurn`, the reverse of the convo pane's
 "context →"). Only for steps the outline could address — a superseded or
 unattributed request has no turn to land on, and we do not invent one.
 
-Live behavior: the view re-renders on pair arrival with scroll, chart
-position, granularity, pin, filter, and fold state preserved. Works
-identically in snapshots and `cctrace view` pages (pure client-side).
+Live behavior: the view re-renders on pair arrival with every position
+preserved — the margin's scroll, the deck's scroll, the stream list's
+scroll and its search box's focus and caret, the overview's horizontal
+scroll (which also STICKS to the newest edge when it was already there),
+plus the zoom, the brushed range (clamped, never dropped, as steps
+arrive under it), the granularity, the pin, the filters and the fold
+state. Works identically in snapshots and `cctrace view` pages (pure
+client-side).
 
-## The trajectory gutter (the Trajectory borrow)
+## The trajectory gutter (the same shape, on the sessions rail)
 
-dsh ships Trajectory as its own tab — the agent's path read as a shape.
-cctrace already HAS that path: the sessions rail, whose turn is the
-working-loop unit and whose rows already carry compaction breaks,
-superseded exchanges and failed runs. What it lacked was MAGNITUDE. So the
-borrow lands as a gutter, not a tab (`.tctx` in ui.ts, built in
-`epochTurnList`):
+The sessions rail is already a reading of the agent's path: its turn is
+the working-loop unit and its rows already carry compaction breaks,
+superseded exchanges and failed runs. What it lacked was MAGNITUDE, so it
+gets a gutter (`.tctx` in ui.ts, built in `epochTurnList`):
 
 - one 30px track per wire step, filled to how full the window was;
 - the fill SPLIT: the prefix read from cache (green) vs what was billed
@@ -373,11 +553,13 @@ Every figure is provider-reported; nothing in the gutter is estimated.
 
 dsh's Trajectory also reads the agent's path as TIME — three lanes (Input /
 Model / Tools). cctrace has that too, off its own attributed pairs
-(`threadTimeSplit` in src/session.ts), and it lands where the reader is
-already looking at a thread's totals: a **`time` chip** on the sessions
-thread header, `model 15m · tools 7m · between turns 20m`, with the split
-in the hover — and each assistant role bar carries its own step's
-`tools`/`waiting` time beside its duration. The lanes in cctrace's terms:
+(`threadTimeSplit` in src/session.ts), in three places: the context
+overview's per-step **time track**, its **margin totals**, and — where
+the reader is already looking at a thread's totals — a **`time` chip** on
+the sessions thread header, `model 15m · tools 7m · between turns 20m`,
+with the split in the hover; each assistant role bar carries its own
+step's `tools`/`waiting` time beside its duration. The lanes in cctrace's
+terms:
 *model* is the requests' own durations; *tools* is the gap from a reply
 that made tool calls to the same working loop's next request (one gap
 covers calls run in parallel, so it is the STEP's tool time, never per
@@ -444,8 +626,22 @@ context route renders in ~45ms, the sessions route in ~35ms.
   doesn't") — the data is there; the question is whether anyone asks it.
 - The graph's zoom and selection are page state, not URL state: you cannot
   link someone to "the Bash node of turn 37". The route grammar has room
-  (`#/context/<key>/<node>`) but nobody has asked yet.
-- The icicle's interaction (zoom, select, keyboard) is verified in a real
-  browser and at the layout level (tests/context.test.ts drives
-  `ctxFlameLayout` directly); tests/dom-stub.ts renders markup and cannot
-  dispatch clicks, so the click path itself is not covered by `bun test`.
+  (`#/context/<key>/=<deck>/<node>`) but nobody has asked yet. The DECK is
+  in the URL as of the rebuild; the pin and the brushed range are not.
+- The overview's x axis is ORDINAL (one column per step), not TIME. A real
+  time axis is what DevTools has and what would make idle gaps visible;
+  it is also what turns a 9-hour session with two 3-hour gaps into a chart
+  of mostly nothing. Wanted: a toggle, not a replacement.
+- The time track carries model/tools/waiting per step but the RANGE does
+  not aggregate them ("this brushed span cost 4m of tools"). The data is
+  right there in `ctxColTime`.
+- Keyboard j/k over the stream deck's record list (today click-only; the
+  requests list has j/k, the pattern is there).
+- Link a record to replay: click → replay cursor at that pair, so the
+  stream drives the time machine cctrace already has.
+- The icicle's interaction (zoom, select, keyboard), the brush (drag,
+  handles, pan), wheel zoom and the deck switch are verified in a REAL
+  BROWSER (`test-output/ctx-rebuild/drive*.mjs`, cloakbrowser) and at the
+  layout level (tests/context.test.ts drives `ctxFlameLayout` directly);
+  tests/dom-stub.ts renders markup and cannot dispatch pointer events, so
+  `bun test` covers the markup grammar and the routes, not the gestures.

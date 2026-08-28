@@ -976,6 +976,17 @@ export function harnessTurnKind(blocks: any[]): string {
 }
 
 /**
+ * The subagent-dispatch tool names: a tool_use with one of these SPAWNS a
+ * thread (buildSession's agent linker keys on the same three; so does the
+ * page's fold). Name-level only — whether a given call is a dispatch or
+ * task tracking is a SHAPE question (a dispatch carries subagent_type /
+ * prompt, a tracked task carries subject), which stays with the caller.
+ */
+export function isSpawnTool(name: any): boolean {
+  return name === "Task" || name === "Agent" || name === "TaskCreate";
+}
+
+/**
  * Group visible message-turns into working-loop TURNS — the unit a human
  * means by "turn": user request → agent work (thinking, tool calls,
  * subagents, intermediate narration) → final response. A genuine user
@@ -1223,7 +1234,11 @@ export function richToolBody(name: string, input: any): string {
  * and add nothing; the gap simply spans them. All ms. The path is the
  * spine's attributed replies in order; `pairOf(id)` resolves each to its
  * wire pair (the page keeps that index; a finished thread carries ids).
- *   { wall, model, tools, waiting, between, steps, byPair: { [pairId]: { tools | waiting } } }
+ *   { wall, model, tools, waiting, between, steps,
+ *     byPair: { [pairId]: { tools | waiting, t0, t1 } } }
+ * byPair carries the gap's ABSOLUTE window beside its ms so the trajectory
+ * lanes draw exactly the gap this arithmetic counts — tools/waiting time has
+ * one definition, not two (docs/design/replay-stage.md).
  */
 export function threadTimeSplit(t: any, pairOf: (id: string) => any): any {
   const out: any = { wall: 0, model: 0, tools: 0, waiting: 0, between: 0, steps: 0, byPair: {} };
@@ -1251,7 +1266,11 @@ export function threadTimeSplit(t: any, pairOf: (id: string) => any): any {
     if (loop !== next.loop) { out.between += gap; continue; }
     const kind = calls ? "tools" : "waiting";
     out[kind] += gap;
-    const slot: any = {};
+    // t0 = this reply's end, t1 = t0 + the gap (never the next request's raw
+    // start: a clock that went backwards clamps to a zero-width window, so
+    // t1 - t0 is always exactly the ms counted above).
+    const end = (p.request.timestamp || 0) * 1000 + dur;
+    const slot: any = { t0: end, t1: end + gap };
     slot[kind] = gap;
     out.byPair[p.id] = slot;
   }

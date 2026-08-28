@@ -831,22 +831,33 @@ export function trajectoryRecords(t: any): any[] {
   // Working-loop address per VISIBLE turn (same numbering as the outline).
   const vis = turns.filter((x: any) => x && !x.toolResultsOnly);
   const loops = loopTurns(vis);
-  const addr: any = {}; // visible-index -> { ord, step }
+  const addr: any = {}; // visible-index -> { ord, step, pair }
   for (let li = 0; li < loops.length; li++) {
     const L = loops[li];
-    const mark = (i: number, step: number) => { if (i != null) addr[i] = { ord: li, step }; };
-    if (L.head != null) mark(L.head, 0);
     // An assistant member IS a step. A user-role member (a tool result, an
     // injection, a nudge) entered the window with the NEXT request, so it
-    // takes that request's step — the address the Context pane's
-    // provenance already gives it ("since turn 04 · step 2"); one turn,
-    // one name on every surface. Injected after the final reply: step 0.
+    // takes that request's step AND that request's pair — the address the
+    // Context pane's provenance already gives it ("since turn 04 · step
+    // 2"); one turn, one name and one wire pair on every surface. Without
+    // the pair a user/context record answers to no request at all, and a
+    // range brushed over the wire steps cannot scope it. Injected after
+    // the final reply: step 0, no pair (nothing carried it yet).
     let next = 0;
+    let nextPair: string | null = null;
     for (let m = L.members.length - 1; m >= 0; m--) {
       const v = L.members[m];
       const own = L.steps && L.steps[v];
-      if (own) next = own;
-      mark(v, own || next);
+      const vt: any = vis[v];
+      if (own) { next = own; nextPair = (vt && vt.pairId) || null; }
+      addr[v] = { ord: li, step: own || next, pair: (vt && vt.pairId) || nextPair };
+    }
+    // The loop's head is the human's prompt: step 0 (it opens the turn,
+    // it is not a step), but it entered on the loop's FIRST request —
+    // which is what nextPair holds after the backwards walk. Members win
+    // if the head is also one.
+    if (L.head != null && addr[L.head] == null) {
+      const ht: any = vis[L.head];
+      addr[L.head] = { ord: li, step: 0, pair: (ht && ht.pairId) || nextPair };
     }
   }
 
@@ -863,9 +874,12 @@ export function trajectoryRecords(t: any): any[] {
   for (const turn of turns) {
     if (!turn) continue;
     if (turn.toolResultsOnly) continue; // results are fused into their tool_use below
-    const a = addr[vi] || { ord: null, step: 0 };
+    const a = addr[vi] || { ord: null, step: 0, pair: null };
     vi++;
-    const pairId = turn.pairId || null;
+    // A user/injection turn answers to the request that carried it into
+    // the window, not to none: that is what makes "wire →" resolve on a
+    // CONTEXT row and what lets the overview's range scope the stream.
+    const pairId = turn.pairId || a.pair || null;
     const role = turn.role;
     for (const b of turn.blocks || []) {
       if (!b) continue;

@@ -3,14 +3,20 @@ import * as net from "net";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { isInterceptHost, hostInSet, generateHostCert } from "./certs";
-import { isModelCallPath } from "./categorize";
+import { categorizeUrl, isModelCallPath } from "./categorize";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
-import type { TracePair } from "./types";
+import type { TracePair, TraceStart } from "./types";
 
 export interface MitmConfig {
   caDir: string;
   onPair: (pair: TracePair) => void;
+  /**
+   * A model call was forwarded and has no response yet — the live "thinking
+   * now" signal, carrying the id the eventual pair will have. Fail-soft: a
+   * throwing sink can never cost the forward.
+   */
+  onStart?: (start: TraceStart) => void;
   logAll?: boolean;
   /**
    * Host suffixes to MITM beyond the static Anthropic set — the SSL-proxying
@@ -124,6 +130,17 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
 
   const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
 
+  // Live state, not a pair: only a MESSAGES-category request is a "the model
+  // is thinking" moment (a count_tokens probe, oauth or telemetry is not).
+  // categorizeUrl needs no client/wire here — it decides model-call WIRE
+  // SHAPE before any host/client rule, so no client label can turn a
+  // non-messages URL into "messages" or vice versa. Fail-soft by
+  // construction: the hint must never cost the request it precedes.
+  const emitStart = (id: string, method: string, url: string, ts: number) => {
+    if (!config.onStart || categorizeUrl(url) !== "messages") return;
+    try { config.onStart({ id, url, method, ts }); } catch {}
+  };
+
   let pairCount = 0;
   const pending = new Set<Promise<void>>();
 
@@ -206,6 +223,16 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
     }
 
     const doCapture = async (): Promise<Response> => {
+      // The pair id is minted BEFORE the forward, so the live `start` event
+      // and the pair that eventually lands carry the SAME id (the page drops
+      // the open start when the pair arrives). pairCount counts the requests
+      // that will be logged — a filtered-out one mints nothing — and stays
+      // the uniqueness suffix, so ids can't collide within a millisecond.
+      let captureId = "";
+      if (shouldLog) {
+        pairCount++;
+        captureId = `${Date.now()}_${pairCount.toString(36)}`;
+      }
       let reqBody: unknown = null;
       let fwdBody: Uint8Array | null = null;
       if (req.body && req.method !== "GET" && req.method !== "HEAD") {
@@ -224,6 +251,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       delete fetchHeaders["content-length"];
 
       let upstream: Response;
+      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
       try {
         upstream = await fetch(targetUrl, {
           method: req.method,
@@ -233,9 +261,8 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         });
       } catch (err) {
         if (shouldLog) {
-          pairCount++;
           onPair({
-            id: `${Date.now()}_${pairCount.toString(36)}`,
+            id: captureId,
             request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
             response: null,
             duration: Date.now() - startTime,
@@ -251,11 +278,10 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
 
       if (!upstream.body) {
         if (shouldLog) {
-          pairCount++;
           const resHeaders: Record<string, string> = {};
           fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });
           onPair({
-            id: `${Date.now()}_${pairCount.toString(36)}`,
+            id: captureId,
             request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
             response: { timestamp: Date.now() / 1000, status: upstream.status, headers: resHeaders },
             duration: Date.now() - startTime,
@@ -269,8 +295,6 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       }
 
       const { stream: clientStream, captured } = captureTee(upstream.body);
-      pairCount++;
-      const captureId = `${Date.now()}_${pairCount.toString(36)}`;
       const resStatus = upstream.status;
       const resHeaders: Record<string, string> = {};
       fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });

@@ -1,7 +1,7 @@
 import { describe, test, expect, afterEach } from "bun:test";
 import { startProxy } from "../src/proxy";
 import { isNativeBinary } from "../src/detect";
-import type { TracePair } from "../src/types";
+import type { TracePair, TraceStart } from "../src/types";
 import { writeFileSync, unlinkSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 
@@ -263,6 +263,68 @@ describe("proxy: SSE streaming", () => {
     });
     expect(again.status).toBe(200);
     await again.text();
+  });
+});
+
+// Live state (docs/design/replay-stage.md): a model call announces itself
+// when it is FORWARDED, so the page can say "the model is thinking now"
+// instead of learning about the request only once it has been answered.
+describe("proxy: live start events", () => {
+  const okUpstream = () => track(Bun.serve({ port: 0, fetch() { return Response.json({ ok: true }); } }));
+
+  test("a messages request starts with the id its pair will carry; probes and other paths don't", async () => {
+    const upstream = okUpstream();
+    const pairs: TracePair[] = [];
+    const starts: TraceStart[] = [];
+    const proxy = track(startProxy({
+      targetHost: `localhost:${upstream.port}`,
+      targetScheme: "http",
+      onPair: (p) => pairs.push(p),
+      onStart: (s) => starts.push(s),
+    }));
+
+    await fetch(`http://localhost:${proxy.port}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    // Emitted before the forward: the start exists while the pair does not.
+    expect(starts.length).toBe(1);
+
+    await Bun.sleep(50);
+    expect(pairs.length).toBe(1);
+    expect(starts[0]!.id).toBe(pairs[0]!.id);
+    expect(starts[0]!.method).toBe("POST");
+    expect(starts[0]!.url).toContain("/v1/messages");
+    // Same unit as request.timestamp (epoch seconds), so the page can place it.
+    expect(starts[0]!.ts).toBe(pairs[0]!.request.timestamp);
+
+    // A count_tokens probe is not the model thinking; nor is anything else.
+    await fetch(`http://localhost:${proxy.port}/v1/messages/count_tokens`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    await fetch(`http://localhost:${proxy.port}/v1/models`);
+    await Bun.sleep(50);
+    expect(pairs.length).toBe(3);
+    expect(starts.length).toBe(1);
+  });
+
+  test("a throwing start sink can never cost the request", async () => {
+    const upstream = okUpstream();
+    const pairs: TracePair[] = [];
+    const proxy = track(startProxy({
+      targetHost: `localhost:${upstream.port}`,
+      targetScheme: "http",
+      onPair: (p) => pairs.push(p),
+      onStart: () => { throw new Error("live UI is gone"); },
+    }));
+    const res = await fetch(`http://localhost:${proxy.port}/v1/messages`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+    await Bun.sleep(50);
+    expect(pairs.length).toBe(1);
   });
 });
 

@@ -826,7 +826,7 @@ describe("find in session (toolbar)", () => {
 });
 
 describe("context boundaries on the replay timeline", () => {
-  test("a compaction gets its own mark on the track, beside the per-pair ticks", () => {
+  test("a compaction gets its own mark in the harness lane", () => {
     const long: { role: string; content: unknown }[] = [];
     for (let i = 0; i < 12; i++) {
       long.push({ role: "user", content: "prompt " + i });
@@ -840,9 +840,226 @@ describe("context boundaries on the replay timeline", () => {
     const ws = page.sockets[0]!;
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [before, after] }) });
     page.goto("#/session/aaaabbbb/@k1..k2");
-    const marks = page.els["rp-marks"].innerHTML as string;
-    expect(marks).toContain("rp-mark turn cut");
-    expect((marks.match(/rp-mark/g) || []).length).toBe(2);
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    // The cut is amber on both surfaces — one compaction, one class.
+    expect(body).toContain('class="rp-mark cut"');
+    expect((body.match(/rp-mark/g) || []).length).toBe(1);
+    expect(body).toContain('data-lane="harness"');
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+});
+
+// The strip is the trace's SHAPE: five lanes over wall-clock, drawn from
+// sessionLanes. Its markup is built from captured wire content (tool names,
+// agent labels, the human's own words), so it gets the same hostile-fixture
+// grammar treatment as every other generated fragment.
+describe("the trajectory strip (#rp-lanes)", () => {
+  const AGENT_SYS = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+  const PROMPT = "Explore </script><script>alert(1)</script> and report [1mback[0m";
+  const TASK = {
+    type: "tool_use",
+    id: "tu_a",
+    name: "Task",
+    input: { subagent_type: "Explore", description: "<img src=x onerror=alert(2)>", prompt: PROMPT },
+  };
+  const BASH = { type: "tool_use", id: "tu_b", name: "Bash", input: { command: "bun test" } };
+  const HEAD = "map the repo [1mfast[0m & <b>well</b>";
+
+  // p1 calls Bash -> p2 (result in) spawns a subagent -> a1 is the child ->
+  // p4 fails 429 -> p5 is the retry that answers.
+  function fixture(): TracePair[] {
+    const h1 = [{ role: "user", content: HEAD }];
+    const h2 = [...h1, { role: "assistant", content: [BASH] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_b", content: "ok" }] }];
+    const h3 = [...h2, { role: "assistant", content: [TASK] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_a", content: "done" }] }];
+    const p1 = msgPair("p1", { reqBody: { messages: h1 }, resBody: { content: [BASH], stop_reason: "tool_use" } });
+    const p2 = msgPair("p2", { reqBody: { messages: h2 }, resBody: { content: [TASK], stop_reason: "tool_use" } });
+    const a1 = msgPair("p3", {
+      reqBody: { system: [{ type: "text", text: AGENT_SYS }], messages: [{ role: "user", content: [{ type: "text", text: PROMPT }] }] },
+      resBody: { content: [{ type: "text", text: "child reply" }] },
+    });
+    const p4 = msgPair("p4", { reqBody: { messages: h3 } });
+    (p4.response as { status: number }).status = 429;
+    (p4.response as { body: unknown }).body = { error: { type: "overloaded_error", message: "slow down" } };
+    const p5 = msgPair("p5", { reqBody: { messages: h3 }, resBody: { content: [{ type: "text", text: "all done" }] } });
+    return [p1, p2, a1, p4, p5];
+  }
+
+  test("replaying, the strip draws every lane and its gutter, and parses", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
+    const gut = page.els["rp-gut"].innerHTML as string;
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    // The gutter names every lane — a lane whose meaning is unstated is
+    // decoration (and the geometry is fixed, so none of them can vanish).
+    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(gut).toContain(">" + l + "<");
+    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
+    // ONE point: the human's own prompt. A subagent's head is the parent
+    // model's dispatch text, not a person's — it rides the agents lane
+    // (sessionLanes skips heads of threads with agentOf).
+    expect((body.match(/class="rp-point"/g) || []).length).toBe(1);
+    expect((body.match(/rp-span model/g) || []).length).toBe(4); // p1 p2 p5 + the child's own
+    // the Bash gap is a tools span carrying its initials AND its name
+    expect(body).toContain("rp-span tools");
+    expect(body).toContain('class="rp-lbl i">B<');
+    expect(body).toContain('class="rp-lbl n">Bash<');
+    // the verified spawn is an agent span; the 429 is a harness mark
+    expect(body).toContain("rp-span agent");
+    expect(body).toContain('class="rp-mark err"');
+    // every span is clickable and carries a tip
+    expect(body).toContain("data-rpt=");
+    expect(body).toContain("data-tip=");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("not replaying, the strip is inert markup and nothing renders into it", () => {
+    const html = renderSnapshot(fixture());
+    expect(html).toContain('id="rp-lanes"');
+    expect(html).toContain('data-depth="map"');
+    expect(html).toContain('id="rp-lanes-body"');
+    const page = bootSnapshotPage(html);
+    page.goto("#/session");
+    expect(page.els["rp-lanes-body"].innerHTML).toBe("");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a live start draws an open span; the pair that answers it retires it", () => {
+    const fix = fixture();
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    // init carries the starts already in flight when the page connected
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix.slice(0, 4), starts: [] }) });
+    page.goto("#/session/aaaabbbb/@p4");
+    expect(page.els["rp-lanes-body"].innerHTML).not.toContain("rp-span model open");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p5", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1005 } }) });
+    const open = page.els["rp-lanes-body"].innerHTML as string;
+    expect(open).toContain("rp-span model open");
+    expect(open).toContain("in flight");
+    // the response retires the start — no double-drawn request
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[4] }) });
+    expect(page.els["rp-lanes-body"].innerHTML).not.toContain("rp-span model open");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+});
+
+// The stage tops the threads column while replaying: the observed state
+// machine (fixed geometry, one lit node) and the beat (what this step did).
+// Its rows are built from captured wire content — tool names, previews, the
+// model's own words — so it gets the hostile-fixture grammar treatment too.
+describe("the replay stage (#stage)", () => {
+  const PROMPT = "Explore </script><script>alert(1)</script> and report [1mback[0m";
+  const TASK = {
+    type: "tool_use",
+    id: "tu_a",
+    name: "Task",
+    input: { subagent_type: "Explore", description: "<img src=x onerror=alert(2)>", prompt: PROMPT },
+  };
+  const BASH = { type: "tool_use", id: "tu_b", name: "Bash", input: { command: "bun test" } };
+  const HEAD = "map the repo [1mfast[0m & <b>well</b>";
+  const AGENT_SYS = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+
+  // p1 (head, calls Bash) -> p2 (spawns a subagent) -> p3 the child -> p5 the reply.
+  function fixture(): TracePair[] {
+    const h1 = [{ role: "user", content: HEAD }];
+    const h2 = [...h1, { role: "assistant", content: [BASH] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_b", content: "ok" }] }];
+    const h3 = [...h2, { role: "assistant", content: [TASK] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_a", content: "done" }] }];
+    return [
+      msgPair("p1", { reqBody: { messages: h1 }, resBody: { content: [BASH], stop_reason: "tool_use" } }),
+      msgPair("p2", { reqBody: { messages: h2 }, resBody: { content: [TASK], stop_reason: "tool_use" } }),
+      msgPair("p3", {
+        reqBody: { system: [{ type: "text", text: AGENT_SYS }], messages: [{ role: "user", content: [{ type: "text", text: PROMPT }] }] },
+        resBody: { content: [{ type: "text", text: "child reply" }] },
+      }),
+      msgPair("p5", { reqBody: { messages: h3 }, resBody: { content: [{ type: "text", text: "all done" }] } }),
+    ];
+  }
+  // #stage is written as part of the threads pane's html — it must lead it.
+  const stageOf = (page: ReturnType<typeof bootSnapshotPage>) => {
+    const th = page.els["threads"].innerHTML as string;
+    const at = th.indexOf('<div id="stage">');
+    return at === -1 ? "" : th.slice(at, th.indexOf('<div class="threads-sum"'));
+  };
+
+  test("replaying, the stage leads the threads column: 6 nodes, one lit, 9 edges, a beat", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
+    const th = page.els["threads"].innerHTML as string;
+    expect(th.indexOf('<div id="stage">')).toBe(0); // above the rail, not beside it
+    const stage = stageOf(page);
+    expect(stage).toContain('<svg id="sd"');
+    // Fixed geometry: every node and every transition is always drawn — a
+    // zero one goes faint (.zero), never missing.
+    expect((stage.match(/data-node="/g) || []).length).toBe(6);
+    expect((stage.match(/data-edge="/g) || []).length).toBe(9);
+    expect(stage).toContain('class="sd-node zero"'); // waiting: never entered here
+    // Exactly one state is lit — at the end of the tape that is the reply.
+    const lit = [...stage.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
+    expect(lit.length).toBe(1);
+    expect(stage).toContain('data-node="reply" class="sd-node on"');
+    // the beat names the turn it is showing (the outline's own numbering)
+    expect(stage).toMatch(/turn\s*\d+/);
+    expect(stage).toContain("all done"); // the reply's first line
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a spawn step's beat row links to the reconstructed child thread", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    // At the child's end the parent's latest step is still the dispatch, and
+    // the child thread now exists — so the row can actually point at it.
+    page.goto("#/session/aaaabbbb/@p3");
+    const stage = stageOf(page);
+    expect(stage).toContain('class="sb-row spawn"');
+    expect(stage).toContain("open thread");
+    expect(stage).toMatch(/class="fold-link" href="#\/session\//);
+    // hostile spawn content stays escaped through the new markup
+    expect(stage).not.toContain("<img src=x");
+    expect(stage).toContain("&lt;img src=x");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a live start lights model as thinking, with an absolute clock", () => {
+    const fix = fixture();
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix, starts: [] }) });
+    page.goto("#/session/aaaabbbb/@p5"); // parked at the newest landed pair
+    expect(stageOf(page)).not.toContain("thinking since");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p9", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1008 } }) });
+    // renderStage patches #stage in place (a start rebuilds no pane), so the
+    // fragment the page wrote last is the one to read.
+    const live = page.els["stage"].innerHTML as string;
+    expect(live).toContain('class="sd-node on live"');
+    expect(live).toMatch(/thinking since \d\d:\d\d:\d\d/); // absolute, never a counter
+    const lit = [...live.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
+    expect(lit.length).toBe(1);
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("Escape peels present, then replay — and the stage goes with replay", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5");
+    expect(page.body.classList.contains("replaying")).toBe(true);
+    page.fireKey("f");
+    expect(page.body.classList.contains("present")).toBe(true);
+    // one Escape drops the presentation and KEEPS the replay
+    page.fireKey("Escape");
+    expect(page.body.classList.contains("present")).toBe(false);
+    expect(page.body.classList.contains("replaying")).toBe(true);
+    expect(page.els["threads"].innerHTML).toContain('<div id="stage">');
+    // the second exits replay, and the stage is torn down with it
+    page.fireKey("Escape");
+    expect(page.body.classList.contains("replaying")).toBe(false);
+    expect(page.els["threads"].innerHTML).not.toContain('<div id="stage">');
     expect(page.errors).toEqual([]);
   });
 });
@@ -924,31 +1141,44 @@ describe("context view", () => {
     }),
   ];
 
-  test("the sheet ships: a reconciling margin beside three canvas sections", () => {
+  test("the shell ships: an overview on top, a reconciling margin, one deck", () => {
     const html = renderSnapshot(CTX_PAIRS);
     expect(html).toContain('id="tab-context"');
     expect(html).toContain('id="context-view"');
+    // the Trajectory tab folded into this page — it was a reading, not a view
+    expect(html).not.toContain('id="tab-trajectory"');
+    expect(html).not.toContain('id="trajectory-view"');
     const page = bootSnapshotPage(html);
     page.goto("#/context");
     expect(page.errors).toEqual([]);
     const cx = page.els["context-view"].innerHTML;
-    // the two-pane sheet: a sticky margin that reconciles, a canvas that scrolls
+    // the overview: the page's time axis, above the two-pane shell
+    expect(cx).toContain('id="cx-ov"');
+    expect(cx).toContain('id="cx-tracks"');
+    expect(cx).toContain('id="cx-brush"');
+    expect(cx).toContain('id="cx-ov-scroll"');
+    expect(cx).toContain("drag to select");
+    expect(cx).toContain("wheel to zoom");
+    // the shell: a margin that reconciles beside a deck that scrolls
     expect(cx).toContain('class="cx-cols"');
     expect(cx).toContain('id="cx-margin"');
-    expect(cx).toContain('class="cx-canvas"');
+    expect(cx).toContain('class="cx-canvas mode-window"');
+    expect(cx).toContain('id="cx-deck"');
+    // three readings of ONE selection, window first
+    expect(cx).toContain('data-cxmode="window"');
+    expect(cx).toContain('data-cxmode="stream"');
+    expect(cx).toContain('data-cxmode="events"');
+    expect((cx.match(/class="cx-mode active"/g) || []).length).toBe(1);
     // the margin's balance: the headline, the bar, the reconciliation
     expect(cx).toContain("cx-bal-n");
     expect(cx).toContain("of context used");
     expect(cx).toContain("cx-recon");
-    // the canvas's three sections, each named for what the reader gets
-    expect(cx).toContain("trajectory");
-    expect(cx).toContain("inside this step");
-    expect(cx).toContain("what changed it");
     // counts caption the thing they count — never an orphan chips row
     expect(cx).toContain("wire request");
     expect(cx).toContain("working loop");
-    // one bar per wire request
-    expect((cx.match(/data-cxbar=/g) || []).length).toBe(2);
+    // one column per wire request, each addressable by the brush
+    expect((cx.match(/data-cxbar=/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(cx).toContain('data-cxc="0"');
     // the ledger names all six categories, and every line is a zoom
     for (const label of ["system prompt", "tool schemas", "user messages", "injected context", "assistant replies", "tool results"]) {
       expect(cx).toContain(label);
@@ -956,6 +1186,86 @@ describe("context view", () => {
     expect((cx.match(/class="cx-crow[ "]/g) || []).length).toBe(6);
     expect(cx).toContain('data-cxnode="c:toolResult"');
     expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the granularity, zoom and brush controls all live on the overview", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('data-cxgran="step"');
+    expect(cx).toContain('data-cxgran="turn"');
+    expect(cx).toContain('data-cxzoomb="in"');
+    expect(cx).toContain('data-cxzoomb="out"');
+    expect(cx).toContain('data-cxzoomb="fit"');
+    // no range brushed yet: no brush window, no caption — never a fake selection
+    expect(cx).toContain('id="cx-brush"></div>');
+    expect(cx).not.toContain("esc clears<");
+    expect(cx).not.toContain("cx-brush-win");
+    // the gutter names each track and states its own top of scale
+    expect(cx).toContain('class="cx-ov-gn">ctx<');
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the stream deck is the old Trajectory tab, scoped to this page", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/=stream");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-canvas mode-stream"');
+    // the record stream: rows with kind badges, the inspector beside them
+    expect(cx).toContain('class="tj-list"');
+    expect(cx).toContain('id="tj-detail"');
+    expect(cx).toContain('class="tj-badge"');
+    expect(cx).toContain("USER");
+    expect(cx).toContain("CONTEXT"); // the reminder is the harness's, not the human's
+    expect(cx).toContain("TOOL");
+    // archify's MAP/READ/FULL, and the kind filter
+    expect(cx).toContain('data-tjlvl="map"');
+    expect(cx).toContain('data-tjlvl="read"');
+    expect(cx).toContain('data-tjlvl="full"');
+    expect(cx).toContain('data-tjkind="context"');
+    // ...but no second head: the page head and the margin already say it
+    expect(cx).not.toContain("tj-head");
+    expect(cx).not.toContain("tj-counts");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a stream search that matches nothing says so instead of throwing", () => {
+    // 0.45.0 review: the empty branch referenced an undeclared name, so one
+    // unmatched keystroke froze the deck on the previous render.
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/=stream");
+    const search = page.els["tj-search"];
+    search.value = "zzz-nothing-in-this-stream";
+    // One dispatch: the stub reuses the element by id, so every repaint
+    // re-registers the listener and a loop over the live list never ends.
+    const onInput = (search.listeners.input || [])[0];
+    expect(onInput).toBeDefined();
+    onInput!({} as any);
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("no records match this filter");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the old #/trajectory route lands on the stream deck and rewrites itself", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/trajectory");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-canvas mode-stream"');
+    expect(cx).toContain('class="tj-list"');
+  });
+
+  test("where the time went is a margin block, and a track on the overview", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("where the time went");
+    expect(cx).toContain('class="cx-time"'); // the second overview track
+    expect(cx).toContain('class="cx-ov-gn">time<');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
   });
 
   test("the six numbers are rendered ONCE as a list: no legend, no detail strip", () => {
@@ -973,7 +1283,7 @@ describe("context view", () => {
 
   test("an injected reminder shows as an inject event and in the graph's inject items", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     // the event row names the reminder's opening words
     expect(cx).toContain("Recalled memory");
@@ -997,7 +1307,7 @@ describe("context view", () => {
       resBody: { usage: { input_tokens: 300, output_tokens: 10 } },
     });
     const page = bootSnapshotPage(renderSnapshot([before, after]));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("cx-mark"); // ✂ above the post-compact bar
     expect(cx).toContain("cx-colw cut"); // ...and the axis-break rule down the bar
@@ -1023,7 +1333,7 @@ describe("context view", () => {
       resBody: { model: "claude-fable-5" },
     });
     const page = bootSnapshotPage(renderSnapshot([p1, p2]));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("opus-4-6 → fable-5");
   });
@@ -1064,7 +1374,7 @@ describe("context view", () => {
     expect(cats).toEqual(["tools", "user", "assistant", "toolResult"]); // no system block in this fixture
     // the ledger states all six, always, in the same order — it is the
     // invariant the chart stops showing the moment you zoom
-    const margin = cx.slice(cx.indexOf('id="cx-margin"'), cx.indexOf('class="cx-canvas"'));
+    const margin = cx.slice(cx.indexOf('id="cx-margin"'), cx.indexOf('class="cx-canvas'));
     expect([...margin.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]))
       .toEqual(["system", "tools", "user", "inject", "assistant", "toolResult"]);
     // a container node zooms, a leaf opens
@@ -1130,7 +1440,7 @@ describe("context view", () => {
       pairsOut.push(msgPair("e" + i, { reqBody: { messages: msgs.slice() } }));
     }
     const page = bootSnapshotPage(renderSnapshot(pairsOut));
-    page.goto("#/context");
+    page.goto("#/context/=events");
     const cx = page.els["context-view"].innerHTML;
     // the chips still count every raw event...
     expect(cx).toContain("inject 6");

@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import { buildSession, threadTimeSplit, mainThread } from "../src/session";
+import { pairStartMs, pairEndMs } from "../src/replay";
 import { wireTables } from "../src/clients";
 
 // Where a thread's wall-clock went (dsh's Trajectory lanes read off the
@@ -62,10 +63,20 @@ describe("threadTimeSplit", () => {
     expect(s.between).toBe(90_000 - 1000);        // B -> C, the loop ended
     expect(s.waiting).toBe(5000 - 500);           // C -> D, same loop, C made no call (harness nudge)
     expect(s.wall).toBe(105_000 + 500);
-    expect(s.byPair.A).toEqual({ tools: 8000 });
-    expect(s.byPair.C).toEqual({ waiting: 4500 });
+    expect(s.byPair.A).toEqual({ t0: 1_002_000, t1: 1_010_000, tools: 8000 });
+    expect(s.byPair.C).toEqual({ t0: 1_100_500, t1: 1_105_000, waiting: 4500 });
     expect(s.byPair.B).toBeUndefined();
     expect(s.byPair.D).toBeUndefined();
+  });
+
+  test("byPair carries the gap's absolute window: reply end -> next request start", () => {
+    const s = threadTimeSplit(t, byId);
+    // A ends at 1000s + 2s; B goes on the wire at 1010s. One definition of
+    // tools time — the lanes draw exactly the ms this split counts.
+    expect(s.byPair.A.t0).toBe(pairEndMs(byId("A")));
+    expect(s.byPair.A.t1).toBe(pairStartMs(byId("B")));
+    expect(s.byPair.A.t1 - s.byPair.A.t0).toBe(s.byPair.A.tools);
+    expect(s.byPair.C.t1 - s.byPair.C.t0).toBe(s.byPair.C.waiting);
   });
 
   test("a thread with no attributed reply reports zeros, not NaN", () => {

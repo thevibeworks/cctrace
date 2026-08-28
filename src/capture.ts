@@ -1,12 +1,18 @@
 import { startProxy } from "./proxy";
 import { startMitm } from "./mitm";
 import { ensureCerts, buildCaBundle } from "./certs";
-import type { TracePair } from "./types";
+import type { TracePair, TraceStart } from "./types";
 
 export type CaptureMode = "mitm" | "base-url";
 
 export interface CaptureOptions {
   onPair: (pair: TracePair) => void;
+  /**
+   * A model call was forwarded and has no response yet (both proxy modes) —
+   * the live page's "the model is thinking now" state. Carries the id the
+   * eventual pair will have; ignored by static/legacy-node captures.
+   */
+  onStart?: (start: TraceStart) => void;
   logAll: boolean;
   cacheDir: string;
   /** Upstream host for base-url mode; MITM reads it from each request. */
@@ -83,6 +89,7 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
     const server = await startMitm({
       caDir: certs.caDir,
       onPair: opts.onPair,
+      onStart: opts.onStart,
       logAll: opts.logAll,
       interceptHosts: opts.interceptHosts,
       captureExternal: opts.captureExternal,
@@ -128,6 +135,7 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
   const server = startProxy({
     targetHost: opts.targetHost,
     onPair: opts.onPair,
+    onStart: opts.onStart,
     logAll: opts.logAll,
   });
   const proxyUrl = `http://127.0.0.1:${server.port}`;

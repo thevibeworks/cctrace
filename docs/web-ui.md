@@ -45,56 +45,78 @@ offline snapshots -- same UI, three ways in.
   were already in the trace; remote image URLs are named, never fetched.
   A masked screen-share mode (header eye toggle) blurs session ids and
   account values.
-- **Context view** -- what the model is actually carrying around, and what
-  is eating the window, laid out as a ledger. A sticky MARGIN states the
-  balance for the picked step and never scrolls away: its prompt tokens, a
-  six-color bar scaled against the model's context window, how far the
-  chars/4 estimate reads under or over the billed prompt, and the six
-  categories as ledger lines (system prompt, tool schemas, your messages,
-  injected context, assistant replies, tool results) -- click a line to
-  zoom the graph to it. Under them the step's links out, the top tool
-  schemas by size, and, on a trace holding several sessions, the other
-  threads: peak assembled context per thread, one scale, click to switch.
-  The CANVAS beside it: a trajectory chart with one stacked bar per
-  request (or per turn) where ✂ and an amber axis break mark compactions
-  and rewinds -- watch the bars drop; the picked step as a context graph
-  -- an icicle where width is tokens and rows are levels, decomposing it
-  into category -> group -> item, with tool results grouped by the tool
-  that made them, schemas by MCP server, injections by producer (click a
-  node to zoom, a leaf to open its exact bytes below; row 1 is the
-  margin's own six categories, so the graph reads as that bar growing
-  downward); and the events -- every injection with its producer --
-  AGENTS.md, system reminders, recaps -- every compaction with the tokens
-  it reclaimed, every model switch and tool-schema change, each linked to
-  its wire request.
+- **Context view** -- the agent's context window over time, in a shell
+  that reads like Chrome DevTools' Performance panel. An interactive
+  OVERVIEW sits on top and never scrolls away: one stacked column per
+  wire request (or per turn), colored by the six things a window is made
+  of, with ✂ and an amber axis break marking compactions and rewinds, and
+  a second track underneath showing where that step's wall-clock went
+  (model / tools / waiting). Drag across it to select a range, drag the
+  handles to resize it or the window to pan it, wheel to zoom in around
+  the cursor, click a column to pin one step, `Esc` to peel back.
+  A MARGIN beside the decks states the balance for the pinned step and
+  repaints on every scrub: its prompt tokens, a six-color bar scaled
+  against the model's context window, how far the chars/4 estimate reads
+  under or over the billed prompt, and the six categories as ledger lines
+  (system prompt, tool schemas, your messages, injected context,
+  assistant replies, tool results) -- click a line to zoom the graph to
+  it. Under them the step's links out, the top tool schemas by size,
+  where the thread's time went, and, on a trace holding several sessions,
+  the other threads: peak assembled context per thread, one scale, click
+  to switch.
+  What you select is then read three ways, one deck at a time:
+  - **window** -- the pinned step as a context graph: an icicle where
+    width is tokens and rows are levels, decomposing it into category ->
+    group -> item, with tool results grouped by the tool that made them,
+    schemas by MCP server, injections by producer. Click a node to zoom,
+    a leaf to open its exact bytes below; row 1 is the margin's own six
+    categories, so the graph reads as that bar growing downward. Every
+    row names where it came from ("since turn 04 . step 2") and clicking
+    that pins the step that first carried it in.
+  - **stream** -- the agent's path as one linear stream of records:
+    system prompt, the human's turns, the context the harness injected
+    (inline, first-class, at the moment it entered), the model's
+    thinking, each tool call fused with its result, the reply --
+    kind-badged, in spine order, every record linked to its wire pair and
+    addressed turn NN . step N exactly as the Sessions outline addresses
+    it. A record list beside an inspector that reuses the detail panel's
+    own block renderers. Three detail levels, filtering only, never
+    summarizing (the bar says how many rows it hid): MAP is the skeleton
+    (system, the human, the tool calls), READ drops the token budget
+    banners and bare thinking, FULL is everything. A kind filter isolates
+    one record type -- context-only is the context trajectory: you watch
+    context enter the window inline with the reasoning that consumed it
+    -- plus search.
+  - **events** -- every injection with its producer (AGENTS.md, system
+    reminders, recaps), every compaction with the tokens it reclaimed,
+    every model switch and tool-schema change, each linked to its wire
+    request.
+
   Because cctrace sits on the wire, every step is exact -- the captured
   request body IS the assembled context -- and every figure is anchored to
   the provider-reported prompt tokens of that same request. Estimates wear
   ≈ and never replace actuals.
-- **Trajectory view** -- the agent's path as one linear, time-anchored
-  stream of records, borrowed from the DeepSeek Harness web UI's
-  Trajectory tab: system prompt, the human's turns, the context the
-  harness injected (inline, first-class, at the moment it entered), the
-  model's thinking, each tool call fused with its result, the reply --
-  kind-badged, in spine order, every record linked to its wire pair and
-  addressed turn NN . step N exactly as the Sessions outline and the
-  Context view address it. A record list beside an inspector that reuses
-  the detail panel's own block renderers. Three detail levels, filtering
-  only, never summarizing (the toolbar says how many rows it hid): MAP is
-  the skeleton (system, the human, the tool calls), READ drops the token
-  budget banners and bare thinking, FULL is everything. A kind filter
-  isolates one record type -- context-only is the context trajectory: you
-  watch context enter the window inline with the reasoning that consumed
-  it -- plus search. A strip on top shows where the thread's wall-clock
-  went (model / tools / waiting / between turns), the same split the
-  Sessions view's "time" chip carries; every figure is a wire timestamp.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
-  wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,
-  and the scrubber doubles as a session minimap (turns, errors, probes).
-  Pause anywhere and the URL (`#/session/<key>/@<pair-id>`) deep-links that
-  exact moment. Works on every trace ever captured -- live, snapshot, or
-  `cctrace view` rebuild -- because the wire is already a timeline.
+  wire request), `[`/`]` jump between working loops, `Space` plays at
+  1/2/8/60x with long idle gaps compressed. Pause anywhere and the URL
+  (`#/session/<key>/@<pair-id>`) deep-links that exact moment. Works on
+  every trace ever captured -- live, snapshot, or `cctrace view` rebuild --
+  because the wire is already a timeline.
+- **The replay stage** -- entering replay turns the scrubber into a
+  trajectory: five lanes over wall-clock (the human's prompts, the model's
+  requests, tools running between them, subagents as stacked spans, the
+  harness lane with compaction cuts and failed requests). Wheel to zoom
+  around the cursor; the strip says more as you zoom in. Click a span to
+  jump there, shift+drag to select a slice. The left pane grows a state
+  diagram -- human -> model -> tools / agents / waiting -> reply -- with
+  counts and time as of the cursor and the current transition lit, and
+  under it the BEAT: what the agent did at this step (tool calls fused with
+  results, spawns, the reply, the stated reasoning, the window delta).
+  Every mark is a wire fact; nothing is inferred. On a live run the model
+  node lights the moment a request is forwarded ("thinking since 14:32:07")
+  because the proxy announces requests as they go out. `F` clears the
+  chrome for presenting; Esc peels present -> replay -> view.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
   read/write TTLs priced separately), with per-turn and per-thread totals

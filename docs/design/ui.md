@@ -109,17 +109,29 @@ to protect that feeling.
   amount parked 800px from the words it belongs to is a hunt, not a column.
 - Every view is two panes: a narrow left column that states what you are
   looking at, and a wide right column you work in — requests
-  (list | detail), sessions (rail | convo), context (ledger | canvas),
-  trajectory (record list | inspector).
-  The left column is fixed-measure and may stick; the right one scrolls.
+  (list | detail), sessions (rail | convo), context (ledger | deck, and
+  the deck's own stream is list | inspector).
+  The left column is fixed-measure; the right one scrolls.
   A view that is one full-width ribbon is the odd one out and reads as a
   different product.
+- A control that scopes what is below it belongs to the FRAME, not to the
+  scroll. The context overview brushes a range every deck under it reads;
+  scrolling it away would leave the reader looking at filtered content
+  with the filter off screen. Same rule as the toolbar and the tabs.
 - A number is stated ONCE per view. If the same figure appears in a
   headline, a legend and a chart, two of the three are decoration —
   delete them or make each a genuinely different form (a list that is
   always the same six lines is not the same thing as a chart that
   reorders and rescales).
 
+- The replay strip is the session view's FRAME element the way the
+  context overview is the context view's: lanes x wall-clock, the playhead
+  and the slice spanning every lane, never scrolled away. Reading depth is
+  a function of zoom (map / read / full on `data-depth`), not a toggle.
+  The playhead is the page's ONE motion owner while replaying: nothing
+  else tweens, counts, or ticks — a still frame is always complete. The
+  stage's diagram is fixed geometry: a node or edge with zero observations
+  goes faint, never hidden (hiding shifts the picture).
 - The dashboard (`src/dashboard.ts`) is part of this design system, not a
   side page: same variable block, same type scale, same lowercase labels,
   same small-button grammar for its group-by control, and the same client

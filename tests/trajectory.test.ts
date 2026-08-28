@@ -113,6 +113,27 @@ describe("trajectoryRecords", () => {
     expect(trajectoryRecords(null)).toEqual([]);
     expect(trajectoryRecords({ turns: [] })).toEqual([]);
   });
+
+  test("an unattributed user turn takes the pair of the request that carried it", () => {
+    // Most of a long spine has no pairId of its own — the history arrived
+    // inside request bodies whose own requests were never captured. A
+    // user turn that answers to no request at all cannot resolve "wire →"
+    // and cannot be sliced by the overview's brushed range, so it takes
+    // the pair of the NEXT request, the same one its Context-pane
+    // provenance names.
+    const t = {
+      key: "k", system: "",
+      turns: [
+        { role: "user", blocks: [{ type: "text", text: "the ask" }] },              // no pairId
+        { role: "user", blocks: [{ type: "text", text: "<system-reminder>a notice</system-reminder>" }] },
+        { role: "assistant", pairId: "pX", blocks: [{ type: "text", text: "done" }] },
+      ],
+    };
+    const r = trajectoryRecords(t);
+    expect(r.find((x) => x.kind === "user")!.pairId).toBe("pX");
+    expect(r.find((x) => x.kind === "context")!.pairId).toBe("pX");
+    expect(r.find((x) => x.kind === "assistant")!.pairId).toBe("pX");
+  });
 });
 
 describe("trajectoryAtLevel (archify MAP/READ/FULL)", () => {

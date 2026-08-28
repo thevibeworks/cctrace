@@ -1,5 +1,5 @@
 import type { ServerWebSocket } from "bun";
-import type { TracePair } from "./types";
+import type { TracePair, TraceStart } from "./types";
 import { getLiveHtml, renderSnapshot, type PageMeta } from "./ui";
 import { sliceWindow, pairEndMs } from "./replay";
 import { createSpecAccumulator, renderSpecMarkdown } from "./spec";
@@ -78,6 +78,25 @@ const pairs: TracePair[] = [];
 const knownIds = new Set<string>();
 const seenSessions = new Set<string>();
 
+/**
+ * Model calls forwarded but not yet answered — the page's "the model is
+ * thinking now" state (docs/design/replay-stage.md). An entry leaves when the
+ * pair with its id lands, or after START_TTL_MS: a killed request must not
+ * pin the state forever, and an open start is a hint, never trace data.
+ */
+const openStarts = new Map<string, TraceStart>();
+const startTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const START_TTL_MS = 10 * 60 * 1000;
+
+function dropStart(id: string) {
+  const t = startTimers.get(id);
+  if (t) {
+    clearTimeout(t);
+    startTimers.delete(id);
+  }
+  openStarts.delete(id);
+}
+
 function broadcast(data: unknown) {
   const msg = JSON.stringify(data);
   for (const ws of clients) {
@@ -91,6 +110,8 @@ function mergePairs(incoming: TracePair[]): TracePair[] {
   if (!fresh.length) return [];
   for (const p of fresh) {
     knownIds.add(p.id);
+    // The response exists now: this request is no longer in flight.
+    if (openStarts.size) dropStart(p.id);
     pairs.push(p);
   }
   pairs.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
@@ -108,6 +129,16 @@ function mergePairs(incoming: TracePair[]): TracePair[] {
 // history (pair.prior = source file), so a --continue'd conversation keeps
 // its old turns' usage/duration/wire links instead of looking incomplete.
 export function createServer(config: ServerConfig) {
+  // The full state a connecting page needs: the pairs, the trace size, and
+  // the requests still in flight (so a page that connects MID-request knows
+  // the model is thinking, instead of waiting for a `start` it missed).
+  const initMessage = () => ({
+    type: "init",
+    pairs,
+    traceBytes: config.traceSize?.(),
+    starts: [...openStarts.values()],
+  });
+
   if (config.initialPairs?.length) mergePairs(config.initialPairs);
   if (config.withFiles?.length) {
     // Streamed reads are async; the page that connects first sees them land
@@ -162,11 +193,28 @@ export function createServer(config: ServerConfig) {
         }
       }
       if (evicted) {
-        broadcast({ type: "init", pairs, traceBytes: config.traceSize?.() });
+        broadcast(initMessage());
         termWrite(`[cctrace] resumed a different session — dropped ${evicted} preloaded pairs`);
       }
     }
     speculativeSid = null;
+  };
+
+  // A model call was forwarded and has no response yet: hold it as open state
+  // and tell every page. The pair with the same id retires it (mergePairs).
+  const onLiveStart = (start: TraceStart) => {
+    if (!start?.id || knownIds.has(start.id) || openStarts.has(start.id)) return;
+    openStarts.set(start.id, start);
+    // An in-flight request must never keep the process alive on its own.
+    // Expiry is the one retirement the pages cannot see for themselves (a
+    // landing pair retires the start on both sides), so it is announced.
+    const timer = setTimeout(() => {
+      dropStart(start.id);
+      broadcast({ type: "start-end", id: start.id });
+    }, START_TTL_MS);
+    (timer as { unref?: () => void }).unref?.();
+    startTimers.set(start.id, timer);
+    broadcast({ type: "start", start });
   };
 
   const onLivePair = (pair: TracePair) => {
@@ -486,7 +534,7 @@ export function createServer(config: ServerConfig) {
     websocket: {
       open(ws) {
         clients.add(ws);
-        ws.send(JSON.stringify({ type: "init", pairs, traceBytes: config.traceSize?.() }));
+        ws.send(JSON.stringify(initMessage()));
       },
       close(ws) {
         clients.delete(ws);
@@ -515,6 +563,7 @@ export function createServer(config: ServerConfig) {
   return {
     port: server.port ?? config.port,
     ingest: onLivePair,
+    ingestStart: onLiveStart,
     stop: () => server.stop(true),
   };
 }

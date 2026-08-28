@@ -36,6 +36,22 @@ export interface TracePair {
   prior?: string;
 }
 
+/**
+ * A model call that has been FORWARDED and has no response yet — the live
+ * "the model is thinking now" signal (docs/design/replay-stage.md). `id` is
+ * the id the eventual TracePair carries, so a page drops the start when the
+ * pair lands. Never written to the trace: it is live state, not a wire pair.
+ */
+export interface TraceStart {
+  id: string;
+  url: string;
+  method: string;
+  /** Request timestamp in epoch SECONDS — same unit as RequestData.timestamp. */
+  ts: number;
+  /** CLI that produced this traffic, stamped by the log sink like pair.client. */
+  client?: string;
+}
+
 export interface TraceConfig {
   logDir: string;
   logName?: string;

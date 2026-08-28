@@ -193,8 +193,16 @@ session) — the link a statusline can afford to print. Hash-routed views:
   prompt tokens. Selection is shared with the Sessions view, and a step
   links back to its turn there.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
-  session as it happened; `Space` plays at 1/2/8/60x (idle gaps compressed);
-  the scrubber is a minimap (turns tall, errors red). Pausing writes a
+  session as it happened; `[`/`]` jump between working loops; `Space` plays
+  at 1/2/8/60x (idle gaps compressed). The scrubber is a TRAJECTORY: five
+  lanes over wall-clock (human prompts · model requests · tools · subagents
+  stacked · harness cuts/failures); wheel zooms around the cursor and the
+  strip labels spans as you zoom in; click a span to jump there. The left
+  pane carries the agent's observed state diagram (human -> model -> tools /
+  agents / waiting -> reply, counts as of the cursor, current transition
+  lit) and the BEAT — this step's tool calls fused with results, spawns,
+  the reply, the window delta. `F` hides the chrome for presenting; Esc
+  peels present -> replay -> view. Pausing writes a
   shareable deep link: `#/session/<key>/@<pair-id>` opens paused at that
   exact moment — use these links to point a human at "the turn where it went
   wrong". Shift+drag on the scrubber selects a SLICE (a range): both panes

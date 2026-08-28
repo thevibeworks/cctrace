@@ -143,6 +143,16 @@ end time), and export (`/api/slice.html`, `view --slice a..b`) emits a
 snapshot holding exactly the window — the honest shareable artifact the
 whole-session --html never was.
 
+## P6 (2026-08-27, BUILT): the stage — lanes, state, beat, live starts
+
+Replay grew from a bar + the transcript into a stage: the scrubber is a
+five-lane trajectory over wall-clock, the left pane carries the agent's
+observed state machine and the beat of the current step, and the proxies
+announce a request as it is forwarded so a live page shows "thinking
+now". Spec and rules: docs/design/replay-stage.md. Open question 3 above
+is settled by it (probes are not states and draw nowhere on the lanes);
+question 1 (multi-day merged sessions) is its listed follow-up.
+
 ## P5 seed (2026-07-28, unbuilt): diff between moments — slices give it endpoints
 
 Out of a "rebrand replay as time travel?" review (sj): the rename was cut —

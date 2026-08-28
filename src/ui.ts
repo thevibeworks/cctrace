@@ -640,6 +640,87 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
     }
     #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* ---- the stage (#stage): the observed state machine + the beat ----
+       Top of the threads column while replaying (the rail stays under it:
+       the strip is time navigation, the rail is still the outline). The
+       diagram's geometry is FIXED — a node or edge with nothing observed
+       goes faint, never missing; hiding one would shift the picture under
+       a reader mid-scrub. */
+    #stage { padding: 2px 4px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+    #sd { display: block; width: 100%; height: auto; }
+    /* One hue per wire fact, the same ones the strip uses: model/tools/
+       waiting from the time-track vars, agents purple, human accent, the
+       reply muted (a reply is the absence of work, not a color). */
+    .sd-node { color: var(--text-faint); opacity: 0.66; transition: opacity 160ms ease-out; }
+    .sd-node[data-node="human"] { color: var(--accent); }
+    .sd-node[data-node="model"] { color: var(--lane-model); }
+    .sd-node[data-node="tools"] { color: var(--lane-tools); }
+    .sd-node[data-node="agents"] { color: var(--purple); }
+    .sd-node[data-node="waiting"] { color: var(--lane-waiting); }
+    .sd-node[data-node="reply"] { color: var(--text-muted); }
+    .sd-node .sd-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
+    .sd-node .sd-nl { fill: var(--text-muted); font-size: 10px; }
+    .sd-node .sd-nn { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .sd-node .sd-fail { fill: var(--red); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .sd-node.zero { opacity: 0.26; }
+    .sd-node.on { opacity: 1; }
+    .sd-node.on .sd-nb { stroke-width: 2; fill-opacity: 0.12; }
+    .sd-node.on .sd-nl { fill: currentColor; }
+    .sd-node.on .sd-nn { fill: var(--text); }
+    /* live: a request is in flight at the cursor — the one heartbeat the
+       page already owns (the status dot), never a ticking counter */
+    .sd-node.live .sd-nb { animation: heartbeat 2.4s ease-in-out infinite; }
+    .sd-edge { color: var(--text-faint); opacity: 0.5; transition: opacity 160ms ease-out; }
+    .sd-edge .sd-e { fill: none; stroke: currentColor; stroke-width: 1; }
+    .sd-edge .sd-ah { fill: currentColor; stroke: none; }
+    .sd-edge .sd-en { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .sd-edge .sd-cut { fill: var(--amber); font-size: 9px; font-variant-numeric: tabular-nums; }
+    .sd-edge.zero { opacity: 0.2; }
+    .sd-edge.on { opacity: 1; color: var(--text); }
+    .sd-edge.on .sd-e { stroke-width: 2; }
+    .sd-edge.on .sd-en { fill: var(--text); }
+    .sd-edge.on[data-edge$=">model"] { color: var(--lane-model); }
+    .sd-edge.on[data-edge="model>tools"] { color: var(--lane-tools); }
+    .sd-edge.on[data-edge="model>agents"] { color: var(--purple); }
+    .sd-edge.on[data-edge="model>waiting"] { color: var(--lane-waiting); }
+    .sd-edge.on[data-edge="reply>human"] { color: var(--accent); }
+    @media (prefers-reduced-motion: reduce) {
+      .sd-node, .sd-edge { transition: none; }
+      .sd-node.live .sd-nb { animation: none; }
+    }
+    .sd-tools {
+      font-size: 10px; color: var(--text-faint); padding: 2px 6px 0;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    .sd-live { font-size: 11px; color: var(--lane-model); padding: 2px 6px 0; font-variant-numeric: tabular-nums; }
+    /* the beat: what the agent did at this step, one row per fact */
+    .sb { margin-top: 8px; }
+    .sb-cap {
+      font-size: 11px; color: var(--text-faint); padding: 0 6px 4px;
+      font-variant-numeric: tabular-nums;
+    }
+    .sb-cap .sb-turn { color: var(--text); }
+    .sb-row { display: flex; align-items: flex-start; gap: 6px; padding: 0 6px; }
+    .sb-row > details { flex: 1 1 auto; min-width: 0; }
+    .sb-mark { flex: none; font-size: 10px; color: var(--text-faint); line-height: 20px; }
+    .sb-line { display: flex; align-items: baseline; gap: 6px; padding: 2px 6px; font-size: 11px; }
+    .sb-lbl { flex: none; font-size: 10px; color: var(--text-faint); }
+    .sb-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+    /* the model's stated reasoning is a claim it made, not an observation:
+       dimmed and labelled, never drawn as causation (replay-stage.md) */
+    .sb-think .sb-txt { color: var(--text-faint); font-style: italic; }
+    .sb-foot {
+      display: flex; align-items: baseline; gap: 6px; margin-top: 6px;
+      padding: 4px 6px 0; border-top: 1px solid var(--border);
+      font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums;
+    }
+    .sb-gap { flex: 1 1 auto; min-width: 6px; }
+    .sb-amt { flex: none; color: var(--text-muted); }
+    .sb-none { font-size: 11px; color: var(--text-faint); padding: 4px 6px; }
+    /* presentation (F): the chrome steps out, the panes take the viewport.
+       Type scale unchanged — a presentation is the same page, undressed. */
+    body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail { display: none; }
     /* boot placeholder: a verb while the wire loads (ccx tradition) */
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
     .bw-star { color: var(--accent); display: inline-block; animation: bwPulse 1.6s ease-in-out infinite; }
@@ -1924,7 +2005,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened, with the trajectory strip — lanes over wall-clock — above it.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there · Esc exits">⏵ replay</button>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the stage (state diagram + the beat) at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
       <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
@@ -3112,6 +3193,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (v === 'session' && view !== 'session') pendingSessionFocus = true;
       view = v;
       if (v !== 'requests' && selMode) setSelMode(false);
+      // Presentation belongs to the sessions view: leaving it must not
+      // strand a reader on a page with no header and no toolbar.
+      if (v !== 'session') document.body.classList.remove('present');
       document.body.classList.toggle('view-session', v === 'session');
       document.body.classList.toggle('view-context', v === 'context');
       tabRequests.classList.toggle('active', v === 'requests');
@@ -3273,6 +3357,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (e.key === 'j') { railJump(convoEl, 'tnext'); return; }
         if (e.key === 'p') { railJump(convoEl, 'uprev'); return; }
         if (e.key === 'u') { railJump(convoEl, 'unext'); return; }
+        // Presentation: the chrome steps out and the panes take the
+        // viewport. Not persisted — a presentation is a moment.
+        if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          document.body.classList.toggle('present');
+          return;
+        }
+        // While replaying, [ / ] are CHAPTERS — the working-loop heads of
+        // the thread on screen. They only switch SESSIONS when replay is
+        // off: with a cursor on the tape, moving between loops is what the
+        // reader means, and the session switcher is one Esc away.
+        if ((e.key === '[' || e.key === ']') && replay.active) {
+          e.preventDefault();
+          seekChapter(e.key === ']' ? 1 : -1);
+          return;
+        }
         if (e.key === '[' || e.key === ']') {
           // Previous/next session, newest-first (same order as the pane).
           const threads = getThreads();
@@ -3292,6 +3391,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           return;
         }
         if (e.key === 'Escape') {
+          // Peel one layer at a time: presentation, then replay, then the
+          // view. Dropping straight out of a mode you entered on purpose is
+          // the thing that makes a reader stop entering modes.
+          if (document.body.classList.contains('present')) { document.body.classList.remove('present'); return; }
           if (replay.active) exitReplay();
           else location.hash = '';
         } else if (e.key === ' ') {
@@ -4021,7 +4124,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function showSession(key, sub) {
       const threads = getThreads();
       if (!threads.length) {
-        threadsEl.innerHTML = '';
+        // The stage still stands while replaying: at a cursor before the
+        // first response it says so, instead of blanking the column.
+        threadsEl.innerHTML = stageHtml();
         convoEl.innerHTML = '<div class="empty">' + (replay.active
           ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
           : 'No /v1/messages requests captured yet.') + '</div>';
@@ -4852,6 +4957,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // keep what the user collapsed.
     const foldedTurns = {};
 
+    // Was the stage up on the LAST render? Entering replay drops one at the
+    // top of a column the reader may have scrolled deep into (focusThreadsPane
+    // lands on the selected thread), so the first render with a stage lands on
+    // it. Every later render keeps the reader's scroll — the stage is a
+    // document region, not floating chrome.
+    let stageWasUp = false;
+
     function renderThreadsPane(threads, sel) {
       const card = (t, nested) => {
         try { return threadCard(t, t.key === sel.key, nested); }
@@ -4904,7 +5016,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!bySid[sid]) { bySid[sid] = []; sids.push(sid); }
         bySid[sid].push(t);
       }
-      let html = sessionSummary(threads, sids.length);
+      // The stage sits ABOVE the rail while replaying: the strip is the time
+      // navigation, the stage is where/what, the rail is still the outline.
+      let html = stageHtml() + sessionSummary(threads, sids.length);
       {
         // EVERY trace renders the sessions layer — a single-session trace
         // is one open container (2026-07-20 round 5: the old flat mode
@@ -4941,7 +5055,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       const top = threadsEl.scrollTop; // live re-renders must not move the list
       threadsEl.innerHTML = html;
-      threadsEl.scrollTop = top;
+      threadsEl.scrollTop = replay.active && !stageWasUp ? 0 : top;
+      stageWasUp = replay.active;
       tipDetachedGuard(); // the hovered row may have just been replaced
       for (const d of threadsEl.querySelectorAll('details.sess')) {
         d.addEventListener('toggle', () => { sessOpen[d.dataset.sid] = d.open; });
@@ -7099,12 +7214,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // scrubbing must not redraw the trajectory being scrubbed over.
     // Cached on the capture's length + the slice (buildSession over a long
     // trace is not a per-frame cost).
+    // The threads of the WHOLE capture (never the cursored subset): the
+    // strip draws the trajectory being scrubbed over, and the stage's
+    // chapters have to include the loops still AHEAD of the cursor.
+    let fullCache = { key: '', threads: [] };
+    function fullThreads() {
+      const key = pairs.length + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
+      if (fullCache.key !== key) {
+        fullCache = { key, threads: buildSession(slicePairs(pairs), CLIENT_WIRE).threads };
+      }
+      return fullCache.threads;
+    }
     let laneCache = { key: '', lanes: null };
     function laneData() {
       const key = pairs.length + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
-      if (laneCache.key !== key) {
-        laneCache = { key, lanes: sessionLanes(buildSession(slicePairs(pairs), CLIENT_WIRE).threads, pairOf) };
-      }
+      if (laneCache.key !== key) laneCache = { key, lanes: sessionLanes(fullThreads(), pairOf) };
       return laneCache.lanes;
     }
 
@@ -7275,6 +7399,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const atEdge = !!frameW && (rpScroll.scrollLeft || 0) + frameW >= frameW * replay.zoom - 2;
       renderReplayStrip(true);
       renderReplayBar();
+      renderStage(); // a start event rebuilds no pane, but it IS the live state
       if (atEdge) rpScroll.scrollLeft = Math.max(0, frameW * replay.zoom - frameW);
     }
 
@@ -7322,6 +7447,260 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function refreshReplay() {
       renderReplayBar();
       if (view === 'session') showSession(sessionSelKey);
+    }
+
+    // ---- the stage (#stage): the observed state machine + the beat ----
+    // Rendered at the TOP of the threads column while replaying, torn down
+    // with replay. Two readings of ONE cursor: WHERE the agent is in its
+    // observed loop (the diagram, counted over the whole trace so far), and
+    // WHAT it did at this step (the beat, from the selected thread). The
+    // diagram's geometry never moves — a node or edge with zero
+    // observations goes faint, so the picture the reader learned at 00:03
+    // is the same picture at 41:07.
+
+    const SD_VB = '0 0 360 146';
+    const SD_W = 84;              // node chip
+    const SD_H = 28;
+    const SD_ARC = 10;            // the reply -> human return, over the top
+    // Hand-placed: the working loop reads left-to-right on top (human ->
+    // model -> reply) with the three things a reply can hand off to sitting
+    // under the model.
+    const SD_XY = {
+      human: [6, 26], model: [138, 26], reply: [270, 26],
+      tools: [6, 110], agents: [138, 110], waiting: [270, 110],
+    };
+
+    // A filled triangle at the end of a run, so an edge's direction is
+    // readable without a shared <marker> (markers can't take the group's
+    // currentColor, and the lit edge changes hue).
+    function sdArrow(x1, y1, x2, y2) {
+      const dx = x2 - x1, dy = y2 - y1;
+      const L = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / L, uy = dy / L;
+      const bx = x2 - ux * 7, by = y2 - uy * 7;
+      const px = -uy * 3, py = ux * 3;
+      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
+        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
+        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
+    }
+
+    // pts is a flat [x0,y0, x1,y1, ...] polyline; the count label is placed
+    // by hand per edge (nine edges, nine deliberate positions — a generic
+    // midpoint rule collided every pair).
+    function sdEdge(key, pts, n, lx, ly, anchor, lit, extra) {
+      let d = '';
+      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
+      const k = pts.length;
+      return '<g data-edge="' + key + '" class="sd-edge' + (lit === key ? ' on' : '') + (n ? '' : ' zero') + '">' +
+        '<path class="sd-e" d="' + d + '"/>' +
+        '<path class="sd-ah" d="' + sdArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/>' +
+        '<text class="sd-en" x="' + lx + '" y="' + ly + '" text-anchor="' + anchor + '">' + n + '</text>' +
+        (extra || '') + '</g>';
+    }
+
+    function sdNode(key, label, n, ms, lit, live, badge) {
+      const p = SD_XY[key];
+      const num = n + (ms ? ' \\u00b7 ' + fmtSpan(ms) : '');
+      return '<g data-node="' + key + '" class="sd-node' + (lit === key ? ' on' : '') +
+        (live ? ' live' : '') + (n ? '' : ' zero') + '">' +
+        '<rect class="sd-nb" x="' + p[0] + '" y="' + p[1] + '" width="' + SD_W + '" height="' + SD_H + '" rx="3"/>' +
+        '<text class="sd-nl" x="' + (p[0] + 6) + '" y="' + (p[1] + 12) + '">' + label + '</text>' +
+        '<text class="sd-nn" x="' + (p[0] + 6) + '" y="' + (p[1] + 23) + '">' + escapeHtml(num) + '</text>' +
+        (badge || '') + '</g>';
+    }
+
+    // stateAt's seven states onto the six nodes — exactly one is always lit:
+    //   model   -> model    a request is in flight
+    //   tools   -> tools    the gap after a reply that made calls
+    //   agents  -> agents   a child thread is running
+    //   waiting -> waiting  the gap after a reply that called nothing
+    //   failed  -> model    a failed request is a BADGE on model, not a state
+    //   human   -> reply    the reply landed and the human has not answered.
+    //                       The wire cannot observe a human typing, so the
+    //                       human node never lights: its count and the
+    //                       human>model edge carry the prompts instead.
+    //   idle    -> reply    nothing running (both ends of the tape)
+    // The lit EDGE is the transition into that node: for the model node it is
+    // whichever span or point ended exactly where the request began (the
+    // gap windows are t1 == the next request's start, threadTimeSplit), and
+    // for the others it is the model edge that opened them. A failed
+    // request went nowhere, so it lights no edge.
+    function sdLit(L, st, key) {
+      const s = st.state;
+      if (s === 'tools') return { node: 'tools', edge: 'model>tools' };
+      if (s === 'agents') return { node: 'agents', edge: 'model>agents' };
+      if (s === 'waiting') return { node: 'waiting', edge: 'model>waiting' };
+      if (s === 'failed') return { node: 'model', edge: '' };
+      if (s === 'model') {
+        const at = st.since;
+        const near = (t) => Math.abs(t - at) <= 1;
+        for (const h of L.human || []) if ((!key || h.threadKey === key) && near(h.t)) return { node: 'model', edge: 'human>model' };
+        for (const g of L.tools || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'tools>model' };
+        for (const g of L.waiting || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'waiting>model' };
+        for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1)) return { node: 'model', edge: 'agents>model' };
+        return { node: 'model', edge: '' };
+      }
+      return { node: 'reply', edge: st.item ? 'model>reply' : '' };
+    }
+
+    // The thread the stage reads: the selection, resolved against the WHOLE
+    // capture (the cursored threads lose every loop still ahead).
+    function stageThread() {
+      const all = fullThreads();
+      return all.length ? resolveThreadSel(all, sessionSelKey) : null;
+    }
+
+    // A request forwarded with no response yet, at the live edge of the
+    // tape: the model IS working right now. Absolute clock, never a ticking
+    // counter (ui.md) — and a snapshot has no starts, so it says nothing.
+    function stageLiveStart() {
+      if (!openStarts.size) return 0;
+      // The edge of what has COMPLETED, not rpSpan's — an open start pushes
+      // rpSpan's right edge into the future, and the reader parked at the
+      // newest landed pair is exactly who should see "thinking now".
+      const span = replaySpan(pairs);
+      if (!span || replay.cursor < span.t1 - 0.5) return 0;
+      let ts = 0;
+      openStarts.forEach((st) => {
+        const t = (st && st.ts ? st.ts : 0) * 1000;
+        if (t && (!ts || t < ts)) ts = t;
+      });
+      return ts;
+    }
+
+    function stageDiagram(L, key) {
+      const st = stateAt(L, replay.cursor, key);
+      const c = stateCounts(L, replay.cursor, key);
+      const tr = c.transitions;
+      const liveTs = stageLiveStart();
+      const lit = liveTs ? { node: 'model', edge: '' } : sdLit(L, st, key);
+      const cuts = c.cuts
+        ? '<text class="sd-cut" x="300" y="20" text-anchor="end">\\u2702 ' + c.cuts + '</text>'
+        : '';
+      const failed = c.model.failed
+        ? '<text class="sd-fail" x="180" y="21" text-anchor="middle">' + c.model.failed + ' failed</text>'
+        : '';
+      let g = '';
+      // top row: human -> model -> reply, and the return arc over them
+      g += sdEdge('human>model', [90, 40, 138, 40], tr['human>model'], 114, 35, 'middle', lit.edge);
+      g += sdEdge('model>reply', [222, 40, 270, 40], tr['model>reply'], 246, 35, 'middle', lit.edge);
+      g += sdEdge('reply>human', [312, 26, 312, SD_ARC, 48, SD_ARC, 48, 26], tr['reply>human'], 56, 20, 'start', lit.edge, cuts);
+      // model <-> tools (down-left) and model <-> waiting (down-right),
+      // parallel pairs so the two directions never cross
+      g += sdEdge('model>tools', [152, 54, 66, 110], tr['model>tools'], 122, 71, 'end', lit.edge);
+      g += sdEdge('tools>model', [82, 110, 168, 54], tr['tools>model'], 112, 94, 'start', lit.edge);
+      g += sdEdge('model>waiting', [208, 54, 294, 110], tr['model>waiting'], 238, 71, 'start', lit.edge);
+      g += sdEdge('waiting>model', [280, 110, 194, 54], tr['waiting>model'], 248, 94, 'end', lit.edge);
+      // model <-> agents, straight down the middle
+      g += sdEdge('model>agents', [172, 54, 172, 110], tr['model>agents'], 166, 78, 'end', lit.edge);
+      g += sdEdge('agents>model', [188, 54, 188, 110], tr['agents>model'], 194, 92, 'start', lit.edge);
+      g += sdNode('human', 'human', c.human, 0, lit.node, false);
+      g += sdNode('model', 'model', c.model.n, c.model.ms, lit.node, !!liveTs, failed);
+      g += sdNode('reply', 'reply', tr['model>reply'], 0, lit.node, false);
+      g += sdNode('tools', 'tools', c.tools.n, c.tools.ms, lit.node, false);
+      g += sdNode('agents', 'agents', c.agents.n, c.agents.ms, lit.node, false);
+      g += sdNode('waiting', 'waiting', c.waiting.n, c.waiting.ms, lit.node, false);
+      let out = '<svg id="sd" viewBox="' + SD_VB + '" preserveAspectRatio="xMidYMid meet">' + g + '</svg>';
+      // which tools, not just how many — the diagram counts the gaps, this
+      // names them (the only place either figure is stated).
+      const names = Object.keys(c.tools.byName).sort((a, b) => c.tools.byName[b] - c.tools.byName[a]);
+      if (names.length) {
+        const shown = names.slice(0, 4).map(n => escapeHtml(n) + ' ' + c.tools.byName[n]);
+        out += '<div class="sd-tools">' + shown.join(' \\u00b7 ') +
+          (names.length > 4 ? ' \\u00b7 +' + (names.length - 4) : '') + '</div>';
+      }
+      if (liveTs) out += '<div class="sd-live">thinking since ' + fmtTime(new Date(liveTs)) + '</div>';
+      return out;
+    }
+
+    function stageBeat(t) {
+      const b = t ? beatAt(t, replay.cursor, pairOf) : null;
+      if (!b) return '<div class="sb"><div class="sb-none">before the first response</div></div>';
+      const ordN = (n) => (n + 1 < 10 ? '0' : '') + (n + 1);
+      let cap = '<span class="sb-turn">turn ' + ordN(b.ord) + '</span>';
+      if (b.step) cap += ' \\u00b7 step ' + b.step;
+      cap += ' \\u00b7 ' + fmtSpan(b.dur);
+      if (b.stop) cap += ' \\u00b7 stop ' + escapeHtml(b.stop);
+      let rows = '';
+      // One row per call, the fold body reusing the convo pane's own
+      // renderer (tool_use fused with its tool_result) — a spawn keeps its
+      // purple title and its "open thread" link into the child.
+      const results = buildToolResultIndex((t && t.turns) || []);
+      let turn = null;
+      for (const x of (t && t.turns) || []) if (x && x.role === 'assistant' && x.pairId === b.pairId) turn = x;
+      const spawned = {};
+      for (const s of b.spawns || []) if (s.id) spawned[s.id] = 1;
+      let ci = 0;
+      for (const blk of (turn && turn.blocks) || []) {
+        if (!blk || (blk.type !== 'tool_use' && blk.type !== 'server_tool_use')) continue;
+        const c = b.calls[ci++] || {};
+        // ok is a wire fact (the result's is_error) or absent — never a guess
+        const mark = c.ok == null ? '<span class="sb-mark" title="no result captured">\\u2014</span>'
+          : c.ok ? '<span class="sb-mark ok">ok</span>'
+          : '<span class="sb-mark err">err</span>';
+        rows += '<div class="sb-row' + (blk.id && spawned[blk.id] ? ' spawn' : '') + '">' +
+          renderBlockS(blk, results, true) + mark + '</div>';
+      }
+      if (b.reply) {
+        rows += '<div class="sb-line"><span class="sb-lbl">reply</span>' +
+          '<span class="sb-txt">' + escapeHtml(b.reply) + '</span></div>';
+      }
+      if (b.thinking) {
+        rows += '<div class="sb-line sb-think"><span class="sb-lbl">stated reasoning</span>' +
+          '<span class="sb-txt">' + escapeHtml(b.thinking) + '</span></div>';
+      }
+      const tk = b.tokens || {};
+      let foot = '';
+      if (tk.prompt) {
+        let amt = fmtCompact(tk.prompt);
+        if (tk.delta) amt += ' (' + (tk.delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(tk.delta)) + ')';
+        if (tk.cachePct != null) amt += ' \\u00b7 cache ' + tk.cachePct + '%';
+        foot = '<div class="sb-foot"><span class="sb-lbl">window</span>' +
+          '<span class="sb-gap"></span><span class="sb-amt">' + escapeHtml(amt) + '</span></div>';
+      }
+      return '<div class="sb"><div class="sb-cap">' + cap + '</div>' + rows + foot + '</div>';
+    }
+
+    function stageInner() {
+      const t = stageThread();
+      return stageDiagram(laneData(), t ? t.key : '') + stageBeat(t);
+    }
+    function stageHtml() {
+      if (!replay.active) return '';
+      try { return '<div id="stage">' + stageInner() + '</div>'; }
+      catch (e) { return '<div id="stage">' + brokenItem('stage', '', e) + '</div>'; }
+    }
+    // Live refresh: a pair landed or a request started, and the threads pane
+    // was not rebuilt (a start event carries no pair). Patch it in place.
+    function renderStage() {
+      const el = document.getElementById('stage');
+      if (!el) return;
+      try { el.innerHTML = stageInner(); }
+      catch (e) { el.innerHTML = brokenItem('stage', '', e); }
+    }
+
+    // Chapters: the working-loop heads of the selected thread, as cursor
+    // stops. A loop is only readable once its first response landed, so the
+    // stop is that pair's END (the boundary visibleAt uses); a loop whose
+    // request was never captured has no honest time and is skipped.
+    function chapterStops() {
+      const t = stageThread();
+      const out = [];
+      for (const ch of (t ? chaptersOf(t, pairOf) : [])) {
+        const p = ch.pairId ? pairOf(ch.pairId) : null;
+        if (p && p.request) out.push(pairEndMs(p));
+      }
+      out.sort((a, b) => a - b);
+      return out;
+    }
+    function seekChapter(dir) {
+      const stops = chapterStops();
+      let target = null;
+      if (dir > 0) { for (const s of stops) if (s > replay.cursor + 0.5) { target = s; break; } }
+      else { for (const s of stops) if (s < replay.cursor - 0.5) target = s; }
+      if (target == null) return;
+      seekReplay(target);
+      updateReplayHash();
     }
 
     // Deep-link anchor: #/session/<key>/@<pair-id> — pair ids survive

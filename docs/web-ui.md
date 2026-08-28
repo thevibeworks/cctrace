@@ -98,11 +98,25 @@ offline snapshots -- same UI, three ways in.
   ≈ and never replace actuals.
 - **Session replay** -- re-experience a captured session as it happened, right
   inside the Sessions view: `←`/`→` step through turns (`shift` steps every
-  wire request), `Space` plays at 1/2/8/60x with long idle gaps compressed,
-  and the scrubber doubles as a session minimap (turns, errors, probes).
-  Pause anywhere and the URL (`#/session/<key>/@<pair-id>`) deep-links that
-  exact moment. Works on every trace ever captured -- live, snapshot, or
-  `cctrace view` rebuild -- because the wire is already a timeline.
+  wire request), `[`/`]` jump between working loops, `Space` plays at
+  1/2/8/60x with long idle gaps compressed. Pause anywhere and the URL
+  (`#/session/<key>/@<pair-id>`) deep-links that exact moment. Works on
+  every trace ever captured -- live, snapshot, or `cctrace view` rebuild --
+  because the wire is already a timeline.
+- **The replay stage** -- entering replay turns the scrubber into a
+  trajectory: five lanes over wall-clock (the human's prompts, the model's
+  requests, tools running between them, subagents as stacked spans, the
+  harness lane with compaction cuts and failed requests). Wheel to zoom
+  around the cursor; the strip says more as you zoom in. Click a span to
+  jump there, shift+drag to select a slice. The left pane grows a state
+  diagram -- human -> model -> tools / agents / waiting -> reply -- with
+  counts and time as of the cursor and the current transition lit, and
+  under it the BEAT: what the agent did at this step (tool calls fused with
+  results, spawns, the reply, the stated reasoning, the window delta).
+  Every mark is a wire fact; nothing is inferred. On a live run the model
+  node lights the moment a request is forwarded ("thinking since 14:32:07")
+  because the proxy announces requests as they go out. `F` clears the
+  chrome for presenting; Esc peels present -> replay -> view.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
   read/write TTLs priced separately), with per-turn and per-thread totals

@@ -159,9 +159,11 @@ export function stepOutcome(turn: any, isFinal: boolean, pair: any): any {
     if (!b || (b.type !== "tool_use" && b.type !== "server_tool_use")) continue;
     calls.push({ name: b.name || "", id: b.id || "", input: b.input });
     // The dispatch SHAPE, not just the name: task-tracking TaskCreate
-    // ({subject}) spawns nothing, and the page's fold gates the same way.
+    // ({subject}) spawns nothing. Gated exactly as buildSession's linker
+    // is (a string prompt), so a step that says `agents` always has a
+    // child thread the agents lane can draw.
     const i = b.input || {};
-    if (isSpawnTool(b.name) && (i.subagent_type || typeof i.prompt === "string")) {
+    if (isSpawnTool(b.name) && typeof i.prompt === "string") {
       spawns.push({
         id: b.id || "",
         name: b.name || "",
@@ -211,6 +213,9 @@ export function sessionLanes(threads: any[], pairOf: any): any {
 
   for (const t of threads || []) {
     if (!t || !t.turns) continue;
+    // Utility threads (title probes, quota checks) are not the agent's
+    // path — the rail segregates them and the lanes leave them out.
+    if (t.kind === "utility") continue;
     const vis = t.turns.filter((x: any) => x && !x.toolResultsOnly);
     const loops = loopTurns(vis);
     const split = threadTimeSplit(t, pairOf);
@@ -249,8 +254,10 @@ export function sessionLanes(threads: any[], pairOf: any): any {
       // The human's prompt is a POINT at the start of the request that
       // carried it — the only wire timestamp a typed line ever gets. A head
       // whose loop produced no captured request has no honest time, so it
-      // is not a point (the chapter still lists it).
-      if (L.head != null && !L.headInjected && headPair) {
+      // is not a point (the chapter still lists it). A subagent's head is
+      // the parent MODEL's dispatch prompt, not a person's — it rides the
+      // agents lane, never the human one (TASTE: name the observed fact).
+      if (L.head != null && !L.headInjected && headPair && !t.agentOf) {
         out.human.push({
           t: pairStartMs(headPair), threadKey: t.key, ord: li,
           label: label(turnSnippet((vis[L.head] || {}).blocks || [])), pairId: headPair.id,
@@ -361,7 +368,10 @@ export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
   let lastKind = "";
   for (const x of L.model || []) {
     if (key && x.threadKey !== key) continue;
-    if (x.t0 <= cursor && cursor <= x.t1 && (!m || x.t0 > m.t0)) m = x;
+    // Half-open, like every span here: at exactly t1 the reply is visible
+    // (visibleAt) and the gap that follows owns the cursor — the same
+    // instant stateCounts credits the outgoing transition.
+    if (x.t0 <= cursor && cursor < x.t1 && (!m || x.t0 > m.t0)) m = x;
     if (x.t1 <= cursor && x.t1 >= lastT) { lastT = x.t1; lastItem = x; lastKind = "end"; }
   }
   if (m) return { state: "model", since: m.t0, item: m, agentsRunning: running };

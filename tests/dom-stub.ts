@@ -21,6 +21,8 @@ export interface StubSocket {
 
 export interface StubPage {
   els: Record<string, StubEl>;
+  /** document.body — the page's mode classes live here (replaying, present, view-*). */
+  body: StubEl;
   fragments: Fragment[];
   /** Errors thrown during boot or navigation, tagged with the route. */
   errors: string[];
@@ -110,9 +112,10 @@ export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
   const els: Record<string, StubEl> = {};
   const byId = (id: string) => (els[id] ||= makeEl(id, fragments, routeRef));
 
+  const bodyEl = makeEl("<body>", fragments, routeRef);
   const documentStub: Record<string, unknown> = {
     documentElement: makeEl("<html>", fragments, routeRef),
-    body: makeEl("<body>", fragments, routeRef),
+    body: bodyEl,
     getElementById: byId,
     createElement: (tag: string) => makeEl("<" + tag + ">", fragments, routeRef),
     querySelectorAll: () => [],
@@ -167,6 +170,7 @@ export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
 
   return {
     els,
+    body: bodyEl,
     fragments,
     errors,
     sockets,

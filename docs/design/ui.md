@@ -124,6 +124,14 @@ to protect that feeling.
   always the same six lines is not the same thing as a chart that
   reorders and rescales).
 
+- The replay strip is the session view's FRAME element the way the
+  context overview is the context view's: lanes x wall-clock, the playhead
+  and the slice spanning every lane, never scrolled away. Reading depth is
+  a function of zoom (map / read / full on `data-depth`), not a toggle.
+  The playhead is the page's ONE motion owner while replaying: nothing
+  else tweens, counts, or ticks — a still frame is always complete. The
+  stage's diagram is fixed geometry: a node or edge with zero observations
+  goes faint, never hidden (hiding shifts the picture).
 - The dashboard (`src/dashboard.ts`) is part of this design system, not a
   side page: same variable block, same type scale, same lowercase labels,
   same small-button grammar for its group-by control, and the same client

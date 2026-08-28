@@ -27,7 +27,11 @@ src/
 │                   #   ->input[] via openaiInput + a chat branch in openaiCompleted
 │                   #   (chunk deltas + prompt_tokens), so both fold into the SAME
 │                   #   turn/usage model; usage mapping (inlined into UI)
-├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts)
+├── server.ts       # Bun.serve() + WebSocket relay (page lives in ui.ts).
+│                   #   Frames: init (pairs + open `starts`), pair, history,
+│                   #   purged, start — a messages request announced as it
+│                   #   is FORWARDED (proxies mint the pair id first), retired
+│                   #   when its pair lands: the page's "thinking now" state
 ├── history.ts      # Streaming trace readers (traceLines/readTracePairs: plain/.zst/.gz, line
 │                   #   by line, tail budget TAIL_BYTES = newest 256 MB) + cross-run session
 │                   #   continuity: find prior traces by session_id, newest first, one budget;
@@ -66,7 +70,13 @@ src/
 │                   #   DevTools-shaped shell: an interactive overview
 │                   #   (two tracks, one brush) driving three decks —
 │                   #   window / stream / events
-├── replay.ts       # Session replay timeline primitives (inlined into UI)
+├── replay.ts       # Session replay: the time cursor primitives (visibleAt,
+│                   #   boundaries, tick ladder, slices) + the STAGE readings
+│                   #   of a cursor — sessionLanes (human/model/tools/agents/
+│                   #   harness over wall-clock), stateAt/stateCounts (the
+│                   #   observed state machine), beatAt (the step's calls
+│                   #   fused with results), chaptersOf (working loops).
+│                   #   Pure, inlined into the UI (docs/design/replay-stage.md)
 ├── pricing.ts      # Per-pair cost: models.dev catalog first, embedded Claude
 │                   #   table as the offline fallback (inlined into UI)
 ├── pricing-catalog.ts # models.dev api.json fetch — 24h-TTL fail-soft cache in

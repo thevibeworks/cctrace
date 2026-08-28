@@ -206,7 +206,12 @@ export function createServer(config: ServerConfig) {
     if (!start?.id || knownIds.has(start.id) || openStarts.has(start.id)) return;
     openStarts.set(start.id, start);
     // An in-flight request must never keep the process alive on its own.
-    const timer = setTimeout(() => dropStart(start.id), START_TTL_MS);
+    // Expiry is the one retirement the pages cannot see for themselves (a
+    // landing pair retires the start on both sides), so it is announced.
+    const timer = setTimeout(() => {
+      dropStart(start.id);
+      broadcast({ type: "start-end", id: start.id });
+    }, START_TTL_MS);
     (timer as { unref?: () => void }).unref?.();
     startTimers.set(start.id, timer);
     broadcast({ type: "start", start });

@@ -896,9 +896,10 @@ describe("the trajectory strip (#rp-lanes)", () => {
     // decoration (and the geometry is fixed, so none of them can vanish).
     for (const l of ["human", "model", "tools", "agents", "harness"]) expect(gut).toContain(">" + l + "<");
     for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
-    // one point per loop head across every thread: the human's prompt and
-    // the dispatch that heads the child (its thread's own first turn)
-    expect((body.match(/class="rp-point"/g) || []).length).toBe(2);
+    // ONE point: the human's own prompt. A subagent's head is the parent
+    // model's dispatch text, not a person's — it rides the agents lane
+    // (sessionLanes skips heads of threads with agentOf).
+    expect((body.match(/class="rp-point"/g) || []).length).toBe(1);
     expect((body.match(/rp-span model/g) || []).length).toBe(4); // p1 p2 p5 + the child's own
     // the Bash gap is a tools span carrying its initials AND its name
     expect(body).toContain("rp-span tools");
@@ -943,6 +944,123 @@ describe("the trajectory strip (#rp-lanes)", () => {
     expect(page.els["rp-lanes-body"].innerHTML).not.toContain("rp-span model open");
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
+  });
+});
+
+// The stage tops the threads column while replaying: the observed state
+// machine (fixed geometry, one lit node) and the beat (what this step did).
+// Its rows are built from captured wire content — tool names, previews, the
+// model's own words — so it gets the hostile-fixture grammar treatment too.
+describe("the replay stage (#stage)", () => {
+  const PROMPT = "Explore </script><script>alert(1)</script> and report [1mback[0m";
+  const TASK = {
+    type: "tool_use",
+    id: "tu_a",
+    name: "Task",
+    input: { subagent_type: "Explore", description: "<img src=x onerror=alert(2)>", prompt: PROMPT },
+  };
+  const BASH = { type: "tool_use", id: "tu_b", name: "Bash", input: { command: "bun test" } };
+  const HEAD = "map the repo [1mfast[0m & <b>well</b>";
+  const AGENT_SYS = "You are a Claude agent, built on Anthropic's Claude Agent SDK.";
+
+  // p1 (head, calls Bash) -> p2 (spawns a subagent) -> p3 the child -> p5 the reply.
+  function fixture(): TracePair[] {
+    const h1 = [{ role: "user", content: HEAD }];
+    const h2 = [...h1, { role: "assistant", content: [BASH] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_b", content: "ok" }] }];
+    const h3 = [...h2, { role: "assistant", content: [TASK] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_a", content: "done" }] }];
+    return [
+      msgPair("p1", { reqBody: { messages: h1 }, resBody: { content: [BASH], stop_reason: "tool_use" } }),
+      msgPair("p2", { reqBody: { messages: h2 }, resBody: { content: [TASK], stop_reason: "tool_use" } }),
+      msgPair("p3", {
+        reqBody: { system: [{ type: "text", text: AGENT_SYS }], messages: [{ role: "user", content: [{ type: "text", text: PROMPT }] }] },
+        resBody: { content: [{ type: "text", text: "child reply" }] },
+      }),
+      msgPair("p5", { reqBody: { messages: h3 }, resBody: { content: [{ type: "text", text: "all done" }] } }),
+    ];
+  }
+  // #stage is written as part of the threads pane's html — it must lead it.
+  const stageOf = (page: ReturnType<typeof bootSnapshotPage>) => {
+    const th = page.els["threads"].innerHTML as string;
+    const at = th.indexOf('<div id="stage">');
+    return at === -1 ? "" : th.slice(at, th.indexOf('<div class="threads-sum"'));
+  };
+
+  test("replaying, the stage leads the threads column: 6 nodes, one lit, 9 edges, a beat", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
+    const th = page.els["threads"].innerHTML as string;
+    expect(th.indexOf('<div id="stage">')).toBe(0); // above the rail, not beside it
+    const stage = stageOf(page);
+    expect(stage).toContain('<svg id="sd"');
+    // Fixed geometry: every node and every transition is always drawn — a
+    // zero one goes faint (.zero), never missing.
+    expect((stage.match(/data-node="/g) || []).length).toBe(6);
+    expect((stage.match(/data-edge="/g) || []).length).toBe(9);
+    expect(stage).toContain('class="sd-node zero"'); // waiting: never entered here
+    // Exactly one state is lit — at the end of the tape that is the reply.
+    const lit = [...stage.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
+    expect(lit.length).toBe(1);
+    expect(stage).toContain('data-node="reply" class="sd-node on"');
+    // the beat names the turn it is showing (the outline's own numbering)
+    expect(stage).toMatch(/turn\s*\d+/);
+    expect(stage).toContain("all done"); // the reply's first line
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a spawn step's beat row links to the reconstructed child thread", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    // At the child's end the parent's latest step is still the dispatch, and
+    // the child thread now exists — so the row can actually point at it.
+    page.goto("#/session/aaaabbbb/@p3");
+    const stage = stageOf(page);
+    expect(stage).toContain('class="sb-row spawn"');
+    expect(stage).toContain("open thread");
+    expect(stage).toMatch(/class="fold-link" href="#\/session\//);
+    // hostile spawn content stays escaped through the new markup
+    expect(stage).not.toContain("<img src=x");
+    expect(stage).toContain("&lt;img src=x");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a live start lights model as thinking, with an absolute clock", () => {
+    const fix = fixture();
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix, starts: [] }) });
+    page.goto("#/session/aaaabbbb/@p5"); // parked at the newest landed pair
+    expect(stageOf(page)).not.toContain("thinking since");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p9", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1008 } }) });
+    // renderStage patches #stage in place (a start rebuilds no pane), so the
+    // fragment the page wrote last is the one to read.
+    const live = page.els["stage"].innerHTML as string;
+    expect(live).toContain('class="sd-node on live"');
+    expect(live).toMatch(/thinking since \d\d:\d\d:\d\d/); // absolute, never a counter
+    const lit = [...live.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
+    expect(lit.length).toBe(1);
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("Escape peels present, then replay — and the stage goes with replay", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p5");
+    expect(page.body.classList.contains("replaying")).toBe(true);
+    page.fireKey("f");
+    expect(page.body.classList.contains("present")).toBe(true);
+    // one Escape drops the presentation and KEEPS the replay
+    page.fireKey("Escape");
+    expect(page.body.classList.contains("present")).toBe(false);
+    expect(page.body.classList.contains("replaying")).toBe(true);
+    expect(page.els["threads"].innerHTML).toContain('<div id="stage">');
+    // the second exits replay, and the stage is torn down with it
+    page.fireKey("Escape");
+    expect(page.body.classList.contains("replaying")).toBe(false);
+    expect(page.els["threads"].innerHTML).not.toContain('<div id="stage">');
+    expect(page.errors).toEqual([]);
   });
 });
 

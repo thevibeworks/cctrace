@@ -642,6 +642,25 @@ hash-routed:
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
+- **The replay stage** (docs/design/replay-stage.md — the rules live
+  there): the track is `#rp-lanes`, five lanes x wall-clock (human points,
+  model spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
+  failed ✗), built from `sessionLanes` over the FULL threads (not the
+  cursored ones) and positioned with the same `(t - t0)/dur` math the
+  marks used; playhead, fill and slice span every lane. Wheel zooms
+  around the cursor (1x-32x, the same helper the context overview uses)
+  and sets `data-depth` map/read/full; click a span seeks to its pair's
+  END (the boundary where it became visible). While replaying, `#stage`
+  sits at the top of `#threads` above the rail: a fixed six-node inline
+  SVG (human, model, tools, agents, waiting, reply) with counts/time as of
+  the cursor from `stateCounts`, the current state and transition lit via
+  `stateAt`; under it the beat from `beatAt` (caption, tool rows fused
+  with results via the detail panel's own renderers, spawn rows, reply
+  line, stated reasoning, window delta). `[`/`]` walk `chaptersOf`; `F`
+  toggles `body.present` (chrome hidden, type scale unchanged); Esc peels
+  present -> replay -> view. Open `start`s (below) draw as a dashed model
+  span to the newest known time and light the model node with the live
+  dot's heartbeat — never a ticking clock.
 - **Live wire** (WebSocket `/ws`, served pages only — a snapshot has none):
   `init` on connect (`{ pairs, traceBytes, starts }`, the whole state, re-sent
   wholesale when a speculative preload is evicted), `pair` per capture

@@ -58,6 +58,7 @@ import {
   richToolBody,
 } from "./session";
 import { modelPricing, modelWindow, pairCost, fmtCost, costTitle } from "./pricing";
+import { stepCost, threadCostSplit, costEvents, usagePolls } from "./cost";
 import {
   CTX_CATS,
   CTX_IMG_EST,
@@ -182,6 +183,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
          backgrounds. */
       --lane-model: #4184e4; --lane-tools: #39c5cf; --lane-waiting: #d29922;
       --lane-ink: #0d1117;   /* text ON a lane span: the hues never flip, so neither does the ink */
+      /* Where the money went: the four billed components, cheap to
+         expensive. A sequential ramp, not six categorical hues — the cost
+         track must not read as a second composition track. Data colors,
+         so they are stated per theme only for contrast, never for state:
+         green/red stay reserved for state. */
+      --cost-read: #4c7f9b; --cost-write: #7c6fd0; --cost-input: #d4753c; --cost-output: #48a68a;
       color-scheme: dark;
     }
     @media (prefers-color-scheme: light) {
@@ -192,6 +199,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         --green: #1a7f37; --red: #cf222e; --amber: #9a6700; --purple: #8250df;
         --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
         --btn-bg: #e1e4e8; --hover: #eef1f4;
+        --cost-read: #35708c; --cost-write: #6355b8; --cost-input: #b25a24; --cost-output: #2f8a70;
         color-scheme: light;
       }
     }
@@ -202,6 +210,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       --green: #1a7f37; --red: #cf222e; --amber: #9a6700; --purple: #8250df;
       --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
       --btn-bg: #e1e4e8; --hover: #eef1f4;
+      --cost-read: #35708c; --cost-write: #6355b8; --cost-input: #b25a24; --cost-output: #2f8a70;
       color-scheme: light;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1668,6 +1677,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-lane { min-width: 2px; }
     .cx-lane-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--text-faint); }
     .cx-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    /* where the money went: the same lane grammar, plus the per-model
+       lines and the bumps line (a control — it opens the events deck
+       filtered to cost). Every figure is an estimate and wears the ≈. */
+    .cx-mrow {
+      display: flex; align-items: baseline; gap: 8px; font-size: 10px;
+      color: var(--text-faint); font-variant-numeric: tabular-nums; padding-top: 4px;
+    }
+    .cx-mrow-n { margin-left: auto; color: var(--text-muted); }
+    button.cx-mrow { font: inherit; font-size: 10px; background: none; border: 0; width: 100%; text-align: left; cursor: pointer; }
+    button.cx-mrow:hover { color: var(--accent); }
+    button.cx-mrow:hover .cx-mrow-n { color: var(--accent); }
+    /* quota, as the client polled it: one row per limit window */
+    .cx-qrow { display: flex; align-items: center; gap: 7px; font-size: 11px; font-variant-numeric: tabular-nums; padding: 2px 0; }
+    .cx-qlabel { flex: 0 0 60px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-qn { flex: 0 0 34px; text-align: right; color: var(--text); }
+    .cx-qr { flex: 1; text-align: right; color: var(--text-faint); font-size: 10px; }
+    .cx-qfoot { font-size: 10px; color: var(--text-faint); padding-top: 6px; line-height: 1.5; }
     /* the margin's own section labels — quieter than the canvas's h4s,
        because the margin is one continuous sheet, not stacked reports */
     .cx-mlabel {
@@ -1686,8 +1712,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-mblock + .cx-mblock,
     #cx-bal + .cx-mblock { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--border); }
     /* ---- the OVERVIEW: the page's time axis, DevTools-shaped ----
-       Two tracks on one x axis — the assembled context per step, then
-       where that step's wall-clock went — under one brush. Drag to
+       Three tracks on one x axis — the assembled context per step, where
+       that step's wall-clock went, what it cost — under one brush. Drag to
        select a range, wheel to zoom, drag the handles to resize, drag
        the window to pan, click a column to pin it. Everything below
        reads that selection: the PIN drives the balance and the window
@@ -1697,7 +1723,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        every column occupies exactly 1/N of it (a 2px gap drifts the
        overlay by a column-width across 100 steps). The breathing room
        moved inside the column, where it costs the geometry nothing. */
-    .cx-ov { --cx-ov-h: 116px; --cx-ov-th: 24px; flex: none; border-bottom: 1px solid var(--border); padding: 0 16px 7px; }
+    .cx-ov { --cx-ov-h: 116px; --cx-ov-th: 24px; --cx-ov-ch: 26px; flex: none; border-bottom: 1px solid var(--border); padding: 0 16px 7px; }
     .cx-ov-bar {
       display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       padding: 7px 0 6px; font-size: 10px; color: var(--text-faint);
@@ -1737,6 +1763,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-tw.out { opacity: 0.32; }
     .cx-tb { display: flex; flex-direction: column-reverse; width: calc(100% - 2px); min-width: 1px; max-width: 28px; border-radius: 1px 1px 0 0; overflow: hidden; }
     .cx-tb > span { width: 100%; }
+    /* the cost track: what THIS step cost, stacked cache read / cache
+       write / input / output. Same x, same brush. A step that re-bought
+       its prefix wears a $ mark, positioned ABSOLUTELY so the mark never
+       shortens the bar it sits over. */
+    .cx-cost { display: flex; align-items: flex-end; height: var(--cx-ov-ch); border-top: 1px solid var(--border); padding-top: 2px; }
+    .cx-cw {
+      position: relative; display: flex; align-items: flex-end; justify-content: center;
+      height: 100%; flex: 1 1 0; min-width: 0; cursor: pointer;
+    }
+    .cx-cw.out { opacity: 0.32; }
+    .cx-cb { display: flex; flex-direction: column-reverse; width: calc(100% - 2px); min-width: 1px; max-width: 28px; border-radius: 1px 1px 0 0; overflow: hidden; }
+    .cx-cb > span { width: 100%; }
+    .cx-cmark {
+      position: absolute; top: -1px; left: 0; right: 0; text-align: center;
+      font-size: 9px; line-height: 1; color: var(--amber); pointer-events: none;
+    }
     /* the brush: two dim panels and a window with grab handles */
     .cx-brush { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
     .cx-brush-dim { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--bg) 62%, transparent); }
@@ -2206,6 +2248,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${fmtCost.toString()}
     ${costTitle.toString()}
 
+    // The cost layer (docs/design/cost.md), injected from src/cost.ts:
+    // where the money went, and which steps re-bought their prefix.
+    ${stepCost.toString()}
+    ${threadCostSplit.toString()}
+    ${costEvents.toString()}
+    ${usagePolls.toString()}
+
     // The context layer, injected from src/context.ts (unit tested there).
     const CTX_CATS = ${JSON.stringify(CTX_CATS)};
     const CTX_IMG_EST = ${JSON.stringify(CTX_IMG_EST)};
@@ -2553,8 +2602,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         calls++;
         inTok += m.input || 0; outTok += m.output || 0;
         cr += m.cacheRead || 0; cw += m.cacheWrite || 0; think += m.thinking || 0;
-        if (p._cost === undefined) { const c = pairCost(m); p._cost = c ? c.total : 0; }
-        cost += p._cost;
+        const sc = stepCost(p);
+        cost += sc ? sc.total : 0;
       }
       // "in" is TOTAL input — uncached + cache read + cache written — the
       // same number the exit report and the dashboard call in; the tip
@@ -5661,7 +5710,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (turn && turn.role === 'assistant' && turn.pairId) addr[turn.pairId] = { ord: li, step: (L.steps && L.steps[v]) || 0, vi: v };
           }
         }
-        hit = { key, tl, addr };
+        // The cost reading of the same steps (docs/design/cost.md): the
+        // thread's bill by component, and the steps that re-bought a
+        // prefix a warm cache would have read. The bumps join the context
+        // events in ONE time-ordered list — the events deck answers "what
+        // moved my window", and a cost bump is the same question about
+        // the bill.
+        const cost = threadCostSplit(tpairs);
+        const bumps = costEvents(tpairs, tl.events);
+        const events = bumps.length
+          ? tl.events.concat(bumps).sort((a, b) => (a.t || 0) - (b.t || 0))
+          : tl.events;
+        hit = { key, tl, addr, cost, bumps, events };
         ctxTlCache.delete(t.key);
         ctxTlCache.set(t.key, hit);
         while (ctxTlCache.size > CTX_TL_KEEP) ctxTlCache.delete(ctxTlCache.keys().next().value);
@@ -6096,11 +6156,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
 
       // ---- this step: the reference line, and the way out to the wire ----
+      // What it cost leads, because that is the reading this block gained:
+      // the bill and the share of it the cache carried, in one line. The
+      // cache share is stated HERE and nowhere else in the block — an
+      // unpriced step keeps the bare chip instead.
+      const sc = stepCost(pairOf(s.pairId));
+      const cachePct = s.cacheRead > 0 && s.actualIn ? Math.round((s.cacheRead / s.actualIn) * 100) : null;
+      const costLine = sc && sc.total > 0
+        ? '<span class="cx-dt" data-tip="' + escapeHtml(costTitle(sc) + '\\n---\\n> every dollar is an estimate from catalog rates') + '">' +
+          '\\u2248' + fmtCost(sc.total) + ' this step' +
+          (cachePct != null ? ' \\u00b7 ' + cachePct + '% from cache' : s.actualIn != null ? ' \\u00b7 cold, nothing from cache' : '') +
+          '</span>'
+        : '';
       h += '<div class="cx-mblock"><div class="cx-mlabel">this step</div>' +
-        '<div class="cx-dhead">' +
+        '<div class="cx-dhead">' + costLine +
         (s.t ? '<span>' + fmtTime(new Date(s.t * 1000)) + '</span>' : '') +
         (s.actualIn != null ? '<span>output ' + fmtCompact(s.out) + '</span>' : '') +
-        (s.cacheRead > 0 && s.actualIn ? '<span class="ok">' + Math.round((s.cacheRead / s.actualIn) * 100) + '% cached</span>'
+        (costLine ? ''
+          : cachePct != null ? '<span class="ok">' + cachePct + '% cached</span>'
           : s.actualIn != null ? '<span class="warn">cold \\u2014 no cache read</span>' : '') +
         ctxTurnLink(s, addr) +
         '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.pairId) + '">wire \\u2192</a>' +
@@ -6128,7 +6201,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const kinds = {};
       for (const ev of events) kinds[ev.kind] = (kinds[ev.kind] || 0) + 1;
       let chips = '<button class="cx-fchip' + (ctxEvFilter === 'all' ? ' active' : '') + '" data-evf="all">all ' + events.length + '</button>';
-      for (const k of ['inject', 'compact', 'model', 'tools', 'system']) {
+      for (const k of ['inject', 'compact', 'cost', 'model', 'tools', 'system']) {
         if (!kinds[k]) continue;
         chips += '<button class="cx-fchip' + (ctxEvFilter === k ? ' active' : '') + '" data-evf="' + k + '">' + k + ' ' + kinds[k] + '</button>';
       }
@@ -6146,15 +6219,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const rolled = [];
       for (let i = list.length - 1; i >= 0; i--) {
         const ev = list[i];
-        const key = ev.kind + '|' + (ev.label || '') + '|' + (ev.mode || '');
+        const key = ev.kind + '|' + (ev.label || '') + '|' + (ev.mode || '') + '|' + (ev.cause || '');
         const top = rolled[rolled.length - 1];
         if (top && top.key === key) {
           top.n++;
           top.tokens += ev.tokens || 0;
+          top.extra += ev.extra || 0;
           top.t0 = ev.t;
           continue;
         }
-        rolled.push({ key, ev, n: 1, tokens: ev.tokens || 0, t0: ev.t });
+        rolled.push({ key, ev, n: 1, tokens: ev.tokens || 0, extra: ev.extra || 0, t0: ev.t });
       }
       let rows = '';
       const CAP = 200;
@@ -6171,8 +6245,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         else if (ev.kind === 'model') { glyph = '\\u21c4'; label = shortModel(ev.from) + ' \\u2192 ' + shortModel(ev.to); delta = 0; }
         else if (ev.kind === 'tools') { glyph = '\\u00b1'; label = 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools'; }
         else if (ev.kind === 'system') { glyph = '\\u00b1'; label = 'system prompt changed'; }
+        // A cost bump: the same row grammar, but the delta slot carries
+        // DOLLARS \u2014 what the step paid over a warm cache, which is the
+        // thing the reader is hunting. The cause is a wire fact; the
+        // amount is an estimate and says so on hover.
+        else if (ev.kind === 'cost') { glyph = '$'; label = ctxBumpLabel(ev); delta = 0; }
         const at = ctxOrdLbl(addr, ev.pairId);
-        const tip = label + (run.n > 1
+        const money = ev.kind === 'cost'
+          ? '<span class="cx-delta plus">\\u2248+' + fmtCost(run.extra) + '</span>'
+          : '';
+        const tip = (ev.kind === 'cost'
+          ? label + '\\n' + run.tokens.toLocaleString() +
+            ' tokens re-billed at input/write rate that a warm cache would have read; \\u2248' +
+            fmtCost(run.extra) + ' is the difference' +
+            (ev.hitPct != null ? '\\n' + ev.hitPct + '% of this prompt came from cache' : '')
+          : label) + (run.n > 1
           ? '\\n' + run.n + ' occurrences, most recent shown' +
             (run.t0 && run.t0 !== ev.t ? '\\n' + fmtTime(new Date(run.t0 * 1000)) + ' \\u2192 ' + fmtTime(new Date(ev.t * 1000)) : '') +
             (run.tokens ? '\\n' + fmtCompact(Math.abs(run.tokens)) + ' tokens in total' : '')
@@ -6186,7 +6273,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="cx-ev-glyph">' + glyph + '</span>' +
           '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
           '<span class="cx-ev-label" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>' +
-          (delta ? '<span class="cx-delta ' + (delta > 0 ? 'plus' : 'minus') + '">' + (delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(delta)) + '</span>' : '<span class="cx-delta"></span>') +
+          (money ? money
+            : delta ? '<span class="cx-delta ' + (delta > 0 ? 'plus' : 'minus') + '">' + (delta > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(delta)) + '</span>'
+            : '<span class="cx-delta"></span>') +
           '<span class="cx-ev-gap"></span>' +
           (run.n > 1 ? '<span class="cx-ev-n">\\u00d7' + run.n + '</span>' : '') +
           '<span class="cx-ev-at"><a href="#/p/' + encodeURIComponent(ev.pairId) + '" title="open the wire request">' + escapeHtml(at || 'wire') + '</a></span>' +
@@ -6587,6 +6676,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // "time" chip already uses, so model/tools/waiting is one vocabulary —
     // and the same variables the replay strip's lanes paint with.
     const CX_TIME_C = { model: 'var(--lane-model)', tools: 'var(--lane-tools)', waiting: 'var(--lane-waiting)' };
+    // The cost track's four billed components, bottom-up: cheap to
+    // expensive. One ramp, not six categorical hues — the cost track must
+    // never read as a second composition track.
+    const CX_COST = [
+      { k: 'cacheRead', lbl: 'cache read', c: 'var(--cost-read)' },
+      { k: 'cacheWrite', lbl: 'cache write', c: 'var(--cost-write)' },
+      { k: 'input', lbl: 'input', c: 'var(--cost-input)' },
+      { k: 'output', lbl: 'output', c: 'var(--cost-output)' },
+    ];
 
     // ---- the overview's columns ----
     // One entry per drawn column, each carrying the STEP SPAN it covers
@@ -6633,6 +6731,50 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return out;
     }
 
+    // Per-step cost, for the cost track: the four billed components of one
+    // request (stepCost memoizes on the pair). An unpriced model draws
+    // nothing at all — never a $0 column.
+    function ctxColCost(col, steps, bumpBy) {
+      const out = { total: 0, cacheRead: 0, cacheWrite: 0, input: 0, output: 0, priced: 0, bump: null };
+      for (let i = col.i0; i <= col.i1 && i < steps.length; i++) {
+        const s = steps[i];
+        const c = stepCost(pairOf(s.pairId));
+        const b = bumpBy && bumpBy[s.pairId];
+        // A turn column folds several steps: the bump it wears is the
+        // dearest one under it, so the mark can never point at the cheap
+        // one and hide the $3.
+        if (b && (!out.bump || b.extra > out.bump.extra)) out.bump = b;
+        if (!c) continue;
+        out.priced++;
+        out.total += c.total;
+        out.cacheRead += c.cacheRead;
+        out.cacheWrite += c.cacheWrite;
+        out.input += c.input;
+        out.output += c.output;
+      }
+      return out;
+    }
+
+    // What a cost bump reads as, in words: the wire fact first, the
+    // counterfactual (what a warm cache would have saved) second. Shared
+    // by the overview's tooltip and the events deck, so one bump is one
+    // sentence wherever it is stated.
+    function ctxBumpLabel(ev) {
+      if (ev.cause === 'expired') {
+        return 'cache expired \\u00b7 ' + ev.ttl + ' ttl \\u00b7 ' + fmtSpan((ev.gap || 0) * 1000) + ' idle';
+      }
+      if (ev.cause === 'retry') {
+        return 'retry after ' + (ev.prevStatus == null ? 'a failed request'
+          : ev.prevStatus >= 400 ? ev.prevStatus : 'an interrupted request');
+      }
+      const why = ev.causeKind === 'system' ? 'system prompt changed'
+        : ev.causeKind === 'tools' ? 'tool schemas changed'
+        : ev.causeKind === 'compact' ? 'the history was compacted'
+        : ev.causeKind === 'model' ? 'the model changed'
+        : 'cause not on the wire';
+      return 'prefix changed \\u00b7 ' + why;
+    }
+
     function ctxOut(col) { return !!ctxRange && (col.i1 < ctxRange.i0 || col.i0 > ctxRange.i1); }
 
     // The brush window, in column space. The range is stored in STEP
@@ -6660,7 +6802,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const a = ctxOrdLbl(addr, steps[ctxRange.i0].pairId);
       const b = ctxOrdLbl(addr, steps[Math.min(ctxRange.i1, steps.length - 1)].pairId);
       const span = a && b ? (a === b ? a : a + ' → ' + b) : '';
-      return n + ' of ' + steps.length + ' selected' + (span ? ' · ' + span : '') + ' · esc clears';
+      // What the span cost — the one number a selected range owes, since
+      // the balance deliberately stays with the pinned step.
+      let spend = 0;
+      for (let i = ctxRange.i0; i <= ctxRange.i1 && i < steps.length; i++) {
+        const c = stepCost(pairOf(steps[i].pairId));
+        if (c) spend += c.total;
+      }
+      return n + ' of ' + steps.length + ' selected' + (span ? ' · ' + span : '') +
+        (spend > 0 ? ' · \\u2248' + fmtCost(spend) : '') + ' · esc clears';
     }
 
     function ctxTrackStyle() {
@@ -6668,10 +6818,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     // ---- the overview ----
-    // Two tracks on one x axis under one brush. It is the page's time
+    // Three tracks on one x axis under one brush — what the window held,
+    // where the wall-clock went, what it cost. It is the page's time
     // axis: the PIN it sets drives the balance and the window deck, the
     // RANGE it brushes scopes the stream and the events.
-    function renderCtxOverview(steps, addr, cols, maxT, split, loops) {
+    function renderCtxOverview(steps, addr, cols, maxT, split, loops, bumpBy) {
       const N = cols.length;
       let maxTime = 0;
       const times = [];
@@ -6679,7 +6830,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (hasTime) {
         for (const c of cols) { const x = ctxColTime(c, steps, split); times.push(x); if (x.total > maxTime) maxTime = x.total; }
       }
-      let ctxCols = '', timeCols = '';
+      // The third track: what each step cost. Drawn only when the catalog
+      // priced at least one step of this thread — a track of empty columns
+      // states nothing.
+      let maxCost = 0;
+      const spend = [];
+      for (const c of cols) { const x = ctxColCost(c, steps, bumpBy); spend.push(x); if (x.total > maxCost) maxCost = x.total; }
+      const hasCost = maxCost > 0;
+      let ctxCols = '', timeCols = '', costCols = '';
       for (let i = 0; i < N; i++) {
         const c = cols[i], s = c.s;
         const total = ctxStepTotal(s);
@@ -6693,6 +6851,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="cx-col' + (s.failed ? ' cx-col-failed' : '') + '" style="height:' + hpct.toFixed(2) + '%">' +
           ctxColSegs(s) + '</span>' +
           (c.lbl ? '<span class="cx-tlbl">' + escapeHtml(c.lbl) + '</span>' : '') + '</span>';
+        if (hasCost) {
+          const cc = spend[i];
+          let csegs = '';
+          for (const k of CX_COST) {
+            if (!cc[k.k]) continue;
+            csegs += '<span style="height:' + ((cc[k.k] / cc.total) * 100).toFixed(2) + '%;background:' + k.c + '"></span>';
+          }
+          const bits = [(ctxOrdLbl(addr, s.pairId) || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : '')];
+          if (cc.priced) {
+            bits.push('\\u2248' + fmtCost(cc.total) + (c.n > 1 ? ' over ' + c.n + ' steps' : ''));
+            bits.push(CX_COST.map(k => k.lbl + ' \\u2248' + fmtCost(cc[k.k])).join(' \\u00b7 '));
+          } else bits.push('no catalog price for this model \\u2014 unpriced');
+          if (s.cacheRead > 0 && s.actualIn) bits.push(Math.round((s.cacheRead / s.actualIn) * 100) + '% of the prompt came from cache');
+          else if (s.actualIn != null) bits.push('cold \\u2014 nothing came from cache');
+          if (cc.bump) bits.push(ctxBumpLabel(cc.bump) + ' \\u00b7 \\u2248' + fmtCost(cc.bump.extra) + ' over warm');
+          costCols += '<span class="cx-cw' + out + '" data-cxbar="' + escapeHtml(s.pairId) + '" data-cxc="' + i + '"' +
+            ' data-tip="' + escapeHtml(bits.join('\\n') + '\\n---\\n> every dollar is an estimate from catalog rates') + '">' +
+            (cc.bump ? '<span class="cx-cmark">$</span>' : '') +
+            (cc.total
+              ? '<span class="cx-cb" style="height:max(2px,' + ((cc.total / maxCost) * 100).toFixed(2) + '%)">' + csegs + '</span>'
+              : '') + '</span>';
+        }
         if (!hasTime) continue;
         const x = times[i];
         let segs = '';
@@ -6714,10 +6894,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const gut = '<div class="cx-ov-gut">' +
         '<div class="cx-ov-gl" style="height:var(--cx-ov-h)"><span>' + fmtCompact(maxT) + '</span><span class="cx-ov-gn">ctx</span></div>' +
         (hasTime ? '<div class="cx-ov-gl" style="height:var(--cx-ov-th)"><span>' + fmtSpan(maxTime) + '</span><span class="cx-ov-gn">time</span></div>' : '') +
+        (hasCost ? '<div class="cx-ov-gl" style="height:var(--cx-ov-ch)"><span>\\u2248' + fmtCost(maxCost) + '</span><span class="cx-ov-gn">cost</span></div>' : '') +
         '</div>';
       const tracks = '<div class="cx-ov-tracks" id="cx-tracks" style="' + ctxTrackStyle() + '">' +
         '<div class="cx-chart">' + ctxCols + '</div>' +
         (hasTime ? '<div class="cx-time">' + timeCols + '</div>' : '') +
+        (hasCost ? '<div class="cx-cost">' + costCols + '</div>' : '') +
         '<div class="cx-brush" id="cx-brush">' + ctxBrushHtml(cols) + '</div>' +
         '</div>';
       const cap = steps.length + ' wire request' + (steps.length === 1 ? '' : 's') +
@@ -6759,6 +6941,93 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<span><i style="background:' + x.c + '"></i>' + x.k + ' ' + fmtSpan(x.v) + '</span>').join('');
       return '<div class="cx-mblock"><div class="cx-mlabel">where the time went<span class="cx-mlabel-r">' + fmtSpan(split.wall) + ' wall</span></div>' +
         '<div class="cx-lanes">' + seg + '</div><div class="cx-lane-key">' + key + '</div></div>';
+    }
+
+    // ---- where the thread's money went (margin block) ----
+    // The cost track's totals and the legend that names its four hues,
+    // then the models it was spent on, then the bumps — the steps that
+    // paid twice for a prefix. Every figure is an ESTIMATE from catalog
+    // rates; the block says so once, in its right label, and every number
+    // wears the ≈.
+    function ctxPct(v, total) {
+      const p = total > 0 ? (v / total) * 100 : 0;
+      return p >= 0.5 ? Math.round(p) + '%' : v > 0 ? '&lt;1%' : '0%';
+    }
+    function renderCtxCostBlock(cost, bumps) {
+      if (!cost || !cost.steps || !(cost.total > 0)) return '';
+      const parts = CX_COST.filter(x => cost[x.k] > 0);
+      const seg = parts.map(x =>
+        '<span class="cx-lane" style="flex:' + cost[x.k] + ';background:' + x.c + '" title="' + x.lbl + ' \\u2248' + fmtCost(cost[x.k]) + '"></span>').join('');
+      const key = parts.map(x =>
+        '<span><i style="background:' + x.c + '"></i>' + x.lbl + ' \\u2248' + fmtCost(cost[x.k]) + ' ' + ctxPct(cost[x.k], cost.total) + '</span>').join('');
+      let h = '<div class="cx-mblock"><div class="cx-mlabel">where the money went' +
+        '<span class="cx-mlabel-r">\\u2248' + fmtCost(cost.total) + ' est</span></div>' +
+        '<div class="cx-lanes">' + seg + '</div><div class="cx-lane-key">' + key + '</div>';
+      const models = Object.keys(cost.byModel).sort((a, b) => cost.byModel[b].total - cost.byModel[a].total);
+      if (models.length > 1) {
+        for (const m of models) {
+          const e = cost.byModel[m];
+          h += '<div class="cx-mrow"><span>' + escapeHtml(shortModel(m)) + '</span>' +
+            '<span class="cx-mrow-n">\\u2248' + fmtCost(e.total) + ' \\u00b7 ' + ctxPct(e.total, cost.total) + '</span></div>';
+        }
+      }
+      if (bumps && bumps.length) {
+        let extra = 0;
+        for (const b of bumps) extra += b.extra;
+        const tip = 'steps that re-bought a prefix a warm cache would have read \\u2014 expired, changed, or never banked' +
+          '\\n\\u2248' + fmtCost(extra) + ' is the difference against reading those tokens from cache' +
+          '\\n---\\n> click to list them in the events deck';
+        h += '<button class="cx-mrow" data-cxbumps="1" data-tip="' + escapeHtml(tip) + '">' +
+          '<span>' + bumps.length + ' cost bump' + (bumps.length === 1 ? '' : 's') + '</span>' +
+          '<span class="cx-mrow-n">\\u2248' + fmtCost(extra) + ' over warm</span></button>';
+      }
+      if (cost.unpriced) {
+        h += '<div class="cx-mrow"><span>' + cost.unpriced + ' step' + (cost.unpriced === 1 ? '' : 's') + ' unpriced</span>' +
+          '<span class="cx-mrow-n">no catalog rate</span></div>';
+      }
+      return h + '</div>';
+    }
+
+    // ---- quota, as the client polled it (margin block) ----
+    // Claude Code asks /api/oauth/usage every ~10 minutes; the answer is
+    // the only account-wide budget fact on the wire. It belongs to the
+    // TRACE, not the thread, so it sits outside #cx-bal and does not
+    // repaint on a scrub. Absolute reset times, never a countdown — a
+    // rendered page must not go stale. Clients that never poll (codex,
+    // grok, kimi, opencode) render nothing.
+    function ctxHhmm(iso) {
+      const d = new Date(iso);
+      return isFinite(d.getTime()) ? fmtTime(d).slice(0, 5) : '';
+    }
+    function renderCtxQuotaBlock(polls) {
+      if (!polls || !polls.length) return '';
+      const last = polls[polls.length - 1];
+      const first = polls[0];
+      let h = '<div class="cx-mblock"><div class="cx-mlabel">quota' +
+        '<span class="cx-mlabel-r">' + polls.length + ' poll' + (polls.length === 1 ? '' : 's') + '</span></div>';
+      for (const l of last.limits) {
+        const p = Math.max(0, Math.min(100, l.percent));
+        const c = (l.severity && l.severity !== 'normal') || p >= 90 ? 'var(--red)' : p >= 75 ? 'var(--amber)' : 'var(--text-muted)';
+        const at = l.resetsAt ? ctxHhmm(l.resetsAt) : '';
+        h += '<div class="cx-qrow"><span class="cx-qlabel">' + escapeHtml(l.label) + '</span>' +
+          '<span class="cx-track"><span class="cx-fill" style="--cx:' + c + ';width:' + p.toFixed(0) + '%"></span></span>' +
+          '<span class="cx-qn">' + Math.round(l.percent) + '%</span>' +
+          '<span class="cx-qr">' + (at ? 'resets ' + at : '') + '</span></div>';
+      }
+      if (last.credits) {
+        const d = Math.pow(10, last.credits.decimalPlaces);
+        h += '<div class="cx-mrow"><span>credits</span><span class="cx-mrow-n" data-mask="credits">' +
+          escapeHtml((last.credits.used / d) + '/' + (last.credits.limit / d) + ' ' + last.credits.currency) + '</span></div>';
+      }
+      if (polls.length > 1) {
+        for (const l of last.limits) {
+          const f = (first.limits || []).filter(x => x.label === l.label)[0];
+          if (!f || Math.round(f.percent) === Math.round(l.percent)) continue;
+          h += '<div class="cx-mrow"><span>' + escapeHtml(l.label) + ' ' + Math.round(f.percent) + '% → ' +
+            Math.round(l.percent) + '% over this trace</span></div>';
+        }
+      }
+      return h + '<div class="cx-qfoot">as polled by the client at ' + fmtTime(new Date(last.t * 1000)) + '</div></div>';
     }
 
     // ---- the deck: three readings of one selection ----
@@ -6804,7 +7073,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const cols = ctxColumns(steps, addr);
       const maxT = Math.max(1, tl.maxTotal);
       const inIds = ctxRangeIds(steps);
-      const evAll = inIds ? tl.events.filter(ev => inIds[ev.pairId]) : tl.events;
+      const evAll = inIds ? d.events.filter(ev => inIds[ev.pairId]) : d.events;
+      // pairId -> the step's cost bump, for the overview's $ marks
+      const bumpBy = {};
+      for (const b of d.bumps) bumpBy[b.pairId] = b;
 
       // ---- head ----
       const head = '<div class="cx-head">' +
@@ -6832,10 +7104,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         deck = renderCtxStream(leveled, bounds);
       } else if (ctxMode === 'events') {
         right = '<span class="tj-toolbar">' + ctxEventChips(evAll) + '</span>';
+        const bumpEvs = evAll.filter(ev => ev.kind === 'cost');
+        let overWarm = 0;
+        for (const ev of bumpEvs) overWarm += ev.extra;
         hint = [
           injN ? injN + ' injection' + (injN === 1 ? '' : 's') : '',
           compEvs.length ? compEvs.length + ' compaction' + (compEvs.length === 1 ? '' : 's') : '',
           reclaimed ? fmtCompact(reclaimed) + ' reclaimed' : '',
+          bumpEvs.length ? bumpEvs.length + ' cost bump' + (bumpEvs.length === 1 ? '' : 's') + ' · ≈' + fmtCost(overWarm) + ' over warm' : '',
         ].filter(Boolean).join(' · ') || 'when and why the window grew or was reclaimed';
         deck = '<div id="cx-events">' + renderCtxEvents(evAll, addr) + '</div>';
       } else {
@@ -6854,7 +7130,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
       const margin = '<aside class="cx-margin" id="cx-margin">' +
         '<div id="cx-bal">' + renderCtxMargin(focus, addr) + '</div>' +
+        renderCtxCostBlock(d.cost, d.bumps) +
         renderCtxTimeBlock(split) +
+        renderCtxQuotaBlock(usagePolls(pairs)) +
         renderCtxThreads(getThreads(), t) +
         '</aside>';
       const canvas = '<div class="cx-canvas mode-' + ctxMode + '" id="cx-canvas">' + bar +
@@ -6882,7 +7160,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
 
       contextEl.innerHTML = head +
-        renderCtxOverview(steps, addr, cols, maxT, split, loopCountOf(t)) +
+        renderCtxOverview(steps, addr, cols, maxT, split, loopCountOf(t), bumpBy) +
         '<div class="cx-cols">' + margin + canvas + '</div>';
 
       ctxRestoreTops(keepTops);
@@ -6922,6 +7200,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }));
       contextEl.querySelectorAll('[data-evf]').forEach(b => b.addEventListener('click', () => {
         ctxEvFilter = b.dataset.evf; repaintDeck();
+      }));
+      // The margin's bumps line is a control: it opens the events deck
+      // already filtered to the cost events it counted.
+      contextEl.querySelectorAll('[data-cxbumps]').forEach(b => b.addEventListener('click', () => {
+        setCtxMode('events');
+        ctxEvFilter = 'cost';
+        history.replaceState(null, '', ctxHash(t.key, ctxMode));
+        renderContextView(t);
       }));
       contextEl.querySelectorAll('[data-cxgran]').forEach(b => b.addEventListener('click', () => {
         ctxGran = b.dataset.cxgran; localStorage.setItem('cctrace-ctx-gran', ctxGran); renderContextView(t);

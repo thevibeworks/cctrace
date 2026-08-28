@@ -1464,6 +1464,119 @@ describe("context view", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
+  // A warm step, then one that re-bought the whole prefix: the shape every
+  // cost surface below reads (docs/design/cost.md).
+  const COST_PAIRS: TracePair[] = [
+    msgPair("k1", {
+      reqBody: { messages: [{ role: "user", content: "start" }] },
+      resBody: {
+        usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100000, cache_creation_input_tokens: 500 },
+      },
+    }),
+    msgPair("k2", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "start" },
+          { role: "assistant", content: "hello" },
+          { role: "user", content: "carry on" },
+        ],
+      },
+      resBody: {
+        usage: { input_tokens: 20, output_tokens: 5, cache_read_input_tokens: 0, cache_creation_input_tokens: 200000 },
+      },
+    }),
+  ];
+
+  test("the overview grows a cost track when the catalog priced the thread", () => {
+    const page = bootSnapshotPage(renderSnapshot(COST_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-cost"');
+    expect(cx).toContain('class="cx-ov-gn">cost<');
+    // one column per step, addressable by the same brush as the other tracks
+    expect((cx.match(/class="cx-cw[ "]/g) || []).length).toBe(2);
+    expect(cx).toContain("every dollar is an estimate from catalog rates");
+    // the bump wears a mark, the way a compaction wears ✂
+    expect(cx).toContain('class="cx-cmark"');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("an unpriced model draws no cost track and no cost block — never $0", () => {
+    const p = msgPair("z1", {
+      reqBody: { model: "some-unknown-model" },
+      resBody: { model: "some-unknown-model" },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).not.toContain('class="cx-cost"');
+    expect(cx).not.toContain('class="cx-ov-gn">cost<');
+    expect(cx).not.toContain("where the money went");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the margin's money block names all four billed components", () => {
+    const page = bootSnapshotPage(renderSnapshot(COST_PAIRS));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("where the money went");
+    for (const part of ["cache read", "cache write", "input", "output"]) {
+      expect(cx).toContain("</i>" + part + " ≈$");
+    }
+    // the bumps line is a control into the events deck
+    expect(cx).toContain("data-cxbumps");
+    expect(cx).toContain("over warm");
+    // and the pinned step states its own bill once, with the cache share
+    expect(cx).toMatch(/≈\$[\d.]+ this step/);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a cost bump is an event row: the cause in words, the delta in dollars", () => {
+    const page = bootSnapshotPage(renderSnapshot(COST_PAIRS));
+    page.goto("#/context/=events");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-ev-kind">cost<');
+    expect(cx).toContain("prefix changed");
+    expect(cx).toMatch(/class="cx-delta plus">≈\+\$[\d.]+</);
+    // the chip counts it beside the other kinds
+    expect(cx).toContain('data-evf="cost"');
+    expect(cx).toContain("re-billed at input/write rate");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("quota renders from a usage poll, and not at all without one", () => {
+    const poll = {
+      id: "q1",
+      request: { timestamp: 1500, method: "GET", url: "https://api.anthropic.com/api/oauth/usage", headers: {} },
+      response: {
+        timestamp: 1501,
+        status: 200,
+        headers: {},
+        body: {
+          five_hour: { utilization: 37, resets_at: "2026-08-19T10:59:59Z" },
+          seven_day: { utilization: 47, resets_at: "2026-08-19T15:59:59Z" },
+        },
+      },
+      duration: 100,
+      loggedAt: "x",
+    } as unknown as TracePair;
+    const page = bootSnapshotPage(renderSnapshot([...COST_PAIRS, poll]));
+    page.goto("#/context");
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain(">quota<");
+    expect(cx).toContain('class="cx-qlabel">5h<');
+    expect(cx).toContain('class="cx-qn">37%<');
+    expect(cx).toContain("resets ");
+    expect(cx).toContain("as polled by the client at");
+    expect(fragmentErrors(page)).toEqual([]);
+
+    const bare = bootSnapshotPage(renderSnapshot(COST_PAIRS));
+    bare.goto("#/context");
+    expect(bare.els["context-view"].innerHTML).not.toContain(">quota<");
+  });
+
   test("a session-id-prefix context route resolves like the sessions view", () => {
     const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
     page.goto("#/context/aaaabbbb");

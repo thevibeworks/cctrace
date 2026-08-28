@@ -2901,6 +2901,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
+          // TAIL, measured BEFORE the pair lands: was the cursor at the live
+          // edge, and was the reader at the bottom of the conversation?
+          // Terminal semantics — stick when you're there, never yank when
+          // you're not (docs/design/ui.md 3).
+          const preSpan = replay.active ? replaySpan(pairs) : null;
+          const wasAtEdge = !!preSpan && replay.cursor >= preSpan.t1 - 0.5;
+          const wasAtBottom = wasAtEdge && convoAtBottom();
           // The response retires its start even when the page rejects the
           // pair — the server retires silently on land, nothing else would.
           if (msg.pair && msg.pair.id) openStarts.delete(msg.pair.id);
@@ -2925,6 +2932,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
           rpLiveRefresh(); // the strip grows at the right edge
+          if (wasAtEdge) {
+            // The cursor FOLLOWS: the now line, the beat and the convo all
+            // move to the new edge. The beat gets the page's live-arrived
+            // fade once — a scrub never fades.
+            const postSpan = replaySpan(pairs);
+            if (postSpan) {
+              replay.cursor = postSpan.t1;
+              stageFade = true;
+              try { refreshReplay({ follow: false }); } finally { stageFade = false; }
+              if (wasAtBottom) convoToBottom();
+              updateReplayHash();
+            }
+          }
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
           const known = new Set(pairs.map(p => p.id));
@@ -7530,7 +7550,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function scheduleTick() {
       const tick = nextTick(replayEvents(slicePairs(pairs)), replay.cursor, replay.speed, IDLE_CAP_MS);
-      if (!tick) { pausePlayback(); updateReplayHash(); return; }
+      if (!tick) {
+        // The end of the tape. On a live page that is the live EDGE: park
+        // there and the tail rule takes over. A reading page just pauses.
+        if (!IS_READING && !sliceActive()) {
+          const s = replaySpan(pairs);
+          if (s && replay.cursor < s.t1) { replay.cursor = s.t1; refreshReplay(); }
+        }
+        pausePlayback();
+        updateReplayHash();
+        return;
+      }
       replay.timer = setTimeout(function() {
         replay.cursor = tick.cursor;
         refreshReplay();
@@ -7874,9 +7904,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (b) b.onclick = seekEnd;
     }
 
-    function refreshReplay() {
+    // Every cursor change rebuilds the convo as of the cursor, and its
+    // BOTTOM is the newest visible turn — the moment. So a seek, a step, a
+    // chapter jump and a playback tick all land there, instantly: a rebuilt
+    // pane has no scroll position worth animating from, and playback would
+    // otherwise be continuous motion (ui.md 5).
+    // The tail path passes { follow: false } — it decides by where the
+    // reader was (terminal semantics: stick when you're there, never yank).
+    function refreshReplay(opts) {
       renderReplayBar();
       if (view === 'session') showSession(sessionSelKey);
+      if (view === 'session' && (!opts || opts.follow !== false)) convoToBottom();
     }
 
     // ---- the stage (#stage): the now line, the beat, the tally ----

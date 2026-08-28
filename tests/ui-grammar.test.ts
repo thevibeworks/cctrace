@@ -927,6 +927,37 @@ describe("the trajectory strip (#rp-lanes)", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
+  test("the strip carries a clock row, ghosts every other thread, and dims the future", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    // The stub's default 100px track fits one tick by the 72px rule; give
+    // the frame a real width so the ruler has something to rule.
+    page.els["rp-scroll"].getBoundingClientRect = () => ({ left: 0, width: 1400, top: 0, height: 24 });
+    page.goto("#/session/aaaabbbb/@p1");
+    // the clock row: labelled in the gutter like every other lane, ticks in
+    // local wall-clock
+    expect(page.els["rp-gut"].innerHTML).toContain(">clock<");
+    const axis = page.els["rp-axis"].innerHTML as string;
+    expect((axis.match(/class="rp-tick/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(axis).toMatch(/\d\d:\d\d/);
+    // thread focus: the subagent's own requests are not the selected loop's
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    expect((body.match(/rp-span model other/g) || []).length).toBe(1);
+    // ...but the agent SPAN belongs to the parent that spawned it
+    expect(body).toContain("rp-span agent");
+    expect(body).not.toContain("rp-span agent other");
+    // the veil covers the future, from the playhead to the right edge
+    expect(page.els["rp-veil"].style.left).toBe("33.333%");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the past fill is gone — the strip dims what has not happened instead", () => {
+    const html = renderSnapshot(fixture());
+    expect(html).toContain('id="rp-veil"');
+    expect(html).toContain('id="rp-axis"');
+    expect(html).not.toContain('id="rp-fill"');
+  });
+
   test("a live start draws an open span; the pair that answers it retires it", () => {
     const fix = fixture();
     const page = bootPage(getLiveHtml({}));
@@ -1070,6 +1101,117 @@ describe("the replay stage (#stage)", () => {
     expect(page.body.classList.contains("replaying")).toBe(false);
     expect(page.els["threads"].innerHTML).not.toContain('<div id="stage">');
     expect(page.errors).toEqual([]);
+  });
+});
+
+// Replay TAILS a live run: a landed pair moves a cursor that was sitting at
+// the live edge, and leaves one that was not alone. The rule is the convo's
+// own (ui.md 3): stick when you're there, never yank when you're not.
+describe("replay tails the live session", () => {
+  const BASH = { type: "tool_use", id: "tu_b", name: "Bash", input: { command: "bun test" } };
+
+  // p1 (calls Bash) -> p2 -> p3, then p5 lands while the page is replaying.
+  function fixture(): TracePair[] {
+    const h1 = [{ role: "user", content: "map the repo" }];
+    const h2 = [...h1, { role: "assistant", content: [BASH] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_b", content: "ok" }] }];
+    return [
+      msgPair("p1", { reqBody: { messages: h1 }, resBody: { content: [BASH], stop_reason: "tool_use" } }),
+      msgPair("p2", { reqBody: { messages: h2 }, resBody: { content: [{ type: "text", text: "one" }] } }),
+      msgPair("p3", { reqBody: { messages: h2 }, resBody: { content: [{ type: "text", text: "two" }] } }),
+      msgPair("p5", { reqBody: { messages: h2 }, resBody: { content: [{ type: "text", text: "all done" }] } }),
+    ];
+  }
+  // #rp-time reads "<local clock> · +<offset> / <length>" — the cursor's
+  // position on the tape, which is what "did it follow" means.
+  const offsetOf = (page: ReturnType<typeof bootPage>) =>
+    String(page.els["rp-time"].textContent).split("\u00b7 ")[1];
+
+  function live() {
+    const fix = fixture();
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix.slice(0, 3), starts: [] }) });
+    return { fix, page, ws };
+  }
+
+  test("a pair landing while the cursor is AT the edge advances it", () => {
+    const { fix, page, ws } = live();
+    page.goto("#/session/aaaabbbb/@p3"); // p3's end IS the live edge
+    expect(offsetOf(page)).toBe("+0:04 / 0:04");
+    expect(page.els["rp-live"].innerHTML).toContain("at-edge");
+    page.els["convo"].scrollTop = page.els["convo"].scrollHeight; // reading the newest turn
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[3] }) });
+    // the cursor followed: still at the edge, and the tape is longer
+    expect(offsetOf(page)).toBe("+0:06 / 0:06");
+    expect(page.els["rp-live"].innerHTML).toContain("at-edge");
+    // the beat moved with it, and it got the page's one live-arrived fade
+    // (showSession rewrites the threads column, #stage with it)
+    const stage = page.els["threads"].innerHTML as string;
+    expect(stage).toContain('class="sb arrived"');
+    expect(stage).toContain("all done");
+    // the convo's bottom IS the moment, and the reader was there
+    expect(page.els["convo"].scrollTop).toBe(page.els["convo"].scrollHeight);
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a pair landing while the reader is BEHIND moves nothing", () => {
+    const { fix, page, ws } = live();
+    page.goto("#/session/aaaabbbb/@p1"); // two pairs back from the edge
+    expect(offsetOf(page)).toBe("+0:02 / 0:04");
+    expect(page.els["rp-live"].innerHTML).toContain("rp-live-btn"); // the snap-back
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[3] }) });
+    // the strip grew; the cursor did not move and the beat did not fade
+    expect(offsetOf(page)).toBe("+0:02 / 0:06");
+    expect(page.els["threads"].innerHTML).not.toContain("sb arrived");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a reader who scrolled up keeps their place while the cursor follows", () => {
+    const { fix, page, ws } = live();
+    page.goto("#/session/aaaabbbb/@p3");
+    page.els["convo"].scrollTop = 0; // reading history
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[3] }) });
+    expect(offsetOf(page)).toBe("+0:06 / 0:06"); // the cursor still followed
+    expect(page.els["convo"].scrollTop).toBe(0); // ...and the scroll was not yanked
+    expect(page.errors).toEqual([]);
+  });
+
+  test("older pairs merged in (history) never move the cursor", () => {
+    const { page, ws } = live();
+    page.goto("#/session/aaaabbbb/@p3");
+    const before = offsetOf(page);
+    ws.onmessage!({ data: JSON.stringify({ type: "history", pairs: [] }) });
+    expect(offsetOf(page)).toBe(before);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the live chip and End both snap a reader back to the edge", () => {
+    const { page } = live();
+    page.goto("#/session/aaaabbbb/@p1");
+    expect(offsetOf(page)).toBe("+0:02 / 0:04");
+    // the chip's button
+    (page.els["rp-live"].innerHTML as string).includes("rp-live-btn");
+    page.els["convo"].scrollTop = 0;
+    page.fireKey("End");
+    expect(offsetOf(page)).toBe("+0:04 / 0:04");
+    expect(page.els["rp-live"].innerHTML).toContain("at-edge");
+    // a SEEK rebuilds the convo as of the cursor and lands on its bottom
+    expect(page.els["convo"].scrollTop).toBe(page.els["convo"].scrollHeight);
+    // and back, then the transport button
+    page.fireKey("Home");
+    expect(offsetOf(page)).toBe("+0:00 / 0:04");
+    page.els["rp-end"].onclick!({});
+    expect(offsetOf(page)).toBe("+0:04 / 0:04");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a reading page has no live chip — a saved trace has no edge to chase", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session/aaaabbbb/@p3");
+    expect(page.els["rp-live"].innerHTML).toBe("");
+    expect(page.els["rp-exit"].textContent).toBe("\u2715 exit");
   });
 });
 

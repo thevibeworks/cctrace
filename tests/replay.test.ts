@@ -308,6 +308,14 @@ describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
     expect(nowAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", what: "", since: 1_105_500, held: null });
   });
 
+  test("the idle BEFORE the first pair states no since — it has not happened", () => {
+    // stateAt bounds the leading hole by the lane span's t0, which is in the
+    // cursor's future; a now line never dates a state to a clock the reader
+    // has not reached (the UI suppresses since === 0).
+    expect(stateAt(lanes, 999_000).since).toBe(1_000_000);
+    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", since: 0, held: null });
+  });
+
   test("a live start overrides the cursor's state: thinking, since the start, no extent", () => {
     expect(nowAt(lanes, 2_000_000, "", 2_100_000)).toEqual({
       state: "model", live: true, what: "thinking",
@@ -532,5 +540,17 @@ describe("axisTicks", () => {
     // and a day boundary that only exists in LOCAL time is the one marked
     const shifted = axisTicks(T - DAY / 2, T + DAY / 2, 900, -480);
     expect(shifted.filter((k: any) => k.major).map((k: any) => k.t)).toEqual([T - 8 * HOUR]);
+  });
+
+  test("a merged multi-day session keeps the 72px floor — a day step is multiplied", () => {
+    // 30 days at 900px: the ladder's top rung (1d) lands 30px apart, which
+    // would draw 31 ticks of mush, every one of them major.
+    const span = 30 * DAY;
+    const ticks = axisTicks(T, T + span, 900, 0);
+    expect(ticks.length).toBeGreaterThan(1);
+    const step = ticks[1].t - ticks[0].t;
+    expect((step / span) * 900).toBeGreaterThanOrEqual(72);
+    expect(step % DAY).toBe(0); // still local midnights, so the labels are dates
+    expect(ticks.every((k: any) => k.major)).toBe(true);
   });
 });

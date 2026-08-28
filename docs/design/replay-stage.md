@@ -176,11 +176,15 @@ were called, how often, so far — for the stage footer.
 
 `axisTicks` picks the FINEST step from `1s 5s 15s 30s 1m 2m 5m 10m 15m
 30m 1h 2h 6h 12h 1d` whose ticks still land >= 72px apart at the given
-track width (4h at 1400px -> 15m at 87px; 10m would be 58px), aligned to the LOCAL clock (tzOffsetMin is the page's
-`getTimezoneOffset()`; the function itself never reads a Date). Labels
-are `HH:MM` (`HH:MM:SS` under 1m); a tick that is the first of a calendar
-day is `major` and reads `MM-DD HH:MM`. Ticks are never estimated —
-they are a ruler, not data.
+track width (4h at 1400px -> 15m at 87px; 10m would be 58px); past the top
+rung the day step is multiplied until the floor holds, so a merged
+multi-day session rules in whole days instead of 30px mush. Aligned to the
+LOCAL clock: `tzOffsetMin` is the offset measured on the DATA
+(`new Date(span.t0).getTimezoneOffset()`, so the ruler agrees with
+`fmtTime` for the trace's own date instead of today's); the function itself
+never reads a Date. Labels are `HH:MM` (`HH:MM:SS` under 1m); a tick that
+is the first of a calendar day is `major` and reads `MM-DD HH:MM`. Ticks
+are never estimated — they are a ruler, not data.
 
 Per-call durations are NOT on the wire (one gap covers parallel calls);
 the beat carries the step's tools gap once, never a fake per-call time.
@@ -415,7 +419,10 @@ slice; the stage and the strip read them. Nothing new in the URL.
   renders now + beat + so-far and no `#sd`; a `pair` frame while
   replaying at the edge ADVANCES the cursor and a frame while behind does
   not; `start` lights the now line; the strip carries a clock row, the
-  veil, `.other` on unselected threads; ⏭ / End seek to the edge).
+  veil, `.other` on unselected threads; ⏭ / End seek to the edge; entering
+  replay from the requests tab still rules the clock once the route lands;
+  selecting the child flips the focus; a tail advance renders the session
+  view once and only fades when the beat actually moved).
 - Real browser: test-output/replay-stage/check.sh (updated for the new
   ids) and a LIVE tail check — a traced `claude -p` run with a browser
   attached in replay, asserting the cursor followed the landed pairs and
@@ -428,6 +435,10 @@ slice; the stage and the strip read them. Nothing new in the URL.
   settled; do not build a third.
 - A compressed-time axis for merged multi-day sessions (playback already
   idle-compresses; the strip does not).
+- The ruler takes ONE zone offset, measured at the span's start, so a
+  session that runs across a DST transition draws one side an hour off its
+  own tips. A correct ruler needs a per-tick offset (a Date per tick), and
+  the payoff is two nights a year in a handful of zones.
 - Per-call durations need chunk timing (session-replay P3).
 - Rev 1 open nit: agent-span label contrast in the light theme (dark ink
   on --purple at 10px).

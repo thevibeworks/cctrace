@@ -2908,6 +2908,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           const preSpan = replay.active ? replaySpan(pairs) : null;
           const wasAtEdge = !!preSpan && replay.cursor >= preSpan.t1 - 0.5;
           const wasAtBottom = wasAtEdge && convoAtBottom();
+          // The step the stage is showing, BEFORE the pair lands: the
+          // live-arrived fade is only honest when the beat actually moves
+          // (telemetry, count_tokens probes and usage polls land here too).
+          const preBeat = wasAtEdge ? stageBeatId() : '';
           // The response retires its start even when the page rejects the
           // pair — the server retires silently on land, nothing else would.
           if (msg.pair && msg.pair.id) openStarts.delete(msg.pair.id);
@@ -2929,17 +2933,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             liveSids.add(nsid);
             if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
           }
-          if (view === 'session') showSession(sessionSelKey);
+          // While tailing, the tail branch below owns the session render:
+          // it moves the cursor first, so rendering here would build the
+          // whole view twice per landed pair, once at a cursor already gone.
+          if (view === 'session' && !wasAtEdge) showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
           rpLiveRefresh(); // the strip grows at the right edge
           if (wasAtEdge) {
             // The cursor FOLLOWS: the now line, the beat and the convo all
             // move to the new edge. The beat gets the page's live-arrived
-            // fade once — a scrub never fades.
+            // fade once — a scrub never fades, and neither does a pair that
+            // left the beat where it was.
             const postSpan = replaySpan(pairs);
             if (postSpan) {
               replay.cursor = postSpan.t1;
-              stageFade = true;
+              stageFade = stageBeatId() !== preBeat;
               try { refreshReplay({ follow: false }); } finally { stageFade = false; }
               if (wasAtBottom) convoToBottom();
               updateReplayHash();
@@ -2957,6 +2965,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
           refreshDetailNav();
+          // Merged history moves the tape's LEFT edge, not the cursor — but
+          // the axis it hangs on is new, so the playhead, the veil and the
+          // tape length have to be re-read on it or they point at the old one.
+          if (replay.active) renderReplayBar();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
         } else if (msg.type === 'purged') {
@@ -7593,11 +7605,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // The end of the tape. On a live page that IS the live edge — the
     // cursor parks there and tails from then on (the ws pair branch).
+    // Every caller (⏭, End, the live chip) lives inside the replay bar, so
+    // replay is always already active here.
     function seekEnd() {
       const span = rpSpan();
       if (!span) return;
-      if (!replay.active) enterReplay(span.t1);
-      else seekReplay(span.t1);
+      seekReplay(span.t1);
       updateReplayHash();
     }
 
@@ -7659,6 +7672,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function rpDepth() { return replay.zoom < 2 ? 'map' : (replay.zoom < 8 ? 'read' : 'full'); }
 
     let rpStripKey = '';
+    let rpZeroTries = 0;
     function renderReplayStrip(force) {
       const span = rpSpan();
       if (!span) { rpGut.innerHTML = ''; rpAxis.innerHTML = ''; rpRules.innerHTML = ''; rpBody.innerHTML = ''; rpStripKey = ''; return; }
@@ -7667,16 +7681,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // surfaces.
       const selT = stageThread();
       const selKey = selT ? selT.key : '';
+      // Label visibility and the clock ruler need the frame's width in
+      // PIXELS, so the measurement is part of the KEY: entering replay from
+      // the requests tab renders once while #session-view is still hidden
+      // (the hash route is async), and that zero-width draw — no ticks, no
+      // span labels — must not be the cached answer forever.
+      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
       // The cursor is NOT in the key — it moves the handle, never the lanes.
       const key = pairs.length + '|' + (sliceActive() ? replay.sliceA + '-' + replay.sliceB : '-') +
-        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1 + '|' + selKey;
+        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1 + '|' + selKey +
+        '|' + Math.round(frameW);
       if (rpStripKey === key && !force) return;
       rpStripKey = key;
+      // A zero-width draw is a measurement that has not happened yet: ask
+      // for one more frame (bounded — a strip that is never on screen must
+      // not spin) and let the re-measure repair it.
+      if (frameW > 0) rpZeroTries = 0;
+      else if (rpZeroTries < 5 && typeof requestAnimationFrame === 'function') {
+        rpZeroTries++;
+        requestAnimationFrame(() => renderReplayStrip(true));
+      }
       const L = laneData();
       const dur = Math.max(1, span.t1 - span.t0);
-      // Label visibility needs the span's width in PIXELS at this zoom, so
-      // the width class is computed here and re-computed when zoom changes.
-      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
       const trackW = frameW * replay.zoom;
       const pct = (t) => (((t - span.t0) / dur) * 100).toFixed(3);
       const ord = (n) => (n + 1 < 10 ? '0' : '') + (n + 1);
@@ -7694,14 +7720,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           (ln ? '<span class="rp-lbl n">' + escapeHtml(ln) + '</span>' : '') + '</span>';
       };
       const lane = (name, inner) => '<div class="rp-lane" data-lane="' + name + '">' + inner + '</div>';
-      const oth = (k) => (selKey && k !== selKey ? ' other' : '');
+      // Ghost everything the selection does not own. An agent span has TWO
+      // keys that count as ownership (the parent that spawned it, and the
+      // child itself), hence the optional second key.
+      const oth = (k, k2) => (selKey && k !== selKey && (k2 == null || k2 !== selKey) ? ' other' : '');
 
-      // the clock row: a ruler in the page's local time. axisTicks never
-      // reads a clock of its own — the page hands it the zone, so a
-      // rendered snapshot draws the same ruler wherever it is opened.
+      // The clock row: a ruler in the READER's local zone, exactly like
+      // fmtTime — so the axis and the span tips agree. The offset is
+      // anchored to the DATA (the span's own start), never to today: a July
+      // trace read in January must not be ruled an hour off its own tips.
+      // A DST transition INSIDE the span still shifts one side by an hour
+      // (docs/design/replay-stage.md, "Not done").
       let axis = '';
       let rules = '';
-      for (const k of axisTicks(span.t0, span.t1, trackW || frameW, new Date().getTimezoneOffset())) {
+      for (const k of axisTicks(span.t0, span.t1, trackW || frameW, new Date(span.t0).getTimezoneOffset())) {
         axis += '<span class="rp-tick' + (k.major ? ' major' : '') + '" style="left:' + pct(k.t) + '%">' +
           escapeHtml(k.label) + '</span>';
         if (k.major) rules += '<i class="rp-rule" style="left:' + pct(k.t) + '%"></i>';
@@ -7758,9 +7790,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
 
       // agents: child threads stacked on the rows sessionLanes assigned,
-      // In focus when the selected thread spawned them OR is one of them —
-      // a child selected in the rail keeps its own span full.
       // capped — the rest fold into one row rather than growing the frame.
+      // A span is in focus when the selected thread spawned it OR IS it, so
+      // a child selected in the rail keeps its own span full.
       const arows = [];
       let folded = 0;
       for (const a of L.agents) {
@@ -7769,7 +7801,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const label = a.label || a.agentType || 'subagent';
         const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
           '\\n---\\n> click seeks to where its work landed';
-        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') + (selKey && a.parentKey !== selKey && a.threadKey !== selKey ? ' other' : ''), a.t0, a.t1, a.t1, tip, '', label);
+        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') +
+          oth(a.parentKey, a.threadKey), a.t0, a.t1, a.t1, tip, '', label);
       }
 
       // harness: moments, not spans — a compaction and a failed request.
@@ -7894,12 +7927,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // The live chip: STATE while the cursor sits at the newest landed pair
     // (the page is tailing), a CONTROL when the reader is behind. Never on a
     // reading page — a saved trace has no edge to chase.
+    // It renders on EVERY bar update (a playback tick, a landed pair), so it
+    // rewrites only when the state actually flips: rebuilding the markup
+    // under the reader's pointer would destroy the button mid-hover and can
+    // eat the click that was aimed at it.
+    let rpLiveState = null;
     function renderLiveChip() {
       if (!rpLive) return;
-      if (IS_READING) { rpLive.innerHTML = ''; return; }
-      const s = replaySpan(pairs);
-      const atEdge = !!s && replay.cursor >= s.t1 - 0.5;
-      rpLive.innerHTML = atEdge
+      const s = IS_READING ? null : replaySpan(pairs);
+      const state = IS_READING ? 'reading' : (s && replay.cursor >= s.t1 - 0.5 ? 'edge' : 'behind');
+      if (rpLiveState === state) return;
+      rpLiveState = state;
+      rpLive.innerHTML = state === 'reading' ? ''
+        : state === 'edge'
         ? '<span class="at-edge" data-tip="live\\nthe cursor is at the newest landed pair \\u2014 the next one moves it, and the conversation follows">live</span>'
         : '<button class="rp-btn" id="rp-live-btn" data-tip="back to the live edge\\nthe capture has moved on; this snaps the cursor to the newest landed pair\\n---\\n> key: End">\\u2913 live</button>';
       const b = document.getElementById('rp-live-btn');
@@ -7931,6 +7971,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function stageThread() {
       const all = fullThreads();
       return all.length ? resolveThreadSel(all, sessionSelKey) : null;
+    }
+
+    // The step the beat is showing at the cursor, as an id — the one thing
+    // the tail has to compare to know whether a landed pair CHANGED the
+    // stage (a telemetry pair or a usage poll does not).
+    function stageBeatId() {
+      const t = stageThread();
+      const b = t ? beatAt(t, replay.cursor, pairOf) : null;
+      return b ? b.pairId : '';
     }
 
     // A request forwarded with no response yet, at the live edge of the

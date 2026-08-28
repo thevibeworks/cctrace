@@ -457,11 +457,15 @@ export function nowAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: 
   else if (s === "human") what = "awaiting the next prompt";
   else if (s === "failed") what = ((item && item.status) || "failed") + " · the retry is next";
   const extent = s === "model" || s === "tools" || s === "waiting" || s === "agents";
+  // The idle BEFORE the first pair has no beginning we observed — stateAt
+  // hands back the lane span's t0, which is still in the cursor's future.
+  // A now line never states a time that has not happened: 0 = say nothing.
+  const since = st.since > cursor ? 0 : st.since || 0;
   return {
     state: s,
     live: false,
     what,
-    since: st.since || 0,
+    since,
     held: extent && item && item.t1 != null ? Math.max(0, cursor - st.since) : null,
     agentsRunning: st.agentsRunning,
     pairId: (item && (item.pairId || item.parentPairId)) || "",
@@ -509,12 +513,16 @@ export function soFar(lanes: any, cursor: number, threadKey?: any): any {
 
 /**
  * The strip's clock ruler: the FINEST ladder step whose ticks still land
- * >= 72px apart at this track width, aligned to the LOCAL calendar.
+ * >= 72px apart at this track width, aligned to the LOCAL calendar. Past the
+ * ladder's top rung (a merged multi-day session) the day step is multiplied
+ * until the 72px floor holds.
  *
- * `tzOffsetMin` is the page's `getTimezoneOffset()` — the function never
- * reads a clock of its own, so a rendered page's ruler does not depend on
- * when it is read. `t - tzOffsetMin * 60000` is the local wall clock as a ms
- * value, which is why the UTC getters below format local time.
+ * `tzOffsetMin` is the offset the caller measured ON THE DATA
+ * (`new Date(t0).getTimezoneOffset()`) — the function reads no clock of its
+ * own, so the ruler does not depend on when the page is read, and a summer
+ * trace read in winter still rules in the offset it was captured under.
+ * `t - tzOffsetMin * 60000` is the local wall clock as a ms value, which is
+ * why the UTC getters below format local time.
  *
  * Labels are HH:MM (HH:MM:SS under a minute); the first tick of a local
  * calendar day is `major` and names the date. Ticks are a ruler, never data:
@@ -532,6 +540,11 @@ export function axisTicks(t0: number, t1: number, px: number, tzOffsetMin: numbe
   for (const s of LADDER) {
     if ((s / span) * px >= 72) { step = s; break; }
   }
+  // A merged multi-day session outruns the ladder: 30 days at 900px would
+  // draw 31 day-ticks 29px apart, every one of them `major`. Multiply the
+  // coarsest rung instead — a multiple of a day keeps the local-midnight
+  // alignment, so the labels stay a ruler rather than mush.
+  if ((step / span) * px < 72) step *= Math.ceil(72 / ((step / span) * px));
   const DAY = 86400000;
   const shift = (tzOffsetMin || 0) * 60000;
   const two = (n: number) => (n < 10 ? "0" : "") + n;

@@ -15,9 +15,10 @@ import { extractCallInfo } from "./summarize";
 // docs/design/session-replay.md). These are the pure primitives: the wire as
 // of a cursor, the event boundaries playback walks, and the tick scheduler —
 // plus the STAGE layer below them (docs/design/replay-stage.md): the trace as
-// lanes over time, the observed state machine as of the cursor, and the beat
-// (what the agent did at this step). Every mark is a wire timestamp or a wire
-// fact; nothing here estimates.
+// lanes over time, the observed state at the cursor (stateAt) read into one
+// NOW line (nowAt), the tally behind it (soFar), the beat (what the agent did
+// at this step) and the strip's clock ruler (axisTicks). Every mark is a wire
+// timestamp or a wire fact; nothing here estimates.
 //
 // Like summarize.ts, every exported function is inlined into the web UI via
 // Function.prototype.toString() — keep them self-contained (cross-calls only
@@ -401,82 +402,152 @@ export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
 }
 
 /**
- * The state diagram's numbers as of the cursor: how often each state was
- * entered, how much wall-clock it holds so far, and how many times each
- * transition was taken. A span counts the moment it STARTS (t0 <= cursor)
- * and contributes min(t1, cursor) - t0 ms, so the totals grow with the
- * playhead instead of jumping when a span completes; a transition counts
- * only when the state it leaves has finished (t1 <= cursor) — the edge is
- * not observed until then.
+ * The NOW line: `stateAt` read into the one row the stage puts on screen —
+ * what the agent is doing at the cursor, what is running, since when
+ * (docs/design/replay-stage.md). Built ON stateAt, never forking its
+ * precedence.
  *
- * byName tallies the calls of every counted tools gap. A step whose loop
- * ended before any result came back has no gap and no tally: we never saw
- * those calls run. `model.failed` is the failed-request count (the badge on
- * the model node), never a state of its own here.
+ * `since` is always a wire timestamp. `held` is `cursor - since` only where
+ * the state's extent is itself a wire fact — a span or gap with a t1. The
+ * holes (`human`, `failed`, `idle`) are bounded by an event that has not
+ * happened yet, so they hold nothing we observed: null.
+ *
+ * `liveStartMs` is an in-flight request's start (the proxies' `start` event)
+ * at the live edge: the model IS thinking, the extent is unknown, and the
+ * dot is the page's one heartbeat.
  */
-export function stateCounts(lanes: any, cursor: number, threadKey?: any): any {
+export function nowAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
   const L = lanes || {};
   const key = threadKey || "";
-  const out: any = {
-    human: 0,
-    model: { n: 0, ms: 0, failed: 0 },
-    tools: { n: 0, ms: 0, byName: {} },
-    agents: { n: 0, ms: 0 },
-    waiting: { n: 0, ms: 0 },
-    cuts: 0,
-    // Fixed key set: the diagram's geometry never shifts, so a zero edge is
-    // faint, not absent.
-    transitions: {
-      "human>model": 0, "model>tools": 0, "tools>model": 0,
-      "model>agents": 0, "agents>model": 0, "model>reply": 0,
-      "model>waiting": 0, "waiting>model": 0, "reply>human": 0,
-    },
-  };
-  const held = (x: any) => Math.max(0, Math.min(x.t1, cursor) - x.t0);
-  for (const h of L.human || []) {
-    if (key && h.threadKey !== key) continue;
-    if (h.t > cursor) continue;
-    out.human++;
-    out.transitions["human>model"]++;
-    // Every loop after a thread's first was entered from a reply.
-    if (h.ord > 0) out.transitions["reply>human"]++;
+  const st = stateAt(L, cursor, key);
+  if (liveStartMs && liveStartMs > 0) {
+    return {
+      state: "model", live: true, what: "thinking",
+      since: liveStartMs, held: null, agentsRunning: st.agentsRunning, pairId: "",
+    };
   }
+  const s = st.state;
+  const item = st.item || null;
+  let what = "";
+  if (s === "model") what = "thinking";
+  else if (s === "tools") {
+    // Wire order of FIRST appearance, repeats folded: one gap covers three
+    // Bash calls, and "Bash ×3" is what the reader means by that.
+    const order: string[] = [];
+    const n: any = {};
+    for (const c of (item && item.names) || []) {
+      if (!c) continue;
+      if (n[c] == null) { n[c] = 0; order.push(c); }
+      n[c]++;
+    }
+    const parts: string[] = [];
+    for (const c of order) parts.push(c + (n[c] > 1 ? " ×" + n[c] : ""));
+    what = parts.join(" · ");
+  } else if (s === "agents") {
+    const labels: string[] = [];
+    for (const a of L.agents || []) {
+      if (key && a.parentKey !== key) continue;
+      if (a.t0 <= cursor && cursor < a.t1) labels.push(a.label || a.agentType || "subagent");
+    }
+    what = st.agentsRunning + " running";
+    if (labels.length) {
+      what += " · " + labels.slice(0, 3).join(", ") +
+        (labels.length > 3 ? " +" + (labels.length - 3) : "");
+    }
+  } else if (s === "waiting") what = "harness continued";
+  else if (s === "human") what = "awaiting the next prompt";
+  else if (s === "failed") what = ((item && item.status) || "failed") + " · the retry is next";
+  const extent = s === "model" || s === "tools" || s === "waiting" || s === "agents";
+  return {
+    state: s,
+    live: false,
+    what,
+    since: st.since || 0,
+    held: extent && item && item.t1 != null ? Math.max(0, cursor - st.since) : null,
+    agentsRunning: st.agentsRunning,
+    pairId: (item && (item.pairId || item.parentPairId)) || "",
+  };
+}
+
+/**
+ * The tally behind the now line: how many steps ran, which tools were called
+ * and how often, how many children, failures and cuts — all as of the cursor.
+ * A span counts the moment it STARTS (t0 <= cursor), a mark when it lands.
+ *
+ * `tools` is byName only. Durations are not here on purpose: the convo
+ * header's `time` chip already states where the thread's wall-clock went,
+ * and a number is stated once per view (docs/design/ui.md).
+ */
+export function soFar(lanes: any, cursor: number, threadKey?: any): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const out: any = { steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 };
   for (const x of L.model || []) {
     if (key && x.threadKey !== key) continue;
-    if (x.t0 > cursor) continue;
-    out.model.n++;
-    out.model.ms += held(x);
-    if (x.t1 <= cursor && out.transitions["model>" + x.next] != null) out.transitions["model>" + x.next]++;
-  }
-  for (const f of L.failed || []) {
-    if (key && f.threadKey !== key) continue;
-    if (f.t <= cursor) out.model.failed++;
+    if (x.t0 <= cursor) out.steps++;
   }
   for (const g of L.tools || []) {
     if (key && g.threadKey !== key) continue;
     if (g.t0 > cursor) continue;
-    out.tools.n++;
-    out.tools.ms += held(g);
-    for (const n of g.names || []) out.tools.byName[n] = (out.tools.byName[n] || 0) + 1;
-    if (g.t1 <= cursor) out.transitions["tools>model"]++;
-  }
-  for (const g of L.waiting || []) {
-    if (key && g.threadKey !== key) continue;
-    if (g.t0 > cursor) continue;
-    out.waiting.n++;
-    out.waiting.ms += held(g);
-    if (g.t1 <= cursor) out.transitions["waiting>model"]++;
+    // A step whose loop ended before any result came back has no gap and no
+    // tally: we never saw those calls run.
+    for (const n of g.names || []) out.tools[n] = (out.tools[n] || 0) + 1;
   }
   for (const a of L.agents || []) {
     if (key && a.parentKey !== key) continue;
-    if (a.t0 > cursor) continue;
-    out.agents.n++;
-    out.agents.ms += held(a);
-    if (a.t1 <= cursor) out.transitions["agents>model"]++;
+    if (a.t0 <= cursor) out.agents++;
+  }
+  for (const f of L.failed || []) {
+    if (key && f.threadKey !== key) continue;
+    if (f.t <= cursor) out.failed++;
   }
   for (const c of L.cuts || []) {
     if (key && c.threadKey !== key) continue;
     if (c.t <= cursor) out.cuts++;
+  }
+  return out;
+}
+
+/**
+ * The strip's clock ruler: the coarsest-that-fits ladder step whose ticks
+ * land >= 72px apart at this track width, aligned to the LOCAL calendar.
+ *
+ * `tzOffsetMin` is the page's `getTimezoneOffset()` — the function never
+ * reads a clock of its own, so a rendered page's ruler does not depend on
+ * when it is read. `t - tzOffsetMin * 60000` is the local wall clock as a ms
+ * value, which is why the UTC getters below format local time.
+ *
+ * Labels are HH:MM (HH:MM:SS under a minute); the first tick of a local
+ * calendar day is `major` and names the date. Ticks are a ruler, never data:
+ * nothing here is estimated or rounded into a claim.
+ */
+export function axisTicks(t0: number, t1: number, px: number, tzOffsetMin: number): any[] {
+  const out: any[] = [];
+  if (!(px > 0) || !(t1 > t0)) return out;
+  const LADDER = [
+    1000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000,
+    3600000, 7200000, 21600000, 43200000, 86400000,
+  ];
+  const span = t1 - t0;
+  let step = LADDER[LADDER.length - 1];
+  for (const s of LADDER) {
+    if ((s / span) * px >= 72) { step = s; break; }
+  }
+  const DAY = 86400000;
+  const shift = (tzOffsetMin || 0) * 60000;
+  const two = (n: number) => (n < 10 ? "0" : "") + n;
+  for (let lt = Math.ceil((t0 - shift) / step) * step; lt <= t1 - shift; lt += step) {
+    const d = new Date(lt);
+    const hh = two(d.getUTCHours());
+    const mm = two(d.getUTCMinutes());
+    const major = ((lt % DAY) + DAY) % DAY === 0;
+    out.push({
+      t: lt + shift,
+      label: major
+        ? two(d.getUTCMonth() + 1) + "-" + two(d.getUTCDate()) + " " + hh + ":" + mm
+        : hh + ":" + mm + (step < 60000 ? ":" + two(d.getUTCSeconds()) : ""),
+      major,
+    });
   }
   return out;
 }
@@ -493,6 +564,10 @@ export function stateCounts(lanes: any, cursor: number, threadKey?: any): any {
  * growth over the previous step (the first step grew from nothing, so its
  * delta IS its window). Per-call durations are not on the wire — one gap
  * covers parallel calls — so the beat never invents one.
+ *
+ * `head` is the human prompt that started this step's working loop, so the
+ * reader always knows which task the step serves. Empty when the loop has no
+ * head or the harness authored it — a notification is not a task.
  */
 export function beatAt(thread: any, cursor: number, pairOf: any): any {
   if (!thread || !thread.turns) return null;
@@ -512,7 +587,7 @@ export function beatAt(thread: any, cursor: number, pairOf: any): any {
       const prompt = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
       const end = pairEndMs(p);
       if (end <= cursor + 0.5 && (!best || end >= best.end)) {
-        best = { turn, p, u, prompt, prev: prevPrompt, end, ord: li, step: L.steps[v] || 0, isFinal: v === L.final };
+        best = { turn, p, u, prompt, prev: prevPrompt, end, ord: li, step: L.steps[v] || 0, isFinal: v === L.final, loop: L };
       }
       prevPrompt = prompt;
     }
@@ -555,9 +630,14 @@ export function beatAt(thread: any, cursor: number, pairOf: any): any {
     if (oc.next === "reply" && b.type === "text" && typeof b.text === "string" && b.text.trim()) reply = cap(b.text);
     if (!thinking && b.type === "thinking" && typeof b.thinking === "string" && b.thinking.trim()) thinking = cap(b.thinking);
   }
+  const HL = best.loop || {};
+  const head = HL.head != null && !HL.headInjected
+    ? String(turnSnippet((vis[HL.head] || {}).blocks || [])).replace(/\s+/g, " ").trim().slice(0, 80)
+    : "";
   return {
     ord: best.ord,
     step: best.step,
+    head,
     pairId: best.p.id,
     t0: pairStartMs(best.p),
     t1: best.end,

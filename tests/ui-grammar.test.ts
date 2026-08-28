@@ -947,10 +947,11 @@ describe("the trajectory strip (#rp-lanes)", () => {
   });
 });
 
-// The stage tops the threads column while replaying: the observed state
-// machine (fixed geometry, one lit node) and the beat (what this step did).
-// Its rows are built from captured wire content — tool names, previews, the
-// model's own words — so it gets the hostile-fixture grammar treatment too.
+// The stage tops the threads column while replaying: the NOW line (the
+// observed state at the cursor), the beat (what this step did) and the
+// tally. Its rows are built from captured wire content — tool names,
+// previews, the model's own words — so it gets the hostile-fixture grammar
+// treatment too.
 describe("the replay stage (#stage)", () => {
   const PROMPT = "Explore </script><script>alert(1)</script> and report [1mback[0m";
   const TASK = {
@@ -987,25 +988,32 @@ describe("the replay stage (#stage)", () => {
     return at === -1 ? "" : th.slice(at, th.indexOf('<div class="threads-sum"'));
   };
 
-  test("replaying, the stage leads the threads column: 6 nodes, one lit, 9 edges, a beat", () => {
+  test("replaying, the stage leads the threads column: now, beat, so far — no diagram", () => {
     const page = bootSnapshotPage(renderSnapshot(fixture()));
     page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
     const th = page.els["threads"].innerHTML as string;
     expect(th.indexOf('<div id="stage">')).toBe(0); // above the rail, not beside it
     const stage = stageOf(page);
-    expect(stage).toContain('<svg id="sd"');
-    // Fixed geometry: every node and every transition is always drawn — a
-    // zero one goes faint (.zero), never missing.
-    expect((stage.match(/data-node="/g) || []).length).toBe(6);
-    expect((stage.match(/data-edge="/g) || []).length).toBe(9);
-    expect(stage).toContain('class="sd-node zero"'); // waiting: never entered here
-    // Exactly one state is lit — at the end of the tape that is the reply.
-    const lit = [...stage.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
-    expect(lit.length).toBe(1);
-    expect(stage).toContain('data-node="reply" class="sd-node on"');
+    // The state DIAGRAM is gone: the loop's shape is the strip, the moment
+    // is the now line.
+    expect(stage).not.toContain('id="sd"');
+    expect(stage).not.toContain("sd-node");
+    // The now line: at the end of the tape nothing is running, so the dot
+    // is hollow and the state is idle — with the clock it began at.
+    expect(stage).toContain('<div id="stage-now"');
+    expect(stage).toMatch(/id="stage-now"[^>]*data-state="idle"/);
+    expect(stage).toContain('class="sn-dot hollow"');
+    expect(stage).toMatch(/since \d\d:\d\d:\d\d/);
     // the beat names the turn it is showing (the outline's own numbering)
     expect(stage).toMatch(/turn\s*\d+/);
     expect(stage).toContain("all done"); // the reply's first line
+    // the loop's head — which task this step serves — and its chapter seek
+    expect(stage).toContain('class="sb-head" data-rpchap="0"');
+    expect(stage).toContain("map the repo");
+    // the tally: which tools were called and how often, as of the cursor
+    expect(stage).toContain('class="st-sofar"');
+    expect(stage).toContain("Bash 1");
+    expect(stage).toContain("1 agent");
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
   });
@@ -1032,15 +1040,16 @@ describe("the replay stage (#stage)", () => {
     const ws = page.sockets[0]!;
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix, starts: [] }) });
     page.goto("#/session/aaaabbbb/@p5"); // parked at the newest landed pair
-    expect(stageOf(page)).not.toContain("thinking since");
+    expect(stageOf(page)).not.toContain('class="live"');
     ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p9", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1008 } }) });
     // renderStage patches #stage in place (a start rebuilds no pane), so the
     // fragment the page wrote last is the one to read.
     const live = page.els["stage"].innerHTML as string;
-    expect(live).toContain('class="sd-node on live"');
-    expect(live).toMatch(/thinking since \d\d:\d\d:\d\d/); // absolute, never a counter
-    const lit = [...live.matchAll(/class="sd-node([^"]*)"/g)].filter(m => / on\b/.test(m[1]!));
-    expect(lit.length).toBe(1);
+    expect(live).toMatch(/id="stage-now" class="live" data-state="model"/);
+    expect(live).toContain(">thinking<");
+    expect(live).toMatch(/since \d\d:\d\d:\d\d/); // absolute, never a counter
+    // a live in-flight request has no known extent: no held duration
+    expect(live).not.toContain("sn-held");
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
   });

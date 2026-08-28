@@ -15,7 +15,9 @@ import {
   stepOutcome,
   sessionLanes,
   stateAt,
-  stateCounts,
+  nowAt,
+  soFar,
+  axisTicks,
   beatAt,
   chaptersOf,
 } from "../src/replay";
@@ -225,7 +227,7 @@ describe("stepOutcome", () => {
 
 // loop 1: ask -> Bash call (A, 2s) -> [tools 8s, a 529 dies inside it] -> done (B, 1s)
 // loop 2: [human 89s] -> next -> sure (C, 0.5s) -> [harness nudge 4.5s] -> loaded (D, 0.5s)
-describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
+describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
   const CALL = { type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls", description: "list" } };
   const RES = { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "file.txt" }] };
   const h1 = [U("ask")];
@@ -287,28 +289,36 @@ describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
     expect(stateAt(lanes, 2_000_000)).toMatchObject({ state: "idle", since: 1_105_500 });
   });
 
-  test("stateCounts grows with the cursor: a span counts at t0, its ms up to the cursor", () => {
-    const mid = stateCounts(lanes, 1_004_000);
-    expect(mid.human).toBe(1);
-    expect(mid.model).toEqual({ n: 1, ms: 2000, failed: 0 });
-    expect(mid.tools).toEqual({ n: 1, ms: 2000, byName: { Bash: 1 } });
-    expect(mid.transitions["human>model"]).toBe(1);
-    expect(mid.transitions["model>tools"]).toBe(1);
-    expect(mid.transitions["tools>model"]).toBe(0); // the gap hasn't closed yet
-
-    const end = stateCounts(lanes, 2_000_000);
-    expect(end.human).toBe(2);
-    expect(end.model).toEqual({ n: 4, ms: 4000, failed: 1 });
-    expect(end.tools).toEqual({ n: 1, ms: 8000, byName: { Bash: 1 } });
-    expect(end.waiting).toEqual({ n: 1, ms: 4500 });
-    expect(end.agents).toEqual({ n: 0, ms: 0 });
-    expect(end.cuts).toBe(0);
-    expect(end.transitions).toEqual({
-      "human>model": 2, "model>tools": 1, "tools>model": 1,
-      "model>agents": 0, "agents>model": 0, "model>reply": 2,
-      "model>waiting": 1, "waiting>model": 1, "reply>human": 1,
+  test("nowAt names the state, what is running, and how long it has held", () => {
+    // held is cursor - since wherever the extent is a wire fact (a span or a
+    // gap with a t1); the holes hold nothing we observed.
+    expect(nowAt(lanes, 1_001_000, "")).toMatchObject({
+      state: "model", live: false, what: "thinking", since: 1_000_000, held: 1000, pairId: "A",
     });
-    expect(stateCounts(lanes, 999_000).model).toEqual({ n: 0, ms: 0, failed: 0 });
+    expect(nowAt(lanes, 1_004_000, "")).toMatchObject({
+      state: "tools", what: "Bash", since: 1_002_000, held: 2000, pairId: "A",
+    });
+    expect(nowAt(lanes, 1_102_000, "")).toMatchObject({
+      state: "waiting", what: "harness continued", since: 1_100_500, held: 1500, pairId: "C",
+    });
+    expect(nowAt(lanes, 1_050_000, "")).toMatchObject({
+      state: "human", what: "awaiting the next prompt", since: 1_011_000, held: null, pairId: "B",
+    });
+    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", what: "", held: null });
+    expect(nowAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", what: "", since: 1_105_500, held: null });
+  });
+
+  test("a live start overrides the cursor's state: thinking, since the start, no extent", () => {
+    expect(nowAt(lanes, 2_000_000, "", 2_100_000)).toEqual({
+      state: "model", live: true, what: "thinking",
+      since: 2_100_000, held: null, agentsRunning: 0, pairId: "",
+    });
+  });
+
+  test("soFar tallies steps, calls by name, children, failures and cuts", () => {
+    expect(soFar(lanes, 999_000)).toEqual({ steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 });
+    expect(soFar(lanes, 1_004_000)).toEqual({ steps: 1, tools: { Bash: 1 }, agents: 0, failed: 0, cuts: 0 });
+    expect(soFar(lanes, 2_000_000)).toEqual({ steps: 4, tools: { Bash: 1 }, agents: 0, failed: 1, cuts: 0 });
   });
 
   test("beatAt is the step whose pair END is the latest at or before the cursor", () => {
@@ -327,6 +337,14 @@ describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
     expect(b2.tokens.prompt).toBe(215);
     expect(b2.tokens.delta).toBe(100); // 215 - 115
     expect(beatAt(t, 9_000_000, byId).pairId).toBe("D");
+  });
+
+  test("the beat carries its loop's head — the task the step serves", () => {
+    expect(beatAt(t, 1_005_000, byId).head).toBe("ask");
+    expect(beatAt(t, 1_050_000, byId).head).toBe("ask");
+    // loop 1's head is the human's "next"; the harness's "Tool loaded."
+    // joined that loop, it never headed one
+    expect(beatAt(t, 9_000_000, byId).head).toBe("next");
   });
 
   test("chapters are the working loops with a head, ordinals from loopTurns", () => {
@@ -354,9 +372,12 @@ describe("sessionLanes: a failed request holds the hole until its retry", () => 
     expect(lanes.failed.map((f: any) => [f.pairId, f.t, f.status])).toEqual([["F", 1_001_000, 529]]);
   });
 
-  test("between the failure and the retry the state is failed, counted as a badge", () => {
+  test("between the failure and the retry the state is failed, and the now line says why", () => {
     expect(stateAt(lanes, 1_005_000)).toMatchObject({ state: "failed", since: 1_001_000 });
-    expect(stateCounts(lanes, 1_005_000).model).toEqual({ n: 0, ms: 0, failed: 1 });
+    expect(nowAt(lanes, 1_005_000, "")).toMatchObject({
+      state: "failed", what: "529 · the retry is next", since: 1_001_000, held: null, pairId: "F",
+    });
+    expect(soFar(lanes, 1_005_000)).toMatchObject({ steps: 0, failed: 1 });
     expect(stateAt(lanes, 1_010_500).state).toBe("model");
   });
 });
@@ -396,11 +417,9 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     const m1 = lanes.model.find((m: any) => m.pairId === "M1");
     expect(m1.next).toBe("agents");
     expect(lanes.tools.find((g: any) => g.pairId === "M1")).toMatchObject({ names: ["Task", "Task"], count: 2 });
-    const c = stateCounts(lanes, 3_000_000, parent.key);
-    expect(c.tools.byName).toEqual({ Task: 2 });
-    expect(c.agents).toEqual({ n: 2, ms: 20_500 + 1000 });
-    expect(c.transitions["model>agents"]).toBe(1);
-    expect(c.transitions["agents>model"]).toBe(2);
+    expect(soFar(lanes, 3_000_000, parent.key)).toEqual({
+      steps: 2, tools: { Task: 2 }, agents: 2, failed: 0, cuts: 0,
+    });
   });
 
   test("stateAt scoped to the parent reports the children running under it", () => {
@@ -408,6 +427,18 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     expect(stateAt(lanes, 2_025_000, parent.key)).toMatchObject({ state: "agents", agentsRunning: 1 });
     // a request in flight is the actor even while a child runs
     expect(stateAt(lanes, 2_020_500, lanes.agents[1].threadKey)).toMatchObject({ state: "model", agentsRunning: 0 });
+  });
+
+  test("the now line names the running children, and folds repeated calls", () => {
+    expect(nowAt(lanes, 2_020_500, parent.key)).toMatchObject({
+      state: "agents", agentsRunning: 2,
+      what: "2 running · [Explore] explore repo, [Review] review docs",
+      // stateAt's own precedence: the newest child span owns the cursor
+      since: 2_020_000, held: 500, pairId: "M1",
+    });
+    expect(nowAt(lanes, 2_025_000, parent.key).what).toBe("1 running · [Explore] explore repo");
+    // one gap, two Task calls: wire order of first appearance, repeats folded
+    expect(nowAt(lanes, 2_005_000, parent.key)).toMatchObject({ state: "tools", what: "Task ×2" });
   });
 });
 
@@ -428,8 +459,8 @@ describe("sessionLanes: cuts (real compaction fixture)", () => {
     expect(cut.mode).toBe("fold");
     expect(cut.threadKey).toBe(main.key);
     expect(cut.t).toBe(pairEndMs(index["1784536387048_6t"]));
-    expect(stateCounts(lanes, cut.t - 1).cuts).toBe(0);
-    expect(stateCounts(lanes, cut.t).cuts).toBe(1);
+    expect(soFar(lanes, cut.t - 1).cuts).toBe(0);
+    expect(soFar(lanes, cut.t).cuts).toBe(1);
   });
 
   test("every verified spawn is an agent span inside the trace's own window", () => {
@@ -439,5 +470,67 @@ describe("sessionLanes: cuts (real compaction fixture)", () => {
       expect(a.t0).toBeGreaterThanOrEqual(lanes.t0);
       expect(a.t1).toBeLessThanOrEqual(lanes.t1);
     }
+  });
+});
+
+describe("beatAt: a harness-authored head is not the task", () => {
+  const pairs = [
+    mpair("N1", 3000, 1000, [U("[SYSTEM NOTIFICATION] the sandbox restarted")], [TXT("noted")]),
+  ];
+  const byId = (id: string) => pairs.find((p) => p.id === id);
+  const t = mainThread(buildSession(pairs).threads);
+
+  test("head is empty when the harness wrote the prompt that opened the loop", () => {
+    expect(beatAt(t, 9_000_000, byId).head).toBe("");
+  });
+});
+
+// The strip's clock ruler. Pure: the caller supplies the timezone offset, so
+// the same trace draws the same ruler wherever it is read.
+describe("axisTicks", () => {
+  const HOUR = 3_600_000;
+  const DAY = 86_400_000;
+  // 2026-08-28 00:00:00 UTC
+  const T = Date.UTC(2026, 7, 28, 0, 0, 0);
+
+  test("empty when there is no track or no span", () => {
+    expect(axisTicks(0, HOUR, 0, 0)).toEqual([]);
+    expect(axisTicks(HOUR, HOUR, 1000, 0)).toEqual([]);
+    expect(axisTicks(HOUR, 0, 1000, 0)).toEqual([]);
+  });
+
+  test("picks the finest ladder step that still lands ticks >= 72px apart", () => {
+    // 4h over 1400px: 10m would land 58px apart, 15m lands 87.5px.
+    const ticks = axisTicks(T, T + 4 * HOUR, 1400, 0);
+    expect(ticks.length).toBeGreaterThan(2);
+    const step = ticks[1].t - ticks[0].t;
+    expect([900_000, 1_800_000]).toContain(step);
+    expect((step / (4 * HOUR)) * 1400).toBeGreaterThanOrEqual(72);
+    // ticks are aligned to the clock, not to the span's start
+    for (const k of ticks) expect(k.t % step).toBe(0);
+    expect(ticks[0].t).toBeGreaterThanOrEqual(T);
+  });
+
+  test("labels are HH:MM in local time, HH:MM:SS under a minute", () => {
+    // UTC+8 (getTimezoneOffset() is -480 there)
+    const local = axisTicks(T, T + 4 * HOUR, 1400, -480);
+    expect(local[0].label).toBe("08:00");
+    expect(axisTicks(T, T + 4 * HOUR, 1400, 0)[1].label).toBe("00:15");
+    // a 30s span at 1200px: the 1s step fits, so seconds are on the label
+    const fine = axisTicks(T, T + 30_000, 1200, 0);
+    expect(fine[1].label).toMatch(/^\d\d:\d\d:\d\d$/);
+    expect(fine[1].t - fine[0].t).toBe(5000);
+  });
+
+  test("the first tick of a local calendar day is major and names the date", () => {
+    const ticks = axisTicks(T - 3 * HOUR, T + 3 * HOUR, 900, 0);
+    const major = ticks.filter((k: any) => k.major);
+    expect(major.length).toBe(1);
+    expect(major[0].t).toBe(T);
+    expect(major[0].label).toBe("08-28 00:00");
+    expect(ticks.every((k: any) => k.major || !/-/.test(k.label))).toBe(true);
+    // and a day boundary that only exists in LOCAL time is the one marked
+    const shifted = axisTicks(T - DAY / 2, T + DAY / 2, 900, -480);
+    expect(shifted.filter((k: any) => k.major).map((k: any) => k.t)).toEqual([T - 8 * HOUR]);
   });
 });

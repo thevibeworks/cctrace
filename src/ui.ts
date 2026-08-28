@@ -103,7 +103,9 @@ import {
   stepOutcome,
   sessionLanes,
   stateAt,
-  stateCounts,
+  nowAt,
+  soFar,
+  axisTicks,
   beatAt,
   chaptersOf,
 } from "./replay";
@@ -649,62 +651,61 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
     }
     #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    /* ---- the stage (#stage): the observed state machine + the beat ----
+    /* ---- the stage (#stage): the now line, the beat, the tally ----
        Top of the threads column while replaying (the rail stays under it:
        the strip is time navigation, the rail is still the outline). The
-       diagram's geometry is FIXED — a node or edge with nothing observed
-       goes faint, never missing; hiding one would shift the picture under
-       a reader mid-scrub. */
+       loop's SHAPE is the strip — model/tools alternation unrolled over
+       wall-clock — so the stage states the moment, not a graph of it. */
     #stage { padding: 2px 4px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-    #sd { display: block; width: 100%; height: auto; }
-    /* One hue per wire fact, the same ones the strip uses: model/tools/
-       waiting from the time-track vars, agents purple, human accent, the
-       reply muted (a reply is the absence of work, not a color). */
-    .sd-node { color: var(--text-faint); opacity: 0.66; transition: opacity 160ms ease-out; }
-    .sd-node[data-node="human"] { color: var(--accent); }
-    .sd-node[data-node="model"] { color: var(--lane-model); }
-    .sd-node[data-node="tools"] { color: var(--lane-tools); }
-    .sd-node[data-node="agents"] { color: var(--purple); }
-    .sd-node[data-node="waiting"] { color: var(--lane-waiting); }
-    .sd-node[data-node="reply"] { color: var(--text-muted); }
-    .sd-node .sd-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
-    .sd-node .sd-nl { fill: var(--text-muted); font-size: 10px; }
-    .sd-node .sd-nn { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-node .sd-fail { fill: var(--red); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-node.zero { opacity: 0.26; }
-    .sd-node.on { opacity: 1; }
-    .sd-node.on .sd-nb { stroke-width: 2; fill-opacity: 0.12; }
-    .sd-node.on .sd-nl { fill: currentColor; }
-    .sd-node.on .sd-nn { fill: var(--text); }
-    /* live: a request is in flight at the cursor — the one heartbeat the
-       page already owns (the status dot), never a ticking counter */
-    .sd-node.live .sd-nb { animation: heartbeat 2.4s ease-in-out infinite; }
-    .sd-edge { color: var(--text-faint); opacity: 0.5; transition: opacity 160ms ease-out; }
-    .sd-edge .sd-e { fill: none; stroke: currentColor; stroke-width: 1; }
-    .sd-edge .sd-ah { fill: currentColor; stroke: none; }
-    .sd-edge .sd-en { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-edge .sd-cut { fill: var(--amber); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-edge.zero { opacity: 0.2; }
-    .sd-edge.on { opacity: 1; color: var(--text); }
-    .sd-edge.on .sd-e { stroke-width: 2; }
-    .sd-edge.on .sd-en { fill: var(--text); }
-    .sd-edge.on[data-edge$=">model"] { color: var(--lane-model); }
-    .sd-edge.on[data-edge="model>tools"] { color: var(--lane-tools); }
-    .sd-edge.on[data-edge="model>agents"] { color: var(--purple); }
-    .sd-edge.on[data-edge="model>waiting"] { color: var(--lane-waiting); }
-    .sd-edge.on[data-edge="reply>human"] { color: var(--accent); }
-    @media (prefers-reduced-motion: reduce) {
-      .sd-node, .sd-edge { transition: none; }
-      .sd-node.live .sd-nb { animation: none; }
+    /* the NOW line: one row — the observed state at the cursor, what is
+       running, how long it has held, since when. One hue per wire fact,
+       the same ones the strip's lanes paint with. */
+    #stage-now {
+      display: flex; align-items: baseline; gap: 6px;
+      padding: 3px 6px 5px; font-size: 12px; color: var(--text-faint);
     }
-    .sd-tools {
-      font-size: 10px; color: var(--text-faint); padding: 2px 6px 0;
+    #stage-now[data-state="human"] { color: var(--accent); }
+    #stage-now[data-state="model"] { color: var(--lane-model); }
+    #stage-now[data-state="tools"] { color: var(--lane-tools); }
+    #stage-now[data-state="agents"] { color: var(--purple); }
+    #stage-now[data-state="waiting"] { color: var(--lane-waiting); }
+    #stage-now[data-state="failed"] { color: var(--red); }
+    #stage-now[data-rpseek] { cursor: pointer; }
+    .sn-dot { flex: none; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    /* hollow = nothing is running: the human's turn, or both ends of the tape */
+    .sn-dot.hollow { background: none; box-shadow: inset 0 0 0 1px currentColor; }
+    /* live: a request is in flight right now — the ONE heartbeat the page
+       spends while replaying (the status dot's keyframes, moved here) */
+    #stage-now.live .sn-dot { animation: heartbeat 2.4s ease-in-out infinite; }
+    .sn-state { flex: none; }
+    .sn-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+    .sn-held { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    .sn-gap { flex: 1 1 auto; min-width: 6px; }
+    /* absolute wall-clock, never a ticking counter (ui.md) */
+    .sn-since { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    /* so far: the call tally as of the cursor — the only place the
+       per-tool count is stated */
+    .st-sofar {
+      font-size: 10px; color: var(--text-faint); padding: 6px 6px 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
-    .sd-live { font-size: 11px; color: var(--lane-model); padding: 2px 6px 0; font-variant-numeric: tabular-nums; }
+    @media (prefers-reduced-motion: reduce) {
+      #stage-now.live .sn-dot { animation: none; }
+      .sb.arrived { animation: none; }
+    }
     /* the beat: what the agent did at this step, one row per fact */
     .sb { margin-top: 8px; }
+    /* a tail advance landed a NEW step: the same 160ms fade a live row
+       gets. A scrub never fades — scrubbing is continuous. */
+    .sb.arrived { animation: arrive 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+    /* the loop's head: which task this step serves, so the reader never
+       has to find it in the rail. Click jumps to that chapter. */
+    .sb-head {
+      font-size: 11px; color: var(--text-faint); padding: 0 6px 5px; cursor: pointer;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sb-head:hover { color: var(--text-muted); }
     .sb-cap {
       font-size: 11px; color: var(--text-faint); padding: 0 6px 4px;
       font-variant-numeric: tabular-nums;
@@ -2298,12 +2299,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // The stage layer (docs/design/replay-stage.md), injected from
     // src/replay.ts + src/session.ts: the trace as lanes over wall-clock,
-    // the observed state machine, the beat. Pure, unit-tested there.
+    // the observed state at the cursor read into the now line, the tally
+    // behind it, the beat, the strip's clock ruler. Pure, unit-tested there.
     ${isSpawnTool.toString()}
     ${stepOutcome.toString()}
     ${sessionLanes.toString()}
     ${stateAt.toString()}
-    ${stateCounts.toString()}
+    ${nowAt.toString()}
+    ${soFar.toString()}
+    ${axisTicks.toString()}
     ${beatAt.toString()}
     ${chaptersOf.toString()}
 
@@ -7774,102 +7778,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (view === 'session') showSession(sessionSelKey);
     }
 
-    // ---- the stage (#stage): the observed state machine + the beat ----
+    // ---- the stage (#stage): the now line, the beat, the tally ----
     // Rendered at the TOP of the threads column while replaying, torn down
-    // with replay. Two readings of ONE cursor: WHERE the agent is in its
-    // observed loop (the diagram, counted over the whole trace so far), and
-    // WHAT it did at this step (the beat, from the selected thread). The
-    // diagram's geometry never moves — a node or edge with zero
-    // observations goes faint, so the picture the reader learned at 00:03
-    // is the same picture at 41:07.
-
-    const SD_VB = '0 0 360 146';
-    const SD_W = 84;              // node chip
-    const SD_H = 28;
-    const SD_ARC = 10;            // the reply -> human return, over the top
-    // Hand-placed: the working loop reads left-to-right on top (human ->
-    // model -> reply) with the three things a reply can hand off to sitting
-    // under the model.
-    const SD_XY = {
-      human: [6, 26], model: [138, 26], reply: [270, 26],
-      tools: [6, 110], agents: [138, 110], waiting: [270, 110],
-    };
-
-    // A filled triangle at the end of a run, so an edge's direction is
-    // readable without a shared <marker> (markers can't take the group's
-    // currentColor, and the lit edge changes hue).
-    function sdArrow(x1, y1, x2, y2) {
-      const dx = x2 - x1, dy = y2 - y1;
-      const L = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ux = dx / L, uy = dy / L;
-      const bx = x2 - ux * 7, by = y2 - uy * 7;
-      const px = -uy * 3, py = ux * 3;
-      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
-        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
-        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
-    }
-
-    // pts is a flat [x0,y0, x1,y1, ...] polyline; the count label is placed
-    // by hand per edge (nine edges, nine deliberate positions — a generic
-    // midpoint rule collided every pair).
-    function sdEdge(key, pts, n, lx, ly, anchor, lit, extra) {
-      let d = '';
-      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
-      const k = pts.length;
-      return '<g data-edge="' + key + '" class="sd-edge' + (lit === key ? ' on' : '') + (n ? '' : ' zero') + '">' +
-        '<path class="sd-e" d="' + d + '"/>' +
-        '<path class="sd-ah" d="' + sdArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/>' +
-        '<text class="sd-en" x="' + lx + '" y="' + ly + '" text-anchor="' + anchor + '">' + n + '</text>' +
-        (extra || '') + '</g>';
-    }
-
-    function sdNode(key, label, n, ms, lit, live, badge) {
-      const p = SD_XY[key];
-      const num = n + (ms ? ' \\u00b7 ' + fmtSpan(ms) : '');
-      return '<g data-node="' + key + '" class="sd-node' + (lit === key ? ' on' : '') +
-        (live ? ' live' : '') + (n ? '' : ' zero') + '">' +
-        '<rect class="sd-nb" x="' + p[0] + '" y="' + p[1] + '" width="' + SD_W + '" height="' + SD_H + '" rx="3"/>' +
-        '<text class="sd-nl" x="' + (p[0] + 6) + '" y="' + (p[1] + 12) + '">' + label + '</text>' +
-        '<text class="sd-nn" x="' + (p[0] + 6) + '" y="' + (p[1] + 23) + '">' + escapeHtml(num) + '</text>' +
-        (badge || '') + '</g>';
-    }
-
-    // stateAt's seven states onto the six nodes — exactly one is always lit:
-    //   model   -> model    a request is in flight
-    //   tools   -> tools    the gap after a reply that made calls
-    //   agents  -> agents   a child thread is running
-    //   waiting -> waiting  the gap after a reply that called nothing
-    //   failed  -> model    a failed request is a BADGE on model, not a state
-    //   human   -> reply    the reply landed and the human has not answered.
-    //                       The wire cannot observe a human typing, so the
-    //                       human node never lights: its count and the
-    //                       human>model edge carry the prompts instead.
-    //   idle    -> reply    nothing running (both ends of the tape)
-    // The lit EDGE is the transition into that node: for the model node it is
-    // whichever span or point ended exactly where the request began (the
-    // gap windows are t1 == the next request's start, threadTimeSplit), and
-    // for the others it is the model edge that opened them. A failed
-    // request went nowhere, so it lights no edge.
-    function sdLit(L, st, key) {
-      const s = st.state;
-      if (s === 'tools') return { node: 'tools', edge: 'model>tools' };
-      if (s === 'agents') return { node: 'agents', edge: 'model>agents' };
-      if (s === 'waiting') return { node: 'waiting', edge: 'model>waiting' };
-      if (s === 'failed') return { node: 'model', edge: '' };
-      if (s === 'model') {
-        const at = st.since;
-        const near = (t) => Math.abs(t - at) <= 1;
-        for (const h of L.human || []) if ((!key || h.threadKey === key) && near(h.t)) return { node: 'model', edge: 'human>model' };
-        for (const g of L.tools || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'tools>model' };
-        for (const g of L.waiting || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'waiting>model' };
-        for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1)) return { node: 'model', edge: 'agents>model' };
-        return { node: 'model', edge: '' };
-      }
-      // Idle at the live edge after a tool_use reply: the wire saw no
-      // model>reply (the reply's stop was tool_use, the next request has
-      // not started) — light the node, not an edge the counts read as 0.
-      return { node: 'reply', edge: st.item && st.item.next === 'reply' ? 'model>reply' : '' };
-    }
+    // with replay. Three readings of ONE cursor: WHAT the agent is doing
+    // right now (the now line), WHAT it did at this step (the beat, from the
+    // selected thread), and WHAT it has called so far (the tally). The
+    // loop's shape is the strip and the rail; the stage states the moment.
 
     // The thread the stage reads: the selection, resolved against the WHOLE
     // capture (the cursored threads lose every loop still ahead).
@@ -7896,50 +7810,60 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return ts;
     }
 
-    function stageDiagram(L, key) {
-      const st = stateAt(L, replay.cursor, key);
-      const c = stateCounts(L, replay.cursor, key);
-      const tr = c.transitions;
-      const liveTs = stageLiveStart();
-      const lit = liveTs ? { node: 'model', edge: '' } : sdLit(L, st, key);
-      const cuts = c.cuts
-        ? '<text class="sd-cut" x="300" y="20" text-anchor="end">\\u2702 ' + c.cuts + '</text>'
-        : '';
-      const failed = c.model.failed
-        ? '<text class="sd-fail" x="180" y="21" text-anchor="middle">' + c.model.failed + ' failed</text>'
-        : '';
-      let g = '';
-      // top row: human -> model -> reply, and the return arc over them
-      g += sdEdge('human>model', [90, 40, 138, 40], tr['human>model'], 114, 35, 'middle', lit.edge);
-      g += sdEdge('model>reply', [222, 40, 270, 40], tr['model>reply'], 246, 35, 'middle', lit.edge);
-      g += sdEdge('reply>human', [312, 26, 312, SD_ARC, 48, SD_ARC, 48, 26], tr['reply>human'], 56, 20, 'start', lit.edge, cuts);
-      // model <-> tools (down-left) and model <-> waiting (down-right),
-      // parallel pairs so the two directions never cross
-      g += sdEdge('model>tools', [152, 54, 66, 110], tr['model>tools'], 122, 71, 'end', lit.edge);
-      g += sdEdge('tools>model', [82, 110, 168, 54], tr['tools>model'], 112, 94, 'start', lit.edge);
-      g += sdEdge('model>waiting', [208, 54, 294, 110], tr['model>waiting'], 238, 71, 'start', lit.edge);
-      g += sdEdge('waiting>model', [280, 110, 194, 54], tr['waiting>model'], 248, 94, 'end', lit.edge);
-      // model <-> agents, straight down the middle
-      g += sdEdge('model>agents', [172, 54, 172, 110], tr['model>agents'], 166, 78, 'end', lit.edge);
-      g += sdEdge('agents>model', [188, 54, 188, 110], tr['agents>model'], 194, 92, 'start', lit.edge);
-      g += sdNode('human', 'human', c.human, 0, lit.node, false);
-      g += sdNode('model', 'model', c.model.n, c.model.ms, lit.node, !!liveTs, failed);
-      g += sdNode('reply', 'reply', tr['model>reply'], 0, lit.node, false);
-      g += sdNode('tools', 'tools', c.tools.n, c.tools.ms, lit.node, false);
-      g += sdNode('agents', 'agents', c.agents.n, c.agents.ms, lit.node, false);
-      g += sdNode('waiting', 'waiting', c.waiting.n, c.waiting.ms, lit.node, false);
-      let out = '<svg id="sd" viewBox="' + SD_VB + '" preserveAspectRatio="xMidYMid meet">' + g + '</svg>';
-      // which tools, not just how many — the diagram counts the gaps, this
-      // names them (the only place either figure is stated).
-      const names = Object.keys(c.tools.byName).sort((a, b) => c.tools.byName[b] - c.tools.byName[a]);
-      if (names.length) {
-        const shown = names.slice(0, 4).map(n => escapeHtml(n) + ' ' + c.tools.byName[n]);
-        out += '<div class="sd-tools">' + shown.join(' \\u00b7 ') +
-          (names.length > 4 ? ' \\u00b7 +' + (names.length - 4) : '') + '</div>';
-      }
-      if (liveTs) out += '<div class="sd-live">thinking since ' + fmtTime(new Date(liveTs)) + '</div>';
-      return out;
+    // What each state MEANS on the wire — the hover, so a one-word lane
+    // label is never something the reader has to guess at.
+    const NOW_WHY = {
+      model: 'a request is in flight',
+      tools: 'the harness is running the calls this reply made',
+      agents: 'a subagent thread is working',
+      waiting: 'the reply called nothing \\u2014 the harness came back on its own',
+      human: 'the reply landed; the human has not spoken yet',
+      failed: 'the request went nowhere \\u2014 its retry is the next one',
+      idle: 'nothing on the wire',
+    };
+
+    // The NOW line: nowAt rendered as one row. The held duration appears
+    // only where the state's extent is a wire fact; since is absolute
+    // wall-clock. The dot beats ONLY for a request in flight right now.
+    function stageNow(L, key) {
+      const n = nowAt(L, replay.cursor, key, stageLiveStart());
+      const hollow = n.state === 'human' || n.state === 'idle';
+      const p = n.pairId ? pairOf(n.pairId) : null;
+      const seek = p && p.request ? pairEndMs(p) : 0;
+      const tip = 'now \\u00b7 ' + n.state + '\\n' +
+        (n.live ? 'a request is in flight \\u2014 no response yet' : (NOW_WHY[n.state] || '')) +
+        (seek ? '\\n---\\n> click seeks to the step that opened it' : '');
+      return '<div id="stage-now"' + (n.live ? ' class="live"' : '') + ' data-state="' + n.state + '"' +
+        (seek ? ' data-rpseek="' + seek + '"' : '') +
+        ' data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="sn-dot' + (hollow ? ' hollow' : '') + '"></span>' +
+        '<span class="sn-state">' + n.state + '</span>' +
+        (n.what ? '<span class="sn-what">' + escapeHtml(n.what) + '</span>' : '') +
+        (n.held != null && n.held > 0 ? '<span class="sn-held">\\u00b7 ' + escapeHtml(fmtSpan(n.held)) + '</span>' : '') +
+        '<span class="sn-gap"></span>' +
+        (n.since > 0 ? '<span class="sn-since">since ' + fmtTime(new Date(n.since)) + '</span>' : '') +
+        '</div>';
     }
+
+    // So far: which tools were called and how often as of the cursor, then
+    // the coarse marks. The ONE place the per-tool call count is stated.
+    function stageSoFar(L, key) {
+      const c = soFar(L, replay.cursor, key);
+      if (!c.steps) return '';
+      const names = Object.keys(c.tools).sort((a, b) => c.tools[b] - c.tools[a]);
+      const parts = [];
+      for (const n of names.slice(0, 4)) parts.push(escapeHtml(n) + ' ' + c.tools[n]);
+      if (names.length > 4) parts.push('+' + (names.length - 4));
+      if (c.agents) parts.push(c.agents + ' agent' + (c.agents === 1 ? '' : 's'));
+      if (c.failed) parts.push(c.failed + ' failed');
+      if (c.cuts) parts.push(c.cuts + ' \\u2702');
+      if (!parts.length) return '';
+      return '<div class="st-sofar">so far&#160;&#160;' + parts.join(' \\u00b7 ') + '</div>';
+    }
+
+    // Set for the one render that follows a tail advance (see the ws pair
+    // branch); every other render is a still frame.
+    let stageFade = false;
 
     function stageBeat(t) {
       const b = t ? beatAt(t, replay.cursor, pairOf) : null;
@@ -7949,6 +7873,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (b.step) cap += ' \\u00b7 step ' + b.step;
       cap += ' \\u00b7 ' + fmtSpan(b.dur);
       if (b.stop) cap += ' \\u00b7 stop ' + escapeHtml(b.stop);
+      // The loop's HEAD: the task this step serves. Harness-authored heads
+      // are not tasks, so beatAt hands back '' for them and no line renders.
+      const head = b.head
+        ? '<div class="sb-head" data-rpchap="' + b.ord + '" data-tip="' +
+          escapeHtml('the loop this step serves\\n' + b.head + '\\n---\\n> click jumps to this chapter') +
+          '">' + escapeHtml(b.head) + '</div>'
+        : '';
       let rows = '';
       // One row per call, the fold body reusing the convo pane's own
       // renderer (tool_use fused with its tool_result) — a spawn keeps its
@@ -7986,12 +7917,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         foot = '<div class="sb-foot"><span class="sb-lbl">window</span>' +
           '<span class="sb-gap"></span><span class="sb-amt">' + escapeHtml(amt) + '</span></div>';
       }
-      return '<div class="sb"><div class="sb-cap">' + cap + '</div>' + rows + foot + '</div>';
+      // A TAIL advance landed a new step: the page's live-arrived fade says
+      // so once. A scrub is continuous — it never fades (ui.md 5).
+      return '<div class="sb' + (stageFade ? ' arrived' : '') + '"><div class="sb-cap">' + cap + '</div>' +
+        head + rows + foot + '</div>';
     }
 
     function stageInner() {
       const t = stageThread();
-      return stageDiagram(laneData(), t ? t.key : '') + stageBeat(t);
+      const L = laneData();
+      const key = t ? t.key : '';
+      return stageNow(L, key) + stageBeat(t) + stageSoFar(L, key);
     }
     function stageHtml() {
       if (!replay.active) return '';
@@ -8046,9 +7982,33 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 
+    // The stage's two seeks — the now line (to the step that opened the
+    // state) and the beat's head (to that loop's chapter stop). Delegated:
+    // #stage is rewritten on every cursor change.
+    threadsEl.addEventListener('click', (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('[data-rpseek],[data-rpchap]') : null;
+      if (!el) return;
+      e.preventDefault();
+      if (el.dataset.rpseek) {
+        const t = parseFloat(el.dataset.rpseek);
+        if (isFinite(t)) { seekReplay(t); updateReplayHash(); }
+        return;
+      }
+      const ord = parseInt(el.dataset.rpchap, 10);
+      const th = stageThread();
+      for (const c of (th ? chaptersOf(th, pairOf) : [])) {
+        if (c.ord !== ord || !c.pairId) continue;
+        const p = pairOf(c.pairId);
+        if (p && p.request) { seekReplay(pairEndMs(p)); updateReplayHash(); }
+        return;
+      }
+    });
+
     replayToggle.onclick = () => { replay.active ? exitReplay() : enterReplay(); };
-    rpExit.textContent = IS_READING ? '\\u2715 exit' : 'live \\u2913';
-    rpExit.title = IS_READING ? 'Exit replay (Esc)' : 'Exit replay, back to the live tail (Esc)';
+    // Exiting is exiting: snapping to the live edge is the transport's job
+    // (⏭ / the live chip), never the button that leaves the mode.
+    rpExit.textContent = '\\u2715 exit';
+    rpExit.title = 'Exit replay (Esc)';
     rpExit.onclick = exitReplay;
     rpRestart.onclick = () => {
       if (!replay.active) enterReplay();

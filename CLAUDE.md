@@ -81,6 +81,14 @@ src/
 │                   #   table as the offline fallback (inlined into UI)
 ├── pricing-catalog.ts # models.dev api.json fetch — 24h-TTL fail-soft cache in
 │                   #   the data dir, filtered to anthropic/openai/xai
+├── cost.ts         # The cost layer (inlined into UI): stepCost (per-pair bill
+│                   #   by component, memoized as _sc), threadCostSplit (a
+│                   #   thread's bill byPair/byModel), costEvents (the BUMPS —
+│                   #   a weak/cold cache hit priced against warm, caused by
+│                   #   retry / expiry vs the write's TTL / a changed prefix)
+│                   #   and usagePolls (the account quota the client polled).
+│                   #   Estimates from catalog rates, causes from the wire
+│                   #   (docs/design/cost.md)
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI).
 │                   #   threadTimeSplit: where a thread's wall-clock went

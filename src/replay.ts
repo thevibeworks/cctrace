@@ -16,9 +16,10 @@ import { extractCallInfo } from "./summarize";
 // of a cursor, the event boundaries playback walks, and the tick scheduler —
 // plus the STAGE layer below them (docs/design/replay-stage.md): the trace as
 // lanes over time, the observed state at the cursor (stateAt) read into one
-// NOW line (nowAt), the tally behind it (soFar), the beat (what the agent did
-// at this step) and the strip's clock ruler (axisTicks). Every mark is a wire
-// timestamp or a wire fact; nothing here estimates.
+// NOW line (nowAt) and placed on the loop row (loopAt), the tally behind it
+// (soFar), the beat (what the agent did at this step) and the strip's clock
+// ruler (axisTicks). Every mark is a wire timestamp or a wire fact; nothing
+// here estimates.
 //
 // Like summarize.ts, every exported function is inlined into the web UI via
 // Function.prototype.toString() — keep them self-contained (cross-calls only
@@ -470,6 +471,86 @@ export function nowAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: 
     agentsRunning: st.agentsRunning,
     pairId: (item && (item.pairId || item.parentPairId)) || "",
   };
+}
+
+/**
+ * The LOOP row: `nowAt` placed on Claude Code's actual machine, drawn once
+ * and lit at the cursor (docs/design/replay-stage.md, "The loop row"):
+ *
+ *     human --prompt--> model --calls--> [tools | agents | waiting]
+ *       ^                 ^                        |
+ *       |                 +--------results---------+
+ *       +----------------answer--------------------+
+ *
+ * Three states the agent occupies — the hand-off SLOT is one position in
+ * the loop with three flavors — and four edges. Returns nowAt's fields plus:
+ *   node  'human' | 'model' | 'slot' | ''   the lit state ('' = idle: nothing lit)
+ *   slot  'tools' | 'agents' | 'waiting'    the slot's label
+ *   edge  'human>model' | 'model>slot' | 'slot>model' | 'model>human' | ''
+ *         the transition INTO the lit node, where the wire shows one
+ *   also  a child is running while the actor is elsewhere: the slot reads
+ *         `agents`, half-lit, beside the lit node
+ *
+ * The edge into `model` is adjacency: the point or gap that ended exactly
+ * where this request began (gap windows end at the next request's start —
+ * threadTimeSplit's own rule). A live request has no gap yet, so its edge
+ * is the protocol's: the newest landed reply made calls, and the request
+ * in flight is the one that carries their results (`slot>model`); after a
+ * final reply the wire cannot tell the human from a harness nudge until the
+ * pair lands — no edge. The edge into `human` lights only when the reply
+ * actually landed (the last step's `next` is reply): a loop the human
+ * interrupted mid-tools lights the node, never the answer edge. A failed
+ * request went nowhere: no edge.
+ */
+export function loopAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const n = nowAt(L, cursor, key, liveStartMs);
+  const st = stateAt(L, cursor, key);
+  const s = n.state;
+  let node = "";
+  let slot = "tools";
+  let edge = "";
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const mine = (x: any) => !key || x.threadKey === key;
+  // the hand-off a gap stands for: its step's `next` (a Task beside a Bash
+  // is `agents` — the same coarser fact the lane and stateAt agree on)
+  const flavorOf = (pairId: string) => {
+    for (const x of L.model || []) if (x.pairId === pairId && x.next === "agents") return "agents";
+    return "tools";
+  };
+  if (s === "tools" || s === "agents" || s === "waiting") {
+    node = "slot";
+    slot = s;
+    edge = "model>slot";
+  } else if (s === "human") {
+    node = "human";
+    if (st.item && st.item.next === "reply") edge = "model>human";
+  } else if (s === "failed") {
+    node = "model";
+  } else if (s === "model") {
+    node = "model";
+    if (n.live) {
+      let last: any = null;
+      for (const x of L.model || []) {
+        if (!mine(x)) continue;
+        if (x.t1 <= cursor + 0.5 && (!last || x.t1 >= last.t1)) last = x;
+      }
+      if (last && (last.next === "tools" || last.next === "agents")) {
+        slot = last.next;
+        edge = "slot>model";
+      }
+    } else {
+      const at = n.since;
+      for (const h of L.human || []) if (mine(h) && near(h.t, at)) edge = "human>model";
+      if (!edge) for (const g of L.tools || []) if (mine(g) && near(g.t1, at)) { slot = flavorOf(g.pairId); edge = "slot>model"; }
+      if (!edge) for (const g of L.waiting || []) if (mine(g) && near(g.t1, at)) { slot = "waiting"; edge = "slot>model"; }
+      if (!edge) for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1, at)) { slot = "agents"; edge = "slot>model"; }
+    }
+  }
+  const also = n.agentsRunning > 0 && s !== "agents";
+  if (also && node !== "slot") slot = "agents";
+  return Object.assign({}, n, { node, slot, edge, also });
 }
 
 /**

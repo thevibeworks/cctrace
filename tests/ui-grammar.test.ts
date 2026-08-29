@@ -3,6 +3,7 @@ import { parseFragment } from "parse5";
 import { renderSnapshot, verifySnapshot, getLiveHtml } from "../src/ui";
 import { parseTraceText, type TraceParseStats } from "../src/history";
 import { bootSnapshotPage, bootPage } from "./dom-stub";
+import { pairEndMs } from "../src/replay";
 import type { TracePair } from "../src/types";
 
 // The snapshot page builds its DOM as innerHTML strings from captured wire
@@ -1018,9 +1019,10 @@ describe("the trajectory strip (#rp-lanes)", () => {
   });
 });
 
-// The stage tops the threads column while replaying: the NOW line (the
-// observed state at the cursor), the beat (what this step did) and the
-// tally. Its rows are built from captured wire content — tool names,
+// While replaying the FRAME carries the moment — the loop row (#rp-now in
+// the replay bar: Claude Code's machine with the observed state lit) — and
+// the stage tops the threads column with the beat (what this step did) and
+// the tally. Its rows are built from captured wire content — tool names,
 // previews, the model's own words — so it gets the hostile-fixture grammar
 // treatment too.
 describe("the replay stage (#stage)", () => {
@@ -1059,22 +1061,24 @@ describe("the replay stage (#stage)", () => {
     return at === -1 ? "" : th.slice(at, th.indexOf('<div class="threads-sum"'));
   };
 
-  test("replaying, the stage leads the threads column: now, beat, so far — no diagram", () => {
+  test("replaying, the loop row is in the bar and the stage leads the threads column: beat, so far", () => {
     const page = bootSnapshotPage(renderSnapshot(fixture()));
     page.goto("#/session/aaaabbbb/@p5"); // an @anchor enters replay paused
     const th = page.els["threads"].innerHTML as string;
     expect(th.indexOf('<div id="stage">')).toBe(0); // above the rail, not beside it
     const stage = stageOf(page);
-    // The state DIAGRAM is gone: the loop's shape is the strip, the moment
-    // is the now line.
+    // The moment is stated in the FRAME, not the stage: the loop row in
+    // the replay bar. At the end of the tape nothing is running — idle, no
+    // chip and no edge lit — with the clock the hole began at.
     expect(stage).not.toContain('id="sd"');
-    expect(stage).not.toContain("sd-node");
-    // The now line: at the end of the tape nothing is running, so the dot
-    // is hollow and the state is idle — with the clock it began at.
-    expect(stage).toContain('<div id="stage-now"');
-    expect(stage).toMatch(/id="stage-now"[^>]*data-state="idle"/);
-    expect(stage).toContain('class="sn-dot hollow"');
-    expect(stage).toMatch(/since \d\d:\d\d:\d\d/);
+    expect(stage).not.toContain("rp-now");
+    const now = page.els["rp-now"];
+    expect(now.dataset.state).toBe("idle");
+    expect(now.innerHTML).toContain('<span class="rp-glbl">now</span><svg id="rp-loop"');
+    expect(now.innerHTML).not.toMatch(/class="rl-(node|edge)[^"]* on/);
+    expect(now.innerHTML).toContain('data-slot="tools"'); // the slot's default label
+    expect(now.innerHTML).toContain('<span class="rn-what">idle</span>');
+    expect(now.innerHTML).toMatch(/since \d\d:\d\d:\d\d/);
     // the beat names the turn it is showing (the outline's own numbering)
     expect(stage).toMatch(/turn\s*\d+/);
     expect(stage).toContain("all done"); // the reply's first line
@@ -1105,22 +1109,43 @@ describe("the replay stage (#stage)", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
-  test("a live start lights model as thinking, with an absolute clock", () => {
+  test("the loop row lights the edge the model came in by: results from the spawned child", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    // p3 (the child) ends exactly where p5 begins: p5 is in flight, and it
+    // carries the results of p2's spawn — the slot reads agents.
+    page.goto("#/session/aaaabbbb/@p3");
+    const now = page.els["rp-now"];
+    expect(now.dataset.state).toBe("model");
+    expect(now.innerHTML).toMatch(/class="rl-node on" data-node="model"/);
+    expect(now.innerHTML).toMatch(/class="rl-edge on" data-edge="slot>model"/);
+    expect(now.innerHTML).toContain('data-slot="agents"');
+    expect(now.innerHTML).toContain('<span class="rn-what">thinking</span>');
+    // the row seeks to the step that opened the state (p5's end)
+    expect(now.dataset.rpseek).toBe(String(pairEndMs(fixture()[3])));
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("a live start lights the model chip as thinking, beating, with an absolute clock", () => {
     const fix = fixture();
     const page = bootPage(getLiveHtml({}));
     const ws = page.sockets[0]!;
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix, starts: [] }) });
     page.goto("#/session/aaaabbbb/@p5"); // parked at the newest landed pair
-    expect(stageOf(page)).not.toContain('class="live"');
+    const now = page.els["rp-now"];
+    expect(now.className).toBe("");
     ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p9", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: 1008 } }) });
-    // renderStage patches #stage in place (a start rebuilds no pane), so the
-    // fragment the page wrote last is the one to read.
-    const live = page.els["stage"].innerHTML as string;
-    expect(live).toMatch(/id="stage-now" class="live" data-state="model"/);
-    expect(live).toContain(">thinking<");
-    expect(live).toMatch(/since \d\d:\d\d:\d\d/); // absolute, never a counter
-    // a live in-flight request has no known extent: no held duration
-    expect(live).not.toContain("sn-held");
+    // the start frame redraws the bar (a start rebuilds no pane): the model
+    // chip lit and beating — the page's one heartbeat while replaying
+    expect(now.className).toBe("live");
+    expect(now.dataset.state).toBe("model");
+    expect(now.innerHTML).toMatch(/class="rl-node on live" data-node="model"/);
+    expect(now.innerHTML).toContain(">thinking<");
+    expect(now.innerHTML).toMatch(/since \d\d:\d\d:\d\d/); // absolute, never a counter
+    // a live in-flight request has no known extent: the held span stays empty
+    expect(now.innerHTML).toContain('<span class="rn-held"></span>');
+    // p5's reply was final: the wire cannot tell the human from a nudge yet — no edge
+    expect(now.innerHTML).not.toMatch(/class="rl-edge on"/);
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
   });

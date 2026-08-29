@@ -125,15 +125,17 @@ offline snapshots -- same UI, three ways in.
   requests, tools running between them, subagents as stacked spans, the
   harness lane with compaction cuts and failed requests). Wheel to zoom
   around the cursor; the strip says more as you zoom in. Click a span to
-  jump there, shift+drag to select a slice. The left pane grows a state
-  diagram -- human -> model -> tools / agents / waiting -> reply -- with
-  counts and time as of the cursor and the current transition lit, and
-  under it the BEAT: what the agent did at this step (tool calls fused with
-  results, spawns, the reply, the stated reasoning, the window delta).
-  Every mark is a wire fact; nothing is inferred. On a live run the model
-  node lights the moment a request is forwarded ("thinking since 14:32:07")
-  because the proxy announces requests as they go out. `F` clears the
-  chrome for presenting; Esc peels present -> replay -> view.
+  jump there, shift+drag to select a slice. Under the strip, the LOOP ROW:
+  the agent's machine -- human -> model -> tools / agents / waiting ->
+  model ... -> human -- drawn once, with the state at the cursor lit, the
+  transition it came in by, what is running and since when. The left pane
+  carries the BEAT: what the agent did at this step (tool calls fused with
+  results, spawns, the reply, the stated reasoning, the window delta) and
+  the call tally so far. Every mark is a wire fact; nothing is inferred.
+  On a live run the model chip beats the moment a request is forwarded
+  ("thinking since 14:32:07") because the proxy announces requests as they
+  go out, and replay tails: the cursor follows every pair that lands. `F`
+  clears the chrome for presenting; Esc peels present -> replay -> view.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
   read/write TTLs priced separately), with per-turn and per-thread totals

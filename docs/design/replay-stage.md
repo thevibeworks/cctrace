@@ -9,6 +9,11 @@ revision keeps the strip and the beat, deletes the diagram, adds the NOW
 line, and makes replay a tail. What changed and why is in "Revision 2"
 below; the rest of the document is the current truth.
 
+Revision 2.1 (2026-08-29, same PR): Eric's read of rev 2 was that the
+picture of the loop was worth keeping — "redesign it accurately, live and
+horizontal, in the replay bar". The NOW line becomes the LOOP ROW in the
+frame: the machine drawn once, the state lit. "Revision 2.1" below.
+
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
 as lanes over time, what the agent is doing at the cursor, and the beat —
@@ -76,7 +81,7 @@ real browser, 2026-08-28:
 The changes, each traceable to one of the three:
 
 - (1) The cursor at the live edge FOLLOWS: a landed pair advances it,
-  the convo sticks to its bottom, the now line and the beat update.
+  the convo sticks to its bottom, the loop row and the beat update.
   Behind the edge nothing moves; a `⤓ live` control snaps back.
 - (2) The diagram is deleted. In its place the NOW line: one row naming
   the state at the cursor, what is running, since when. The loop's shape
@@ -86,6 +91,35 @@ The changes, each traceable to one of the three:
   is dimmed on the strip instead of the past being tinted; a clock axis
   labels the strip; the playhead gets a flag and a halo; the selected
   thread draws full, the others ghost.
+
+## Revision 2.1: the loop row
+
+Rev 2 deleted the diagram and argued the loop's shape was already on the
+strip. Eric's read, on the real trace: the strip shows the loop UNROLLED
+— right for where time went, useless for "where in the loop is it right
+now" at a glance — and the picture of the machine was the thing he
+missed. Rev 2's critique of the diagram stands (wrong machine, redundant
+counts, a restated time chip); its remedy was wrong. The fix is an
+accurate diagram, not none:
+
+- The machine is Claude Code's: three states the agent occupies —
+  `human`, `model`, and one HAND-OFF slot that reads `tools`, `agents` or
+  `waiting` (one position in the loop, three flavors) — and four edges:
+  prompt (human>model), calls (model>slot), results (slot>model), answer
+  (model>human). `reply` is not a node: it is the answer edge. `failed`
+  is the model chip in red with no edge — the request went nowhere.
+- It is horizontal and it lives in the FRAME: a row in the replay bar
+  between the strip and the transport, aligned to the strip's gutter and
+  labelled `now`. It is on screen whenever the strip is.
+- It is live: the cursor's state lights one chip and the edge it came in
+  by; at the live edge a request in flight beats the model chip (the
+  page's one heartbeat). Nothing moves when the state changes — the
+  geometry is fixed pixels, only the lit parts change.
+- It carries NO counts. The tally stays in "so far", the times in the
+  beat and the strip tips. What rides beside the machine is the NOW
+  line's own text — what is running, how long it has held where that is
+  a wire fact, since when — so the state is stated ONCE on the page: the
+  stage's `#stage-now` row is gone, the stage is the beat and the tally.
 
 ## The observed loop
 
@@ -156,6 +190,12 @@ nowAt(lanes, cursor, threadKey, liveStartMs) -> {        // NEW (rev 2)
   agentsRunning: n,
   pairId: string|''       // the step that opened the state (seek target)
 }
+loopAt(lanes, cursor, threadKey, liveStartMs) -> nowAt's fields + {   // NEW (rev 2.1)
+  node: 'human'|'model'|'slot'|'',        // the lit chip ('' = idle: nothing lit)
+  slot: 'tools'|'agents'|'waiting',       // the hand-off slot's label
+  edge: 'human>model'|'model>slot'|'slot>model'|'model>human'|'',  // INTO the lit chip
+  also: boolean                           // a child runs while the actor is elsewhere
+}
 soFar(lanes, cursor, threadKey?) -> {                     // replaces stateCounts (rev 2)
   steps: n, tools: { Bash: 41, ... }, agents: n, failed: n, cuts: n
 }
@@ -170,9 +210,21 @@ chaptersOf(thread, pairOf) -> [{ ord, headIdx, pairId, t, label, injected }]
 axisTicks(t0, t1, px, tzOffsetMin) -> [{ t, label, major }]   // NEW (rev 2)
 ```
 
-`stateCounts` and its `transitions` table were the diagram's; they go
-with it. `soFar` keeps the one figure nothing else states — which tools
-were called, how often, so far — for the stage footer.
+`stateCounts` and its `transitions` table were the rev-1 diagram's; they
+went with it. `soFar` keeps the one figure nothing else states — which
+tools were called, how often, so far — for the stage footer.
+
+`loopAt` is built ON `nowAt` and `stateAt`, never forking their
+precedence. The edge into `model` is adjacency: the human point or the
+gap that ended exactly where this request began (gap windows end at the
+next request's start — threadTimeSplit's rule; a tools gap whose step
+spawned reads `agents` on the slot, the lane's coarser fact). A live
+request has no gap yet, so its edge is the protocol's: the newest landed
+reply made calls, and the request in flight carries their results; after
+a final reply the wire cannot tell the human from a harness nudge until
+the pair lands — no edge. The edge into `human` lights only when the
+reply actually landed (the last step's `next` is reply): a loop the human
+interrupted mid-tools lights the chip, never the answer edge.
 
 `axisTicks` picks the FINEST step from `1s 5s 15s 30s 1m 2m 5m 10m 15m
 30m 1h 2h 6h 12h 1d` whose ticks still land >= 72px apart at the given
@@ -202,11 +254,12 @@ Session view, `body.replaying`. No new tab.
     |  agents  |           [----- explore -----]   [-- review --]            |
     |  harness |                    ✂        ~~            ✂                 |
     |                               ▼ playhead; right of it: the veil (▒)     |
+    |  now     | human ─▸ model ─▸ [tools]   Bash · Read ×2 · 24ms   since 00:32:58 |
+    |          |   ▲        ▲ ◂──────┘                                        |
+    |          |   └────────┘                                                 |
     |  [⏮][▶][⏭] 1x 2x 8x 60x   00:32:58 · +2:48:54 / 3:51:52  [● live][✕] |
     +---------------------------+--------------------------------------------+
     | STAGE (top of #threads)   | CONVO as of the cursor, bottom = the moment |
-    |  ● tools  Bash · Read ×2  |                                            |
-    |           since 00:32:58  |                                            |
     |  turn 05 · step 25 · 12.9s · stop tool_use                             |
     |  our team just mounted all .cctrace…   (the loop's head, faint)        |
     |  ▸ Bash  (Read the exit…)    ok                                        |
@@ -258,6 +311,69 @@ Session view, `body.replaying`. No new tab.
   to the live edge when the reader was there. An open `start` draws as a
   dashed model stub hugging the right edge.
 
+### The loop row (`#rp-now`)
+
+Between the strip and the transport, aligned to the strip's 56px gutter
+and labelled `now`: the machine, drawn once, lit at the cursor, with the
+NOW facts beside it — `loopAt` rendered.
+
+    now │ human ─▸ model ─▸ [tools]      Bash · Read ×2 · 24ms       since 00:32:58
+        │   ▲        ▲ ◂──────┘
+        │   └────────┘
+
+- **The machine** (`#rp-loop`, inline SVG at FIXED pixel size — 236x30,
+  no viewBox scaling, so the 10px chip labels are the page's micro tier
+  and never resize): three chips `human` · `model` · the slot, the
+  forward path on top (prompt, calls) and the two returns nested below
+  (results the inner arc, answer the outer — they never cross). One chip
+  is lit (`.on`: full color, 2px stroke, a 14% fill) and the edge INTO
+  it where the wire shows one (`.rl-edge.on`, in the row's state color);
+  everything else sits at ~50%. The slot's label is its flavor when lit
+  or when it is the lit edge's other end (`slot>model` out of a waiting
+  gap reads `waiting`), `tools` otherwise. Colors are the lanes' own:
+  human accent, model / tools / waiting the time-track vars, agents
+  purple, failed red — one wire fact, one color across surfaces.
+- **What lights, per state**:
+
+      state    chip            edge                                  what
+      -------  --------------  ------------------------------------  ---------------------------
+      model    model           human>model — a human point sits at   thinking · 12.9s
+                               the request start; slot>model — a gap
+                               ended there (its flavor on the slot);
+                               live: slot>model if the newest landed
+                               reply made calls, else none
+      tools    slot = tools    model>slot                            Bash · Read ×2 · 24ms
+      agents   slot = agents   model>slot                            2 running · explore, review
+      waiting  slot = waiting  model>slot                            harness continued · 3s
+      human    human, hollow   model>human — only if the last step's  awaiting the next prompt
+                               next is reply
+      failed   model, red      none                                  502 · the retry is next
+      idle     none            none                                  idle
+
+  A child running while the actor is elsewhere (the parent thinks while
+  its subagents work) half-lights the slot as `agents` (`.also`); the tip
+  counts them.
+- **The facts beside it**: `.rn-what` (what is running, or the state
+  word when nothing is), `.rn-held` (the held duration, only where the
+  state's extent is a wire fact: a span or gap with a t1, or the cursor
+  inside a completed span), and `.rn-since` at the right edge — the
+  absolute local clock the state began at, never a ticking counter
+  (ui.md). A live in-flight request shows `since` only.
+- **Live**: the model chip beats (`#rp-now.live`, the status dot's
+  keyframes) ONLY while a request is in flight at the live edge — the one
+  heartbeat the page spends while replaying. `prefers-reduced-motion`
+  drops it.
+- **Click** the row: seek to the step that opened the state
+  (`data-rpseek`). Hover: the page tip — the state, what it means on the
+  wire (`NOW_WHY`), the running children, the click hint.
+- **Rendering discipline**: the row re-renders on every bar update (a
+  playback tick, a landed pair, a `start`) but rewrites its markup only
+  when the picture changes; a held duration that merely grew patches its
+  own span. Rebuilding under the reader's pointer would kill the hover
+  and can eat a click.
+- No counts. The per-tool tally is "so far", times are the beat and the
+  strip tips — a number is stated once per view.
+
 ### Transport
 
 `[⏮] [▶] [⏭]  1x 2x 8x 60x   <clock> · +<offset> / <length>   [live] [✕ exit]`
@@ -294,7 +410,8 @@ you're there, never yank when you're not.
   nothing else moves.
 - A `history` frame (older pairs merged in) never moves the cursor: the
   edge did not change.
-- A `start` frame moves nothing; it lights the now line (below).
+- A `start` frame moves nothing; it lights the loop row (the model chip
+  beats — below).
 - Playback reaching the end of the tape on a live page parks the cursor
   at the edge — from there it tails. On a reading page it pauses, as
   before.
@@ -321,28 +438,8 @@ live.
 
 The rail stays under it — the strip is the time navigation, the rail is
 still the outline and the thread switcher. Esc exits replay, the stage
-goes with it. Three blocks, top to bottom:
-
-**The NOW line** (`#stage-now`, one row): a state dot in the lane color,
-the state, what is running, and since when — `nowAt` rendered.
-
-    ● model    thinking                          since 14:32:07      <- live, in flight: the dot pulses
-    ● model    thinking · 12.9s                  since 00:32:45      <- scrubbed into a completed request
-    ● tools    Bash · Read ×2 · 24ms             since 00:32:58
-    ● agents   2 running · explore, review       since 14:20:11
-    ● waiting  harness continued · 3s            since …
-    ○ human    awaiting the next prompt           since 00:41:07      <- hollow dot: nothing runs
-    ● failed   502 · the retry is next           since …             <- red
-    ○ idle                                                            <- both ends of the tape
-
-`since` is absolute local time (never a ticking counter — ui.md). The
-held duration appears only when the state's extent is a wire fact
-(the gap or span has ended by the cursor, or the cursor sits inside a
-completed span: `cursor - since` is then two wire timestamps apart). A
-live in-flight request shows `since` only. The dot is the page's ONE
-heartbeat while replaying, and it beats only when `live` (the rev 1
-model-node pulse, moved). Click the row: seek to the step that opened
-the state.
+goes with it. The moment itself is the loop row in the frame (above);
+the stage is what this STEP did. Two blocks, top to bottom:
 
 **The beat** (`.sb`, unchanged in kind, refined): caption `turn 05 ·
 step 25 · 12.9s · stop tool_use`; under it the loop's HEAD — the
@@ -362,8 +459,9 @@ Bash 157 · Write 2 · ToolSearch 1 · 2 agents · 1 failed · 1 ✂` — the
 call tally as of the cursor, top four names, `+k` for the rest. The
 only place the per-tool call count is stated.
 
-Gone: the SVG diagram (`#sd`, `SD_*`, `sdEdge/sdNode/sdLit`, the
-`.sd-*` CSS), `stateCounts`, `.sd-live` (the now line carries it).
+Gone: the rev-1 SVG diagram (`#sd`, `SD_*`, `sdEdge/sdNode/sdLit`, the
+`.sd-*` CSS) and `stateCounts` (rev 2); the stage's `#stage-now` row and
+its `.sn-*` CSS (rev 2.1 — the loop row in the bar IS the now line).
 
 - **Chapters**: `[` / `]` jump to the previous / next working-loop head
   (chaptersOf). `←/→` keep stepping turns, shift+←/→ requests.
@@ -378,9 +476,9 @@ sink hands it to the server (`server.ingestStart`), which broadcasts
 `{ type: "start", start: { id, url, method, ts, client } }`, keeps the
 open starts (dropped when the pair with that id lands, or after 10 min),
 and includes them in `init` as `starts`. The page keeps `openStarts`;
-the strip draws the open span; the now line reads `● model thinking
-since 14:32:07` with the heartbeat — only when the cursor is at the
-edge of what has COMPLETED (a reader scrubbed back is not told about
+the strip draws the open span; the loop row lights the model chip — `thinking since
+14:32:07`, beating — only when the cursor is at the edge of what has
+COMPLETED (a reader scrubbed back is not told about
 now). Only messages-category starts are broadcast (a count_tokens probe
 is not a state).
 
@@ -397,8 +495,10 @@ slice; the stage and the strip read them. Nothing new in the URL.
 
 ## Rules kept
 
-- Motion: the playhead is the ONE owner. The now dot beats only for a
-  live in-flight request (the status dot's heartbeat, same keyframes).
+- Motion: the playhead is the ONE owner. The loop row's model chip beats
+  only for a live in-flight request (the status dot's heartbeat, same
+  keyframes); a state change lights different parts of a fixed drawing,
+  it moves nothing.
   No flow tokens, no tweened counts, no ticking clocks; the convo jumps,
   never glides, on cursor changes. `prefers-reduced-motion` drops the
   fade and the heartbeat.
@@ -413,12 +513,16 @@ slice; the stage and the strip read them. Nothing new in the URL.
 
 ## Verification
 
-- `bun test`: tests/replay.test.ts (nowAt per state incl. live, soFar,
-  axisTicks step choice + day-major, beatAt.head; the parallel-agents and
-  failed-request fixtures stay), tests/ui-grammar.test.ts (the stage
-  renders now + beat + so-far and no `#sd`; a `pair` frame while
-  replaying at the edge ADVANCES the cursor and a frame while behind does
-  not; `start` lights the now line; the strip carries a clock row, the
+- `bun test`: tests/replay.test.ts (nowAt per state incl. live, loopAt —
+  the lit chip and the edge per state, the live edge rule, failed, the
+  half-lit slot —, soFar, axisTicks step choice + day-major, beatAt.head;
+  the parallel-agents and failed-request fixtures stay),
+  tests/ui-grammar.test.ts (the loop row is in the bar: idle lights
+  nothing, the results edge lights out of an agents-flavored slot, a
+  `start` lights the model chip beating with no edge after a final reply;
+  the stage renders beat + so-far and no `#stage-now` / `#sd`; a `pair`
+  frame while replaying at the edge ADVANCES the cursor and a frame while
+  behind does not; the strip carries a clock row, the
   veil, `.other` on unselected threads; ⏭ / End seek to the edge; entering
   replay from the requests tab still rules the clock once the route lands;
   selecting the child flips the focus; a tail advance renders the session

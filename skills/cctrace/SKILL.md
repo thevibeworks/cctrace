@@ -199,11 +199,13 @@ session) — the link a statusline can afford to print. Hash-routed views:
   stacked · harness cuts/failures) under a clock axis, everything right of
   the playhead dimmed and every thread but the selected one ghosted; wheel
   zooms around the cursor and the strip labels spans as you zoom in; click
-  a span to jump there. The left pane carries the NOW line (the observed
-  state at the cursor — model/tools/agents/waiting/human/failed/idle —
-  what is running and since when), the BEAT (this step's tool calls fused
-  with results, spawns, the reply, the window delta, and the prompt that
-  started the loop) and the call tally so far. On a LIVE run replay tails:
+  a span to jump there. Under the strip the LOOP ROW lights where in the
+  agent's loop the cursor sits — human -> model -> tools/agents/waiting
+  -> model … -> human — with the observed state (model/tools/agents/
+  waiting/human/failed/idle), what is running and since when. The left
+  pane carries the BEAT (this step's tool calls fused with results,
+  spawns, the reply, the window delta, and the prompt that started the
+  loop) and the call tally so far. On a LIVE run replay tails:
   `⏭` / `End` park the cursor at the live edge and it follows every pair
   that lands, with the conversation scrolled to the moment. `F` hides the
   chrome for presenting; Esc peels present -> replay -> view. Pausing writes a

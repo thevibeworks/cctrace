@@ -656,26 +656,30 @@ hash-routed:
   replay never shows what has not happened. Wheel zooms around the cursor
   (1x-32x, the same helper the context overview uses) and sets
   `data-depth` map/read/full; click a span seeks to its pair's END (the
-  boundary where it became visible). While replaying, `#stage` sits at
-  the top of `#threads` above the rail, three blocks: the NOW line
-  (`#stage-now`, `nowAt` — a dot in the lane color, the state, what is
+  boundary where it became visible). While replaying the bar carries the
+  LOOP ROW (`#rp-now`, between the strip and the transport, `loopAt`):
+  Claude Code's machine — human -> model -> [tools | agents | waiting]
+  -> model … -> human — as inline SVG at fixed pixel geometry, the state
+  at the cursor lit with the edge it came in by, and beside it what is
   running, the held duration where the extent is a wire fact, and the
-  absolute clock it began at; click seeks to the step that opened it),
-  the beat from `beatAt` (caption, the loop's head, tool rows fused with
+  absolute clock it began at; click seeks to the step that opened it;
+  the model chip beats only for a request in flight at the live edge.
+  `#stage` sits at the top of `#threads` above the rail, two blocks: the
+  beat from `beatAt` (caption, the loop's head, tool rows fused with
   results via the detail panel's own renderers, spawn rows, reply line,
   stated reasoning, window delta) and `.st-sofar` from `soFar` (the call
   tally as of the cursor — the only place the per-tool count is stated).
   `[`/`]` walk `chaptersOf`; `F` toggles `body.present` (chrome hidden,
   type scale unchanged); Esc peels present -> replay -> view. Open
   `start`s (below) draw as a dashed model span to the newest known time
-  and beat the now dot — never a ticking clock.
+  and beat the loop row's model chip — never a ticking clock.
 - **Replay TAILS a live run.** The transport is
   `[⏮][▶][⏭] 1x 2x 8x 60x  <local clock> · +<offset> / <length>  [live]
   [✕ exit]`. `⏭` / `End` seek the end of the tape — on a live page the
   live edge. A `pair` frame measures `wasAtEdge` (cursor >=
   `replaySpan(pairs).t1 - 0.5`) and `wasAtBottom` (`convoAtBottom`)
-  BEFORE ingest: at the edge the cursor moves to the new edge, the now
-  line and the beat follow (the beat gets the page's 160ms live-arrived
+  BEFORE ingest: at the edge the cursor moves to the new edge, the loop
+  row and the beat follow (the beat gets the page's 160ms live-arrived
   fade once), and the convo sticks to its bottom only if the reader was
   there. Behind the edge nothing moves and the `#rp-live` chip flips from
   `● live` to a `⤓ live` button that snaps back. `history` frames never

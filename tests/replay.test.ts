@@ -16,6 +16,7 @@ import {
   sessionLanes,
   stateAt,
   nowAt,
+  loopAt,
   soFar,
   axisTicks,
   beatAt,
@@ -323,6 +324,43 @@ describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
     });
   });
 
+  test("loopAt lights the machine: the state's node and the edge it came in by", () => {
+    // in flight, entered by the human's prompt (the point sits at the request start)
+    expect(loopAt(lanes, 1_001_000, "")).toMatchObject({ state: "model", node: "model", edge: "human>model", slot: "tools", also: false });
+    // the reply made calls: the slot is lit, entered from the model
+    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ state: "tools", node: "slot", slot: "tools", edge: "model>slot" });
+    // the next request begins exactly where the tools gap ended: results came back
+    expect(loopAt(lanes, 1_010_500, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "tools" });
+    // the reply landed and the human has not spoken: the answer edge, into human
+    expect(loopAt(lanes, 1_050_000, "")).toMatchObject({ state: "human", node: "human", edge: "model>human" });
+    // a call-less reply the loop continued past: the slot reads waiting, both ways
+    expect(loopAt(lanes, 1_102_000, "")).toMatchObject({ state: "waiting", node: "slot", slot: "waiting", edge: "model>slot" });
+    expect(loopAt(lanes, 1_105_200, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "waiting" });
+    // both ends of the tape: nothing lit
+    expect(loopAt(lanes, 999_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
+    expect(loopAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
+    // nowAt's own fields ride along
+    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ what: "Bash", since: 1_002_000, held: 2000, pairId: "A" });
+  });
+
+  test("a live request's edge is the protocol's: after a tool_use reply the results are coming back; after a final reply, unknown", () => {
+    // A's reply called Bash; the request in flight carries the results
+    expect(loopAt(lanes, 1_002_000, "", 1_002_500)).toMatchObject({ state: "model", live: true, node: "model", edge: "slot>model", slot: "tools" });
+    // D's reply was final: the wire cannot tell the human from a harness nudge yet
+    expect(loopAt(lanes, 2_000_000, "", 2_100_000)).toMatchObject({ state: "model", live: true, node: "model", edge: "" });
+  });
+
+  test("a child running while the parent thinks: the slot reads agents, half-lit", () => {
+    const L = {
+      t0: 0, t1: 10, human: [], tools: [], waiting: [], cuts: [], failed: [],
+      model: [{ t0: 5, t1: 8, threadKey: "p", pairId: "m", next: "tools" }],
+      agents: [{ t0: 1, t1: 9, threadKey: "c", parentKey: "p", parentPairId: "m0", label: "x", agentType: "", row: 0 }],
+    };
+    expect(loopAt(L, 6, "p")).toMatchObject({ state: "model", node: "model", slot: "agents", also: true, agentsRunning: 1, edge: "" });
+    // scoped to the child itself: it is the actor, nothing runs under it
+    expect(loopAt(L, 6, "c")).toMatchObject({ state: "idle", also: false });
+  });
+
   test("soFar tallies steps, calls by name, children, failures and cuts", () => {
     expect(soFar(lanes, 999_000)).toEqual({ steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 });
     expect(soFar(lanes, 1_004_000)).toEqual({ steps: 1, tools: { Bash: 1 }, agents: 0, failed: 0, cuts: 0 });
@@ -387,6 +425,8 @@ describe("sessionLanes: a failed request holds the hole until its retry", () => 
     });
     expect(soFar(lanes, 1_005_000)).toMatchObject({ steps: 0, failed: 1 });
     expect(stateAt(lanes, 1_010_500).state).toBe("model");
+    // a failed request went nowhere: the model chip in red, no edge lit
+    expect(loopAt(lanes, 1_005_000, "")).toMatchObject({ state: "failed", node: "model", edge: "" });
   });
 });
 
@@ -447,6 +487,13 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     expect(nowAt(lanes, 2_025_000, parent.key).what).toBe("1 running · [Explore] explore repo");
     // one gap, two Task calls: wire order of first appearance, repeats folded
     expect(nowAt(lanes, 2_005_000, parent.key)).toMatchObject({ state: "tools", what: "Task ×2" });
+  });
+
+  test("the loop row's slot reads agents for a spawning step, and the model returns from it", () => {
+    expect(loopAt(lanes, 2_020_500, parent.key)).toMatchObject({ state: "agents", node: "slot", slot: "agents", edge: "model>slot", also: false });
+    // M2 begins exactly where M1's gap ended, and M1's step was a spawn:
+    // the results edge, from an agents-flavored slot
+    expect(loopAt(lanes, 2_200_200, parent.key)).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "agents" });
   });
 });
 

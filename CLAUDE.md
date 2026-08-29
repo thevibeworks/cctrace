@@ -73,8 +73,9 @@ src/
 ├── replay.ts       # Session replay: the time cursor primitives (visibleAt,
 │                   #   boundaries, tick ladder, slices) + the STAGE readings
 │                   #   of a cursor — sessionLanes (human/model/tools/agents/
-│                   #   harness over wall-clock), stateAt/nowAt (the observed
-│                   #   state at the cursor, read into one NOW line),
+│                   #   harness over wall-clock), stateAt/nowAt/loopAt (the
+│                   #   observed state at the cursor, read into one NOW line
+│                   #   and lit on the LOOP ROW in the replay bar),
 │                   #   soFar (the tally behind it), axisTicks (the strip's
 │                   #   clock ruler), beatAt (the step's calls fused with
 │                   #   results, plus its loop's head), chaptersOf (loops).

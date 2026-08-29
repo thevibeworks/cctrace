@@ -104,6 +104,7 @@ import {
   sessionLanes,
   stateAt,
   nowAt,
+  loopAt,
   soFar,
   axisTicks,
   beatAt,
@@ -692,38 +693,64 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       content: ''; width: 7px; height: 7px; border-radius: 50%;
       background: var(--green); flex-shrink: 0;
     }
-    /* ---- the stage (#stage): the now line, the beat, the tally ----
+    /* ---- the loop row (#rp-now): Claude Code's machine, drawn once,
+       lit at the cursor. Three states (the hand-off slot reads tools /
+       agents / waiting), four edges; the now facts — what is running,
+       how long it has held, since when — ride beside it. Fixed pixel
+       geometry: a still frame is always complete, only the lit parts
+       change, and the 10px labels never scale. The row's color is the
+       lit state's hue — the strip's own lane colors. */
+    #rp-now {
+      display: flex; align-items: center; gap: 8px; min-height: 30px;
+      font-size: 12px; color: var(--text-faint);
+    }
+    #rp-now .rp-glbl { flex: 0 0 56px; }  /* the strip's gutter: the bar reads as one table */
+    #rp-now[data-state="human"] { color: var(--accent); }
+    #rp-now[data-state="model"] { color: var(--lane-model); }
+    #rp-now[data-state="tools"] { color: var(--lane-tools); }
+    #rp-now[data-state="agents"] { color: var(--purple); }
+    #rp-now[data-state="waiting"] { color: var(--lane-waiting); }
+    #rp-now[data-state="failed"] { color: var(--red); }
+    #rp-now[data-rpseek] { cursor: pointer; }
+    #rp-loop { flex: none; display: block; overflow: visible; }
+    .rl-node { color: var(--text-faint); opacity: 0.5; }
+    .rl-node[data-node="human"] { color: var(--accent); }
+    .rl-node[data-node="model"] { color: var(--lane-model); }
+    .rl-node[data-slot="tools"] { color: var(--lane-tools); }
+    .rl-node[data-slot="agents"] { color: var(--purple); }
+    .rl-node[data-slot="waiting"] { color: var(--lane-waiting); }
+    .rl-node .rl-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
+    .rl-node .rl-nl { fill: var(--text-muted); font-size: 10px; }
+    .rl-node.on { opacity: 1; }
+    .rl-node.on .rl-nb { stroke-width: 2; fill-opacity: 0.14; }
+    .rl-node.on .rl-nl { fill: currentColor; }
+    /* hollow = nothing is running: the human's turn */
+    .rl-node.on.hollow .rl-nb { fill-opacity: 0; }
+    /* a child is working while the actor is elsewhere: half-lit */
+    .rl-node.also { opacity: 0.85; }
+    .rl-node.also .rl-nb { fill-opacity: 0.08; }
+    #rp-now[data-state="failed"] .rl-node.on { color: var(--red); }
+    /* live: a request is in flight right now — the ONE heartbeat the page
+       spends while replaying (the status dot's keyframes) */
+    #rp-now.live .rl-node.on .rl-nb { animation: heartbeat 2.4s ease-in-out infinite; }
+    .rl-edge { color: var(--text-faint); opacity: 0.4; }
+    .rl-edge .rl-e { fill: none; stroke: currentColor; stroke-width: 1; }
+    .rl-edge .rl-ah { fill: currentColor; stroke: none; }
+    /* the lit edge takes the row's state color: the transition INTO the
+       lit node, where the wire shows one */
+    .rl-edge.on { opacity: 1; color: inherit; }
+    .rl-edge.on .rl-e { stroke-width: 2; }
+    .rn-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+    .rn-held { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    .rn-gap { flex: 1 1 auto; min-width: 6px; }
+    /* absolute wall-clock, never a ticking counter (ui.md) */
+    .rn-since { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    /* ---- the stage (#stage): the beat, the tally ----
        Top of the threads column while replaying (the rail stays under it:
        the strip is time navigation, the rail is still the outline). The
-       loop's SHAPE is the strip — model/tools alternation unrolled over
-       wall-clock — so the stage states the moment, not a graph of it. */
+       moment itself is stated in the frame — the loop row — so the stage
+       is what this STEP did. */
     #stage { padding: 2px 4px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-    /* the NOW line: one row — the observed state at the cursor, what is
-       running, how long it has held, since when. One hue per wire fact,
-       the same ones the strip's lanes paint with. */
-    #stage-now {
-      display: flex; align-items: baseline; gap: 6px;
-      padding: 3px 6px 5px; font-size: 12px; color: var(--text-faint);
-    }
-    #stage-now[data-state="human"] { color: var(--accent); }
-    #stage-now[data-state="model"] { color: var(--lane-model); }
-    #stage-now[data-state="tools"] { color: var(--lane-tools); }
-    #stage-now[data-state="agents"] { color: var(--purple); }
-    #stage-now[data-state="waiting"] { color: var(--lane-waiting); }
-    #stage-now[data-state="failed"] { color: var(--red); }
-    #stage-now[data-rpseek] { cursor: pointer; }
-    .sn-dot { flex: none; align-self: center; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-    /* hollow = nothing is running: the human's turn, or both ends of the tape */
-    .sn-dot.hollow { background: none; box-shadow: inset 0 0 0 1px currentColor; }
-    /* live: a request is in flight right now — the ONE heartbeat the page
-       spends while replaying (the status dot's keyframes, moved here) */
-    #stage-now.live .sn-dot { animation: heartbeat 2.4s ease-in-out infinite; }
-    .sn-state { flex: none; }
-    .sn-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
-    .sn-held { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-    .sn-gap { flex: 1 1 auto; min-width: 6px; }
-    /* absolute wall-clock, never a ticking counter (ui.md) */
-    .sn-since { flex: none; font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
     /* so far: the call tally as of the cursor — the only place the
        per-tool count is stated */
     .st-sofar {
@@ -732,7 +759,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-variant-numeric: tabular-nums;
     }
     @media (prefers-reduced-motion: reduce) {
-      #stage-now.live .sn-dot { animation: none; }
+      #rp-now.live .rl-node.on .rl-nb { animation: none; }
       .sb.arrived { animation: none; }
     }
     /* the beat: what the agent did at this step, one row per fact */
@@ -2089,7 +2116,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the stage (what is happening now + the beat) at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the loop row — where in the agent's loop the cursor sits — under it, the beat at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
       <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
@@ -2114,6 +2141,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           </div>
         </div>
       </div>
+      <div id="rp-now" data-state="idle"></div>
       <div class="rp-transport">
         <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
         <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
@@ -2344,13 +2372,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // The stage layer (docs/design/replay-stage.md), injected from
     // src/replay.ts + src/session.ts: the trace as lanes over wall-clock,
-    // the observed state at the cursor read into the now line, the tally
-    // behind it, the beat, the strip's clock ruler. Pure, unit-tested there.
+    // the observed state at the cursor read into the now line and lit on
+    // the loop row, the tally behind it, the beat, the strip's clock ruler.
+    // Pure, unit-tested there.
     ${isSpawnTool.toString()}
     ${stepOutcome.toString()}
     ${sessionLanes.toString()}
     ${stateAt.toString()}
     ${nowAt.toString()}
+    ${loopAt.toString()}
     ${soFar.toString()}
     ${axisTicks.toString()}
     ${beatAt.toString()}
@@ -2403,6 +2433,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpTime = document.getElementById('rp-time');
     const rpEnd = document.getElementById('rp-end');
     const rpLive = document.getElementById('rp-live');
+    const rpNow = document.getElementById('rp-now');
     const rpSlice = document.getElementById('rp-slice');
     const pulseEl = document.getElementById('pulse');
     const rpSliceChip = document.getElementById('rp-slice-chip');
@@ -2763,7 +2794,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '---\\n' +
         'fresh off the wire:\\n' +
         '\\u00b7 replay is a STAGE \\u2014 a clock axis over five lanes of wall-clock (human, model, tools, agents, harness); the selected thread draws full, the future is dimmed; wheel to zoom, click a span to jump there\\n' +
-        '\\u00b7 the NOW line \\u2014 what the agent is doing at the cursor, what is running, and since when; nothing inferred, nothing ticking\\n' +
+        '\\u00b7 the LOOP ROW \\u2014 the agent\\u2019s machine (human \\u2192 model \\u2192 tools/agents/waiting \\u2192 model \\u2026 \\u2192 human) with the state at the cursor lit, what is running, and since when; nothing inferred, nothing ticking\\n' +
         '\\u00b7 the BEAT \\u2014 what the agent did at this step: the prompt that started the loop, every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
         '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor follows every pair that lands, with the conversation scrolled to the moment\\n' +
         '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
@@ -2940,7 +2971,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (view === 'context') showContext(sessionSelKey);
           rpLiveRefresh(); // the strip grows at the right edge
           if (wasAtEdge) {
-            // The cursor FOLLOWS: the now line, the beat and the convo all
+            // The cursor FOLLOWS: the loop row, the beat and the convo all
             // move to the new edge. The beat gets the page's live-arrived
             // fade once — a scrub never fades, and neither does a pair that
             // left the beat where it was.
@@ -7893,6 +7924,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpTime.textContent = fmtTime(new Date(replay.cursor)) + ' \\u00b7 +' +
         fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
       renderLiveChip();
+      renderReplayNow();
       // The slice band + chip: the selected window, its size, and the two
       // actions it affords (export the artifact, clear the selection).
       if (sliceActive()) {
@@ -7959,12 +7991,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (view === 'session' && (!opts || opts.follow !== false)) convoToBottom();
     }
 
-    // ---- the stage (#stage): the now line, the beat, the tally ----
+    // ---- the stage (#stage): the beat, the tally ----
     // Rendered at the TOP of the threads column while replaying, torn down
-    // with replay. Three readings of ONE cursor: WHAT the agent is doing
-    // right now (the now line), WHAT it did at this step (the beat, from the
-    // selected thread), and WHAT it has called so far (the tally). The
-    // loop's shape is the strip and the rail; the stage states the moment.
+    // with replay. Two readings of ONE cursor: WHAT the agent did at this
+    // step (the beat, from the selected thread) and WHAT it has called so
+    // far (the tally). WHAT it is doing right now is the loop row in the
+    // bar (renderReplayNow) — the frame states the moment, the stage the step.
 
     // The thread the stage reads: the selection, resolved against the WHOLE
     // capture (the cursored threads lose every loop still ahead).
@@ -8000,8 +8032,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return ts;
     }
 
-    // What each state MEANS on the wire — the hover, so a one-word lane
-    // label is never something the reader has to guess at.
+    // What each state MEANS on the wire — the hover, so a one-word chip
+    // is never something the reader has to guess at.
     const NOW_WHY = {
       model: 'a request is in flight',
       tools: 'the harness is running the calls this reply made',
@@ -8012,27 +8044,88 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       idle: 'nothing on the wire',
     };
 
-    // The NOW line: nowAt rendered as one row. The held duration appears
-    // only where the state's extent is a wire fact; since is absolute
-    // wall-clock. The dot beats ONLY for a request in flight right now.
-    function stageNow(L, key) {
-      const n = nowAt(L, replay.cursor, key, stageLiveStart());
-      const hollow = n.state === 'human' || n.state === 'idle';
-      const p = n.pairId ? pairOf(n.pairId) : null;
+    // The loop row (#rp-now): Claude Code's machine — human -> model ->
+    // [tools | agents | waiting] -> model ... -> human — drawn ONCE at fixed
+    // pixel geometry in the frame, the cursor's state lit and the edge it
+    // came in by (loopAt). Beside it the now facts: what is running, how
+    // long it has held where the extent is a wire fact, since when (absolute
+    // wall-clock). The chip beats ONLY for a request in flight right now.
+    // Nothing moves when the state changes — only which parts are lit.
+    const RL_W = 52, RL_H = 16;                          // a state chip
+    const RL_X = { human: 2, model: 92, slot: 182 };     // chip left edges
+    // A filled triangle at the end of a run (no shared <marker>: markers
+    // can't take the group's currentColor, and the lit edge changes hue).
+    function rlArrow(x1, y1, x2, y2) {
+      const dx = x2 - x1, dy = y2 - y1;
+      const L = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / L, uy = dy / L;
+      const bx = x2 - ux * 7, by = y2 - uy * 7;
+      const px = -uy * 3, py = ux * 3;
+      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
+        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
+        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
+    }
+    function rlEdge(key, pts, lit) {
+      let d = '';
+      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
+      const k = pts.length;
+      return '<g class="rl-edge' + (lit ? ' on' : '') + '" data-edge="' + key + '">' +
+        '<path class="rl-e" d="' + d + '"/>' +
+        '<path class="rl-ah" d="' + rlArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/></g>';
+    }
+    function rlChip(node, label, cls) {
+      const x = RL_X[node];
+      return '<g class="rl-node' + cls + '" data-node="' + node + '"' +
+        (node === 'slot' ? ' data-slot="' + label + '"' : '') + '>' +
+        '<rect class="rl-nb" x="' + x + '" y="1" width="' + RL_W + '" height="' + RL_H + '" rx="3"/>' +
+        '<text class="rl-nl" x="' + (x + RL_W / 2) + '" y="12" text-anchor="middle">' + label + '</text></g>';
+    }
+    // The forward path on top; the two returns nested below (results the
+    // inner arc, answer the outer) so they never cross.
+    function rlSvg(q) {
+      const on = q.node, e = q.edge;
+      return '<svg id="rp-loop" width="236" height="30" viewBox="0 0 236 30" aria-hidden="true">' +
+        rlEdge('human>model', [54, 9, 92, 9], e === 'human>model') +
+        rlEdge('model>slot', [144, 9, 182, 9], e === 'model>slot') +
+        rlEdge('slot>model', [208, 17, 208, 24, 124, 24, 124, 17], e === 'slot>model') +
+        rlEdge('model>human', [104, 17, 104, 29, 28, 29, 28, 17], e === 'model>human') +
+        rlChip('human', 'human', on === 'human' ? ' on hollow' : '') +
+        rlChip('model', 'model', (on === 'model' ? ' on' : '') + (q.live ? ' live' : '')) +
+        rlChip('slot', q.slot, on === 'slot' ? ' on' : q.also ? ' also' : '') +
+        '</svg>';
+    }
+    // Rendered on every bar update (a playback tick, a landed pair): the
+    // markup is rewritten only when the picture changes, and a held
+    // duration that merely grew patches its own span — rebuilding under the
+    // reader's pointer would kill the hover and can eat a click.
+    let rpNowKey = null;
+    function renderReplayNow() {
+      if (!rpNow) return;
+      const t = stageThread();
+      const q = loopAt(laneData(), replay.cursor, t ? t.key : '', stageLiveStart());
+      const p = q.pairId ? pairOf(q.pairId) : null;
       const seek = p && p.request ? pairEndMs(p) : 0;
-      const tip = 'now \\u00b7 ' + n.state + '\\n' +
-        (n.live ? 'a request is in flight \\u2014 no response yet' : (NOW_WHY[n.state] || '')) +
+      const held = q.held != null && q.held > 0 ? '\\u00b7 ' + fmtSpan(q.held) : '';
+      const sig = [q.state, q.node, q.slot, q.edge, q.also, q.live, q.what, q.since, seek].join('|');
+      if (rpNowKey === sig) {
+        const h = rpNow.querySelector ? rpNow.querySelector('.rn-held') : null;
+        if (h && h.textContent !== held) h.textContent = held;
+        return;
+      }
+      rpNowKey = sig;
+      const tip = 'now \\u00b7 ' + q.state + '\\n' +
+        (q.live ? 'a request is in flight \\u2014 no response yet' : (NOW_WHY[q.state] || '')) +
+        (q.also ? '\\n' + q.agentsRunning + ' subagent' + (q.agentsRunning === 1 ? '' : 's') + ' running meanwhile' : '') +
         (seek ? '\\n---\\n> click seeks to the step that opened it' : '');
-      return '<div id="stage-now"' + (n.live ? ' class="live"' : '') + ' data-state="' + n.state + '"' +
-        (seek ? ' data-rpseek="' + seek + '"' : '') +
-        ' data-tip="' + escapeHtml(tip) + '">' +
-        '<span class="sn-dot' + (hollow ? ' hollow' : '') + '"></span>' +
-        '<span class="sn-state">' + n.state + '</span>' +
-        (n.what ? '<span class="sn-what">' + escapeHtml(n.what) + '</span>' : '') +
-        (n.held != null && n.held > 0 ? '<span class="sn-held">\\u00b7 ' + escapeHtml(fmtSpan(n.held)) + '</span>' : '') +
-        '<span class="sn-gap"></span>' +
-        (n.since > 0 ? '<span class="sn-since">since ' + fmtTime(new Date(n.since)) + '</span>' : '') +
-        '</div>';
+      rpNow.className = q.live ? 'live' : '';
+      rpNow.dataset.state = q.state;
+      if (seek) rpNow.dataset.rpseek = String(seek); else delete rpNow.dataset.rpseek;
+      rpNow.dataset.tip = tip;
+      rpNow.innerHTML = '<span class="rp-glbl">now</span>' + rlSvg(q) +
+        '<span class="rn-what">' + escapeHtml(q.what || q.state) + '</span>' +
+        '<span class="rn-held">' + escapeHtml(held) + '</span>' +
+        '<span class="rn-gap"></span>' +
+        (q.since > 0 ? '<span class="rn-since">since ' + fmtTime(new Date(q.since)) + '</span>' : '');
     }
 
     // So far: which tools were called and how often as of the cursor, then
@@ -8115,9 +8208,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function stageInner() {
       const t = stageThread();
-      const L = laneData();
-      const key = t ? t.key : '';
-      return stageNow(L, key) + stageBeat(t) + stageSoFar(L, key);
+      return stageBeat(t) + stageSoFar(laneData(), t ? t.key : '');
     }
     function stageHtml() {
       if (!replay.active) return '';
@@ -8172,18 +8263,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 
-    // The stage's two seeks — the now line (to the step that opened the
-    // state) and the beat's head (to that loop's chapter stop). Delegated:
-    // #stage is rewritten on every cursor change.
+    // The loop row seeks to the step that opened the state it shows.
+    if (rpNow) rpNow.addEventListener('click', () => {
+      const t = parseFloat(rpNow.dataset.rpseek || '');
+      if (isFinite(t)) { seekReplay(t); updateReplayHash(); }
+    });
+    // The stage's seek — the beat's head, to that loop's chapter stop.
+    // Delegated: #stage is rewritten on every cursor change.
     threadsEl.addEventListener('click', (e) => {
-      const el = e.target && e.target.closest ? e.target.closest('[data-rpseek],[data-rpchap]') : null;
+      const el = e.target && e.target.closest ? e.target.closest('[data-rpchap]') : null;
       if (!el) return;
       e.preventDefault();
-      if (el.dataset.rpseek) {
-        const t = parseFloat(el.dataset.rpseek);
-        if (isFinite(t)) { seekReplay(t); updateReplayHash(); }
-        return;
-      }
       const ord = parseInt(el.dataset.rpchap, 10);
       const th = stageThread();
       for (const c of (th ? chaptersOf(th, pairOf) : [])) {

@@ -125,10 +125,13 @@ offline snapshots -- same UI, three ways in.
   requests, tools running between them, subagents as stacked spans, the
   harness lane with compaction cuts and failed requests). Wheel to zoom
   around the cursor; the strip says more as you zoom in. Click a span to
-  jump there, shift+drag to select a slice. Under the strip, the LOOP ROW:
-  the agent's machine -- human -> model -> tools / agents / waiting ->
-  model ... -> human -- drawn once, with the state at the cursor lit, the
-  transition it came in by, what is running and since when. The left pane
+  jump there, shift+drag to select a slice. The axis is the selected
+  session's own time; idle gaps over five minutes fold to a hatched break
+  (`//` 1h 29m), so a lunch break is not half the strip. Under the strip,
+  the LOOP ROW: a live flowchart of the agent's loop -- human -> model ->
+  calls? -> tools / agents / waiting -> back to model, or no -> answer ->
+  human -- with the state at the cursor lit, the transition it came in by
+  flowing, what is running and since when. The left pane
   carries the BEAT: what the agent did at this step (tool calls fused with
   results, spawns, the reply, the stated reasoning, the window delta) and
   the call tally so far. Every mark is a wire fact; nothing is inferred.

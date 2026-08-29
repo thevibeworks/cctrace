@@ -851,6 +851,32 @@ describe("context boundaries on the replay timeline", () => {
   });
 });
 
+// One thread, two working loops, TEN MINUTES apart: the human answered the
+// first reply after a coffee. The gap is the axis's own idle — nothing on
+// this thread's wire between 1002 and 1600 — which is what the compressed
+// break is for, and the reply/answer branch of the loop row.
+function twoLoops(): TracePair[] {
+  const b1 = msgPair("b1", {
+    reqBody: { messages: [{ role: "user", content: "one" }] },
+    resBody: { content: [{ type: "text", text: "hello" }] },
+  });
+  const b2 = msgPair("b2", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "one" },
+        { role: "assistant", content: [{ type: "text", text: "hello" }] },
+        { role: "user", content: "two" },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "done" }] },
+  });
+  (b1.request as { timestamp: number }).timestamp = 1000;
+  (b1.response as { timestamp: number }).timestamp = 1002;
+  (b2.request as { timestamp: number }).timestamp = 1600;
+  (b2.response as { timestamp: number }).timestamp = 1602;
+  return [b1, b2];
+}
+
 // The strip is the trace's SHAPE: five lanes over wall-clock, drawn from
 // sessionLanes. Its markup is built from captured wire content (tool names,
 // agent labels, the human's own words), so it gets the same hostile-fixture
@@ -948,6 +974,68 @@ describe("the trajectory strip (#rp-lanes)", () => {
     expect(body).not.toContain("rp-span agent other");
     // the veil covers the future, from the playhead to the right edge
     expect(page.els["rp-veil"].style.left).toBe("33.333%");
+    // this thread worked without stopping: nothing to compress, so the axis
+    // is one linear stretch and every position is what it always was
+    expect(page.els["rp-breaks"].innerHTML).toBe("");
+    expect(page.els["rp-axis"].innerHTML).not.toContain("⧸");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  // The axis is the SELECTED thread's own time, with its idle compressed: a
+  // session that sat still for ten minutes must not spend a third of the
+  // strip saying so (replay-stage.md, rev 2.2).
+  test("an idle stretch compresses to a hatched break column with the skipped time named", () => {
+    const page = bootSnapshotPage(renderSnapshot(twoLoops()));
+    page.els["rp-scroll"].getBoundingClientRect = () => ({ left: 0, width: 1400, top: 0, height: 24 });
+    page.goto("#/session/aaaabbbb/@b1");
+    // one column, over the lanes, exactly RP_BREAK_PX of the 1400px track
+    const breaks = page.els["rp-breaks"].innerHTML as string;
+    expect((breaks.match(/class="rp-break"/g) || []).length).toBe(1);
+    expect(breaks).toContain("width:2.000%"); // 28px of 1400
+    // the clock row names what was skipped, coarsely — a break is minutes
+    const axis = page.els["rp-axis"].innerHTML as string;
+    expect(axis).toContain("⧸⧸ 10m");
+    // ...and the WORK is still ruled at the step its own width earns: the
+    // ladder is picked per busy segment (two 2s stretches), never over the
+    // 10-minute extent — which would rule the whole strip with two ticks.
+    const ticks = [...axis.matchAll(/class="rp-tick[^"]*" style="left:([\d.]+)%">([^<]*)</g)];
+    expect(ticks.length).toBeGreaterThanOrEqual(6);
+    const labelled = ticks.filter((t) => t[2]);
+    expect(labelled.length).toBeGreaterThanOrEqual(4);
+    expect(labelled.every((t) => /^\d\d:\d\d:\d\d$/.test(t[2]!))).toBe(true);
+    // both stretches are ruled, not just the one before the break
+    expect(labelled.some((t) => Number(t[1]) < 50)).toBe(true);
+    expect(labelled.some((t) => Number(t[1]) > 50)).toBe(true);
+    // and the work keeps the rest: the first loop's request is no sliver
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    const w = body.match(/rp-span model[^"]*" data-rpt="[^"]*" style="left:[\d.]+%;width:([\d.]+)%/);
+    expect(w).not.toBeNull();
+    expect(Number(w![1])).toBeGreaterThan(30);
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  // ⏭ seeks to the end of the TAPE, which on another thread's session may be
+  // hours past this one's last pair: the axis takes the cursor in as a point
+  // and the stretch to it compresses. The break then touches the right edge,
+  // where a centred label would hang half off the track.
+  test("a break against the track's edge anchors its label inside it", () => {
+    const later = msgPair("c1", { reqBody: { messages: [{ role: "user", content: "another session" }] } });
+    (later.request as { timestamp: number }).timestamp = 3000;
+    (later.response as { timestamp: number }).timestamp = 3002;
+    const page = bootSnapshotPage(renderSnapshot([...twoLoops(), later]));
+    page.els["rp-scroll"].getBoundingClientRect = () => ({ left: 0, width: 1400, top: 0, height: 24 });
+    page.goto("#/session/aaaabbbb/@b2");
+    expect(page.els["rp-axis"].innerHTML).not.toContain("at-end");
+    page.els["rp-end"].onclick!({}); // ⏭ — the tape ends on the other thread
+    const axis = page.els["rp-axis"].innerHTML as string;
+    // two skipped stretches now; the one at the edge right-aligns, so its
+    // whole label is on the track
+    expect((axis.match(/class="rp-bk/g) || []).length).toBe(2);
+    expect(axis).toContain('class="rp-bk at-end" style="left:100.000%"');
+    // the thread's own work still rules its own ticks
+    expect(axis).toMatch(/class="rp-tick[^"]*" style="left:[\d.]+%">\d\d:\d\d:\d\d</);
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
   });
@@ -958,10 +1046,14 @@ describe("the trajectory strip (#rp-lanes)", () => {
     // at the child's end the parent's latest step is still the dispatch, so
     // the beat carries the spawn row — and its "open thread" link the key
     page.goto("#/session/aaaabbbb/@p3");
+    // the axis is the parent's whole extent while the parent is selected
+    expect(String(page.els["rp-time"].textContent).split(" / ")[1]).toBe("0:06");
     const link = (page.els["threads"].innerHTML as string)
       .match(/class="fold-link" href="(#\/session\/[^"]+)"/);
     expect(link).not.toBeNull();
     page.goto(link![1]!);
+    // ...and re-rules to the CHILD's own two seconds when it is
+    expect(String(page.els["rp-time"].textContent).split(" / ")[1]).toBe("0:02");
     const body = page.els["rp-lanes-body"].innerHTML as string;
     // the parent's three requests ghost; the child's own is the picture
     expect((body.match(/rp-span model other/g) || []).length).toBe(3);
@@ -1077,7 +1169,24 @@ describe("the replay stage (#stage)", () => {
     expect(now.innerHTML).toContain('<span class="rp-glbl">now</span><svg id="rp-loop"');
     expect(now.innerHTML).not.toMatch(/class="rl-(node|edge)[^"]* on/);
     expect(now.innerHTML).toContain('data-slot="tools"'); // the slot's default label
-    expect(now.innerHTML).toContain('<span class="rn-what">idle</span>');
+    // The whole machine is drawn, always: four nodes (the hand-off slot is
+    // one position with three flavors, the decision is a wire fact) and five
+    // labelled edges. A state change lights parts of it; it never redraws it.
+    for (const n of ["human", "model", "slot", "decision"]) {
+      expect(now.innerHTML).toContain('data-node="' + n + '"');
+    }
+    for (const e of ["human>model", "model>decision", "decision>slot", "slot>model", "decision>human"]) {
+      expect(now.innerHTML).toContain('data-edge="' + e + '"');
+    }
+    expect((now.innerHTML.match(/<path class="rl-e"/g) || []).length).toBe(5);
+    expect(now.innerHTML).toContain(">prompt<");
+    expect(now.innerHTML).toContain(">yes<");
+    expect(now.innerHTML).toContain(">results<");
+    expect(now.innerHTML).toContain(">no \u00b7 answer<");
+    // the facts beside it: the state word once (idle has nothing running, so
+    // no `what` beside it), then the absolute clock the hole began at
+    expect(now.innerHTML).toContain('<span class="rn-state">idle</span>');
+    expect(now.innerHTML).not.toContain("rn-what");
     expect(now.innerHTML).toMatch(/since \d\d:\d\d:\d\d/);
     // the beat names the turn it is showing (the outline's own numbering)
     expect(stage).toMatch(/turn\s*\d+/);
@@ -1119,11 +1228,47 @@ describe("the replay stage (#stage)", () => {
     expect(now.innerHTML).toMatch(/class="rl-node on" data-node="model"/);
     expect(now.innerHTML).toMatch(/class="rl-edge on" data-edge="slot>model"/);
     expect(now.innerHTML).toContain('data-slot="agents"');
+    expect(now.innerHTML).toContain('<span class="rn-state">model</span>');
     expect(now.innerHTML).toContain('<span class="rn-what">thinking</span>');
+    // the results arc is the ONLY lit edge — the decision is not on this path
+    expect((now.innerHTML.match(/class="rl-edge on"/g) || []).length).toBe(1);
+    expect(now.innerHTML).toMatch(/class="rl-node" data-node="decision"/);
     // the row seeks to the step that opened the state (p5's end)
     expect(now.dataset.rpseek).toBe(String(pairEndMs(fixture()[3])));
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  // The two branches out of the decision: a reply that called tools lights
+  // model -> calls? -> yes -> slot, and a reply that answered lights
+  // model -> calls? -> no -> human. The diamond lights with either.
+  test("the decision diamond lights with the branch the wire took", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    // p2's reply dispatched the subagent and the child is still working: the
+    // hand-off slot is lit, in its agents flavor, entered through the decision
+    page.goto("#/session/aaaabbbb/@p2");
+    const now = page.els["rp-now"];
+    expect(now.dataset.state).toBe("agents");
+    expect(now.innerHTML).toMatch(/class="rl-edge on" data-edge="model>decision"/);
+    expect(now.innerHTML).toMatch(/class="rl-edge on" data-edge="decision>slot"/);
+    expect(now.innerHTML).toMatch(/class="rl-node on[^"]*" data-node="decision"/);
+    expect(now.innerHTML).toMatch(/class="rl-node on" data-node="slot" data-slot="agents"/);
+    expect(now.innerHTML).toContain('<span class="rn-state">agents</span>');
+    expect(now.innerHTML).toContain("1 running");
+    // the answer branch: the reply landed and the human has not spoken yet
+    const two = bootSnapshotPage(renderSnapshot(twoLoops()));
+    two.goto("#/session/aaaabbbb/@b1");
+    const nw2 = two.els["rp-now"];
+    expect(nw2.dataset.state).toBe("human");
+    expect(nw2.innerHTML).toMatch(/class="rl-edge on" data-edge="model>decision"/);
+    expect(nw2.innerHTML).toMatch(/class="rl-edge on" data-edge="decision>human"/);
+    expect(nw2.innerHTML).toMatch(/class="rl-node on[^"]*" data-node="decision"/);
+    expect(nw2.innerHTML).toMatch(/class="rl-node on hollow" data-node="human"/);
+    expect(nw2.innerHTML).toContain('<span class="rn-state">human</span>');
+    expect(page.errors).toEqual([]);
+    expect(two.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(fragmentErrors(two)).toEqual([]);
   });
 
   test("a live start lights the model chip as thinking, beating, with an absolute clock", () => {
@@ -1281,12 +1426,14 @@ describe("replay tails the live session", () => {
     page.goto("#/session/aaaabbbb/@p3");
     const before = clockOf(page);
     expect(lengthOf(page)).toBe("0:04");
-    // A prior run's pair, EARLIER than everything on the tape: the left edge
-    // moves, so the offset legitimately changes — the moment does not.
+    // A prior run's pair, EARLIER than everything on the tape and its own
+    // thread: it lands in the lanes as a ghost, and the axis — the SELECTED
+    // thread's own extent (rev 2.2) — does not move for somebody else's
+    // work. The moment does not move either.
     const older = msgPair("p0", { reqBody: { messages: [{ role: "user", content: "yesterday" }] } });
     ws.onmessage!({ data: JSON.stringify({ type: "history", pairs: [older] }) });
     expect(clockOf(page)).toBe(before); // the same instant, to the second
-    expect(lengthOf(page)).toBe("0:05"); // ...on a longer tape
+    expect(lengthOf(page)).toBe("0:04"); // ...on the same thread
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
   });

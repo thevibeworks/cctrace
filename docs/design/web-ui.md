@@ -658,12 +658,21 @@ hash-routed:
   `data-depth` map/read/full; click a span seeks to its pair's END (the
   boundary where it became visible). While replaying the bar carries the
   LOOP ROW (`#rp-now`, between the strip and the transport, `loopAt`):
-  Claude Code's machine — human -> model -> [tools | agents | waiting]
-  -> model … -> human — as inline SVG at fixed pixel geometry, the state
-  at the cursor lit with the edge it came in by, and beside it what is
-  running, the held duration where the extent is a wire fact, and the
-  absolute clock it began at; click seeks to the step that opened it;
-  the model chip beats only for a request in flight at the live edge.
+  Claude Code's loop as a FLOWCHART in fixed-pixel inline SVG — boxes
+  human / model / the hand-off slot (tools | agents | waiting), a
+  `calls?` decision diamond, five labelled edges (prompt, yes, results
+  over the row, no · answer under it) — the state at the cursor lit, the
+  edge it came in by lit and FLOWING (an animated dash, the page's
+  deliberate second motion owner while replaying), and beside it the
+  state word, what is running, the held duration where the extent is a
+  wire fact, and the absolute clock it began at; click seeks to the step
+  that opened it; the model box beats only for a request in flight at
+  the live edge. The strip's axis is the selected thread's own extent
+  (`threadExtent`), idle gaps ≥ 5 min folded to 28px hatched `rp-break`
+  columns labelled `⧸⧸ <skipped>` in the clock row (`timeScale` /
+  `scaleX` / `scaleT` — the ONE x<->t mapping every strip surface uses:
+  spans, ticks, veil, playhead, slice, drag, wheel zoom); the transport's
+  clock and length stay real wall-clock.
   `#stage` sits at the top of `#threads` above the rail, two blocks: the
   beat from `beatAt` (caption, the loop's head, tool rows fused with
   results via the detail panel's own renderers, spawn rows, reply line,

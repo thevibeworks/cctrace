@@ -17,9 +17,11 @@ import { extractCallInfo } from "./summarize";
 // plus the STAGE layer below them (docs/design/replay-stage.md): the trace as
 // lanes over time, the observed state at the cursor (stateAt) read into one
 // NOW line (nowAt) and placed on the loop row (loopAt), the tally behind it
-// (soFar), the beat (what the agent did at this step) and the strip's clock
-// ruler (axisTicks). Every mark is a wire timestamp or a wire fact; nothing
-// here estimates.
+// (soFar), the beat (what the agent did at this step), the strip's clock
+// ruler (axisTicks) and its axis — the selected thread's own extent
+// (threadExtent) mapped to pixels with idle compressed (timeScale / scaleX /
+// scaleT). Every mark is a wire timestamp or a wire fact; nothing here
+// estimates.
 //
 // Like summarize.ts, every exported function is inlined into the web UI via
 // Function.prototype.toString() — keep them self-contained (cross-calls only
@@ -643,6 +645,152 @@ export function axisTicks(t0: number, t1: number, px: number, tzOffsetMin: numbe
     });
   }
   return out;
+}
+
+/**
+ * Sorted, merged [t0, t1] intervals — the union of a set of spans. Touching
+ * intervals fuse (a gap of zero is not a gap), points ([t, t]) are kept: they
+ * are moments the strip still has to place.
+ */
+export function mergeBusy(intervals: any[]): any[] {
+  const xs: any[] = [];
+  for (const iv of intervals || []) {
+    if (!iv) continue;
+    const a = +iv[0];
+    const b = +iv[1];
+    if (!isFinite(a) || !isFinite(b)) continue;
+    xs.push(b >= a ? [a, b] : [b, a]);
+  }
+  xs.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const out: any[] = [];
+  for (const iv of xs) {
+    const last = out.length ? out[out.length - 1] : null;
+    if (last && iv[0] <= last[1]) {
+      if (iv[1] > last[1]) last[1] = iv[1];
+    } else out.push([iv[0], iv[1]]);
+  }
+  return out;
+}
+
+/**
+ * The strip's mapping from wall-clock to pixels, with IDLE COMPRESSED
+ * (docs/design/replay-stage.md, "The strip's axis"). `busy` are the spans
+ * that carry activity; a gap between two of them longer than `idleMs`
+ * collapses to a fixed `breakPx` column, and the remaining width is shared
+ * by the busy stretches in proportion to their real duration.
+ *
+ *   { segs: [{ t0, t1, x0, x1, kind: 'busy'|'break' }], px, t0, t1 }
+ *
+ * The segments tile [t0, t1] and [0, px] with no holes, so `scaleX` and
+ * `scaleT` are inverses everywhere — including INSIDE a break, which maps
+ * linearly across its own column (scrubbing through skipped time is fast but
+ * continuous). With no qualifying gap the result is ONE linear segment and
+ * every position is what it was before this existed. Time outside the busy
+ * union but at the edges of the span (a request in flight past the last
+ * captured pair) stays busy: only interior gaps compress.
+ */
+export function timeScale(busy: any[], t0: number, t1: number, px: number, idleMs: number, breakPx: number): any {
+  const P = px > 0 ? px : 1;
+  const one = { segs: [{ t0, t1, x0: 0, x1: P, kind: "busy" }], px: P, t0, t1 };
+  if (!(t1 > t0)) return one;
+  const gap = idleMs > 0 ? idleMs : Infinity;
+  const bw = breakPx > 0 ? breakPx : 0;
+  const m = mergeBusy(busy);
+  const breaks: any[] = [];
+  for (let i = 1; i < m.length; i++) {
+    const a = Math.max(t0, m[i - 1][1]);
+    const b = Math.min(t1, m[i][0]);
+    if (b - a >= gap) breaks.push([a, b]);
+  }
+  // Nothing to skip, or so much to skip that the breaks alone would eat the
+  // track: one honest linear segment beats a negative busy width.
+  if (!breaks.length || breaks.length * bw >= P) return one;
+  let skipped = 0;
+  for (const b of breaks) skipped += b[1] - b[0];
+  const busyMs = t1 - t0 - skipped;
+  if (busyMs <= 0) return one;
+  const perMs = (P - breaks.length * bw) / busyMs;
+  const segs: any[] = [];
+  let x = 0;
+  let t = t0;
+  for (const b of breaks) {
+    if (b[0] > t) {
+      const w = (b[0] - t) * perMs;
+      segs.push({ t0: t, t1: b[0], x0: x, x1: x + w, kind: "busy" });
+      x += w;
+    }
+    segs.push({ t0: b[0], t1: b[1], x0: x, x1: x + bw, kind: "break" });
+    x += bw;
+    t = b[1];
+  }
+  if (t < t1) segs.push({ t0: t, t1, x0: x, x1: P, kind: "busy" });
+  else segs[segs.length - 1].x1 = P;
+  return { segs, px: P, t0, t1 };
+}
+
+/** A wall-clock instant as a pixel on the track, clamped to [0, px]. */
+export function scaleX(scale: any, t: number): number {
+  const S = scale || {};
+  const segs = S.segs || [];
+  const P = S.px > 0 ? S.px : 1;
+  if (!segs.length) return 0;
+  if (t <= segs[0].t0) return 0;
+  for (const s of segs) {
+    if (t <= s.t1) {
+      const d = s.t1 - s.t0;
+      const f = d > 0 ? (t - s.t0) / d : 0;
+      const x = s.x0 + f * (s.x1 - s.x0);
+      return x < 0 ? 0 : x > P ? P : x;
+    }
+  }
+  return P;
+}
+
+/** A pixel on the track back to its wall-clock instant, clamped to the span. */
+export function scaleT(scale: any, x: number): number {
+  const S = scale || {};
+  const segs = S.segs || [];
+  if (!segs.length) return S.t0 || 0;
+  if (x <= segs[0].x0) return segs[0].t0;
+  for (const s of segs) {
+    if (x <= s.x1) {
+      const w = s.x1 - s.x0;
+      const f = w > 0 ? (x - s.x0) / w : 0;
+      return s.t0 + f * (s.t1 - s.t0);
+    }
+  }
+  return segs[segs.length - 1].t1;
+}
+
+/**
+ * One thread's own extent on the wall clock, and the time inside it that
+ * carries activity: its model / tools / waiting spans, its human points,
+ * cuts and failed marks, plus the agent spans it spawned (and its OWN span
+ * when a child is the selection — the same ownership the strip's focus
+ * uses). Points widen to nothing. `threadKey` empty = every item in the
+ * lanes. null when the thread has nothing on the wire.
+ */
+export function threadExtent(lanes: any, threadKey?: any): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const busy: any[] = [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  const add = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b)) return;
+    busy.push([a, b]);
+    if (a < lo) lo = a;
+    if (b > hi) hi = b;
+  };
+  for (const x of L.model || []) if (!key || x.threadKey === key) add(x.t0, x.t1);
+  for (const g of L.tools || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const g of L.waiting || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const h of L.human || []) if (!key || h.threadKey === key) add(h.t, h.t);
+  for (const c of L.cuts || []) if (!key || c.threadKey === key) add(c.t, c.t);
+  for (const f of L.failed || []) if (!key || f.threadKey === key) add(f.t, f.t);
+  for (const a of L.agents || []) if (!key || a.parentKey === key || a.threadKey === key) add(a.t0, a.t1);
+  if (lo === Infinity) return null;
+  return { t0: lo, t1: hi, busy: mergeBusy(busy) };
 }
 
 /**

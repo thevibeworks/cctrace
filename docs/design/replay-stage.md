@@ -14,6 +14,12 @@ picture of the loop was worth keeping — "redesign it accurately, live and
 horizontal, in the replay bar". The NOW line becomes the LOOP ROW in the
 frame: the machine drawn once, the state lit. "Revision 2.1" below.
 
+Revision 2.2 (2026-08-29, same PR): rev 2.1's chip row was not a
+diagram. The loop row becomes a FLOWCHART (boxes, a `calls?` decision
+diamond, labelled edges, the lit edge flowing) and the strip's axis
+becomes the selected thread's own time with idle gaps compressed —
+"The loop row: the flowchart" and "The strip's axis" below.
+
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
 as lanes over time, what the agent is doing at the cursor, and the beat —
@@ -311,68 +317,152 @@ Session view, `body.replaying`. No new tab.
   to the live edge when the reader was there. An open `start` draws as a
   dashed model stub hugging the right edge.
 
-### The loop row (`#rp-now`)
+### The loop row (`#rp-now`): the flowchart
 
 Between the strip and the transport, aligned to the strip's 56px gutter
-and labelled `now`: the machine, drawn once, lit at the cursor, with the
-NOW facts beside it — `loopAt` rendered.
+and labelled `now`: Claude Code's loop as a FLOWCHART, drawn once, lit at
+the cursor, the active edge flowing — `loopAt` rendered. Revision 2.2
+(2026-08-29): rev 2.1's three 16px chips on a 30px row read as a legend,
+not a diagram ("it's damn shit again; make it like a flow chart live
+diagram"). The row grows to ~70px and the drawing becomes the flowchart
+below, with the loop's DECISION drawn as the diamond it is.
 
-    now │ human ─▸ model ─▸ [tools]      Bash · Read ×2 · 24ms       since 00:32:58
-        │   ▲        ▲ ◂──────┘
-        │   └────────┘
+                    ┌──────────── results ─────────────┐
+                    ▼                                  │
+    ┌───────┐ prompt ┌───────┐        ◇        yes  ┌──┴─────┐
+    │ human │ ─────▸ │ model │ ─────▸ calls? ─────▸ │ tools  │      tools   Bash · Read ×2 · 24ms
+    └───────┘        └───────┘          │ no        └────────┘              since 00:32:58
+        ▲                               │ answer
+        └───────────────────────────────┘
 
-- **The machine** (`#rp-loop`, inline SVG at FIXED pixel size — 236x30,
-  no viewBox scaling, so the 10px chip labels are the page's micro tier
-  and never resize): three chips `human` · `model` · the slot, the
-  forward path on top (prompt, calls) and the two returns nested below
-  (results the inner arc, answer the outer — they never cross). One chip
-  is lit (`.on`: full color, 2px stroke, a 14% fill) and the edge INTO
-  it where the wire shows one (`.rl-edge.on`, in the row's state color);
-  everything else sits at ~50%. The slot's label is its flavor when lit
-  or when it is the lit edge's other end (`slot>model` out of a waiting
-  gap reads `waiting`), `tools` otherwise. Colors are the lanes' own:
-  human accent, model / tools / waiting the time-track vars, agents
-  purple, failed red — one wire fact, one color across surfaces.
-- **What lights, per state**:
+- **Nodes** (`#rp-loop`, inline SVG at FIXED pixel size, ~440x68, no
+  viewBox scaling; labels 11px in the boxes, 9px on the edges): three
+  process boxes — `human`, `model`, the hand-off SLOT (label `tools` /
+  `agents` / `waiting`, its flavor when lit or when it is the lit edge's
+  other end, `tools` otherwise) — and one DECISION diamond, `calls?`:
+  did the reply make tool calls. The diamond is a wire fact
+  (stop_reason tool_use / the reply's tool_use blocks), not a state the
+  agent occupies — it never carries "since" or "held"; it lights with
+  the decision edge that is lit.
+- **Edges**, five, each labelled: `prompt` (human -> model), model ->
+  diamond (unlabelled), `yes` (diamond -> slot), `results` (slot ->
+  model, the arc OVER the row), `no · answer` (diamond -> human, the arc
+  UNDER the row). The two arcs sit on opposite sides so they never cross
+  (their x-extents interleave: any two-arcs-below layout crosses).
+  Arrowheads are filled triangles at the target (no shared `<marker>`:
+  markers cannot take the group's currentColor).
+- **What lights** — from `loopAt`, unchanged:
 
-      state    chip            edge                                  what
-      -------  --------------  ------------------------------------  ---------------------------
-      model    model           human>model — a human point sits at   thinking · 12.9s
-                               the request start; slot>model — a gap
-                               ended there (its flavor on the slot);
-                               live: slot>model if the newest landed
-                               reply made calls, else none
-      tools    slot = tools    model>slot                            Bash · Read ×2 · 24ms
-      agents   slot = agents   model>slot                            2 running · explore, review
-      waiting  slot = waiting  model>slot                            harness continued · 3s
-      human    human, hollow   model>human — only if the last step's  awaiting the next prompt
-                               next is reply
-      failed   model, red      none                                  502 · the retry is next
-      idle     none            none                                  idle
+      state    node lit        edges lit                              flow
+      -------  --------------  -------------------------------------  ---------------
+      model    model           prompt (human>model) OR results        the lit edge
+                               (slot>model); live: results if the
+                               newest landed reply made calls
+      tools    slot = tools    model->diamond, diamond yes -> slot     yes
+      agents   slot = agents   same                                   yes
+      waiting  slot = waiting  same                                   yes
+      human    human (hollow)  model->diamond, diamond no -> answer   answer
+                               (only when the last step's next is
+                               reply)
+      failed   model, red      none                                   none
+      idle     none            none                                   none
 
-  A child running while the actor is elsewhere (the parent thinks while
-  its subagents work) half-lights the slot as `agents` (`.also`); the tip
-  counts them.
-- **The facts beside it**: `.rn-what` (what is running, or the state
-  word when nothing is), `.rn-held` (the held duration, only where the
-  state's extent is a wire fact: a span or gap with a t1, or the cursor
-  inside a completed span), and `.rn-since` at the right edge — the
-  absolute local clock the state began at, never a ticking counter
-  (ui.md). A live in-flight request shows `since` only.
-- **Live**: the model chip beats (`#rp-now.live`, the status dot's
-  keyframes) ONLY while a request is in flight at the live edge — the one
-  heartbeat the page spends while replaying. `prefers-reduced-motion`
-  drops it.
+  A child running while the actor is elsewhere half-lights the slot as
+  `agents` (`.also`).
+- **Live, meaning motion**: the LIT edge flows — a 4/4 dash pattern
+  whose offset animates along the edge's direction (`rlflow`, ~0.9s
+  linear, infinite), so the eye reads "this is the transition in
+  progress". The lit node is filled (14%) with a 2px stroke; at the live
+  edge with a request in flight the model box breathes (the heartbeat
+  keyframes). Nothing else on the drawing moves: geometry is fixed
+  pixels, a state change swaps which parts are lit. This is a DELIBERATE
+  second motion owner while replaying (ui.md's budget names the playhead
+  as the one) — the loop row's job is to show the loop running, and a
+  static lit chip failed that job on inspection. `prefers-reduced-motion`
+  drops the flow and the heartbeat both; the lit edge then reads as a
+  solid 2px stroke.
+- **The facts beside it** (right of the drawing, vertically centred, two
+  lines): line 1 `.rn-state` (the state word, in the state color)
+  `.rn-what` (what is running, `.rn-held` after it where the extent is
+  a wire fact); line 2 `.rn-since` — the absolute local clock the state
+  began at, never a ticking counter (ui.md). A live in-flight request
+  shows `since` only. Idle: `idle` and the clock the hole began at.
+- Colors are the lanes' own: human accent, model / tools / waiting the
+  time-track vars, agents purple, failed red; the diamond and the
+  unlabelled edge take the row's state color when lit.
 - **Click** the row: seek to the step that opened the state
   (`data-rpseek`). Hover: the page tip — the state, what it means on the
   wire (`NOW_WHY`), the running children, the click hint.
-- **Rendering discipline**: the row re-renders on every bar update (a
-  playback tick, a landed pair, a `start`) but rewrites its markup only
-  when the picture changes; a held duration that merely grew patches its
-  own span. Rebuilding under the reader's pointer would kill the hover
-  and can eat a click.
+- **Rendering discipline**: the row re-renders on every bar update but
+  rewrites its markup only when the picture changes; a held duration
+  that merely grew patches its own span (rebuilding under the pointer
+  kills the hover and can eat a click — and would restart the flow
+  animation every tick).
 - No counts. The per-tool tally is "so far", times are the beat and the
   strip tips — a number is stated once per view.
+
+### The strip's axis: the thread's own time, idle compressed
+
+Revision 2.2. On the real 2026-08-28 trace (6 sessions, 10h38m of
+capture) the selected 1h34m session sat in the left quarter of the strip
+and three quarters of the frame drew nothing — the axis was the whole
+capture (`rpSpan`: every pair plus open starts). Two fixes, both on the
+axis, nothing on the lanes:
+
+1. **The axis is the SELECTED thread's extent**: `t0..t1` of its own
+   focus items (its model / tools / waiting spans, human points, cuts and
+   failed marks, and the agent spans it spawned) — stretched to cover an
+   open `start` when the thread is the live one. Other threads' items
+   still draw (`.other`, ghosted) but only where they fall inside the
+   axis; a capture with one thread selected no longer shows five idle
+   hours of somebody else's sessions. Changing the selection re-rules the
+   axis (the strip memo key already carries `selKey`).
+2. **Idle is compressed**: a gap in the thread's BUSY time (the union of
+   its focus spans, points widened to nothing) longer than `RP_IDLE_MS`
+   (5 min) collapses to a fixed `RP_BREAK_PX` (28px) break, drawn as a
+   hatched column across every lane with the skipped duration in the
+   clock row (`⧸⧸ 1h 29m`). A human who went to lunch is 28px, not
+   half the strip.
+
+`timeScale(busy, t0, t1, px, idleMs, breakPx)` in src/replay.ts (pure,
+unit-tested) builds the mapping: `busy` are sorted, merged [t0,t1]
+intervals; the result is `{ segs: [{ t0, t1, x0, x1, kind: 'busy'|'break' }],
+px }` with x in PIXELS along the track (the strip's width is
+`frameW * zoom`, already measured), busy segments sharing the remaining
+width proportionally to their duration, breaks fixed. `scaleX(scale, t)`
+and `scaleT(scale, x)` are the two inverses (clamped; inside a break
+both map linearly across the break's 28px, so scrubbing through a break
+is fast but continuous). With no gap over `idleMs` the scale is one
+linear segment and every position is what it was.
+
+EVERY x<->t site goes through the scale — there is one mapping, never a
+second `(t - t0) / dur` beside it: the strip's spans, points and marks
+(`renderReplayStrip`), the veil / playhead / slice band
+(`renderReplayBar`), the clock row, `rpFollowHandle`, the track's
+pointer handlers (drag scrubs, click seeks, shift+drag selects), and
+wheel zoom around the cursor. A span that straddles a break draws
+clipped to its busy parts (the break column sits on top).
+
+The clock row rules PER BUSY SEGMENT: `axisTicks(seg.t0, seg.t1,
+seg.x1 - seg.x0, tz)` for each busy segment, positioned by `scaleX` —
+busy segments share pixels proportionally to duration, so they all land
+on the same ladder step, and a folded 8h break never coarsens the ruler
+of the 90 minutes beside it (ruling over the whole extent did exactly
+that: 5-minute ticks collapsed to hourly the moment a break existed).
+Each break gets its `⧸⧸ <skipped>` label instead (fmtSpan, coarse:
+`1h 29m`, `12m`), 10px, faint, centred in the column — anchored to the
+column's inner edge when the column touches either end of the track,
+so the label is never clipped; a tick label that would collide with it
+is dropped (its rule stays). Major rules (day boundaries) drop through
+the lanes when they land in busy time.
+
+The transport's `<length>` stays the axis's REAL duration (`t1 - t0`,
+wall-clock) — the ruler compresses, the clock does not lie. `+<offset>`
+stays real too. Playback's idle compression (`nextTick`, ≤2s per gap)
+is unchanged and unrelated: it compresses waiting, this compresses
+pixels.
+
+Deep links (`@<pair-id>`) are unaffected: they address pairs, not x.
 
 ### Transport
 
@@ -495,10 +585,12 @@ slice; the stage and the strip read them. Nothing new in the URL.
 
 ## Rules kept
 
-- Motion: the playhead is the ONE owner. The loop row's model chip beats
-  only for a live in-flight request (the status dot's heartbeat, same
+- Motion: two owners while replaying, both deliberate — the playhead and
+  the loop row's lit edge (the flow, rev 2.2). The model box beats only
+  for a live in-flight request (the status dot's heartbeat, same
   keyframes); a state change lights different parts of a fixed drawing,
-  it moves nothing.
+  it moves nothing. `prefers-reduced-motion` drops the flow and the
+  heartbeat.
   No flow tokens, no tweened counts, no ticking clocks; the convo jumps,
   never glides, on cursor changes. `prefers-reduced-motion` drops the
   fade and the heartbeat.
@@ -516,13 +608,20 @@ slice; the stage and the strip read them. Nothing new in the URL.
 - `bun test`: tests/replay.test.ts (nowAt per state incl. live, loopAt —
   the lit chip and the edge per state, the live edge rule, failed, the
   half-lit slot —, soFar, axisTicks step choice + day-major, beatAt.head;
-  the parallel-agents and failed-request fixtures stay),
+  the parallel-agents and failed-request fixtures stay; timeScale — no
+  gap is one linear segment, a 20-minute gap is busy / 28px break / busy
+  with scaleX·scaleT round-tripping in busy time and inside the break,
+  breaks exceeding the width fall back to linear; threadExtent scoped to
+  a thread, the human pause kept as a gap),
   tests/ui-grammar.test.ts (the loop row is in the bar: idle lights
   nothing, the results edge lights out of an agents-flavored slot, a
   `start` lights the model chip beating with no edge after a final reply;
   the stage renders beat + so-far and no `#stage-now` / `#sd`; a `pair`
   frame while replaying at the edge ADVANCES the cursor and a frame while
-  behind does not; the strip carries a clock row, the
+  behind does not; the tools state lights the diamond and its `yes` edge,
+  the human-after-reply state lights `no · answer`; a selected thread with
+  a >5 min idle gap draws an `rp-break` column and a `⧸⧸` label in the
+  clock row, a thread without one draws none; the strip carries a clock row, the
   veil, `.other` on unselected threads; ⏭ / End seek to the edge; entering
   replay from the requests tab still rules the clock once the route lands;
   selecting the child flips the focus; a tail advance renders the session
@@ -537,8 +636,6 @@ slice; the stage and the strip read them. Nothing new in the URL.
 - The context overview (ordinal) and this strip (time) are two overview
   components. Fold them into one with an axis switch once both have
   settled; do not build a third.
-- A compressed-time axis for merged multi-day sessions (playback already
-  idle-compresses; the strip does not).
 - The ruler takes ONE zone offset, measured at the span's start, so a
   session that runs across a DST transition draws one side an hour off its
   own tips. A correct ruler needs a per-tick offset (a Date per tick), and

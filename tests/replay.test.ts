@@ -19,6 +19,11 @@ import {
   loopAt,
   soFar,
   axisTicks,
+  mergeBusy,
+  timeScale,
+  scaleX,
+  scaleT,
+  threadExtent,
   beatAt,
   chaptersOf,
 } from "../src/replay";
@@ -367,6 +372,23 @@ describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
     expect(soFar(lanes, 2_000_000)).toEqual({ steps: 4, tools: { Bash: 1 }, agents: 0, failed: 1, cuts: 0 });
   });
 
+  test("threadExtent is the thread's own window and the time inside it that worked", () => {
+    const ex = threadExtent(lanes, t.key);
+    expect(ex.t0).toBe(1_000_000);
+    expect(ex.t1).toBe(1_105_500);
+    // the model spans, the tools gap and the retry fuse into one busy run;
+    // the 89s the human spent thinking between the loops is NOT busy — it is
+    // exactly the kind of hole the axis compresses.
+    expect(ex.busy).toEqual([
+      [1_000_000, 1_011_000],
+      [1_100_000, 1_105_500],
+    ]);
+    // no key = every item in the lanes; a key nothing carries = nothing
+    expect(threadExtent(lanes, "")).toEqual(ex);
+    expect(threadExtent(lanes, "no-such-thread")).toBeNull();
+    expect(threadExtent(null, "")).toBeNull();
+  });
+
   test("beatAt is the step whose pair END is the latest at or before the cursor", () => {
     expect(beatAt(t, 999_000, byId)).toBeNull();
     const b1 = beatAt(t, 1_005_000, byId);
@@ -489,6 +511,16 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     expect(nowAt(lanes, 2_005_000, parent.key)).toMatchObject({ state: "tools", what: "Task ×2" });
   });
 
+  test("a thread's extent covers the children it spawned; a child's covers only itself", () => {
+    const p = threadExtent(lanes, parent.key);
+    // the parent's own requests are 2_000_000..2_200_500, but the children it
+    // dispatched are its time too (the strip draws them in its focus)
+    expect(p.t0).toBe(2_000_000);
+    expect(p.t1).toBe(2_200_500);
+    const child = threadExtent(lanes, lanes.agents[1].threadKey);
+    expect([child.t0, child.t1]).toEqual([2_020_000, 2_021_000]);
+  });
+
   test("the loop row's slot reads agents for a spawning step, and the model returns from it", () => {
     expect(loopAt(lanes, 2_020_500, parent.key)).toMatchObject({ state: "agents", node: "slot", slot: "agents", edge: "model>slot", also: false });
     // M2 begins exactly where M1's gap ended, and M1's step was a spawn:
@@ -537,6 +569,85 @@ describe("beatAt: a harness-authored head is not the task", () => {
 
   test("head is empty when the harness wrote the prompt that opened the loop", () => {
     expect(beatAt(t, 9_000_000, byId).head).toBe("");
+  });
+});
+
+// The strip's axis: wall-clock to pixels, with the thread's idle compressed
+// to a fixed column. One mapping, two inverses — every mark on the strip and
+// every pointer handler goes through it.
+describe("timeScale / scaleX / scaleT", () => {
+  const MIN = 60_000;
+  const T = 1_000_000;
+  const IDLE = 5 * MIN;
+  const BRK = 28;
+
+  test("mergeBusy sorts, fuses touching and overlapping runs, keeps points", () => {
+    expect(mergeBusy([[30, 40], [0, 10], [10, 20], [15, 25]])).toEqual([[0, 25], [30, 40]]);
+    expect(mergeBusy([[5, 5], [9, 8]])).toEqual([[5, 5], [8, 9]]);
+    expect(mergeBusy([null, [NaN, 1]] as any)).toEqual([]);
+  });
+
+  test("no qualifying gap: ONE linear segment, and every position is what it was", () => {
+    const sc = timeScale([[T, T + MIN], [T + 2 * MIN, T + 4 * MIN]], T, T + 4 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0]).toEqual({ t0: T, t1: T + 4 * MIN, x0: 0, x1: 1000, kind: "busy" });
+    expect(scaleX(sc, T)).toBe(0);
+    expect(scaleX(sc, T + 2 * MIN)).toBe(500);
+    expect(scaleX(sc, T + 9 * MIN)).toBe(1000); // clamped, both ends
+    expect(scaleX(sc, T - MIN)).toBe(0);
+    expect(scaleT(sc, 250)).toBe(T + MIN);
+    expect(scaleT(sc, -50)).toBe(T);
+    expect(scaleT(sc, 5000)).toBe(T + 4 * MIN);
+  });
+
+  test("a 20-minute hole becomes a fixed 28px break between two busy segments", () => {
+    const busy = [[T, T + 2 * MIN], [T + 22 * MIN, T + 24 * MIN]];
+    const sc = timeScale(busy, T, T + 24 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.map((s: any) => s.kind)).toEqual(["busy", "break", "busy"]);
+    expect(sc.px).toBe(1000);
+    // the break costs exactly 28px; the two busy stretches share the rest in
+    // proportion to their real duration (2 minutes each, so 486 each)
+    expect(sc.segs[1].x1 - sc.segs[1].x0).toBe(28);
+    expect(sc.segs[0].x1 - sc.segs[0].x0).toBeCloseTo(486, 6);
+    expect(sc.segs[2].x1 - sc.segs[2].x0).toBeCloseTo(486, 6);
+    expect(sc.segs[2].x1).toBe(1000);
+    // a moment inside the hole lands inside the break's own column
+    const mid = scaleX(sc, T + 12 * MIN);
+    expect(mid).toBeGreaterThan(sc.segs[1].x0);
+    expect(mid).toBeLessThan(sc.segs[1].x1);
+    // ...and the two functions are inverses everywhere, break included
+    for (const t of [T, T + MIN, T + 2 * MIN, T + 12 * MIN, T + 22 * MIN, T + 24 * MIN]) {
+      expect(scaleT(sc, scaleX(sc, t))).toBeCloseTo(t, 3);
+    }
+    for (const x of [0, 100, 490, 500, 512, 700, 1000]) {
+      expect(scaleX(sc, scaleT(sc, x))).toBeCloseTo(x, 3);
+    }
+  });
+
+  test("only INTERIOR idle compresses: the edges of the span stay real time", () => {
+    // a request still in flight stretches the axis past the last busy span;
+    // that trailing stretch is not a gap between two runs, so it draws.
+    const sc = timeScale([[T + 10 * MIN, T + 11 * MIN]], T, T + 30 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0].kind).toBe("busy");
+  });
+
+  test("more breaks than track: one honest linear segment, never a negative width", () => {
+    const busy: number[][] = [];
+    for (let i = 0; i < 40; i++) busy.push([T + i * 10 * MIN, T + i * 10 * MIN + 1]);
+    const sc = timeScale(busy, T, T + 400 * MIN, 1000, IDLE, BRK); // 39 * 28 > 1000
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0].kind).toBe("busy");
+  });
+
+  test("degenerate inputs degrade to the linear segment", () => {
+    expect(timeScale([], T, T, 500, IDLE, BRK).segs.length).toBe(1);
+    expect(timeScale([], T + 1, T, 500, IDLE, BRK).segs.length).toBe(1);
+    const zero = timeScale([], T, T + MIN, 0, IDLE, BRK);
+    expect(zero.px).toBe(1);
+    expect(scaleX(zero, T + MIN)).toBe(1);
+    expect(scaleX(null, T)).toBe(0);
+    expect(scaleT({ segs: [], t0: T }, 10)).toBe(T);
   });
 });
 

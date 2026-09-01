@@ -426,4 +426,44 @@ describe("dashboard", () => {
       s3.stop();
     }
   });
+
+  // The route renders a DOCUMENT: its budget is VIEW_BYTES, never the
+  // streaming reader's 256 MB — a 708 MB session once shipped a 257 MB page
+  // that no tab survives, silently missing 78% of the session. The page
+  // must carry the truncation fact; ?full=1 is the escape hatch.
+  test("/view/<run-id> budgets the page, states the drop, and ?full=1 loads it all", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-viewbudget-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    const trace = join(dataDir, "trace-big.jsonl");
+    // ~30 pairs x ~100 KB: comfortably over a 1 MB budget, instant to write
+    const filler = "x".repeat(100 * 1024);
+    const lines: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const p = pair(`big${String(i).padStart(2, "0")}`);
+      (p.request as { body: unknown }).body = { messages: [{ role: "user", content: filler }] };
+      lines.push(JSON.stringify(p));
+    }
+    writeFileSync(trace, lines.join("\n") + "\n");
+    writeFileSync(join(dataDir, "instances", "rb.json"), JSON.stringify({
+      id: "rb", pid: 1, port: 9999, project: "p", projectPath: "/x/p",
+      logFile: trace, mode: "mitm",
+      startedAt: "2026-08-01T00:00:00.000Z", endedAt: "2026-08-01T01:00:00.000Z",
+    }));
+    const s4 = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const cut = await fetch(`http://127.0.0.1:${s4.port}/view/rb?bytes=1`);
+      expect(cut.status).toBe(200);
+      const cutHtml = await cut.text();
+      expect(cutHtml).toContain("big29");           // the newest survives
+      expect(cutHtml).not.toContain("big00");       // the oldest was dropped
+      expect(cutHtml).toContain('"truncated":{"droppedLines"'); // ...and the page says so
+      const full = await fetch(`http://127.0.0.1:${s4.port}/view/rb?full=1`);
+      expect(full.status).toBe(200);
+      const fullHtml = await full.text();
+      expect(fullHtml).toContain("big00");
+      expect(fullHtml).not.toContain('"truncated":{"droppedLines"');
+    } finally {
+      s4.stop();
+    }
+  });
 });

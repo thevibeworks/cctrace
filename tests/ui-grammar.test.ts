@@ -444,6 +444,20 @@ describe("header trace totals", () => {
     expect(stats.textContent).toContain("$");
     expect(String(stats.dataset.tip)).toContain("2 model calls");
   });
+
+  // A budgeted page must SAY it is the newest slice — a silent 78% drop
+  // once shipped on /view/<run-id> (2026-08-31).
+  test("the truncation chip states the kept slice; absent meta renders nothing", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")], {
+      truncated: { droppedLines: 343, droppedBytes: 400 * 1024 * 1024, keptBytes: 32 * 1024 * 1024 },
+    }));
+    const chip = String(page.els["trunc"].innerHTML);
+    expect(chip).toContain("newest 32.0MB of 432.0MB");
+    expect(chip).toContain("343 older lines");
+    const clean = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    expect(String(clean.els["trunc"].innerHTML)).toBe("");
+    expect(page.errors).toEqual([]);
+  });
 });
 
 describe("broken pairs degrade to one visible card", () => {

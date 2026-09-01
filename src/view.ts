@@ -233,6 +233,14 @@ function isSessionIdish(s: string): boolean {
  * Does not write anything — see writeView. Throws ViewError with a helpful
  * message (including nearby traces) when nothing matches.
  */
+/** The budget for a rendered DOCUMENT (`/view/<run-id>`): every kept byte
+ * lands ~1:1 in one inline <script> the browser must hold as source and
+ * parse. TAIL_BYTES (256 MB) is a sane budget for a streaming reader and an
+ * insane one for a page — a real 708 MB session produced a 257 MB HTML that
+ * no tab survives (2026-08-31). 32 MB keeps the page in a browser's
+ * comfort zone; ?full=1 / ?bytes=N are the escape hatches. */
+export const VIEW_BYTES = 32 * 1024 * 1024;
+
 export async function resolveView(target: string, logDir: TraceDirArg, opts: ViewOpts = {}): Promise<ViewResult> {
   const tailBytes = opts.tailBytes ?? TAIL_BYTES;
   // A whole-file read, budgeted: the newest `tailBytes` of decoded lines.
@@ -426,6 +434,7 @@ export async function writeView(target: string, logDir: TraceDirArg, meta: PageM
   const html = renderSnapshot(result.pairs, {
     traceBytes,
     traceDiskBytes,
+    truncated: result.truncated,
     sessionTitle: titleFor(result.sourcePaths[0] ? dirname(result.sourcePaths[0]) : viewDir, mainSessionId(result.pairs), traceFile) || undefined,
     project: basename(projectRoot),
     projectPath: projectRoot,

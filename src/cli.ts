@@ -484,6 +484,9 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, viewTracePath),
       mode: tailing ? "tail" : "view",
       traceDiskBytes: traceSizes(result).traceDiskBytes,
+      // The page repeats the terminal's truncation notice: a reader who got
+      // the URL never saw the terminal.
+      truncated: result.truncated,
       sessionTitle: titleFor(dirname(viewTracePath), mainSessionId(result.pairs, wireTables()), viewTrace) || undefined,
     },
     dataDir: DATA_DIR,

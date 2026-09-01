@@ -128,10 +128,19 @@ to protect that feeling.
   context overview is the context view's: lanes x wall-clock, the playhead
   and the slice spanning every lane, never scrolled away. Reading depth is
   a function of zoom (map / read / full on `data-depth`), not a toggle.
-  The playhead is the page's ONE motion owner while replaying: nothing
-  else tweens, counts, or ticks — a still frame is always complete. The
-  stage's diagram is fixed geometry: a node or edge with zero observations
-  goes faint, never hidden (hiding shifts the picture).
+  While replaying the page has TWO motion owners, both deliberate: the
+  playhead, and the loop row's lit edge — the flowchart of Claude Code's
+  loop under the strip draws the transition in progress as a flowing
+  dash (a static lit chip failed to read as "the loop is running" on
+  inspection, 2026-08-29). Nothing else tweens, counts, or ticks — a
+  still frame is always complete; the model box's heartbeat fires only
+  while a request is actually in flight. Both drop under
+  `prefers-reduced-motion`. The strip's axis is the SELECTED thread's own
+  time with idle gaps over five minutes folded to a 28px hatched break
+  (`⧸⧸ 1h 29m`) — a session never sits in a quarter of a frame ruled by
+  somebody else's hours, and a lunch break is not half the strip. The FUTURE is what dims — the veil right of the
+  playhead — never the past: tinting what the reader is looking at costs
+  the data its contrast.
 - The dashboard (`src/dashboard.ts`) is part of this design system, not a
   side page: same variable block, same type scale, same lowercase labels,
   same small-button grammar for its group-by control, and the same client

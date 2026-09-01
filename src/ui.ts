@@ -103,7 +103,15 @@ import {
   stepOutcome,
   sessionLanes,
   stateAt,
-  stateCounts,
+  nowAt,
+  loopAt,
+  soFar,
+  axisTicks,
+  mergeBusy,
+  timeScale,
+  scaleX,
+  scaleT,
+  threadExtent,
   beatAt,
   chaptersOf,
 } from "./replay";
@@ -616,11 +624,53 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #rp-lanes[data-depth="full"] .rp-point .rp-lbl,
     #rp-lanes[data-depth="read"] .rp-mk,
     #rp-lanes[data-depth="full"] .rp-mk { display: inline; }
-    #rp-fill {
-      position: absolute; left: 0; top: 0; bottom: 0; width: 0;
-      background: color-mix(in srgb, var(--accent) 10%, transparent);
+    /* the CLOCK row: a ruler in the page's local time. A hairline with its
+       label to the right; a major tick (the first of a calendar day) names
+       the date and drops a rule through every lane below. */
+    #rp-axis { position: relative; height: var(--rp-lh); overflow: hidden; }
+    .rp-tick {
+      position: absolute; top: 0; height: var(--rp-lh);
+      border-left: 1px solid var(--border); padding-left: 3px;
+      font-size: 10px; line-height: var(--rp-lh); color: var(--text-faint);
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    .rp-tick.major { color: var(--text-muted); border-left-color: var(--text-faint); }
+    /* a compressed idle stretch: the thread did nothing here, so its time is
+       a fixed 28px column instead of half the strip. The clock row names how
+       long was skipped (the ruler compresses; the clock never lies), the
+       column hatches it across every lane. */
+    .rp-bk {
+      position: absolute; top: 0; height: var(--rp-lh);
+      transform: translateX(-50%);
+      font-size: 10px; line-height: var(--rp-lh); color: var(--text-faint);
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    /* against a track edge the label anchors INSIDE it, never half off */
+    .rp-bk.at-end { transform: translateX(-100%); }
+    .rp-bk.at-start { transform: none; }
+    #rp-breaks { position: absolute; left: 0; right: 0; top: var(--rp-lh); bottom: 0; pointer-events: none; }
+    .rp-break {
+      position: absolute; top: 0; bottom: 0;
+      background: repeating-linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--border) 35%, transparent) 0 2px,
+        transparent 2px 5px);
+    }
+    /* drawn BEFORE the lanes so the spans read over it, never under */
+    #rp-rules { position: absolute; left: 0; right: 0; top: var(--rp-lh); bottom: 0; pointer-events: none; }
+    .rp-rule { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); opacity: 0.55; }
+    /* the VEIL: the future is dimmed. A replay never shows the reader
+       something that has not happened — the same statement the convo
+       makes, made on the strip. (The rev-1 accent-tinted PAST cost the
+       model spans their contrast exactly where the reader looks.) */
+    #rp-veil {
+      position: absolute; left: 0; right: 0; top: 0; bottom: 0;
+      background: color-mix(in srgb, var(--bg-surface) 55%, transparent);
       pointer-events: none;
     }
+    /* the selected thread draws full, every other thread ghosts: the shape
+       of the whole capture stays readable, the selected loop is the picture */
+    #rp-lanes-body .other { opacity: 0.3; }
     /* the slice band: a selected range of the timeline (shift+drag) */
     #rp-slice {
       position: absolute; top: 0; bottom: 0; display: none;
@@ -643,68 +693,133 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        (compaction / rewind). The trajectory's axis break, full height. */
     .rp-mark.cut { background: var(--amber); color: var(--amber); opacity: 0.85; }
     .rp-mark.err { background: var(--red); color: var(--red); }
+    /* the playhead: the page's ONE moving thing while replaying. A halo in
+       the strip's own surface color so it reads over a span of any hue, and
+       a flag on the clock row so the eye finds it in a dense region. */
     #rp-handle {
       position: absolute; top: 0; bottom: 0; width: 2px; left: 0;
       background: var(--accent); pointer-events: none;
-      box-shadow: 0 0 4px color-mix(in srgb, var(--accent) 60%, transparent);
+      box-shadow: 0 0 0 1px var(--bg-surface);
+    }
+    #rp-handle::before {
+      content: ''; position: absolute; top: 0; left: -2px;
+      border-left: 3px solid transparent; border-right: 3px solid transparent;
+      border-top: 5px solid var(--accent);
     }
     #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    /* ---- the stage (#stage): the observed state machine + the beat ----
+    /* the live chip: at the edge it is STATE (a green dot, the header status
+       dot's own green), behind it is the control that snaps back. Live runs
+       only — a saved trace has no edge to chase. */
+    #rp-live { display: inline-flex; align-items: center; }
+    #rp-live .at-edge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--text-faint); white-space: nowrap;
+    }
+    #rp-live .at-edge::before {
+      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); flex-shrink: 0;
+    }
+    /* ---- the loop row (#rp-now): Claude Code's machine as a FLOWCHART,
+       drawn once, lit at the cursor. Three process boxes (the hand-off slot
+       reads tools / agents / waiting), one "calls?" decision diamond, five
+       labelled edges; the now facts — what is running, how long it has held,
+       since when — ride beside it. Fixed pixel geometry: a still frame is
+       always complete, only the lit parts change, and the labels never
+       scale. The row's color is the lit state's hue — the strip's own lane
+       colors. */
+    #rp-now {
+      display: flex; align-items: center; gap: 10px; min-height: 70px;
+      font-size: 12px; color: var(--text-faint);
+    }
+    #rp-now .rp-glbl { flex: 0 0 56px; }  /* the strip's gutter: the bar reads as one table */
+    #rp-now[data-state="human"] { color: var(--accent); }
+    #rp-now[data-state="model"] { color: var(--lane-model); }
+    #rp-now[data-state="tools"] { color: var(--lane-tools); }
+    #rp-now[data-state="agents"] { color: var(--purple); }
+    #rp-now[data-state="waiting"] { color: var(--lane-waiting); }
+    #rp-now[data-state="failed"] { color: var(--red); }
+    #rp-now[data-rpseek] { cursor: pointer; }
+    #rp-loop { flex: none; display: block; overflow: visible; }
+    .rl-node { color: var(--text-faint); opacity: 0.5; }
+    .rl-node[data-node="human"] { color: var(--accent); }
+    .rl-node[data-node="model"] { color: var(--lane-model); }
+    .rl-node[data-slot="tools"] { color: var(--lane-tools); }
+    .rl-node[data-slot="agents"] { color: var(--purple); }
+    .rl-node[data-slot="waiting"] { color: var(--lane-waiting); }
+    .rl-node .rl-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
+    .rl-node .rl-nl { fill: var(--text-muted); font-size: 11px; }
+    .rl-node.on { opacity: 1; }
+    .rl-node.on .rl-nb { stroke-width: 2; fill-opacity: 0.14; }
+    .rl-node.on .rl-nl { fill: currentColor; }
+    /* hollow = nothing is running: the human's turn */
+    .rl-node.on.hollow .rl-nb { fill-opacity: 0; }
+    /* a child is working while the actor is elsewhere: half-lit */
+    .rl-node.also { opacity: 0.85; }
+    .rl-node.also .rl-nb { fill-opacity: 0.08; }
+    /* the decision is a wire fact (did the reply make calls), not a state the
+       agent occupies: no hue of its own until a branch out of it is lit,
+       and then the row's */
+    .rl-node[data-node="decision"] { color: var(--text-faint); }
+    .rl-node[data-node="decision"].on { color: inherit; }
+    #rp-now[data-state="failed"] .rl-node.on { color: var(--red); }
+    /* live: a request is in flight right now — the ONE heartbeat the page
+       spends while replaying (the status dot's keyframes) */
+    #rp-now.live .rl-node.on .rl-nb { animation: heartbeat 2.4s ease-in-out infinite; }
+    .rl-edge { color: var(--text-faint); opacity: 0.5; }
+    .rl-edge .rl-e { fill: none; stroke: currentColor; stroke-width: 1; }
+    .rl-edge .rl-ah { fill: currentColor; stroke: none; }
+    /* the edge labels name the machine's transitions — they read a step
+       above the hairlines they belong to, and take the hue when lit */
+    .rl-edge .rl-el { fill: var(--text-muted); font-size: 9px; }
+    .rl-edge.on .rl-el { fill: currentColor; }
+    /* the lit edge takes the row's state color and FLOWS: the transition in
+       progress, drawn along the path's own direction. The page's second
+       motion owner while replaying, and a deliberate one — a static lit chip
+       did not read as a machine running (replay-stage.md, rev 2.2). */
+    .rl-edge.on { opacity: 1; color: inherit; }
+    .rl-edge.on .rl-e {
+      stroke-width: 2; stroke-dasharray: 4 4;
+      animation: rlflow 0.9s linear infinite;
+    }
+    @keyframes rlflow { from { stroke-dashoffset: 8; } to { stroke-dashoffset: 0; } }
+    /* the facts beside the drawing: two lines, vertically centred */
+    .rn-facts { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .rn-l1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+    .rn-state { flex: none; }
+    .rn-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+    .rn-held { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    /* absolute wall-clock, never a ticking counter (ui.md) */
+    .rn-since { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+    /* ---- the stage (#stage): the beat, the tally ----
        Top of the threads column while replaying (the rail stays under it:
        the strip is time navigation, the rail is still the outline). The
-       diagram's geometry is FIXED — a node or edge with nothing observed
-       goes faint, never missing; hiding one would shift the picture under
-       a reader mid-scrub. */
+       moment itself is stated in the frame — the loop row — so the stage
+       is what this STEP did. */
     #stage { padding: 2px 4px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
-    #sd { display: block; width: 100%; height: auto; }
-    /* One hue per wire fact, the same ones the strip uses: model/tools/
-       waiting from the time-track vars, agents purple, human accent, the
-       reply muted (a reply is the absence of work, not a color). */
-    .sd-node { color: var(--text-faint); opacity: 0.66; transition: opacity 160ms ease-out; }
-    .sd-node[data-node="human"] { color: var(--accent); }
-    .sd-node[data-node="model"] { color: var(--lane-model); }
-    .sd-node[data-node="tools"] { color: var(--lane-tools); }
-    .sd-node[data-node="agents"] { color: var(--purple); }
-    .sd-node[data-node="waiting"] { color: var(--lane-waiting); }
-    .sd-node[data-node="reply"] { color: var(--text-muted); }
-    .sd-node .sd-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
-    .sd-node .sd-nl { fill: var(--text-muted); font-size: 10px; }
-    .sd-node .sd-nn { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-node .sd-fail { fill: var(--red); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-node.zero { opacity: 0.26; }
-    .sd-node.on { opacity: 1; }
-    .sd-node.on .sd-nb { stroke-width: 2; fill-opacity: 0.12; }
-    .sd-node.on .sd-nl { fill: currentColor; }
-    .sd-node.on .sd-nn { fill: var(--text); }
-    /* live: a request is in flight at the cursor — the one heartbeat the
-       page already owns (the status dot), never a ticking counter */
-    .sd-node.live .sd-nb { animation: heartbeat 2.4s ease-in-out infinite; }
-    .sd-edge { color: var(--text-faint); opacity: 0.5; transition: opacity 160ms ease-out; }
-    .sd-edge .sd-e { fill: none; stroke: currentColor; stroke-width: 1; }
-    .sd-edge .sd-ah { fill: currentColor; stroke: none; }
-    .sd-edge .sd-en { fill: var(--text-faint); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-edge .sd-cut { fill: var(--amber); font-size: 9px; font-variant-numeric: tabular-nums; }
-    .sd-edge.zero { opacity: 0.2; }
-    .sd-edge.on { opacity: 1; color: var(--text); }
-    .sd-edge.on .sd-e { stroke-width: 2; }
-    .sd-edge.on .sd-en { fill: var(--text); }
-    .sd-edge.on[data-edge$=">model"] { color: var(--lane-model); }
-    .sd-edge.on[data-edge="model>tools"] { color: var(--lane-tools); }
-    .sd-edge.on[data-edge="model>agents"] { color: var(--purple); }
-    .sd-edge.on[data-edge="model>waiting"] { color: var(--lane-waiting); }
-    .sd-edge.on[data-edge="reply>human"] { color: var(--accent); }
-    @media (prefers-reduced-motion: reduce) {
-      .sd-node, .sd-edge { transition: none; }
-      .sd-node.live .sd-nb { animation: none; }
-    }
-    .sd-tools {
-      font-size: 10px; color: var(--text-faint); padding: 2px 6px 0;
+    /* so far: the call tally as of the cursor — the only place the
+       per-tool count is stated */
+    .st-sofar {
+      font-size: 10px; color: var(--text-faint); padding: 6px 6px 0;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
-    .sd-live { font-size: 11px; color: var(--lane-model); padding: 2px 6px 0; font-variant-numeric: tabular-nums; }
+    @media (prefers-reduced-motion: reduce) {
+      #rp-now.live .rl-node.on .rl-nb { animation: none; }
+      .rl-edge.on .rl-e { stroke-dasharray: none; animation: none; }
+      .sb.arrived { animation: none; }
+    }
     /* the beat: what the agent did at this step, one row per fact */
     .sb { margin-top: 8px; }
+    /* a tail advance landed a NEW step: the same 160ms fade a live row
+       gets. A scrub never fades — scrubbing is continuous. */
+    .sb.arrived { animation: arrive 160ms cubic-bezier(0.23, 1, 0.32, 1); }
+    /* the loop's head: which task this step serves, so the reader never
+       has to find it in the rail. Click jumps to that chapter. */
+    .sb-head {
+      font-size: 11px; color: var(--text-faint); padding: 0 6px 5px; cursor: pointer;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .sb-head:hover { color: var(--text-muted); }
     .sb-cap {
       font-size: 11px; color: var(--text-faint); padding: 0 6px 4px;
       font-variant-numeric: tabular-nums;
@@ -2047,7 +2162,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the stage (state diagram + the beat) at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the loop row — where in the agent's loop the cursor sits — under it, the beat at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
       <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
     </span>
   </div>
@@ -2059,20 +2174,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed).&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
         <div id="rp-gut"></div>
         <div id="rp-scroll">
           <div id="rp-lanes-track">
+            <div id="rp-axis"></div>
+            <div id="rp-rules"></div>
             <div id="rp-lanes-body"></div>
-            <div id="rp-fill"></div>
+            <div id="rp-breaks"></div>
+            <div id="rp-veil"></div>
             <div id="rp-slice"></div>
             <div id="rp-handle"></div>
           </div>
         </div>
       </div>
+      <div id="rp-now" data-state="idle"></div>
       <div class="rp-transport">
         <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
         <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
+        <button class="rp-btn" id="rp-end" title="jump to the end of the tape&#10;On a live run that is the live edge — replay tails from there.&#10;> key: End">⏭</button>
         <span class="rp-speeds">
           <button class="rp-speed active" data-speed="1">1x</button>
           <button class="rp-speed" data-speed="2">2x</button>
@@ -2081,6 +2201,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         </span>
         <span id="rp-time">0:00 / 0:00</span>
         <span id="rp-slice-chip"></span>
+        <span id="rp-live"></span>
         <button class="rp-btn" id="rp-exit"></button>
       </div>
     </div>
@@ -2298,12 +2419,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // The stage layer (docs/design/replay-stage.md), injected from
     // src/replay.ts + src/session.ts: the trace as lanes over wall-clock,
-    // the observed state machine, the beat. Pure, unit-tested there.
+    // the observed state at the cursor read into the now line and lit on
+    // the loop row, the tally behind it, the beat, the strip's clock ruler.
+    // Pure, unit-tested there.
     ${isSpawnTool.toString()}
     ${stepOutcome.toString()}
     ${sessionLanes.toString()}
     ${stateAt.toString()}
-    ${stateCounts.toString()}
+    ${nowAt.toString()}
+    ${loopAt.toString()}
+    ${soFar.toString()}
+    ${axisTicks.toString()}
+    ${mergeBusy.toString()}
+    ${timeScale.toString()}
+    ${scaleX.toString()}
+    ${scaleT.toString()}
+    ${threadExtent.toString()}
     ${beatAt.toString()}
     ${chaptersOf.toString()}
 
@@ -2347,9 +2478,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpScroll = document.getElementById('rp-scroll');
     const rpTrack = document.getElementById('rp-lanes-track');
     const rpBody = document.getElementById('rp-lanes-body');
-    const rpFill = document.getElementById('rp-fill');
+    const rpAxis = document.getElementById('rp-axis');
+    const rpRules = document.getElementById('rp-rules');
+    const rpBreaks = document.getElementById('rp-breaks');
+    const rpVeil = document.getElementById('rp-veil');
     const rpHandle = document.getElementById('rp-handle');
     const rpTime = document.getElementById('rp-time');
+    const rpEnd = document.getElementById('rp-end');
+    const rpLive = document.getElementById('rp-live');
+    const rpNow = document.getElementById('rp-now');
     const rpSlice = document.getElementById('rp-slice');
     const pulseEl = document.getElementById('pulse');
     const rpSliceChip = document.getElementById('rp-slice-chip');
@@ -2709,10 +2846,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 replay is a STAGE \\u2014 five lanes over wall-clock (human, model, tools, agents, harness); wheel to zoom, and the strip says more as you zoom; click a span to jump there\\n' +
-        '\\u00b7 the agent\\u2019s observed state machine \\u2014 human \\u2192 model \\u2192 tools / agents / waiting \\u2192 reply, counts and time as of the cursor, the transition just taken lit; nothing inferred\\n' +
-        '\\u00b7 the BEAT \\u2014 what the agent did at this step: every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
-        '\\u00b7 live thinking-now \\u2014 a request is announced as it is forwarded, so the model node lights the moment the call goes out, not when the reply lands\\n' +
+        '\\u00b7 COST is a reading of the Context view \\u2014 a per-step cost track (74% of a real $81 thread was cache reads), amber $ BUMPS with their wire cause (retry / expired / prefix changed) priced against a warm cache, where-the-money-went, and the account quota the client polled\\n' +
+        '\\u00b7 the LOOP ROW is a live flowchart \\u2014 human / model / hand-off boxes, a calls? diamond, the lit edge FLOWS; the state at the cursor, what is running, since when; click it to jump\\n' +
+        '\\u00b7 the strip rules the selected thread\\u2019s OWN time \\u2014 idle gaps fold to \\u29f8\\u29f8 breaks, so a 1h34m session fills the frame instead of a corner of a 10h axis; wall-clock ticks, the future veiled, other threads ghosted\\n' +
+        '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor, the loop row and the conversation follow every pair that lands\\n' +
         '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
@@ -2848,6 +2985,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
+          // TAIL, measured BEFORE the pair lands: was the cursor at the live
+          // edge, and was the reader at the bottom of the conversation?
+          // Terminal semantics — stick when you're there, never yank when
+          // you're not (docs/design/ui.md 3).
+          const preSpan = replay.active ? replaySpan(pairs) : null;
+          const wasAtEdge = !!preSpan && replay.cursor >= preSpan.t1 - 0.5;
+          const wasAtBottom = wasAtEdge && convoAtBottom();
+          // The step the stage is showing, BEFORE the pair lands: the
+          // live-arrived fade is only honest when the beat actually moves
+          // (telemetry, count_tokens probes and usage polls land here too).
+          const preBeat = wasAtEdge ? stageBeatId() : '';
           // The response retires its start even when the page rejects the
           // pair — the server retires silently on land, nothing else would.
           if (msg.pair && msg.pair.id) openStarts.delete(msg.pair.id);
@@ -2869,9 +3017,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             liveSids.add(nsid);
             if (!firstSid && view === 'session' && convoAtBottom()) sessionSelKey = null;
           }
-          if (view === 'session') showSession(sessionSelKey);
+          // While tailing, the tail branch below owns the session render:
+          // it moves the cursor first, so rendering here would build the
+          // whole view twice per landed pair, once at a cursor already gone.
+          if (view === 'session' && !wasAtEdge) showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
           rpLiveRefresh(); // the strip grows at the right edge
+          if (wasAtEdge) {
+            // The cursor FOLLOWS: the loop row, the beat and the convo all
+            // move to the new edge. The beat gets the page's live-arrived
+            // fade once — a scrub never fades, and neither does a pair that
+            // left the beat where it was.
+            const postSpan = replaySpan(pairs);
+            if (postSpan) {
+              replay.cursor = postSpan.t1;
+              stageFade = stageBeatId() !== preBeat;
+              try { refreshReplay({ follow: false }); } finally { stageFade = false; }
+              if (wasAtBottom) convoToBottom();
+              updateReplayHash();
+            }
+          }
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
           const known = new Set(pairs.map(p => p.id));
@@ -2884,6 +3049,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
           render();
           refreshDetailNav();
+          // Merged history moves the tape's LEFT edge, not the cursor — but
+          // the axis it hangs on is new, so the playhead, the veil and the
+          // tape length have to be re-read on it or they point at the old one.
+          if (replay.active) renderReplayBar();
           if (view === 'session') showSession(sessionSelKey);
           if (view === 'context') showContext(sessionSelKey);
         } else if (msg.type === 'purged') {
@@ -2938,6 +3107,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (m < 60) return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
       const h = Math.floor(m / 60), mm = m % 60;
       return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+    }
+    // The same span at the resolution a SKIPPED stretch deserves: "1h 29m",
+    // "12m". Seconds on an hour-long hole are noise, not precision.
+    function fmtSpanCoarse(ms) {
+      if (ms < 60000) return fmtSpan(ms);
+      const m = Math.round(ms / 60000);
+      if (m < 60) return m + 'm';
+      const h = Math.floor(m / 60), mm = m % 60;
+      return h + 'h' + (mm ? ' ' + (mm < 10 ? '0' : '') + mm + 'm' : '');
     }
     // Wall-clock is always 24h — locale 12h AM/PM wastes row width and
     // reads slower in a dense table.
@@ -3470,8 +3648,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           updateReplayHash();
         } else if (e.key === 'End' && replay.active) {
           e.preventDefault();
-          seekReplay(replaySpan(pairs).t1);
-          updateReplayHash();
+          seekEnd();
         }
       }
     });
@@ -4214,6 +4391,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       renderThreadsPane(threads, sel);
       renderConvoPane(sel);
+      // The strip is RULED by the selected thread (its extent is the axis)
+      // and ghosts every other one, so a rail click repaints the whole bar —
+      // keyed on the selection, so this is a no-op otherwise.
+      if (replay.active) renderReplayBar();
       if (pendingSessionFocus) {
         pendingSessionFocus = false;
         focusThreadsPane();
@@ -7397,8 +7578,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // setTimeout ladder over response-end boundaries with idle compression.
     const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null, zoom: 1 };
     const IDLE_CAP_MS = 2000;
-    const RP_ZOOM_MAX = 32;    // 1 = the whole capture fits the frame
+    const RP_ZOOM_MAX = 32;    // 1 = the whole axis fits the frame
     const RP_AGENT_ROWS = 4;   // visible agent rows; deeper ones fold into "+k more"
+    const RP_IDLE_MS = 300000; // idle longer than this compresses on the axis
+    const RP_BREAK_PX = 28;    // ...to exactly this much track, hatched
 
     // The slice: a selected range of the timeline (shift+drag on the track).
     // While set, the session rebuilds from the window's pairs only and
@@ -7475,7 +7658,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function scheduleTick() {
       const tick = nextTick(replayEvents(slicePairs(pairs)), replay.cursor, replay.speed, IDLE_CAP_MS);
-      if (!tick) { pausePlayback(); updateReplayHash(); return; }
+      if (!tick) {
+        // The end of the tape. On a live page that is the live EDGE: park
+        // there and the tail rule takes over. A reading page just pauses.
+        if (!IS_READING && !sliceActive()) {
+          const s = replaySpan(pairs);
+          if (s && replay.cursor < s.t1) { replay.cursor = s.t1; refreshReplay(); }
+        }
+        pausePlayback();
+        updateReplayHash();
+        return;
+      }
       replay.timer = setTimeout(function() {
         replay.cursor = tick.cursor;
         refreshReplay();
@@ -7506,6 +7699,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       refreshReplay();
     }
 
+    // The end of the tape. On a live page that IS the live edge — the
+    // cursor parks there and tails from then on (the ws pair branch).
+    // Every caller (⏭, End, the live chip) lives inside the replay bar, so
+    // replay is always already active here.
+    function seekEnd() {
+      // The end of the TAPE, not of the strip's axis: the axis is the
+      // selected thread's own time now, and ⏭ still means "the live edge".
+      const span = replaySpan(pairs);
+      if (!span) return;
+      seekReplay(span.t1);
+      updateReplayHash();
+    }
+
     function fmtClock(ms) {
       const s = Math.max(0, Math.round(ms / 1000));
       const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -7517,13 +7723,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // ---- the trajectory strip (#rp-lanes) ----
     // Lanes x wall-clock: the human's prompts, the model's requests, the
     // tool/waiting gaps, the subagents stacked, the harness marks. Every
-    // position is the same (t - t0) / dur the playhead uses, so the
-    // handle, the fill and the spans share ONE axis.
+    // position comes from ONE mapping (rpScale) — the handle, the veil, the
+    // ticks, the spans and the pointer handlers all read it, so nothing can
+    // drift off the axis.
 
-    // The strip reads the WHOLE capture, never the cursored session:
-    // scrubbing must not redraw the trajectory being scrubbed over.
-    // Cached on the capture's length + the slice (buildSession over a long
-    // trace is not a per-frame cost).
+    // The LANES read the whole capture, never the cursored session:
+    // scrubbing must not redraw the trajectory being scrubbed over (the
+    // AXIS is the selected thread's — rpSpan). Cached on the capture's
+    // length + the slice (buildSession over a long trace is not a per-frame
+    // cost).
     // The threads of the WHOLE capture (never the cursored subset): the
     // strip draws the trajectory being scrubbed over, and the stage's
     // chapters have to include the loops still AHEAD of the cursor.
@@ -7542,21 +7750,59 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return laneCache.lanes;
     }
 
-    // The strip's axis: the capture's span, stretched to cover a request
-    // still in flight. The right edge is the newest KNOWN time — never
+    // The strip's axis: the SELECTED thread's own extent — its spans, its
+    // points, and the children it spawned — not the whole capture. A 1h34m
+    // session inside a 10h38m capture used to sit in the left quarter with
+    // three quarters of the frame drawing nothing (replay-stage.md, rev 2.2).
+    // Stretched to cover a request still in flight when this thread is the
+    // one at the tape's edge, and always to cover the CURSOR: the playhead
+    // is on the strip by construction. Every stretch is a known time — never
     // Date.now(), which would make a rendered page depend on when it is read.
+    // A busy set rides along: the time inside the axis that carries work, so
+    // the scale can compress the idle (timeScale).
     function rpSpan() {
-      const s = replaySpan(pairs);
-      let t0 = s ? s.t0 : Infinity;
-      let t1 = s ? s.t1 : -Infinity;
-      openStarts.forEach((st) => {
-        const t = (st && st.ts ? st.ts : 0) * 1000;
-        if (!t) return;
-        if (t < t0) t0 = t;
-        if (t > t1) t1 = t;
-      });
-      if (t0 === Infinity) return null;
-      return { t0, t1: Math.max(t0, t1) };
+      const th = stageThread();
+      const ex = threadExtent(laneData(), th ? th.key : '');
+      const cap = replaySpan(pairs);
+      let t0, t1, busy;
+      if (ex) { t0 = ex.t0; t1 = ex.t1; busy = ex.busy; }
+      else if (cap) { t0 = cap.t0; t1 = cap.t1; busy = [[t0, t1]]; }
+      else return null;
+      // Another session's in-flight request is not this thread's time.
+      if (!ex || !cap || t1 >= cap.t1 - 0.5) {
+        openStarts.forEach((st) => {
+          const t = (st && st.ts ? st.ts : 0) * 1000;
+          if (!t) return;
+          if (t < t0) t0 = t;
+          if (t > t1) t1 = t;
+        });
+      }
+      // The cursor can sit outside the selected thread (it follows the tape's
+      // edge). The axis takes it in as a POINT, so the stretch between the
+      // thread's last activity and the playhead compresses like any other
+      // idle instead of flattening the thread into a sliver.
+      const c = replay.cursor;
+      if (replay.active && isFinite(c) && (c < t0 || c > t1)) {
+        busy = busy.concat([[c, c]]);
+        if (c < t0) t0 = c; else t1 = c;
+      }
+      return { t0, t1: Math.max(t0, t1), busy };
+    }
+
+    // The strip's frame in CSS pixels (0 until it has been on screen once).
+    function rpFrameW() {
+      return (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
+    }
+    // ONE mapping from wall-clock to pixels for the whole strip: the spans,
+    // the ruler, the veil, the playhead, the slice and every pointer handler
+    // go through it. Idle longer than RP_IDLE_MS collapses to a fixed
+    // RP_BREAK_PX column, so a lunch break is 28px and the work is the strip.
+    // An unmeasured frame still scales proportionally (the zero-width retry
+    // re-renders); only the ruler and the span labels wait for a real width.
+    function rpScale(span) {
+      const s = span || rpSpan();
+      if (!s) return null;
+      return timeScale(s.busy, s.t0, s.t1, (rpFrameW() || 1000) * replay.zoom, RP_IDLE_MS, RP_BREAK_PX);
     }
 
     // Reading depth is a function of zoom, not a toggle: shapes, then
@@ -7564,21 +7810,52 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function rpDepth() { return replay.zoom < 2 ? 'map' : (replay.zoom < 8 ? 'read' : 'full'); }
 
     let rpStripKey = '';
+    let rpZeroTries = 0;
     function renderReplayStrip(force) {
       const span = rpSpan();
-      if (!span) { rpGut.innerHTML = ''; rpBody.innerHTML = ''; rpStripKey = ''; return; }
+      if (!span) {
+        rpGut.innerHTML = ''; rpAxis.innerHTML = ''; rpRules.innerHTML = '';
+        rpBody.innerHTML = ''; rpBreaks.innerHTML = ''; rpStripKey = '';
+        return;
+      }
+      // The thread the rail has selected draws FULL; every other thread's
+      // items ghost. Same resolution the stage uses — one selection, two
+      // surfaces.
+      const selT = stageThread();
+      const selKey = selT ? selT.key : '';
+      // Label visibility and the clock ruler need the frame's width in
+      // PIXELS, so the measurement is part of the KEY: entering replay from
+      // the requests tab renders once while #session-view is still hidden
+      // (the hash route is async), and that zero-width draw — no ticks, no
+      // span labels — must not be the cached answer forever.
+      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
       // The cursor is NOT in the key — it moves the handle, never the lanes.
       const key = pairs.length + '|' + (sliceActive() ? replay.sliceA + '-' + replay.sliceB : '-') +
-        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1;
+        '|' + replay.zoom.toFixed(3) + '|' + openStarts.size + '|' + span.t0 + '|' + span.t1 + '|' + selKey +
+        '|' + Math.round(frameW);
       if (rpStripKey === key && !force) return;
       rpStripKey = key;
+      // A zero-width draw is a measurement that has not happened yet: ask
+      // for one more frame (bounded — a strip that is never on screen must
+      // not spin) and let the re-measure repair it.
+      if (frameW > 0) rpZeroTries = 0;
+      else if (rpZeroTries < 5 && typeof requestAnimationFrame === 'function') {
+        rpZeroTries++;
+        requestAnimationFrame(() => renderReplayStrip(true));
+      }
       const L = laneData();
-      const dur = Math.max(1, span.t1 - span.t0);
-      // Label visibility needs the span's width in PIXELS at this zoom, so
-      // the width class is computed here and re-computed when zoom changes.
-      const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
-      const trackW = frameW * replay.zoom;
-      const pct = (t) => (((t - span.t0) / dur) * 100).toFixed(3);
+      // ONE mapping, idle compressed: every x on this strip comes from it.
+      const sc = rpScale(span);
+      const px = (t) => scaleX(sc, t) / sc.px * 100;
+      const pct = (t) => px(t).toFixed(3);
+      // An item entirely outside the axis, or buried inside a compressed
+      // break, has no honest position — the ghost lanes drop it instead of
+      // piling it on a boundary. Anything partly inside draws clipped.
+      const hidden = (a, b) => {
+        if (b < span.t0 || a > span.t1) return true;
+        for (const s of sc.segs) if (s.kind === 'break' && a >= s.t0 && b <= s.t1) return true;
+        return false;
+      };
       const ord = (n) => (n + 1 < 10 ? '0' : '') + (n + 1);
       const clock = (t) => fmtTime(new Date(t)) + ' \\u00b7 +' + fmtClock(t - span.t0);
       const seekOf = (pairId, fallback) => {
@@ -7586,32 +7863,96 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return p ? pairEndMs(p) : fallback;
       };
       const bar = (cls, a, b, seek, tip, li, ln) => {
-        const w = Math.max(0, ((b - a) / dur) * 100);
-        return '<span class="rp-span ' + cls + (((b - a) / dur) * trackW >= 24 ? ' w24' : '') +
-          '" data-rpt="' + seek + '" style="left:' + pct(a) + '%;width:' + w.toFixed(3) + '%"' +
+        const x0 = px(a), x1 = px(b);
+        // .w24 gates the labels on REAL pixels: an unmeasured frame says
+        // nothing rather than guessing what fits.
+        const wide = frameW > 0 && (x1 - x0) / 100 * sc.px >= 24;
+        return '<span class="rp-span ' + cls + (wide ? ' w24' : '') +
+          '" data-rpt="' + seek + '" style="left:' + x0.toFixed(3) + '%;width:' + Math.max(0, x1 - x0).toFixed(3) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '">' +
           (li ? '<span class="rp-lbl i">' + escapeHtml(li) + '</span>' : '') +
           (ln ? '<span class="rp-lbl n">' + escapeHtml(ln) + '</span>' : '') + '</span>';
       };
       const lane = (name, inner) => '<div class="rp-lane" data-lane="' + name + '">' + inner + '</div>';
+      // Ghost everything the selection does not own. An agent span has TWO
+      // keys that count as ownership (the parent that spawned it, and the
+      // child itself), hence the optional second key.
+      const oth = (k, k2) => (selKey && k !== selKey && (k2 == null || k2 !== selKey) ? ' other' : '');
+
+      // The clock row: a ruler in the READER's local zone, exactly like
+      // fmtTime — so the axis and the span tips agree. The offset is
+      // anchored to the DATA (the span's own start), never to today: a July
+      // trace read in January must not be ruled an hour off its own tips.
+      // A DST transition INSIDE the span still shifts one side by an hour
+      // (docs/design/replay-stage.md, "Not done").
+      let axis = '';
+      let rules = '';
+      let breaks = '';
+      // The compressed stretches first: a hatched column across the lanes,
+      // and in the clock row how much time it stands for (coarse — a break
+      // is minutes and hours, never seconds). The label is ANCHORED inside
+      // the track: a break against either edge (the cursor sitting hours
+      // past the thread's last pair puts one there) would otherwise centre
+      // its label half off screen and read as "\\u29f8\\u29f8 8h 2".
+      const skipBoxes = [];
+      for (const s of sc.segs) {
+        if (s.kind !== 'break') continue;
+        const l = s.x0 / sc.px * 100, w = (s.x1 - s.x0) / sc.px * 100;
+        const skipped = fmtSpanCoarse(s.t1 - s.t0);
+        const lw = ('\\u29f8\\u29f8 ' + skipped).length * 6 + 4;   // 10px monospace
+        let cls = '', at = (s.x0 + s.x1) / 2, lo = at - lw / 2;
+        if (sc.px - s.x1 <= 40) { cls = ' at-end'; at = s.x1; lo = at - lw; }
+        else if (s.x0 <= 40) { cls = ' at-start'; at = s.x0; lo = at; }
+        skipBoxes.push([lo, lo + lw]);
+        breaks += '<i class="rp-break" style="left:' + l.toFixed(3) + '%;width:' + w.toFixed(3) + '%"></i>';
+        axis += '<span class="rp-bk' + cls + '" style="left:' + (at / sc.px * 100).toFixed(3) + '%"' +
+          ' data-tip="' + escapeHtml('idle \\u00b7 ' + skipped + '\\n' + clock(s.t0) + ' \\u2013 ' + fmtTime(new Date(s.t1)) +
+            '\\n---\\n> nothing on this thread\\u2019s wire \\u2014 the axis skips it') + '">' +
+          '\\u29f8\\u29f8 ' + escapeHtml(skipped) + '</span>';
+      }
+      // The ruler is stepped PER BUSY SEGMENT, over that segment's own time
+      // and its own pixels: stepping it over the whole extent would pick the
+      // ladder rung for 9h54m and rule an hour of work with two ticks. Busy
+      // segments share pixels in proportion to their duration, so they all
+      // land on the same step; a short one may take a coarser rung from the
+      // 72px floor, which is the floor doing its job. Every tick is inside
+      // busy time by construction — no filter needed.
+      const tz = new Date(span.t0).getTimezoneOffset();
+      for (const s of sc.segs) {
+        if (s.kind !== 'busy') continue;
+        for (const k of axisTicks(s.t0, s.t1, frameW > 0 ? s.x1 - s.x0 : 0, tz)) {
+          const x = scaleX(sc, k.t);
+          // A tick label that would collide with a skip label loses its
+          // TEXT, never its hairline: two overlapping clocks read as one
+          // wrong one.
+          let clear = true;
+          for (const b of skipBoxes) if (x + 36 > b[0] && x < b[1]) clear = false;
+          axis += '<span class="rp-tick' + (k.major ? ' major' : '') +
+            '" style="left:' + (x / sc.px * 100).toFixed(3) + '%">' +
+            (clear ? escapeHtml(k.label) : '') + '</span>';
+          if (k.major) rules += '<i class="rp-rule" style="left:' + (x / sc.px * 100).toFixed(3) + '%"></i>';
+        }
+      }
 
       // human: a POINT at the start of the request that carried the prompt
       let human = '';
       for (const x of L.human) {
+        if (hidden(x.t, x.t)) continue;
         const tip = 'human \\u00b7 turn ' + ord(x.ord) + '\\n' + clock(x.t) +
           (x.label ? '\\n' + x.label : '') +
           '\\n---\\n> click seeks to the end of the request that carried it';
-        human += '<span class="rp-point" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
+        human += '<span class="rp-point' + oth(x.threadKey) + '" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-lbl">' + escapeHtml(x.label || '') + '</span></span>';
       }
 
       // model: the pair itself, [request start, response end]
       let model = '';
       for (const x of L.model) {
+        if (hidden(x.t0, x.t1)) continue;
         const tip = 'model \\u00b7 turn ' + ord(x.ord) + ' step ' + x.step + '\\n' + clock(x.t0) +
           '\\n' + fmtSpan(x.t1 - x.t0) + (x.stop ? ' \\u00b7 stop ' + x.stop : '') +
           '\\n---\\n> click seeks to the end of this request';
-        model += bar('model' + (x.err ? ' err' : ''), x.t0, x.t1, x.t1, tip, '', '');
+        model += bar('model' + (x.err ? ' err' : '') + oth(x.threadKey), x.t0, x.t1, x.t1, tip, '', '');
       }
       // a request still in flight: a dashed stub hugging the live edge.
       // Its start is normally the newest known time, so its true extent is
@@ -7619,10 +7960,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // tip says when it started; nothing here reads the clock).
       openStarts.forEach((st) => {
         const t = (st && st.ts ? st.ts : 0) * 1000;
-        if (!t) return;
+        if (!t || t > span.t1) return;
         const tip = 'model \\u00b7 in flight\\nstarted ' + clock(t) +
           '\\n---\\n> no response yet \\u2014 the strip ends at the newest known time';
-        const w = Math.max(0, ((span.t1 - t) / dur) * 100);
+        const w = Math.max(0, 100 - px(t));
         model += '<span class="rp-span model open" data-rpt="' + t + '" style="right:0;width:max(' + w.toFixed(3) + '%,12px)"' +
           ' data-tip="' + escapeHtml(tip) + '"></span>';
       });
@@ -7631,51 +7972,60 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // reply made calls (threadTimeSplit's own rule); waiting is dimmed.
       let tools = '';
       for (const g of L.tools) {
+        if (hidden(g.t0, g.t1)) continue;
         const uniq = [];
         for (const n of g.names || []) if (n && uniq.indexOf(n) === -1) uniq.push(n);
         const tip = 'tools \\u00b7 ' + g.count + ' call' + (g.count === 1 ? '' : 's') + '\\n' + clock(g.t0) +
           '\\n' + fmtSpan(g.t1 - g.t0) + (uniq.length ? '\\n' + uniq.join(', ') : '') +
           '\\n---\\n> one gap covers parallel calls \\u2014 the wire has no per-call time';
-        tools += bar('tools', g.t0, g.t1, seekOf(g.pairId, g.t0), tip,
+        tools += bar('tools' + oth(g.threadKey), g.t0, g.t1, seekOf(g.pairId, g.t0), tip,
           uniq.map(n => n.slice(0, 1)).join(''), uniq.join(' '));
       }
       for (const g of L.waiting) {
+        if (hidden(g.t0, g.t1)) continue;
         const tip = 'waiting\\n' + clock(g.t0) + '\\n' + fmtSpan(g.t1 - g.t0) +
           '\\n---\\n> no tool call \\u2014 the harness came back on its own';
-        tools += bar('waiting', g.t0, g.t1, seekOf(g.pairId, g.t0), tip, '', 'waiting');
+        tools += bar('waiting' + oth(g.threadKey), g.t0, g.t1, seekOf(g.pairId, g.t0), tip, '', 'waiting');
       }
 
       // agents: child threads stacked on the rows sessionLanes assigned,
       // capped — the rest fold into one row rather than growing the frame.
+      // A span is in focus when the selected thread spawned it OR IS it, so
+      // a child selected in the rail keeps its own span full.
       const arows = [];
       let folded = 0;
       for (const a of L.agents) {
+        if (hidden(a.t0, a.t1)) continue;
         const r = a.row < RP_AGENT_ROWS ? a.row : RP_AGENT_ROWS;
         if (r === RP_AGENT_ROWS) folded++;
         const label = a.label || a.agentType || 'subagent';
         const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
           '\\n---\\n> click seeks to where its work landed';
-        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : ''), a.t0, a.t1, a.t1, tip, '', label);
+        arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') +
+          oth(a.parentKey, a.threadKey), a.t0, a.t1, a.t1, tip, '', label);
       }
 
       // harness: moments, not spans — a compaction and a failed request.
       let harness = '';
       for (const c of L.cuts) {
+        if (hidden(c.t, c.t)) continue;
         const tip = 'compaction' + (c.mode ? ' \\u00b7 ' + c.mode : '') + '\\n' + clock(c.t) +
           '\\n---\\n> the context window collapsed here';
-        harness += '<span class="rp-mark cut" data-rpt="' + c.t + '" style="left:' + pct(c.t) + '%"' +
+        harness += '<span class="rp-mark cut' + oth(c.threadKey) + '" data-rpt="' + c.t + '" style="left:' + pct(c.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2702</span></span>';
       }
       for (const f of L.failed) {
+        if (hidden(f.t, f.t)) continue;
         const tip = 'failed request' + (f.status ? ' \\u00b7 ' + f.status : '') + '\\n' + clock(f.t) +
           '\\n---\\n> it produced no turn; the retry is the next request';
-        harness += '<span class="rp-mark err" data-rpt="' + f.t + '" style="left:' + pct(f.t) + '%"' +
+        harness += '<span class="rp-mark err' + oth(f.threadKey) + '" data-rpt="' + f.t + '" style="left:' + pct(f.t) + '%"' +
           ' data-tip="' + escapeHtml(tip) + '"><span class="rp-mk">\\u2717</span></span>';
       }
 
       // Fixed geometry: an empty lane stays, labelled — a client with no
       // spawn tool reads as zero agents, never as a missing row.
-      let gut = '<span class="rp-glbl">human</span><span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
+      let gut = '<span class="rp-glbl">clock</span><span class="rp-glbl">human</span>' +
+        '<span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
       let body = lane('human', human) + lane('model', model) + lane('tools', tools);
       const nrows = Math.max(1, arows.length);
       for (let i = 0; i < nrows; i++) {
@@ -7686,7 +8036,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       gut += '<span class="rp-glbl">harness</span>';
       body += lane('harness', harness);
       rpGut.innerHTML = gut;
+      rpAxis.innerHTML = axis;
+      rpRules.innerHTML = rules;
       rpBody.innerHTML = body;
+      // Above the lanes, below the veil: a span that straddles skipped time
+      // draws across it and the hatch covers what was not shown.
+      rpBreaks.innerHTML = breaks;
       rpLanes.dataset.depth = rpDepth();
       rpTrack.style.width = (replay.zoom > 1 ? (replay.zoom * 100).toFixed(2) : '100') + '%';
     }
@@ -7734,18 +8089,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = rpSpan();
       if (!span) return;
       const dur = Math.max(1, span.t1 - span.t0);
-      const frac = Math.min(1, Math.max(0, (replay.cursor - span.t0) / dur));
-      rpFill.style.width = (frac * 100).toFixed(3) + '%';
+      // The playhead rides the SCALE, like every mark on the strip — inside a
+      // compressed break included, so it never drifts off the lanes it points
+      // into. The clock below it stays real time (the ruler compresses; the
+      // clock does not lie).
+      const sc = rpScale(span);
+      const frac = Math.min(1, Math.max(0, scaleX(sc, replay.cursor) / sc.px));
+      // the veil covers the FUTURE: from the playhead to the right edge
+      rpVeil.style.left = (frac * 100).toFixed(3) + '%';
       rpHandle.style.left = (frac * 100).toFixed(3) + '%';
-      rpTime.textContent = fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      // The terminal the human is looking at shows wall-clock: the absolute
+      // local time first, the tape offset after it.
+      rpTime.textContent = fmtTime(new Date(replay.cursor)) + ' \\u00b7 +' +
+        fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
+      renderLiveChip();
+      renderReplayNow();
       // The slice band + chip: the selected window, its size, and the two
       // actions it affords (export the artifact, clear the selection).
       if (sliceActive()) {
         const lo = Math.min(replay.sliceA, replay.sliceB);
         const hi = Math.max(replay.sliceA, replay.sliceB);
+        const sx0 = scaleX(sc, lo) / sc.px * 100, sx1 = scaleX(sc, hi) / sc.px * 100;
         rpSlice.style.display = 'block';
-        rpSlice.style.left = (Math.max(0, (lo - span.t0) / dur) * 100).toFixed(3) + '%';
-        rpSlice.style.width = (Math.min(1, (hi - lo) / dur) * 100).toFixed(3) + '%';
+        rpSlice.style.left = sx0.toFixed(3) + '%';
+        rpSlice.style.width = Math.max(0, sx1 - sx0).toFixed(3) + '%';
         const w = slicePairs(pairs);
         rpSliceChip.style.display = 'inline-flex';
         rpSliceChip.innerHTML = 'slice ' + fmtClock(lo - span.t0) + '\\u2013' + fmtClock(hi - span.t0) +
@@ -7769,113 +8136,62 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpFollowHandle(frac);
     }
 
-    function refreshReplay() {
+    // The live chip: STATE while the cursor sits at the newest landed pair
+    // (the page is tailing), a CONTROL when the reader is behind. Never on a
+    // reading page — a saved trace has no edge to chase.
+    // It renders on EVERY bar update (a playback tick, a landed pair), so it
+    // rewrites only when the state actually flips: rebuilding the markup
+    // under the reader's pointer would destroy the button mid-hover and can
+    // eat the click that was aimed at it.
+    let rpLiveState = null;
+    function renderLiveChip() {
+      if (!rpLive) return;
+      const s = IS_READING ? null : replaySpan(pairs);
+      const state = IS_READING ? 'reading' : (s && replay.cursor >= s.t1 - 0.5 ? 'edge' : 'behind');
+      if (rpLiveState === state) return;
+      rpLiveState = state;
+      rpLive.innerHTML = state === 'reading' ? ''
+        : state === 'edge'
+        ? '<span class="at-edge" data-tip="live\\nthe cursor is at the newest landed pair \\u2014 the next one moves it, and the conversation follows">live</span>'
+        : '<button class="rp-btn" id="rp-live-btn" data-tip="back to the live edge\\nthe capture has moved on; this snaps the cursor to the newest landed pair\\n---\\n> key: End">\\u2913 live</button>';
+      const b = document.getElementById('rp-live-btn');
+      if (b) b.onclick = seekEnd;
+    }
+
+    // Every cursor change rebuilds the convo as of the cursor, and its
+    // BOTTOM is the newest visible turn — the moment. So a seek, a step, a
+    // chapter jump and a playback tick all land there, instantly: a rebuilt
+    // pane has no scroll position worth animating from, and playback would
+    // otherwise be continuous motion (ui.md 5).
+    // The tail path passes { follow: false } — it decides by where the
+    // reader was (terminal semantics: stick when you're there, never yank).
+    function refreshReplay(opts) {
       renderReplayBar();
       if (view === 'session') showSession(sessionSelKey);
+      if (view === 'session' && (!opts || opts.follow !== false)) convoToBottom();
     }
 
-    // ---- the stage (#stage): the observed state machine + the beat ----
+    // ---- the stage (#stage): the beat, the tally ----
     // Rendered at the TOP of the threads column while replaying, torn down
-    // with replay. Two readings of ONE cursor: WHERE the agent is in its
-    // observed loop (the diagram, counted over the whole trace so far), and
-    // WHAT it did at this step (the beat, from the selected thread). The
-    // diagram's geometry never moves — a node or edge with zero
-    // observations goes faint, so the picture the reader learned at 00:03
-    // is the same picture at 41:07.
-
-    const SD_VB = '0 0 360 146';
-    const SD_W = 84;              // node chip
-    const SD_H = 28;
-    const SD_ARC = 10;            // the reply -> human return, over the top
-    // Hand-placed: the working loop reads left-to-right on top (human ->
-    // model -> reply) with the three things a reply can hand off to sitting
-    // under the model.
-    const SD_XY = {
-      human: [6, 26], model: [138, 26], reply: [270, 26],
-      tools: [6, 110], agents: [138, 110], waiting: [270, 110],
-    };
-
-    // A filled triangle at the end of a run, so an edge's direction is
-    // readable without a shared <marker> (markers can't take the group's
-    // currentColor, and the lit edge changes hue).
-    function sdArrow(x1, y1, x2, y2) {
-      const dx = x2 - x1, dy = y2 - y1;
-      const L = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ux = dx / L, uy = dy / L;
-      const bx = x2 - ux * 7, by = y2 - uy * 7;
-      const px = -uy * 3, py = ux * 3;
-      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
-        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
-        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
-    }
-
-    // pts is a flat [x0,y0, x1,y1, ...] polyline; the count label is placed
-    // by hand per edge (nine edges, nine deliberate positions — a generic
-    // midpoint rule collided every pair).
-    function sdEdge(key, pts, n, lx, ly, anchor, lit, extra) {
-      let d = '';
-      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
-      const k = pts.length;
-      return '<g data-edge="' + key + '" class="sd-edge' + (lit === key ? ' on' : '') + (n ? '' : ' zero') + '">' +
-        '<path class="sd-e" d="' + d + '"/>' +
-        '<path class="sd-ah" d="' + sdArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/>' +
-        '<text class="sd-en" x="' + lx + '" y="' + ly + '" text-anchor="' + anchor + '">' + n + '</text>' +
-        (extra || '') + '</g>';
-    }
-
-    function sdNode(key, label, n, ms, lit, live, badge) {
-      const p = SD_XY[key];
-      const num = n + (ms ? ' \\u00b7 ' + fmtSpan(ms) : '');
-      return '<g data-node="' + key + '" class="sd-node' + (lit === key ? ' on' : '') +
-        (live ? ' live' : '') + (n ? '' : ' zero') + '">' +
-        '<rect class="sd-nb" x="' + p[0] + '" y="' + p[1] + '" width="' + SD_W + '" height="' + SD_H + '" rx="3"/>' +
-        '<text class="sd-nl" x="' + (p[0] + 6) + '" y="' + (p[1] + 12) + '">' + label + '</text>' +
-        '<text class="sd-nn" x="' + (p[0] + 6) + '" y="' + (p[1] + 23) + '">' + escapeHtml(num) + '</text>' +
-        (badge || '') + '</g>';
-    }
-
-    // stateAt's seven states onto the six nodes — exactly one is always lit:
-    //   model   -> model    a request is in flight
-    //   tools   -> tools    the gap after a reply that made calls
-    //   agents  -> agents   a child thread is running
-    //   waiting -> waiting  the gap after a reply that called nothing
-    //   failed  -> model    a failed request is a BADGE on model, not a state
-    //   human   -> reply    the reply landed and the human has not answered.
-    //                       The wire cannot observe a human typing, so the
-    //                       human node never lights: its count and the
-    //                       human>model edge carry the prompts instead.
-    //   idle    -> reply    nothing running (both ends of the tape)
-    // The lit EDGE is the transition into that node: for the model node it is
-    // whichever span or point ended exactly where the request began (the
-    // gap windows are t1 == the next request's start, threadTimeSplit), and
-    // for the others it is the model edge that opened them. A failed
-    // request went nowhere, so it lights no edge.
-    function sdLit(L, st, key) {
-      const s = st.state;
-      if (s === 'tools') return { node: 'tools', edge: 'model>tools' };
-      if (s === 'agents') return { node: 'agents', edge: 'model>agents' };
-      if (s === 'waiting') return { node: 'waiting', edge: 'model>waiting' };
-      if (s === 'failed') return { node: 'model', edge: '' };
-      if (s === 'model') {
-        const at = st.since;
-        const near = (t) => Math.abs(t - at) <= 1;
-        for (const h of L.human || []) if ((!key || h.threadKey === key) && near(h.t)) return { node: 'model', edge: 'human>model' };
-        for (const g of L.tools || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'tools>model' };
-        for (const g of L.waiting || []) if ((!key || g.threadKey === key) && near(g.t1)) return { node: 'model', edge: 'waiting>model' };
-        for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1)) return { node: 'model', edge: 'agents>model' };
-        return { node: 'model', edge: '' };
-      }
-      // Idle at the live edge after a tool_use reply: the wire saw no
-      // model>reply (the reply's stop was tool_use, the next request has
-      // not started) — light the node, not an edge the counts read as 0.
-      return { node: 'reply', edge: st.item && st.item.next === 'reply' ? 'model>reply' : '' };
-    }
+    // with replay. Two readings of ONE cursor: WHAT the agent did at this
+    // step (the beat, from the selected thread) and WHAT it has called so
+    // far (the tally). WHAT it is doing right now is the loop row in the
+    // bar (renderReplayNow) — the frame states the moment, the stage the step.
 
     // The thread the stage reads: the selection, resolved against the WHOLE
     // capture (the cursored threads lose every loop still ahead).
     function stageThread() {
       const all = fullThreads();
       return all.length ? resolveThreadSel(all, sessionSelKey) : null;
+    }
+
+    // The step the beat is showing at the cursor, as an id — the one thing
+    // the tail has to compare to know whether a landed pair CHANGED the
+    // stage (a telemetry pair or a usage poll does not).
+    function stageBeatId() {
+      const t = stageThread();
+      const b = t ? beatAt(t, replay.cursor, pairOf) : null;
+      return b ? b.pairId : '';
     }
 
     // A request forwarded with no response yet, at the live edge of the
@@ -7896,50 +8212,149 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return ts;
     }
 
-    function stageDiagram(L, key) {
-      const st = stateAt(L, replay.cursor, key);
-      const c = stateCounts(L, replay.cursor, key);
-      const tr = c.transitions;
-      const liveTs = stageLiveStart();
-      const lit = liveTs ? { node: 'model', edge: '' } : sdLit(L, st, key);
-      const cuts = c.cuts
-        ? '<text class="sd-cut" x="300" y="20" text-anchor="end">\\u2702 ' + c.cuts + '</text>'
-        : '';
-      const failed = c.model.failed
-        ? '<text class="sd-fail" x="180" y="21" text-anchor="middle">' + c.model.failed + ' failed</text>'
-        : '';
-      let g = '';
-      // top row: human -> model -> reply, and the return arc over them
-      g += sdEdge('human>model', [90, 40, 138, 40], tr['human>model'], 114, 35, 'middle', lit.edge);
-      g += sdEdge('model>reply', [222, 40, 270, 40], tr['model>reply'], 246, 35, 'middle', lit.edge);
-      g += sdEdge('reply>human', [312, 26, 312, SD_ARC, 48, SD_ARC, 48, 26], tr['reply>human'], 56, 20, 'start', lit.edge, cuts);
-      // model <-> tools (down-left) and model <-> waiting (down-right),
-      // parallel pairs so the two directions never cross
-      g += sdEdge('model>tools', [152, 54, 66, 110], tr['model>tools'], 122, 71, 'end', lit.edge);
-      g += sdEdge('tools>model', [82, 110, 168, 54], tr['tools>model'], 112, 94, 'start', lit.edge);
-      g += sdEdge('model>waiting', [208, 54, 294, 110], tr['model>waiting'], 238, 71, 'start', lit.edge);
-      g += sdEdge('waiting>model', [280, 110, 194, 54], tr['waiting>model'], 248, 94, 'end', lit.edge);
-      // model <-> agents, straight down the middle
-      g += sdEdge('model>agents', [172, 54, 172, 110], tr['model>agents'], 166, 78, 'end', lit.edge);
-      g += sdEdge('agents>model', [188, 54, 188, 110], tr['agents>model'], 194, 92, 'start', lit.edge);
-      g += sdNode('human', 'human', c.human, 0, lit.node, false);
-      g += sdNode('model', 'model', c.model.n, c.model.ms, lit.node, !!liveTs, failed);
-      g += sdNode('reply', 'reply', tr['model>reply'], 0, lit.node, false);
-      g += sdNode('tools', 'tools', c.tools.n, c.tools.ms, lit.node, false);
-      g += sdNode('agents', 'agents', c.agents.n, c.agents.ms, lit.node, false);
-      g += sdNode('waiting', 'waiting', c.waiting.n, c.waiting.ms, lit.node, false);
-      let out = '<svg id="sd" viewBox="' + SD_VB + '" preserveAspectRatio="xMidYMid meet">' + g + '</svg>';
-      // which tools, not just how many — the diagram counts the gaps, this
-      // names them (the only place either figure is stated).
-      const names = Object.keys(c.tools.byName).sort((a, b) => c.tools.byName[b] - c.tools.byName[a]);
-      if (names.length) {
-        const shown = names.slice(0, 4).map(n => escapeHtml(n) + ' ' + c.tools.byName[n]);
-        out += '<div class="sd-tools">' + shown.join(' \\u00b7 ') +
-          (names.length > 4 ? ' \\u00b7 +' + (names.length - 4) : '') + '</div>';
-      }
-      if (liveTs) out += '<div class="sd-live">thinking since ' + fmtTime(new Date(liveTs)) + '</div>';
-      return out;
+    // What each state MEANS on the wire — the hover, so a one-word chip
+    // is never something the reader has to guess at.
+    const NOW_WHY = {
+      model: 'a request is in flight',
+      tools: 'the harness is running the calls this reply made',
+      agents: 'a subagent thread is working',
+      waiting: 'the reply called nothing \\u2014 the harness came back on its own',
+      human: 'the reply landed; the human has not spoken yet',
+      failed: 'the request went nowhere \\u2014 its retry is the next one',
+      idle: 'nothing on the wire',
+    };
+
+    // The loop row (#rp-now): Claude Code's machine as a FLOWCHART — human
+    // -> model -> calls? -> [tools | agents | waiting] -> model ... -> human
+    // — drawn ONCE at fixed pixel geometry in the frame, the cursor's state
+    // lit and the edge it came in by flowing (loopAt). Beside it the now
+    // facts: what is running, how long it has held where the extent is a
+    // wire fact, since when (absolute wall-clock). The box beats ONLY for a
+    // request in flight right now. Nothing MOVES when the state changes —
+    // only which parts are lit, and which edge flows.
+    const RL_BY = 22, RL_BH = 22;                        // the process boxes' band
+    const RL_MID = 33;                                   // their centre line
+    // left edge + width per box; the slot is wider (it labels three flavors)
+    const RL_BOX = { human: [2, 62], model: [110, 62], slot: [348, 84] };
+    const RL_DX = 250, RL_DW = 42, RL_DH = 14;           // the decision diamond
+    // A filled triangle at the end of a run (no shared <marker>: markers
+    // can't take the group's currentColor, and the lit edge changes hue).
+    function rlArrow(x1, y1, x2, y2) {
+      const dx = x2 - x1, dy = y2 - y1;
+      const L = Math.sqrt(dx * dx + dy * dy) || 1;
+      const ux = dx / L, uy = dy / L;
+      const bx = x2 - ux * 7, by = y2 - uy * 7;
+      const px = -uy * 3.2, py = ux * 3.2;
+      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
+        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
+        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
     }
+    // Every path is built in its ARROW's direction, so the lit edge's dash
+    // offset animates the way the transition actually runs.
+    function rlEdge(key, pts, lit, label, lx, ly) {
+      let d = '';
+      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
+      const k = pts.length;
+      return '<g class="rl-edge' + (lit ? ' on' : '') + '" data-edge="' + key + '">' +
+        '<path class="rl-e" d="' + d + '"/>' +
+        '<path class="rl-ah" d="' + rlArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/>' +
+        (label ? '<text class="rl-el" x="' + lx + '" y="' + ly + '" text-anchor="middle">' + label + '</text>' : '') +
+        '</g>';
+    }
+    function rlBox(node, label, cls) {
+      const b = RL_BOX[node];
+      return '<g class="rl-node' + cls + '" data-node="' + node + '"' +
+        (node === 'slot' ? ' data-slot="' + label + '"' : '') + '>' +
+        '<rect class="rl-nb" x="' + b[0] + '" y="' + RL_BY + '" width="' + b[1] + '" height="' + RL_BH + '" rx="3"/>' +
+        '<text class="rl-nl" x="' + (b[0] + b[1] / 2) + '" y="' + (RL_MID + 4) + '" text-anchor="middle">' +
+        label + '</text></g>';
+    }
+    // The loop's DECISION: did the reply make tool calls (stop_reason
+    // tool_use / its tool_use blocks). A wire fact, so it is a diamond and
+    // never carries a "since" — it lights with whichever branch is lit.
+    function rlDiamond(cls) {
+      const d = 'M' + (RL_DX - RL_DW) + ',' + RL_MID + 'L' + RL_DX + ',' + (RL_MID - RL_DH) +
+        'L' + (RL_DX + RL_DW) + ',' + RL_MID + 'L' + RL_DX + ',' + (RL_MID + RL_DH) + 'Z';
+      return '<g class="rl-node' + cls + '" data-node="decision">' +
+        '<path class="rl-nb" d="' + d + '"/>' +
+        '<text class="rl-nl" x="' + RL_DX + '" y="' + (RL_MID + 4) + '" text-anchor="middle">calls?</text></g>';
+    }
+    // Forward across the row; the two returns arc on OPPOSITE sides (results
+    // over, answer under) so they never cross.
+    function rlSvg(q) {
+      const on = q.node, e = q.edge;
+      const dec = e === 'model>slot' || e === 'model>human';
+      return '<svg id="rp-loop" width="440" height="68" viewBox="0 0 440 68" aria-hidden="true">' +
+        rlEdge('human>model', [64, RL_MID, 110, RL_MID], e === 'human>model', 'prompt', 87, RL_MID - 5) +
+        rlEdge('model>decision', [172, RL_MID, 208, RL_MID], dec, '', 0, 0) +
+        rlEdge('decision>slot', [292, RL_MID, 348, RL_MID], e === 'model>slot', 'yes', 320, RL_MID - 5) +
+        rlEdge('slot>model', [390, RL_BY, 390, 10, 141, 10, 141, RL_BY], e === 'slot>model', 'results', 265, 7) +
+        rlEdge('decision>human', [RL_DX, RL_MID + RL_DH, RL_DX, 58, 33, 58, 33, RL_BY + RL_BH],
+          e === 'model>human', 'no \\u00b7 answer', 141, 55) +
+        rlBox('human', 'human', on === 'human' ? ' on hollow' : '') +
+        rlBox('model', 'model', (on === 'model' ? ' on' : '') + (q.live ? ' live' : '')) +
+        rlBox('slot', q.slot, on === 'slot' ? ' on' : q.also ? ' also' : '') +
+        rlDiamond(dec ? ' on hollow' : '') +
+        '</svg>';
+    }
+    // Rendered on every bar update (a playback tick, a landed pair): the
+    // markup is rewritten only when the picture changes, and a held
+    // duration that merely grew patches its own span — rebuilding under the
+    // reader's pointer would kill the hover and can eat a click.
+    let rpNowKey = null;
+    function renderReplayNow() {
+      if (!rpNow) return;
+      const t = stageThread();
+      const q = loopAt(laneData(), replay.cursor, t ? t.key : '', stageLiveStart());
+      const p = q.pairId ? pairOf(q.pairId) : null;
+      const seek = p && p.request ? pairEndMs(p) : 0;
+      const held = q.held != null && q.held > 0 ? '\\u00b7 ' + fmtSpan(q.held) : '';
+      const sig = [q.state, q.node, q.slot, q.edge, q.also, q.live, q.what, q.since, seek].join('|');
+      if (rpNowKey === sig) {
+        const h = rpNow.querySelector ? rpNow.querySelector('.rn-held') : null;
+        if (h && h.textContent !== held) h.textContent = held;
+        return;
+      }
+      rpNowKey = sig;
+      const tip = 'now \\u00b7 ' + q.state + '\\n' +
+        (q.live ? 'a request is in flight \\u2014 no response yet' : (NOW_WHY[q.state] || '')) +
+        (q.also ? '\\n' + q.agentsRunning + ' subagent' + (q.agentsRunning === 1 ? '' : 's') + ' running meanwhile' : '') +
+        (seek ? '\\n---\\n> click seeks to the step that opened it' : '');
+      rpNow.className = q.live ? 'live' : '';
+      rpNow.dataset.state = q.state;
+      if (seek) rpNow.dataset.rpseek = String(seek); else delete rpNow.dataset.rpseek;
+      rpNow.dataset.tip = tip;
+      // Line 1 names the state (in its own hue) and what is running under it;
+      // line 2 the absolute clock it began at. The state word is stated ONCE:
+      // q.what is empty for idle, so the row reads just "idle".
+      rpNow.innerHTML = '<span class="rp-glbl">now</span>' + rlSvg(q) +
+        '<span class="rn-facts"><span class="rn-l1">' +
+        '<span class="rn-state">' + escapeHtml(q.state) + '</span>' +
+        (q.what ? '<span class="rn-what">' + escapeHtml(q.what) + '</span>' : '') +
+        '<span class="rn-held">' + escapeHtml(held) + '</span></span>' +
+        (q.since > 0 ? '<span class="rn-since">since ' + fmtTime(new Date(q.since)) + '</span>' : '') +
+        '</span>';
+    }
+
+    // So far: which tools were called and how often as of the cursor, then
+    // the coarse marks. The ONE place the per-tool call count is stated.
+    function stageSoFar(L, key) {
+      const c = soFar(L, replay.cursor, key);
+      if (!c.steps) return '';
+      const names = Object.keys(c.tools).sort((a, b) => c.tools[b] - c.tools[a]);
+      const parts = [];
+      for (const n of names.slice(0, 4)) parts.push(escapeHtml(n) + ' ' + c.tools[n]);
+      if (names.length > 4) parts.push('+' + (names.length - 4));
+      if (c.agents) parts.push(c.agents + ' agent' + (c.agents === 1 ? '' : 's'));
+      if (c.failed) parts.push(c.failed + ' failed');
+      if (c.cuts) parts.push(c.cuts + ' \\u2702');
+      if (!parts.length) return '';
+      return '<div class="st-sofar">so far&#160;&#160;' + parts.join(' \\u00b7 ') + '</div>';
+    }
+
+    // Set for the one render that follows a tail advance (see the ws pair
+    // branch); every other render is a still frame.
+    let stageFade = false;
 
     function stageBeat(t) {
       const b = t ? beatAt(t, replay.cursor, pairOf) : null;
@@ -7949,6 +8364,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (b.step) cap += ' \\u00b7 step ' + b.step;
       cap += ' \\u00b7 ' + fmtSpan(b.dur);
       if (b.stop) cap += ' \\u00b7 stop ' + escapeHtml(b.stop);
+      // The loop's HEAD: the task this step serves. Harness-authored heads
+      // are not tasks, so beatAt hands back '' for them and no line renders.
+      const head = b.head
+        ? '<div class="sb-head" data-rpchap="' + b.ord + '" data-tip="' +
+          escapeHtml('the loop this step serves\\n' + b.head + '\\n---\\n> click jumps to this chapter') +
+          '">' + escapeHtml(b.head) + '</div>'
+        : '';
       let rows = '';
       // One row per call, the fold body reusing the convo pane's own
       // renderer (tool_use fused with its tool_result) — a spawn keeps its
@@ -7986,12 +8408,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         foot = '<div class="sb-foot"><span class="sb-lbl">window</span>' +
           '<span class="sb-gap"></span><span class="sb-amt">' + escapeHtml(amt) + '</span></div>';
       }
-      return '<div class="sb"><div class="sb-cap">' + cap + '</div>' + rows + foot + '</div>';
+      // A TAIL advance landed a new step: the page's live-arrived fade says
+      // so once. A scrub is continuous — it never fades (ui.md 5).
+      return '<div class="sb' + (stageFade ? ' arrived' : '') + '"><div class="sb-cap">' + cap + '</div>' +
+        head + rows + foot + '</div>';
     }
 
     function stageInner() {
       const t = stageThread();
-      return stageDiagram(laneData(), t ? t.key : '') + stageBeat(t);
+      return stageBeat(t) + stageSoFar(laneData(), t ? t.key : '');
     }
     function stageHtml() {
       if (!replay.active) return '';
@@ -8046,15 +8471,39 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 
+    // The loop row seeks to the step that opened the state it shows.
+    if (rpNow) rpNow.addEventListener('click', () => {
+      const t = parseFloat(rpNow.dataset.rpseek || '');
+      if (isFinite(t)) { seekReplay(t); updateReplayHash(); }
+    });
+    // The stage's seek — the beat's head, to that loop's chapter stop.
+    // Delegated: #stage is rewritten on every cursor change.
+    threadsEl.addEventListener('click', (e) => {
+      const el = e.target && e.target.closest ? e.target.closest('[data-rpchap]') : null;
+      if (!el) return;
+      e.preventDefault();
+      const ord = parseInt(el.dataset.rpchap, 10);
+      const th = stageThread();
+      for (const c of (th ? chaptersOf(th, pairOf) : [])) {
+        if (c.ord !== ord || !c.pairId) continue;
+        const p = pairOf(c.pairId);
+        if (p && p.request) { seekReplay(pairEndMs(p)); updateReplayHash(); }
+        return;
+      }
+    });
+
     replayToggle.onclick = () => { replay.active ? exitReplay() : enterReplay(); };
-    rpExit.textContent = IS_READING ? '\\u2715 exit' : 'live \\u2913';
-    rpExit.title = IS_READING ? 'Exit replay (Esc)' : 'Exit replay, back to the live tail (Esc)';
+    // Exiting is exiting: snapping to the live edge is the transport's job
+    // (⏭ / the live chip), never the button that leaves the mode.
+    rpExit.textContent = '\\u2715 exit';
+    rpExit.title = 'Exit replay (Esc)';
     rpExit.onclick = exitReplay;
     rpRestart.onclick = () => {
       if (!replay.active) enterReplay();
       seekReplay(replaySpan(pairs).t0);
       updateReplayHash();
     };
+    rpEnd.onclick = seekEnd;
     rpPlay.onclick = () => {
       if (replay.playing) { pausePlayback(); updateReplayHash(); }
       else startPlayback();
@@ -8072,13 +8521,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let rpClickSeek = null;   // a span was pressed: a click jumps, a drag scrubs
     let rpDownX = 0;
     function timeFromPointer(e) {
-      const span = rpSpan();
-      if (!span) return null;
+      const sc = rpScale();
+      if (!sc) return null;
       // The track's visual rect already accounts for the strip's own
-      // horizontal scroll, so zoomed scrubbing needs no extra math.
+      // horizontal scroll, so zoomed scrubbing needs no extra math. The
+      // fraction goes back through the SCALE — scrubbing across a compressed
+      // break is fast, and every other pixel is real time.
       const rect = rpTrack.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / Math.max(1, rect.width)));
-      return span.t0 + frac * (span.t1 - span.t0);
+      return scaleT(sc, frac * sc.px);
     }
     function seekFromPointer(e) {
       const t = timeFromPointer(e);
@@ -8135,15 +8586,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpDragging = false;
       updateReplayHash();
     });
-    // Wheel zooms the strip around the cursor, 1x fit to 32x — the same
-    // helper the context overview uses. Deeper zoom is deeper reading:
-    // the width class and data-depth are recomputed on every step.
-    wireWheelZoom(rpScroll, rpTrack, {
-      max: RP_ZOOM_MAX,
-      get: () => replay.zoom,
-      set: (z) => { replay.zoom = z; },
-      apply: () => renderReplayStrip(true),
-    });
+    // Wheel zooms the strip around the pointer, 1x fit to 32x. The strip has
+    // its own handler instead of wireWheelZoom's fraction math: with idle
+    // compressed, a fraction of the track is not a fixed instant across a
+    // zoom step (the breaks keep their 28px while the busy time stretches),
+    // so the anchor is the TIME under the pointer, mapped back after.
+    // Deeper zoom is deeper reading: the width class and data-depth are
+    // recomputed on every step.
+    if (rpScroll.addEventListener) rpScroll.addEventListener('wheel', (e) => {
+      if (e.shiftKey || e.ctrlKey || !e.deltaY) return;
+      e.preventDefault();
+      const cur = replay.zoom;
+      const next = Math.max(1, Math.min(RP_ZOOM_MAX, cur * (e.deltaY < 0 ? 1.25 : 0.8)));
+      if (Math.abs(next - cur) < 0.001) return;
+      const r = rpScroll.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const before = rpScale();
+      const at = before ? scaleT(before, (rpScroll.scrollLeft || 0) + x) : 0;
+      replay.zoom = next;
+      renderReplayStrip(true);
+      const after = rpScale();
+      if (after) rpScroll.scrollLeft = Math.max(0, scaleX(after, at) - x);
+    }, { passive: false });
 
     // ---- Select-to-purge ----
     // The web face of "cctrace purge", but by hand-picked request: enter

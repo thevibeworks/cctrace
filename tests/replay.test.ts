@@ -15,7 +15,15 @@ import {
   stepOutcome,
   sessionLanes,
   stateAt,
-  stateCounts,
+  nowAt,
+  loopAt,
+  soFar,
+  axisTicks,
+  mergeBusy,
+  timeScale,
+  scaleX,
+  scaleT,
+  threadExtent,
   beatAt,
   chaptersOf,
 } from "../src/replay";
@@ -225,7 +233,7 @@ describe("stepOutcome", () => {
 
 // loop 1: ask -> Bash call (A, 2s) -> [tools 8s, a 529 dies inside it] -> done (B, 1s)
 // loop 2: [human 89s] -> next -> sure (C, 0.5s) -> [harness nudge 4.5s] -> loaded (D, 0.5s)
-describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
+describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
   const CALL = { type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls", description: "list" } };
   const RES = { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "file.txt" }] };
   const h1 = [U("ask")];
@@ -287,28 +295,98 @@ describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
     expect(stateAt(lanes, 2_000_000)).toMatchObject({ state: "idle", since: 1_105_500 });
   });
 
-  test("stateCounts grows with the cursor: a span counts at t0, its ms up to the cursor", () => {
-    const mid = stateCounts(lanes, 1_004_000);
-    expect(mid.human).toBe(1);
-    expect(mid.model).toEqual({ n: 1, ms: 2000, failed: 0 });
-    expect(mid.tools).toEqual({ n: 1, ms: 2000, byName: { Bash: 1 } });
-    expect(mid.transitions["human>model"]).toBe(1);
-    expect(mid.transitions["model>tools"]).toBe(1);
-    expect(mid.transitions["tools>model"]).toBe(0); // the gap hasn't closed yet
-
-    const end = stateCounts(lanes, 2_000_000);
-    expect(end.human).toBe(2);
-    expect(end.model).toEqual({ n: 4, ms: 4000, failed: 1 });
-    expect(end.tools).toEqual({ n: 1, ms: 8000, byName: { Bash: 1 } });
-    expect(end.waiting).toEqual({ n: 1, ms: 4500 });
-    expect(end.agents).toEqual({ n: 0, ms: 0 });
-    expect(end.cuts).toBe(0);
-    expect(end.transitions).toEqual({
-      "human>model": 2, "model>tools": 1, "tools>model": 1,
-      "model>agents": 0, "agents>model": 0, "model>reply": 2,
-      "model>waiting": 1, "waiting>model": 1, "reply>human": 1,
+  test("nowAt names the state, what is running, and how long it has held", () => {
+    // held is cursor - since wherever the extent is a wire fact (a span or a
+    // gap with a t1); the holes hold nothing we observed.
+    expect(nowAt(lanes, 1_001_000, "")).toMatchObject({
+      state: "model", live: false, what: "thinking", since: 1_000_000, held: 1000, pairId: "A",
     });
-    expect(stateCounts(lanes, 999_000).model).toEqual({ n: 0, ms: 0, failed: 0 });
+    expect(nowAt(lanes, 1_004_000, "")).toMatchObject({
+      state: "tools", what: "Bash", since: 1_002_000, held: 2000, pairId: "A",
+    });
+    expect(nowAt(lanes, 1_102_000, "")).toMatchObject({
+      state: "waiting", what: "harness continued", since: 1_100_500, held: 1500, pairId: "C",
+    });
+    expect(nowAt(lanes, 1_050_000, "")).toMatchObject({
+      state: "human", what: "awaiting the next prompt", since: 1_011_000, held: null, pairId: "B",
+    });
+    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", what: "", held: null });
+    expect(nowAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", what: "", since: 1_105_500, held: null });
+  });
+
+  test("the idle BEFORE the first pair states no since — it has not happened", () => {
+    // stateAt bounds the leading hole by the lane span's t0, which is in the
+    // cursor's future; a now line never dates a state to a clock the reader
+    // has not reached (the UI suppresses since === 0).
+    expect(stateAt(lanes, 999_000).since).toBe(1_000_000);
+    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", since: 0, held: null });
+  });
+
+  test("a live start overrides the cursor's state: thinking, since the start, no extent", () => {
+    expect(nowAt(lanes, 2_000_000, "", 2_100_000)).toEqual({
+      state: "model", live: true, what: "thinking",
+      since: 2_100_000, held: null, agentsRunning: 0, pairId: "",
+    });
+  });
+
+  test("loopAt lights the machine: the state's node and the edge it came in by", () => {
+    // in flight, entered by the human's prompt (the point sits at the request start)
+    expect(loopAt(lanes, 1_001_000, "")).toMatchObject({ state: "model", node: "model", edge: "human>model", slot: "tools", also: false });
+    // the reply made calls: the slot is lit, entered from the model
+    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ state: "tools", node: "slot", slot: "tools", edge: "model>slot" });
+    // the next request begins exactly where the tools gap ended: results came back
+    expect(loopAt(lanes, 1_010_500, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "tools" });
+    // the reply landed and the human has not spoken: the answer edge, into human
+    expect(loopAt(lanes, 1_050_000, "")).toMatchObject({ state: "human", node: "human", edge: "model>human" });
+    // a call-less reply the loop continued past: the slot reads waiting, both ways
+    expect(loopAt(lanes, 1_102_000, "")).toMatchObject({ state: "waiting", node: "slot", slot: "waiting", edge: "model>slot" });
+    expect(loopAt(lanes, 1_105_200, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "waiting" });
+    // both ends of the tape: nothing lit
+    expect(loopAt(lanes, 999_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
+    expect(loopAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
+    // nowAt's own fields ride along
+    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ what: "Bash", since: 1_002_000, held: 2000, pairId: "A" });
+  });
+
+  test("a live request's edge is the protocol's: after a tool_use reply the results are coming back; after a final reply, unknown", () => {
+    // A's reply called Bash; the request in flight carries the results
+    expect(loopAt(lanes, 1_002_000, "", 1_002_500)).toMatchObject({ state: "model", live: true, node: "model", edge: "slot>model", slot: "tools" });
+    // D's reply was final: the wire cannot tell the human from a harness nudge yet
+    expect(loopAt(lanes, 2_000_000, "", 2_100_000)).toMatchObject({ state: "model", live: true, node: "model", edge: "" });
+  });
+
+  test("a child running while the parent thinks: the slot reads agents, half-lit", () => {
+    const L = {
+      t0: 0, t1: 10, human: [], tools: [], waiting: [], cuts: [], failed: [],
+      model: [{ t0: 5, t1: 8, threadKey: "p", pairId: "m", next: "tools" }],
+      agents: [{ t0: 1, t1: 9, threadKey: "c", parentKey: "p", parentPairId: "m0", label: "x", agentType: "", row: 0 }],
+    };
+    expect(loopAt(L, 6, "p")).toMatchObject({ state: "model", node: "model", slot: "agents", also: true, agentsRunning: 1, edge: "" });
+    // scoped to the child itself: it is the actor, nothing runs under it
+    expect(loopAt(L, 6, "c")).toMatchObject({ state: "idle", also: false });
+  });
+
+  test("soFar tallies steps, calls by name, children, failures and cuts", () => {
+    expect(soFar(lanes, 999_000)).toEqual({ steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 });
+    expect(soFar(lanes, 1_004_000)).toEqual({ steps: 1, tools: { Bash: 1 }, agents: 0, failed: 0, cuts: 0 });
+    expect(soFar(lanes, 2_000_000)).toEqual({ steps: 4, tools: { Bash: 1 }, agents: 0, failed: 1, cuts: 0 });
+  });
+
+  test("threadExtent is the thread's own window and the time inside it that worked", () => {
+    const ex = threadExtent(lanes, t.key);
+    expect(ex.t0).toBe(1_000_000);
+    expect(ex.t1).toBe(1_105_500);
+    // the model spans, the tools gap and the retry fuse into one busy run;
+    // the 89s the human spent thinking between the loops is NOT busy — it is
+    // exactly the kind of hole the axis compresses.
+    expect(ex.busy).toEqual([
+      [1_000_000, 1_011_000],
+      [1_100_000, 1_105_500],
+    ]);
+    // no key = every item in the lanes; a key nothing carries = nothing
+    expect(threadExtent(lanes, "")).toEqual(ex);
+    expect(threadExtent(lanes, "no-such-thread")).toBeNull();
+    expect(threadExtent(null, "")).toBeNull();
   });
 
   test("beatAt is the step whose pair END is the latest at or before the cursor", () => {
@@ -327,6 +405,14 @@ describe("sessionLanes / stateAt / stateCounts / beatAt / chaptersOf", () => {
     expect(b2.tokens.prompt).toBe(215);
     expect(b2.tokens.delta).toBe(100); // 215 - 115
     expect(beatAt(t, 9_000_000, byId).pairId).toBe("D");
+  });
+
+  test("the beat carries its loop's head — the task the step serves", () => {
+    expect(beatAt(t, 1_005_000, byId).head).toBe("ask");
+    expect(beatAt(t, 1_050_000, byId).head).toBe("ask");
+    // loop 1's head is the human's "next"; the harness's "Tool loaded."
+    // joined that loop, it never headed one
+    expect(beatAt(t, 9_000_000, byId).head).toBe("next");
   });
 
   test("chapters are the working loops with a head, ordinals from loopTurns", () => {
@@ -354,10 +440,15 @@ describe("sessionLanes: a failed request holds the hole until its retry", () => 
     expect(lanes.failed.map((f: any) => [f.pairId, f.t, f.status])).toEqual([["F", 1_001_000, 529]]);
   });
 
-  test("between the failure and the retry the state is failed, counted as a badge", () => {
+  test("between the failure and the retry the state is failed, and the now line says why", () => {
     expect(stateAt(lanes, 1_005_000)).toMatchObject({ state: "failed", since: 1_001_000 });
-    expect(stateCounts(lanes, 1_005_000).model).toEqual({ n: 0, ms: 0, failed: 1 });
+    expect(nowAt(lanes, 1_005_000, "")).toMatchObject({
+      state: "failed", what: "529 · the retry is next", since: 1_001_000, held: null, pairId: "F",
+    });
+    expect(soFar(lanes, 1_005_000)).toMatchObject({ steps: 0, failed: 1 });
     expect(stateAt(lanes, 1_010_500).state).toBe("model");
+    // a failed request went nowhere: the model chip in red, no edge lit
+    expect(loopAt(lanes, 1_005_000, "")).toMatchObject({ state: "failed", node: "model", edge: "" });
   });
 });
 
@@ -396,11 +487,9 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     const m1 = lanes.model.find((m: any) => m.pairId === "M1");
     expect(m1.next).toBe("agents");
     expect(lanes.tools.find((g: any) => g.pairId === "M1")).toMatchObject({ names: ["Task", "Task"], count: 2 });
-    const c = stateCounts(lanes, 3_000_000, parent.key);
-    expect(c.tools.byName).toEqual({ Task: 2 });
-    expect(c.agents).toEqual({ n: 2, ms: 20_500 + 1000 });
-    expect(c.transitions["model>agents"]).toBe(1);
-    expect(c.transitions["agents>model"]).toBe(2);
+    expect(soFar(lanes, 3_000_000, parent.key)).toEqual({
+      steps: 2, tools: { Task: 2 }, agents: 2, failed: 0, cuts: 0,
+    });
   });
 
   test("stateAt scoped to the parent reports the children running under it", () => {
@@ -408,6 +497,35 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     expect(stateAt(lanes, 2_025_000, parent.key)).toMatchObject({ state: "agents", agentsRunning: 1 });
     // a request in flight is the actor even while a child runs
     expect(stateAt(lanes, 2_020_500, lanes.agents[1].threadKey)).toMatchObject({ state: "model", agentsRunning: 0 });
+  });
+
+  test("the now line names the running children, and folds repeated calls", () => {
+    expect(nowAt(lanes, 2_020_500, parent.key)).toMatchObject({
+      state: "agents", agentsRunning: 2,
+      what: "2 running · [Explore] explore repo, [Review] review docs",
+      // stateAt's own precedence: the newest child span owns the cursor
+      since: 2_020_000, held: 500, pairId: "M1",
+    });
+    expect(nowAt(lanes, 2_025_000, parent.key).what).toBe("1 running · [Explore] explore repo");
+    // one gap, two Task calls: wire order of first appearance, repeats folded
+    expect(nowAt(lanes, 2_005_000, parent.key)).toMatchObject({ state: "tools", what: "Task ×2" });
+  });
+
+  test("a thread's extent covers the children it spawned; a child's covers only itself", () => {
+    const p = threadExtent(lanes, parent.key);
+    // the parent's own requests are 2_000_000..2_200_500, but the children it
+    // dispatched are its time too (the strip draws them in its focus)
+    expect(p.t0).toBe(2_000_000);
+    expect(p.t1).toBe(2_200_500);
+    const child = threadExtent(lanes, lanes.agents[1].threadKey);
+    expect([child.t0, child.t1]).toEqual([2_020_000, 2_021_000]);
+  });
+
+  test("the loop row's slot reads agents for a spawning step, and the model returns from it", () => {
+    expect(loopAt(lanes, 2_020_500, parent.key)).toMatchObject({ state: "agents", node: "slot", slot: "agents", edge: "model>slot", also: false });
+    // M2 begins exactly where M1's gap ended, and M1's step was a spawn:
+    // the results edge, from an agents-flavored slot
+    expect(loopAt(lanes, 2_200_200, parent.key)).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "agents" });
   });
 });
 
@@ -428,8 +546,8 @@ describe("sessionLanes: cuts (real compaction fixture)", () => {
     expect(cut.mode).toBe("fold");
     expect(cut.threadKey).toBe(main.key);
     expect(cut.t).toBe(pairEndMs(index["1784536387048_6t"]));
-    expect(stateCounts(lanes, cut.t - 1).cuts).toBe(0);
-    expect(stateCounts(lanes, cut.t).cuts).toBe(1);
+    expect(soFar(lanes, cut.t - 1).cuts).toBe(0);
+    expect(soFar(lanes, cut.t).cuts).toBe(1);
   });
 
   test("every verified spawn is an agent span inside the trace's own window", () => {
@@ -439,5 +557,158 @@ describe("sessionLanes: cuts (real compaction fixture)", () => {
       expect(a.t0).toBeGreaterThanOrEqual(lanes.t0);
       expect(a.t1).toBeLessThanOrEqual(lanes.t1);
     }
+  });
+});
+
+describe("beatAt: a harness-authored head is not the task", () => {
+  const pairs = [
+    mpair("N1", 3000, 1000, [U("[SYSTEM NOTIFICATION] the sandbox restarted")], [TXT("noted")]),
+  ];
+  const byId = (id: string) => pairs.find((p) => p.id === id);
+  const t = mainThread(buildSession(pairs).threads);
+
+  test("head is empty when the harness wrote the prompt that opened the loop", () => {
+    expect(beatAt(t, 9_000_000, byId).head).toBe("");
+  });
+});
+
+// The strip's axis: wall-clock to pixels, with the thread's idle compressed
+// to a fixed column. One mapping, two inverses — every mark on the strip and
+// every pointer handler goes through it.
+describe("timeScale / scaleX / scaleT", () => {
+  const MIN = 60_000;
+  const T = 1_000_000;
+  const IDLE = 5 * MIN;
+  const BRK = 28;
+
+  test("mergeBusy sorts, fuses touching and overlapping runs, keeps points", () => {
+    expect(mergeBusy([[30, 40], [0, 10], [10, 20], [15, 25]])).toEqual([[0, 25], [30, 40]]);
+    expect(mergeBusy([[5, 5], [9, 8]])).toEqual([[5, 5], [8, 9]]);
+    expect(mergeBusy([null, [NaN, 1]] as any)).toEqual([]);
+  });
+
+  test("no qualifying gap: ONE linear segment, and every position is what it was", () => {
+    const sc = timeScale([[T, T + MIN], [T + 2 * MIN, T + 4 * MIN]], T, T + 4 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0]).toEqual({ t0: T, t1: T + 4 * MIN, x0: 0, x1: 1000, kind: "busy" });
+    expect(scaleX(sc, T)).toBe(0);
+    expect(scaleX(sc, T + 2 * MIN)).toBe(500);
+    expect(scaleX(sc, T + 9 * MIN)).toBe(1000); // clamped, both ends
+    expect(scaleX(sc, T - MIN)).toBe(0);
+    expect(scaleT(sc, 250)).toBe(T + MIN);
+    expect(scaleT(sc, -50)).toBe(T);
+    expect(scaleT(sc, 5000)).toBe(T + 4 * MIN);
+  });
+
+  test("a 20-minute hole becomes a fixed 28px break between two busy segments", () => {
+    const busy = [[T, T + 2 * MIN], [T + 22 * MIN, T + 24 * MIN]];
+    const sc = timeScale(busy, T, T + 24 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.map((s: any) => s.kind)).toEqual(["busy", "break", "busy"]);
+    expect(sc.px).toBe(1000);
+    // the break costs exactly 28px; the two busy stretches share the rest in
+    // proportion to their real duration (2 minutes each, so 486 each)
+    expect(sc.segs[1].x1 - sc.segs[1].x0).toBe(28);
+    expect(sc.segs[0].x1 - sc.segs[0].x0).toBeCloseTo(486, 6);
+    expect(sc.segs[2].x1 - sc.segs[2].x0).toBeCloseTo(486, 6);
+    expect(sc.segs[2].x1).toBe(1000);
+    // a moment inside the hole lands inside the break's own column
+    const mid = scaleX(sc, T + 12 * MIN);
+    expect(mid).toBeGreaterThan(sc.segs[1].x0);
+    expect(mid).toBeLessThan(sc.segs[1].x1);
+    // ...and the two functions are inverses everywhere, break included
+    for (const t of [T, T + MIN, T + 2 * MIN, T + 12 * MIN, T + 22 * MIN, T + 24 * MIN]) {
+      expect(scaleT(sc, scaleX(sc, t))).toBeCloseTo(t, 3);
+    }
+    for (const x of [0, 100, 490, 500, 512, 700, 1000]) {
+      expect(scaleX(sc, scaleT(sc, x))).toBeCloseTo(x, 3);
+    }
+  });
+
+  test("only INTERIOR idle compresses: the edges of the span stay real time", () => {
+    // a request still in flight stretches the axis past the last busy span;
+    // that trailing stretch is not a gap between two runs, so it draws.
+    const sc = timeScale([[T + 10 * MIN, T + 11 * MIN]], T, T + 30 * MIN, 1000, IDLE, BRK);
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0].kind).toBe("busy");
+  });
+
+  test("more breaks than track: one honest linear segment, never a negative width", () => {
+    const busy: number[][] = [];
+    for (let i = 0; i < 40; i++) busy.push([T + i * 10 * MIN, T + i * 10 * MIN + 1]);
+    const sc = timeScale(busy, T, T + 400 * MIN, 1000, IDLE, BRK); // 39 * 28 > 1000
+    expect(sc.segs.length).toBe(1);
+    expect(sc.segs[0].kind).toBe("busy");
+  });
+
+  test("degenerate inputs degrade to the linear segment", () => {
+    expect(timeScale([], T, T, 500, IDLE, BRK).segs.length).toBe(1);
+    expect(timeScale([], T + 1, T, 500, IDLE, BRK).segs.length).toBe(1);
+    const zero = timeScale([], T, T + MIN, 0, IDLE, BRK);
+    expect(zero.px).toBe(1);
+    expect(scaleX(zero, T + MIN)).toBe(1);
+    expect(scaleX(null, T)).toBe(0);
+    expect(scaleT({ segs: [], t0: T }, 10)).toBe(T);
+  });
+});
+
+// The strip's clock ruler. Pure: the caller supplies the timezone offset, so
+// the same trace draws the same ruler wherever it is read.
+describe("axisTicks", () => {
+  const HOUR = 3_600_000;
+  const DAY = 86_400_000;
+  // 2026-08-28 00:00:00 UTC
+  const T = Date.UTC(2026, 7, 28, 0, 0, 0);
+
+  test("empty when there is no track or no span", () => {
+    expect(axisTicks(0, HOUR, 0, 0)).toEqual([]);
+    expect(axisTicks(HOUR, HOUR, 1000, 0)).toEqual([]);
+    expect(axisTicks(HOUR, 0, 1000, 0)).toEqual([]);
+  });
+
+  test("picks the finest ladder step that still lands ticks >= 72px apart", () => {
+    // 4h over 1400px: 10m would land 58px apart, 15m lands 87.5px.
+    const ticks = axisTicks(T, T + 4 * HOUR, 1400, 0);
+    expect(ticks.length).toBeGreaterThan(2);
+    const step = ticks[1].t - ticks[0].t;
+    expect([900_000, 1_800_000]).toContain(step);
+    expect((step / (4 * HOUR)) * 1400).toBeGreaterThanOrEqual(72);
+    // ticks are aligned to the clock, not to the span's start
+    for (const k of ticks) expect(k.t % step).toBe(0);
+    expect(ticks[0].t).toBeGreaterThanOrEqual(T);
+  });
+
+  test("labels are HH:MM in local time, HH:MM:SS under a minute", () => {
+    // UTC+8 (getTimezoneOffset() is -480 there)
+    const local = axisTicks(T, T + 4 * HOUR, 1400, -480);
+    expect(local[0].label).toBe("08:00");
+    expect(axisTicks(T, T + 4 * HOUR, 1400, 0)[1].label).toBe("00:15");
+    // a 30s span at 1200px: the 1s step fits, so seconds are on the label
+    const fine = axisTicks(T, T + 30_000, 1200, 0);
+    expect(fine[1].label).toMatch(/^\d\d:\d\d:\d\d$/);
+    expect(fine[1].t - fine[0].t).toBe(5000);
+  });
+
+  test("the first tick of a local calendar day is major and names the date", () => {
+    const ticks = axisTicks(T - 3 * HOUR, T + 3 * HOUR, 900, 0);
+    const major = ticks.filter((k: any) => k.major);
+    expect(major.length).toBe(1);
+    expect(major[0].t).toBe(T);
+    expect(major[0].label).toBe("08-28 00:00");
+    expect(ticks.every((k: any) => k.major || !/-/.test(k.label))).toBe(true);
+    // and a day boundary that only exists in LOCAL time is the one marked
+    const shifted = axisTicks(T - DAY / 2, T + DAY / 2, 900, -480);
+    expect(shifted.filter((k: any) => k.major).map((k: any) => k.t)).toEqual([T - 8 * HOUR]);
+  });
+
+  test("a merged multi-day session keeps the 72px floor — a day step is multiplied", () => {
+    // 30 days at 900px: the ladder's top rung (1d) lands 30px apart, which
+    // would draw 31 ticks of mush, every one of them major.
+    const span = 30 * DAY;
+    const ticks = axisTicks(T, T + span, 900, 0);
+    expect(ticks.length).toBeGreaterThan(1);
+    const step = ticks[1].t - ticks[0].t;
+    expect((step / span) * 900).toBeGreaterThanOrEqual(72);
+    expect(step % DAY).toBe(0); // still local midnights, so the labels are dates
+    expect(ticks.every((k: any) => k.major)).toBe(true);
   });
 });

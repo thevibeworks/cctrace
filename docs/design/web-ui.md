@@ -482,7 +482,7 @@ hash-routed:
   OVERVIEW, then a margin beside a deck — each of the two scrolling
   itself. The OVERVIEW (`renderCtxOverview` / `wireCtxOverview`, `.cx-ov`)
   is the page's time axis and never scrolls away, because every deck
-  below reads its selection. Two tracks on one x axis, under one brush:
+  below reads its selection. Three tracks on one x axis, under one brush:
   **ctx** (one stacked column per step — or per turn, toggle persisted in
   `cctrace-ctx-gran` — height anchored to actual prompt tokens and scaled
   to this thread's own peak, segment split from the estimate, ✂ plus a
@@ -492,7 +492,13 @@ hash-routed:
   margin's balance, stated once) and **time** (that step's model duration
   then its tools/waiting gap, off `threadTimeSplit.byPair` — every figure
   a wire timestamp, floor of one PIXEL so a short step under a 2m outlier
-  still reads as a baseline; totals and legend live in the margin).
+  still reads as a baseline; totals and legend live in the margin) and
+  **cost** (that step's estimated bill stacked cache read / cache write /
+  input / output against the thread's dearest column, amber $ marks on
+  the cache BUMPS with their wire cause — retry / expired / prefix
+  changed — priced against a warm cache; "where the money went" and the
+  polled account quota live in the margin; the full contract is
+  docs/design/cost.md).
   Columns are equal-width and GAPLESS with the bar inside capped at 28px,
   because the brush's edges sit at `i/N` of the track and a gap would
   drift the overlay by a column across 100 steps.
@@ -638,29 +644,64 @@ hash-routed:
   (zero-width window) clears instead of filtering everything out; ✕ on
   the chip clears; Esc exits replay and the slice with it. Works
   identically in snapshots (export hidden — no server); live captures
-  extend the track and "live ⤓" re-attaches the tail. P1+P2+slices
+  extend the track and the transport's live chip re-attaches the tail.
+  P1+P2+slices
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
 - **The replay stage** (docs/design/replay-stage.md — the rules live
-  there): the track is `#rp-lanes`, five lanes x wall-clock (human points,
-  model spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
+  there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
+  `axisTicks` in the page's local time, a major tick dropping a rule
+  through every lane) over five lanes x wall-clock (human points, model
+  spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
   failed ✗), built from `sessionLanes` over the FULL threads (not the
   cursored ones) and positioned with the same `(t - t0)/dur` math the
-  marks used; playhead, fill and slice span every lane. Wheel zooms
-  around the cursor (1x-32x, the same helper the context overview uses)
-  and sets `data-depth` map/read/full; click a span seeks to its pair's
-  END (the boundary where it became visible). While replaying, `#stage`
-  sits at the top of `#threads` above the rail: a fixed six-node inline
-  SVG (human, model, tools, agents, waiting, reply) with counts/time as of
-  the cursor from `stateCounts`, the current state and transition lit via
-  `stateAt`; under it the beat from `beatAt` (caption, tool rows fused
-  with results via the detail panel's own renderers, spawn rows, reply
-  line, stated reasoning, window delta). `[`/`]` walk `chaptersOf`; `F`
-  toggles `body.present` (chrome hidden, type scale unchanged); Esc peels
-  present -> replay -> view. Open `start`s (below) draw as a dashed model
-  span to the newest known time and light the model node with the live
-  dot's heartbeat — never a ticking clock.
+  marks used; playhead, veil and slice span every lane. The rail's
+  selected thread draws full and every other thread's items carry
+  `.other` (~30%); `#rp-veil` dims everything RIGHT of the playhead — a
+  replay never shows what has not happened. Wheel zooms around the cursor
+  (1x-32x, the same helper the context overview uses) and sets
+  `data-depth` map/read/full; click a span seeks to its pair's END (the
+  boundary where it became visible). While replaying the bar carries the
+  LOOP ROW (`#rp-now`, between the strip and the transport, `loopAt`):
+  Claude Code's loop as a FLOWCHART in fixed-pixel inline SVG — boxes
+  human / model / the hand-off slot (tools | agents | waiting), a
+  `calls?` decision diamond, five labelled edges (prompt, yes, results
+  over the row, no · answer under it) — the state at the cursor lit, the
+  edge it came in by lit and FLOWING (an animated dash, the page's
+  deliberate second motion owner while replaying), and beside it the
+  state word, what is running, the held duration where the extent is a
+  wire fact, and the absolute clock it began at; click seeks to the step
+  that opened it; the model box beats only for a request in flight at
+  the live edge. The strip's axis is the selected thread's own extent
+  (`threadExtent`), idle gaps ≥ 5 min folded to 28px hatched `rp-break`
+  columns labelled `⧸⧸ <skipped>` in the clock row (`timeScale` /
+  `scaleX` / `scaleT` — the ONE x<->t mapping every strip surface uses:
+  spans, ticks, veil, playhead, slice, drag, wheel zoom); the transport's
+  clock and length stay real wall-clock.
+  `#stage` sits at the top of `#threads` above the rail, two blocks: the
+  beat from `beatAt` (caption, the loop's head, tool rows fused with
+  results via the detail panel's own renderers, spawn rows, reply line,
+  stated reasoning, window delta) and `.st-sofar` from `soFar` (the call
+  tally as of the cursor — the only place the per-tool count is stated).
+  `[`/`]` walk `chaptersOf`; `F` toggles `body.present` (chrome hidden,
+  type scale unchanged); Esc peels present -> replay -> view. Open
+  `start`s (below) draw as a dashed model span to the newest known time
+  and beat the loop row's model chip — never a ticking clock.
+- **Replay TAILS a live run.** The transport is
+  `[⏮][▶][⏭] 1x 2x 8x 60x  <local clock> · +<offset> / <length>  [live]
+  [✕ exit]`. `⏭` / `End` seek the end of the tape — on a live page the
+  live edge. A `pair` frame measures `wasAtEdge` (cursor >=
+  `replaySpan(pairs).t1 - 0.5`) and `wasAtBottom` (`convoAtBottom`)
+  BEFORE ingest: at the edge the cursor moves to the new edge, the loop
+  row and the beat follow (the beat gets the page's 160ms live-arrived
+  fade once), and the convo sticks to its bottom only if the reader was
+  there. Behind the edge nothing moves and the `#rp-live` chip flips from
+  `● live` to a `⤓ live` button that snaps back. `history` frames never
+  move the cursor. Every other cursor change (seek, step, chapter,
+  playback tick) scrolls the convo to its bottom instantly — the bottom
+  IS the moment. Reading pages (snapshot / `cctrace view`) have no live
+  chip: there is no edge to chase.
 - **Live wire** (WebSocket `/ws`, served pages only — a snapshot has none):
   `init` on connect (`{ pairs, traceBytes, starts }`, the whole state, re-sent
   wholesale when a speculative preload is evicted), `pair` per capture

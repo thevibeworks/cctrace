@@ -15,9 +15,13 @@ import { extractCallInfo } from "./summarize";
 // docs/design/session-replay.md). These are the pure primitives: the wire as
 // of a cursor, the event boundaries playback walks, and the tick scheduler —
 // plus the STAGE layer below them (docs/design/replay-stage.md): the trace as
-// lanes over time, the observed state machine as of the cursor, and the beat
-// (what the agent did at this step). Every mark is a wire timestamp or a wire
-// fact; nothing here estimates.
+// lanes over time, the observed state at the cursor (stateAt) read into one
+// NOW line (nowAt) and placed on the loop row (loopAt), the tally behind it
+// (soFar), the beat (what the agent did at this step), the strip's clock
+// ruler (axisTicks) and its axis — the selected thread's own extent
+// (threadExtent) mapped to pixels with idle compressed (timeScale / scaleX /
+// scaleT). Every mark is a wire timestamp or a wire fact; nothing here
+// estimates.
 //
 // Like summarize.ts, every exported function is inlined into the web UI via
 // Function.prototype.toString() — keep them self-contained (cross-calls only
@@ -369,8 +373,7 @@ export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
   for (const x of L.model || []) {
     if (key && x.threadKey !== key) continue;
     // Half-open, like every span here: at exactly t1 the reply is visible
-    // (visibleAt) and the gap that follows owns the cursor — the same
-    // instant stateCounts credits the outgoing transition.
+    // (visibleAt) and the gap that follows owns the cursor.
     if (x.t0 <= cursor && cursor < x.t1 && (!m || x.t0 > m.t0)) m = x;
     if (x.t1 <= cursor && x.t1 >= lastT) { lastT = x.t1; lastItem = x; lastKind = "end"; }
   }
@@ -401,84 +404,393 @@ export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
 }
 
 /**
- * The state diagram's numbers as of the cursor: how often each state was
- * entered, how much wall-clock it holds so far, and how many times each
- * transition was taken. A span counts the moment it STARTS (t0 <= cursor)
- * and contributes min(t1, cursor) - t0 ms, so the totals grow with the
- * playhead instead of jumping when a span completes; a transition counts
- * only when the state it leaves has finished (t1 <= cursor) — the edge is
- * not observed until then.
+ * The NOW line: `stateAt` read into the one row the stage puts on screen —
+ * what the agent is doing at the cursor, what is running, since when
+ * (docs/design/replay-stage.md). Built ON stateAt, never forking its
+ * precedence.
  *
- * byName tallies the calls of every counted tools gap. A step whose loop
- * ended before any result came back has no gap and no tally: we never saw
- * those calls run. `model.failed` is the failed-request count (the badge on
- * the model node), never a state of its own here.
+ * `since` is always a wire timestamp. `held` is `cursor - since` only where
+ * the state's extent is itself a wire fact — a span or gap with a t1. The
+ * holes (`human`, `failed`, `idle`) are bounded by an event that has not
+ * happened yet, so they hold nothing we observed: null.
+ *
+ * `liveStartMs` is an in-flight request's start (the proxies' `start` event)
+ * at the live edge: the model IS thinking, the extent is unknown, and the
+ * dot is the page's one heartbeat.
  */
-export function stateCounts(lanes: any, cursor: number, threadKey?: any): any {
+export function nowAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
   const L = lanes || {};
   const key = threadKey || "";
-  const out: any = {
-    human: 0,
-    model: { n: 0, ms: 0, failed: 0 },
-    tools: { n: 0, ms: 0, byName: {} },
-    agents: { n: 0, ms: 0 },
-    waiting: { n: 0, ms: 0 },
-    cuts: 0,
-    // Fixed key set: the diagram's geometry never shifts, so a zero edge is
-    // faint, not absent.
-    transitions: {
-      "human>model": 0, "model>tools": 0, "tools>model": 0,
-      "model>agents": 0, "agents>model": 0, "model>reply": 0,
-      "model>waiting": 0, "waiting>model": 0, "reply>human": 0,
-    },
-  };
-  const held = (x: any) => Math.max(0, Math.min(x.t1, cursor) - x.t0);
-  for (const h of L.human || []) {
-    if (key && h.threadKey !== key) continue;
-    if (h.t > cursor) continue;
-    out.human++;
-    out.transitions["human>model"]++;
-    // Every loop after a thread's first was entered from a reply.
-    if (h.ord > 0) out.transitions["reply>human"]++;
+  const st = stateAt(L, cursor, key);
+  if (liveStartMs && liveStartMs > 0) {
+    return {
+      state: "model", live: true, what: "thinking",
+      since: liveStartMs, held: null, agentsRunning: st.agentsRunning, pairId: "",
+    };
   }
+  const s = st.state;
+  const item = st.item || null;
+  let what = "";
+  if (s === "model") what = "thinking";
+  else if (s === "tools") {
+    // Wire order of FIRST appearance, repeats folded: one gap covers three
+    // Bash calls, and "Bash ×3" is what the reader means by that.
+    const order: string[] = [];
+    const n: any = {};
+    for (const c of (item && item.names) || []) {
+      if (!c) continue;
+      if (n[c] == null) { n[c] = 0; order.push(c); }
+      n[c]++;
+    }
+    const parts: string[] = [];
+    for (const c of order) parts.push(c + (n[c] > 1 ? " ×" + n[c] : ""));
+    what = parts.join(" · ");
+  } else if (s === "agents") {
+    const labels: string[] = [];
+    for (const a of L.agents || []) {
+      if (key && a.parentKey !== key) continue;
+      if (a.t0 <= cursor && cursor < a.t1) labels.push(a.label || a.agentType || "subagent");
+    }
+    what = st.agentsRunning + " running";
+    if (labels.length) {
+      what += " · " + labels.slice(0, 3).join(", ") +
+        (labels.length > 3 ? " +" + (labels.length - 3) : "");
+    }
+  } else if (s === "waiting") what = "harness continued";
+  else if (s === "human") what = "awaiting the next prompt";
+  else if (s === "failed") what = ((item && item.status) || "failed") + " · the retry is next";
+  const extent = s === "model" || s === "tools" || s === "waiting" || s === "agents";
+  // The idle BEFORE the first pair has no beginning we observed — stateAt
+  // hands back the lane span's t0, which is still in the cursor's future.
+  // A now line never states a time that has not happened: 0 = say nothing.
+  const since = st.since > cursor ? 0 : st.since || 0;
+  return {
+    state: s,
+    live: false,
+    what,
+    since,
+    held: extent && item && item.t1 != null ? Math.max(0, cursor - st.since) : null,
+    agentsRunning: st.agentsRunning,
+    pairId: (item && (item.pairId || item.parentPairId)) || "",
+  };
+}
+
+/**
+ * The LOOP row: `nowAt` placed on Claude Code's actual machine, drawn once
+ * and lit at the cursor (docs/design/replay-stage.md, "The loop row"):
+ *
+ *     human --prompt--> model --calls--> [tools | agents | waiting]
+ *       ^                 ^                        |
+ *       |                 +--------results---------+
+ *       +----------------answer--------------------+
+ *
+ * Three states the agent occupies — the hand-off SLOT is one position in
+ * the loop with three flavors — and four edges. Returns nowAt's fields plus:
+ *   node  'human' | 'model' | 'slot' | ''   the lit state ('' = idle: nothing lit)
+ *   slot  'tools' | 'agents' | 'waiting'    the slot's label
+ *   edge  'human>model' | 'model>slot' | 'slot>model' | 'model>human' | ''
+ *         the transition INTO the lit node, where the wire shows one
+ *   also  a child is running while the actor is elsewhere: the slot reads
+ *         `agents`, half-lit, beside the lit node
+ *
+ * The edge into `model` is adjacency: the point or gap that ended exactly
+ * where this request began (gap windows end at the next request's start —
+ * threadTimeSplit's own rule). A live request has no gap yet, so its edge
+ * is the protocol's: the newest landed reply made calls, and the request
+ * in flight is the one that carries their results (`slot>model`); after a
+ * final reply the wire cannot tell the human from a harness nudge until the
+ * pair lands — no edge. The edge into `human` lights only when the reply
+ * actually landed (the last step's `next` is reply): a loop the human
+ * interrupted mid-tools lights the node, never the answer edge. A failed
+ * request went nowhere: no edge.
+ */
+export function loopAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const n = nowAt(L, cursor, key, liveStartMs);
+  const st = stateAt(L, cursor, key);
+  const s = n.state;
+  let node = "";
+  let slot = "tools";
+  let edge = "";
+  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+  const mine = (x: any) => !key || x.threadKey === key;
+  // the hand-off a gap stands for: its step's `next` (a Task beside a Bash
+  // is `agents` — the same coarser fact the lane and stateAt agree on)
+  const flavorOf = (pairId: string) => {
+    for (const x of L.model || []) if (x.pairId === pairId && x.next === "agents") return "agents";
+    return "tools";
+  };
+  if (s === "tools" || s === "agents" || s === "waiting") {
+    node = "slot";
+    slot = s;
+    edge = "model>slot";
+  } else if (s === "human") {
+    node = "human";
+    if (st.item && st.item.next === "reply") edge = "model>human";
+  } else if (s === "failed") {
+    node = "model";
+  } else if (s === "model") {
+    node = "model";
+    if (n.live) {
+      let last: any = null;
+      for (const x of L.model || []) {
+        if (!mine(x)) continue;
+        if (x.t1 <= cursor + 0.5 && (!last || x.t1 >= last.t1)) last = x;
+      }
+      if (last && (last.next === "tools" || last.next === "agents")) {
+        slot = last.next;
+        edge = "slot>model";
+      }
+    } else {
+      const at = n.since;
+      for (const h of L.human || []) if (mine(h) && near(h.t, at)) edge = "human>model";
+      if (!edge) for (const g of L.tools || []) if (mine(g) && near(g.t1, at)) { slot = flavorOf(g.pairId); edge = "slot>model"; }
+      if (!edge) for (const g of L.waiting || []) if (mine(g) && near(g.t1, at)) { slot = "waiting"; edge = "slot>model"; }
+      if (!edge) for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1, at)) { slot = "agents"; edge = "slot>model"; }
+    }
+  }
+  const also = n.agentsRunning > 0 && s !== "agents";
+  if (also && node !== "slot") slot = "agents";
+  return Object.assign({}, n, { node, slot, edge, also });
+}
+
+/**
+ * The tally behind the now line: how many steps ran, which tools were called
+ * and how often, how many children, failures and cuts — all as of the cursor.
+ * A span counts the moment it STARTS (t0 <= cursor), a mark when it lands.
+ *
+ * `tools` is byName only. Durations are not here on purpose: the convo
+ * header's `time` chip already states where the thread's wall-clock went,
+ * and a number is stated once per view (docs/design/ui.md).
+ */
+export function soFar(lanes: any, cursor: number, threadKey?: any): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const out: any = { steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 };
   for (const x of L.model || []) {
     if (key && x.threadKey !== key) continue;
-    if (x.t0 > cursor) continue;
-    out.model.n++;
-    out.model.ms += held(x);
-    if (x.t1 <= cursor && out.transitions["model>" + x.next] != null) out.transitions["model>" + x.next]++;
-  }
-  for (const f of L.failed || []) {
-    if (key && f.threadKey !== key) continue;
-    if (f.t <= cursor) out.model.failed++;
+    if (x.t0 <= cursor) out.steps++;
   }
   for (const g of L.tools || []) {
     if (key && g.threadKey !== key) continue;
     if (g.t0 > cursor) continue;
-    out.tools.n++;
-    out.tools.ms += held(g);
-    for (const n of g.names || []) out.tools.byName[n] = (out.tools.byName[n] || 0) + 1;
-    if (g.t1 <= cursor) out.transitions["tools>model"]++;
-  }
-  for (const g of L.waiting || []) {
-    if (key && g.threadKey !== key) continue;
-    if (g.t0 > cursor) continue;
-    out.waiting.n++;
-    out.waiting.ms += held(g);
-    if (g.t1 <= cursor) out.transitions["waiting>model"]++;
+    // A step whose loop ended before any result came back has no gap and no
+    // tally: we never saw those calls run.
+    for (const n of g.names || []) out.tools[n] = (out.tools[n] || 0) + 1;
   }
   for (const a of L.agents || []) {
     if (key && a.parentKey !== key) continue;
-    if (a.t0 > cursor) continue;
-    out.agents.n++;
-    out.agents.ms += held(a);
-    if (a.t1 <= cursor) out.transitions["agents>model"]++;
+    if (a.t0 <= cursor) out.agents++;
+  }
+  for (const f of L.failed || []) {
+    if (key && f.threadKey !== key) continue;
+    if (f.t <= cursor) out.failed++;
   }
   for (const c of L.cuts || []) {
     if (key && c.threadKey !== key) continue;
     if (c.t <= cursor) out.cuts++;
   }
   return out;
+}
+
+/**
+ * The strip's clock ruler: the FINEST ladder step whose ticks still land
+ * >= 72px apart at this track width, aligned to the LOCAL calendar. Past the
+ * ladder's top rung (a merged multi-day session) the day step is multiplied
+ * until the 72px floor holds.
+ *
+ * `tzOffsetMin` is the offset the caller measured ON THE DATA
+ * (`new Date(t0).getTimezoneOffset()`) — the function reads no clock of its
+ * own, so the ruler does not depend on when the page is read, and a summer
+ * trace read in winter still rules in the offset it was captured under.
+ * `t - tzOffsetMin * 60000` is the local wall clock as a ms value, which is
+ * why the UTC getters below format local time.
+ *
+ * Labels are HH:MM (HH:MM:SS under a minute); the first tick of a local
+ * calendar day is `major` and names the date. Ticks are a ruler, never data:
+ * nothing here is estimated or rounded into a claim.
+ */
+export function axisTicks(t0: number, t1: number, px: number, tzOffsetMin: number): any[] {
+  const out: any[] = [];
+  if (!(px > 0) || !(t1 > t0)) return out;
+  const LADDER = [
+    1000, 5000, 15000, 30000, 60000, 120000, 300000, 600000, 900000, 1800000,
+    3600000, 7200000, 21600000, 43200000, 86400000,
+  ];
+  const span = t1 - t0;
+  let step = LADDER[LADDER.length - 1];
+  for (const s of LADDER) {
+    if ((s / span) * px >= 72) { step = s; break; }
+  }
+  // A merged multi-day session outruns the ladder: 30 days at 900px would
+  // draw 31 day-ticks 29px apart, every one of them `major`. Multiply the
+  // coarsest rung instead — a multiple of a day keeps the local-midnight
+  // alignment, so the labels stay a ruler rather than mush.
+  if ((step / span) * px < 72) step *= Math.ceil(72 / ((step / span) * px));
+  const DAY = 86400000;
+  const shift = (tzOffsetMin || 0) * 60000;
+  const two = (n: number) => (n < 10 ? "0" : "") + n;
+  for (let lt = Math.ceil((t0 - shift) / step) * step; lt <= t1 - shift; lt += step) {
+    const d = new Date(lt);
+    const hh = two(d.getUTCHours());
+    const mm = two(d.getUTCMinutes());
+    const major = ((lt % DAY) + DAY) % DAY === 0;
+    out.push({
+      t: lt + shift,
+      label: major
+        ? two(d.getUTCMonth() + 1) + "-" + two(d.getUTCDate()) + " " + hh + ":" + mm
+        : hh + ":" + mm + (step < 60000 ? ":" + two(d.getUTCSeconds()) : ""),
+      major,
+    });
+  }
+  return out;
+}
+
+/**
+ * Sorted, merged [t0, t1] intervals — the union of a set of spans. Touching
+ * intervals fuse (a gap of zero is not a gap), points ([t, t]) are kept: they
+ * are moments the strip still has to place.
+ */
+export function mergeBusy(intervals: any[]): any[] {
+  const xs: any[] = [];
+  for (const iv of intervals || []) {
+    if (!iv) continue;
+    const a = +iv[0];
+    const b = +iv[1];
+    if (!isFinite(a) || !isFinite(b)) continue;
+    xs.push(b >= a ? [a, b] : [b, a]);
+  }
+  xs.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+  const out: any[] = [];
+  for (const iv of xs) {
+    const last = out.length ? out[out.length - 1] : null;
+    if (last && iv[0] <= last[1]) {
+      if (iv[1] > last[1]) last[1] = iv[1];
+    } else out.push([iv[0], iv[1]]);
+  }
+  return out;
+}
+
+/**
+ * The strip's mapping from wall-clock to pixels, with IDLE COMPRESSED
+ * (docs/design/replay-stage.md, "The strip's axis"). `busy` are the spans
+ * that carry activity; a gap between two of them longer than `idleMs`
+ * collapses to a fixed `breakPx` column, and the remaining width is shared
+ * by the busy stretches in proportion to their real duration.
+ *
+ *   { segs: [{ t0, t1, x0, x1, kind: 'busy'|'break' }], px, t0, t1 }
+ *
+ * The segments tile [t0, t1] and [0, px] with no holes, so `scaleX` and
+ * `scaleT` are inverses everywhere — including INSIDE a break, which maps
+ * linearly across its own column (scrubbing through skipped time is fast but
+ * continuous). With no qualifying gap the result is ONE linear segment and
+ * every position is what it was before this existed. Time outside the busy
+ * union but at the edges of the span (a request in flight past the last
+ * captured pair) stays busy: only interior gaps compress.
+ */
+export function timeScale(busy: any[], t0: number, t1: number, px: number, idleMs: number, breakPx: number): any {
+  const P = px > 0 ? px : 1;
+  const one = { segs: [{ t0, t1, x0: 0, x1: P, kind: "busy" }], px: P, t0, t1 };
+  if (!(t1 > t0)) return one;
+  const gap = idleMs > 0 ? idleMs : Infinity;
+  const bw = breakPx > 0 ? breakPx : 0;
+  const m = mergeBusy(busy);
+  const breaks: any[] = [];
+  for (let i = 1; i < m.length; i++) {
+    const a = Math.max(t0, m[i - 1][1]);
+    const b = Math.min(t1, m[i][0]);
+    if (b - a >= gap) breaks.push([a, b]);
+  }
+  // Nothing to skip, or so much to skip that the breaks alone would eat the
+  // track: one honest linear segment beats a negative busy width.
+  if (!breaks.length || breaks.length * bw >= P) return one;
+  let skipped = 0;
+  for (const b of breaks) skipped += b[1] - b[0];
+  const busyMs = t1 - t0 - skipped;
+  if (busyMs <= 0) return one;
+  const perMs = (P - breaks.length * bw) / busyMs;
+  const segs: any[] = [];
+  let x = 0;
+  let t = t0;
+  for (const b of breaks) {
+    if (b[0] > t) {
+      const w = (b[0] - t) * perMs;
+      segs.push({ t0: t, t1: b[0], x0: x, x1: x + w, kind: "busy" });
+      x += w;
+    }
+    segs.push({ t0: b[0], t1: b[1], x0: x, x1: x + bw, kind: "break" });
+    x += bw;
+    t = b[1];
+  }
+  if (t < t1) segs.push({ t0: t, t1, x0: x, x1: P, kind: "busy" });
+  else segs[segs.length - 1].x1 = P;
+  return { segs, px: P, t0, t1 };
+}
+
+/** A wall-clock instant as a pixel on the track, clamped to [0, px]. */
+export function scaleX(scale: any, t: number): number {
+  const S = scale || {};
+  const segs = S.segs || [];
+  const P = S.px > 0 ? S.px : 1;
+  if (!segs.length) return 0;
+  if (t <= segs[0].t0) return 0;
+  for (const s of segs) {
+    if (t <= s.t1) {
+      const d = s.t1 - s.t0;
+      const f = d > 0 ? (t - s.t0) / d : 0;
+      const x = s.x0 + f * (s.x1 - s.x0);
+      return x < 0 ? 0 : x > P ? P : x;
+    }
+  }
+  return P;
+}
+
+/** A pixel on the track back to its wall-clock instant, clamped to the span. */
+export function scaleT(scale: any, x: number): number {
+  const S = scale || {};
+  const segs = S.segs || [];
+  if (!segs.length) return S.t0 || 0;
+  if (x <= segs[0].x0) return segs[0].t0;
+  for (const s of segs) {
+    if (x <= s.x1) {
+      const w = s.x1 - s.x0;
+      const f = w > 0 ? (x - s.x0) / w : 0;
+      return s.t0 + f * (s.t1 - s.t0);
+    }
+  }
+  return segs[segs.length - 1].t1;
+}
+
+/**
+ * One thread's own extent on the wall clock, and the time inside it that
+ * carries activity: its model / tools / waiting spans, its human points,
+ * cuts and failed marks, plus the agent spans it spawned (and its OWN span
+ * when a child is the selection — the same ownership the strip's focus
+ * uses). Points widen to nothing. `threadKey` empty = every item in the
+ * lanes. null when the thread has nothing on the wire.
+ */
+export function threadExtent(lanes: any, threadKey?: any): any {
+  const L = lanes || {};
+  const key = threadKey || "";
+  const busy: any[] = [];
+  let lo = Infinity;
+  let hi = -Infinity;
+  const add = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b)) return;
+    busy.push([a, b]);
+    if (a < lo) lo = a;
+    if (b > hi) hi = b;
+  };
+  for (const x of L.model || []) if (!key || x.threadKey === key) add(x.t0, x.t1);
+  for (const g of L.tools || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const g of L.waiting || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const h of L.human || []) if (!key || h.threadKey === key) add(h.t, h.t);
+  for (const c of L.cuts || []) if (!key || c.threadKey === key) add(c.t, c.t);
+  for (const f of L.failed || []) if (!key || f.threadKey === key) add(f.t, f.t);
+  for (const a of L.agents || []) if (!key || a.parentKey === key || a.threadKey === key) add(a.t0, a.t1);
+  if (lo === Infinity) return null;
+  return { t0: lo, t1: hi, busy: mergeBusy(busy) };
 }
 
 /**
@@ -493,6 +805,10 @@ export function stateCounts(lanes: any, cursor: number, threadKey?: any): any {
  * growth over the previous step (the first step grew from nothing, so its
  * delta IS its window). Per-call durations are not on the wire — one gap
  * covers parallel calls — so the beat never invents one.
+ *
+ * `head` is the human prompt that started this step's working loop, so the
+ * reader always knows which task the step serves. Empty when the loop has no
+ * head or the harness authored it — a notification is not a task.
  */
 export function beatAt(thread: any, cursor: number, pairOf: any): any {
   if (!thread || !thread.turns) return null;
@@ -512,7 +828,7 @@ export function beatAt(thread: any, cursor: number, pairOf: any): any {
       const prompt = (u.input || 0) + (u.cacheRead || 0) + (u.cacheWrite || 0);
       const end = pairEndMs(p);
       if (end <= cursor + 0.5 && (!best || end >= best.end)) {
-        best = { turn, p, u, prompt, prev: prevPrompt, end, ord: li, step: L.steps[v] || 0, isFinal: v === L.final };
+        best = { turn, p, u, prompt, prev: prevPrompt, end, ord: li, step: L.steps[v] || 0, isFinal: v === L.final, loop: L };
       }
       prevPrompt = prompt;
     }
@@ -555,9 +871,14 @@ export function beatAt(thread: any, cursor: number, pairOf: any): any {
     if (oc.next === "reply" && b.type === "text" && typeof b.text === "string" && b.text.trim()) reply = cap(b.text);
     if (!thinking && b.type === "thinking" && typeof b.thinking === "string" && b.thinking.trim()) thinking = cap(b.thinking);
   }
+  const HL = best.loop || {};
+  const head = HL.head != null && !HL.headInjected
+    ? String(turnSnippet((vis[HL.head] || {}).blocks || [])).replace(/\s+/g, " ").trim().slice(0, 80)
+    : "";
   return {
     ord: best.ord,
     step: best.step,
+    head,
     pairId: best.p.id,
     t0: pairStartMs(best.p),
     t1: best.end,

@@ -281,6 +281,11 @@ cctrace ps [--json]                       # live instances: URL, pids, client, p
 cctrace history [--limit N | --all] [--json]  # global run log: every traced run (live +
                                           # past), newest first, across all projects; dimmed
                                           # rows are another container's (trace not here)
+cctrace insights [--since 7d] [--scan] [--json]  # windowed usage aggregates, all projects:
+                                          # runs/tokens/est cost by day/project/client +
+                                          # heaviest sessions; --scan adds the wire truth
+                                          # (cache split, per-model, quota polls). The
+                                          # cctrace-insights skill reasons over --json
 cctrace store [--json]                    # the store: root path, one row per project (size,
                                           # traces, newest), total — where the disk went
 cctrace title [--force] [--json]           # list sessions needing a name + their spine

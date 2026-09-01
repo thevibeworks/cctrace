@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- The trajectory bar is the session view's OVERVIEW now, always on top. The strip - five lanes over wall-clock, the clock ruler, idle folded to // breaks, the selected thread in focus - used to appear only after pressing replay; an overview that must be asked for is not an overview. It now draws on every session render and grows on every landed pair. Replay's own chrome (the loop row, the transport, the veil, the playhead, the slice band) still waits for replay
+- Touching the strip enters replay at that moment: click a span and the page replays from that pair's end, drag and you are scrubbing. Wheel zoom reads closer without seeking. Exit puts you back at the full session with the overview still on top
+- Made the bar collapsible: a chevron in the clock gutter cell folds the lanes to the ~13px clock row (a thin ruler is still an overview, and the reopen target), persisted across visits. Replay unfolds it - the instrument needs its lanes. A trace with no session pairs hides the bar entirely
+
 ## 0.46.0
 
 - Added COST as a third reading of the Context view, not a fourth tab. The overview grows a cost track beside ctx and time: one column per step (or per turn, same granularity toggle), stacked cache read / cache write / input / output against the thread's dearest column, under the same brush, with the same hover-scrub, click-pin and dimming. The gutter states the top of scale. Measured on a real 1209-pair trace: 74% of the ≈$81 that thread spent was cache READS - re-reading the assembled window on every step - 15% cache writes, 11% output, and fresh input rounded to zero. That is the shape the track exists to show

@@ -649,6 +649,17 @@ hash-routed:
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
+- **The trajectory bar is the session view's OVERVIEW** (replay-stage.md
+  rev 3): `#replay-bar` is FRAME in the session view at all times — the
+  strip draws the whole session's shape (lanes, clock row, idle folded,
+  thread focus, the live open-request stub) without a replay running;
+  the loop row, transport, veil, playhead and slice stay hidden until
+  `body.replaying`. Touching the strip enters replay at that moment
+  (click a span replays from its end, a drag scrubs); wheel zoom works
+  without entering. The ▾ chevron in the clock gutter cell folds the
+  lanes to the ~13px clock row (persisted, `cctrace-traj-fold`); replay
+  overrides the fold. A trace with no session pairs hides the bar
+  (`.rp-empty`).
 - **The replay stage** (docs/design/replay-stage.md — the rules live
   there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
   `axisTicks` in the page's local time, a major tick dropping a rule

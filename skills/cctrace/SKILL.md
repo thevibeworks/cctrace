@@ -192,6 +192,11 @@ session) — the link a statusline can afford to print. Hash-routed views:
   Estimates carry ≈ and sit next to the provider-reported
   prompt tokens. Selection is shared with the Sessions view, and a step
   links back to its turn there.
+- **Trajectory bar** (Sessions view, always on top): five lanes over
+  wall-clock — human prompts · model requests · tools · subagents ·
+  harness marks — drawn for the whole session even before any replay,
+  idle folded to `⧸⧸` breaks. Click a span to replay from that moment;
+  the ▾ chevron folds the lanes to the clock row.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `[`/`]` jump between working loops; `Space` plays
   at 1/2/8/60x (idle gaps compressed). The scrubber is a TRAJECTORY: five

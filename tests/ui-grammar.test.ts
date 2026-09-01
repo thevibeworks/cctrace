@@ -942,16 +942,41 @@ describe("the trajectory strip (#rp-lanes)", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
-  test("not replaying, the strip is inert markup and nothing renders into it", () => {
+  // Rev 3: the strip is the session view's OVERVIEW — it draws without a
+  // replay running; only replay's own chrome (loop row, transport, veil,
+  // playhead) waits for body.replaying.
+  test("not replaying, the strip still draws — it is the session's overview", () => {
     const html = renderSnapshot(fixture());
     expect(html).toContain('id="rp-lanes"');
     expect(html).toContain('data-depth="map"');
-    expect(html).toContain('id="rp-lanes-body"');
     const page = bootSnapshotPage(html);
     page.goto("#/session");
-    expect(page.els["rp-lanes-body"].innerHTML).toBe("");
+    expect(page.body.classList.contains("replaying")).toBe(false);
+    const body = page.els["rp-lanes-body"].innerHTML as string;
+    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
+    // the clock cell carries the fold chevron, unfolded by default
+    expect(page.els["rp-gut"].innerHTML).toContain('class="rp-clps"');
+    expect(page.els["rp-gut"].innerHTML).toContain("▾");
+    expect(page.els["replay-bar"].classList.contains("rp-empty")).toBe(false);
     expect(page.errors).toEqual([]);
     expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the chevron folds the bar and the fold survives a strip re-render", () => {
+    const page = bootSnapshotPage(renderSnapshot(fixture()));
+    page.goto("#/session");
+    const gut = page.els["rp-gut"];
+    const bar = page.els["replay-bar"];
+    const click = (gut.listeners.click || [])[0];
+    expect(typeof click).toBe("function");
+    click({ target: { closest: (sel: string) => (sel === ".rp-clps" ? {} : null) } });
+    expect(bar.classList.contains("rp-collapsed")).toBe(true);
+    // the chevron redrew pointing right — the fold state is in the drawing
+    expect(page.els["rp-gut"].innerHTML).toContain("▸");
+    click({ target: { closest: (sel: string) => (sel === ".rp-clps" ? {} : null) } });
+    expect(bar.classList.contains("rp-collapsed")).toBe(false);
+    expect(page.els["rp-gut"].innerHTML).toContain("▾");
+    expect(page.errors).toEqual([]);
   });
 
   test("the strip carries a clock row, ghosts every other thread, and dims the future", () => {
@@ -1351,6 +1376,23 @@ describe("replay tails the live session", () => {
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: fix.slice(0, 3), starts: [] }) });
     return { fix, page, ws };
   }
+
+  // Rev 3: the overview strip is live even without a replay running.
+  test("a pair landing while the session view is open, not replaying, grows the strip", () => {
+    const { fix, page, ws } = live();
+    page.goto("#/session");
+    expect(page.body.classList.contains("replaying")).toBe(false);
+    const before = String(page.els["rp-lanes-body"].innerHTML);
+    expect(before).toContain("rp-span model");
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: fix[3] }) });
+    // the axis grew to the new pair's end, so every span repositioned — the
+    // strip re-rendered without a replay running
+    const after = String(page.els["rp-lanes-body"].innerHTML);
+    expect(after).not.toBe(before);
+    expect(after).toContain("rp-span model");
+    expect(page.body.classList.contains("replaying")).toBe(false);
+    expect(page.errors).toEqual([]);
+  });
 
   test("a pair landing while the cursor is AT the edge advances it", () => {
     const { fix, page, ws } = live();

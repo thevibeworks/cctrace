@@ -540,12 +540,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        conversation text never sits under it */
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 48px 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
-    /* ---- Replay transport bar (body.replaying) ---- */
+    /* ---- The trajectory bar: the session's overview, replay's instrument ---- */
     #replay-toggle { display: none; }
     body.view-session #replay-toggle { display: inline-block; }
     body.replaying #replay-toggle { background: var(--accent); border-color: var(--accent); color: #fff; }
-    /* Two rows: the trajectory strip over the transport. Both are FRAME —
-       they scope the panes below and must never scroll away with them. */
+    /* The bar is FRAME in the session view, ALWAYS (rev 3): the strip is
+       the session's overview even before any replay — touching it enters
+       replay at that moment. It scopes the panes below and must never
+       scroll away with them. */
     #replay-bar {
       display: none; flex-direction: column; align-items: stretch; gap: 6px;
       padding: 7px 16px;
@@ -553,7 +555,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-bottom: 1px solid var(--border);
       font-size: 12px;
     }
-    body.replaying #replay-bar { display: flex; }
+    body.view-session #replay-bar, body.replaying #replay-bar { display: flex; }
+    /* No session pairs yet: an empty band asserting nothing is not a frame */
+    body:not(.replaying) #replay-bar.rp-empty { display: none; }
+    /* Replay's own chrome waits for replay: the strip without a cursor
+       states history; the cursor states a moment. The veil/handle/slice
+       carry inline styles, hence the !important. */
+    body:not(.replaying) #rp-now, body:not(.replaying) .rp-transport { display: none; }
+    body:not(.replaying) #rp-veil, body:not(.replaying) #rp-handle,
+    body:not(.replaying) #rp-slice { display: none !important; }
+    /* Collapsed (the chevron in the clock gutter cell): the lanes fold
+       away, the ~13px clock row stays — a thin ruler is still an overview.
+       Replay needs its lanes, so replaying overrides the fold. */
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-lanes-body,
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-rules,
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-breaks,
+    body:not(.replaying) #replay-bar.rp-collapsed .rp-glbl:not(.rp-g0) { display: none; }
+    .rp-clps {
+      font: inherit; font-size: 9px; line-height: var(--rp-lh);
+      background: none; border: none; padding: 0 3px 0 0; margin: 0;
+      color: var(--text-faint); cursor: pointer;
+    }
+    .rp-clps:hover { color: var(--text); }
+    body.replaying .rp-clps { visibility: hidden; }
     .rp-transport { display: flex; align-items: center; gap: 8px; }
     .rp-btn {
       font: inherit; font-size: 12px; line-height: 1;
@@ -2174,7 +2198,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; while replaying, everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> click a span replays from there · drag scrubs · shift+drag selects a slice&#10;> wheel zooms · the ▾ chevron folds the lanes to the clock row">
         <div id="rp-gut"></div>
         <div id="rp-scroll">
           <div id="rp-lanes-track">
@@ -2474,6 +2498,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpRestart = document.getElementById('rp-restart');
     const rpExit = document.getElementById('rp-exit');
     const rpLanes = document.getElementById('rp-lanes');
+    const rpBar = document.getElementById('replay-bar');
     const rpGut = document.getElementById('rp-gut');
     const rpScroll = document.getElementById('rp-scroll');
     const rpTrack = document.getElementById('rp-lanes-track');
@@ -4393,8 +4418,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderConvoPane(sel);
       // The strip is RULED by the selected thread (its extent is the axis)
       // and ghosts every other one, so a rail click repaints the whole bar —
-      // keyed on the selection, so this is a no-op otherwise.
+      // keyed on the selection, so this is a no-op otherwise. Outside replay
+      // the strip alone renders (rev 3): it is the view's overview; the
+      // veil, the handle and the loop row wait for a cursor.
       if (replay.active) renderReplayBar();
+      else renderReplayStrip();
       if (pendingSessionFocus) {
         pendingSessionFocus = false;
         focusThreadsPane();
@@ -7577,6 +7605,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // visible subset via the normal buildSession path; playback is a
     // setTimeout ladder over response-end boundaries with idle compression.
     const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null, zoom: 1 };
+    // The overview fold (rev 3): lanes collapsed to the clock row, outside
+    // replay only. Persisted — an overview the reader folded stays folded.
+    let rpCollapsed = false;
+    try { rpCollapsed = localStorage.getItem('cctrace-traj-fold') === '1'; } catch {}
+    if (rpCollapsed) rpBar.classList.add('rp-collapsed');
+    if (rpGut.addEventListener) rpGut.addEventListener('click', (e) => {
+      const b = e.target && e.target.closest ? e.target.closest('.rp-clps') : null;
+      if (!b) return;
+      rpCollapsed = !rpCollapsed;
+      rpBar.classList.toggle('rp-collapsed', rpCollapsed);
+      try { localStorage.setItem('cctrace-traj-fold', rpCollapsed ? '1' : '0'); } catch {}
+      renderReplayStrip(true); // the chevron redraws with the fold state
+    });
     const IDLE_CAP_MS = 2000;
     const RP_ZOOM_MAX = 32;    // 1 = the whole axis fits the frame
     const RP_AGENT_ROWS = 4;   // visible agent rows; deeper ones fold into "+k more"
@@ -7816,8 +7857,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) {
         rpGut.innerHTML = ''; rpAxis.innerHTML = ''; rpRules.innerHTML = '';
         rpBody.innerHTML = ''; rpBreaks.innerHTML = ''; rpStripKey = '';
+        rpBar.classList.add('rp-empty');
         return;
       }
+      rpBar.classList.remove('rp-empty');
       // The thread the rail has selected draws FULL; every other thread's
       // items ghost. Same resolution the stage uses — one selection, two
       // surfaces.
@@ -8024,7 +8067,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
       // Fixed geometry: an empty lane stays, labelled — a client with no
       // spawn tool reads as zero agents, never as a missing row.
-      let gut = '<span class="rp-glbl">clock</span><span class="rp-glbl">human</span>' +
+      // The clock cell carries the fold chevron (rev 3): outside replay the
+      // lanes collapse to the clock row, which stays the reopen target.
+      let gut = '<span class="rp-glbl rp-g0"><button class="rp-clps" data-tip="' +
+        escapeHtml('fold the trajectory\\nThe lanes collapse to the clock row \\u2014 a thin ruler is still an overview.\\n---\\n> click toggles \\u00b7 replay always unfolds it') +
+        '">' + (rpCollapsed ? '\\u25b8' : '\\u25be') + '</button>clock</span><span class="rp-glbl">human</span>' +
         '<span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
       let body = lane('human', human) + lane('model', model) + lane('tools', tools);
       const nrows = Math.max(1, arows.length);
@@ -8068,18 +8115,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // only, and a re-render is a still frame (no motion budget spent).
     let rpResizeTimer = null;
     window.addEventListener('resize', () => {
-      if (!replay.active) return;
+      if (!replay.active && view !== 'session') return;
       clearTimeout(rpResizeTimer);
       rpResizeTimer = setTimeout(() => renderReplayStrip(true), 150);
     });
 
     function rpLiveRefresh() {
-      if (!replay.active) return;
+      // The strip is the session view's overview (rev 3): it grows on every
+      // landed pair whether or not a replay is running. Replay's own chrome
+      // (the bar, the stage) refreshes only while replaying.
+      if (!replay.active && view !== 'session') return;
       const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
       const atEdge = !!frameW && (rpScroll.scrollLeft || 0) + frameW >= frameW * replay.zoom - 2;
       renderReplayStrip(true);
-      renderReplayBar();
-      renderStage(); // a start event rebuilds no pane, but it IS the live state
+      if (replay.active) {
+        renderReplayBar();
+        renderStage(); // a start event rebuilds no pane, but it IS the live state
+      }
       if (atEdge) rpScroll.scrollLeft = Math.max(0, frameW * replay.zoom - frameW);
     }
 

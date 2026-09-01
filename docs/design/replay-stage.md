@@ -1,6 +1,6 @@
 # Replay stage: trajectory, now, beat
 
-Status: REVISION 2 (2026-08-28). Revision 1 shipped in 0.45.0 (PR #101):
+Status: REVISION 3 (2026-08-31). Revision 1 shipped in 0.45.0 (PR #101):
 the trajectory strip, a six-node state DIAGRAM, the beat, the live `start`
 event. Eric's read of it: "the replay should tail the session; the
 transition stage is inaccurate and a bad representation of Claude Code
@@ -19,6 +19,13 @@ diagram. The loop row becomes a FLOWCHART (boxes, a `calls?` decision
 diamond, labelled edges, the lit edge flowing) and the strip's axis
 becomes the selected thread's own time with idle gaps compressed —
 "The loop row: the flowchart" and "The strip's axis" below.
+
+Revision 3 (2026-08-31): the trajectory strip is the session view's
+OVERVIEW, always on top — Eric: "make the session's trajectory bar
+always on top (collapsible of course); not only for the replay, useful
+to overall view the whole traced session". The strip no longer waits
+for replay; replay's own chrome (loop row, transport, veil, playhead,
+slice) still does. "Revision 3: the strip is the overview" below.
 
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
@@ -247,9 +254,40 @@ are never estimated — they are a ruler, not data.
 Per-call durations are NOT on the wire (one gap covers parallel calls);
 the beat carries the step's tools gap once, never a fake per-call time.
 
+## Revision 3: the strip is the overview
+
+The strip drew the whole session's shape — and then hid until the
+reader pressed ⏵. An overview that must be asked for is not an
+overview. Revision 3 makes `#replay-bar` FRAME in the session view at
+all times, with a sharp line between what the strip is and what replay
+adds:
+
+- **Always drawn** (`body.view-session`): the lanes, the clock row,
+  the breaks, thread focus, the live open-request stub — full
+  contrast, no veil (nothing is "the future" when there is no cursor).
+  The strip renders on every session render and grows on every landed
+  pair, replaying or not. A trace with no session pairs yet hides the
+  bar (`.rp-empty`) — an empty band asserting nothing is not a frame.
+- **Replay-only chrome stays replay's** (`body.replaying`): the loop
+  row, the transport, the veil, the playhead and the slice band are
+  hidden outside replay. The strip without a cursor states history;
+  the cursor states a moment.
+- **Touching the strip enters replay at that moment.** The pointerdown
+  handler already did this (`if (!replay.active) enterReplay()`);
+  now it is reachable: click a span and the page replays from that
+  pair's end, drag and you are scrubbing. Wheel zoom works without
+  entering replay — reading closer is not seeking. Exit (Esc/✕) puts
+  the reader back at the full session with the overview still on top.
+- **Collapsible, to the clock row** (the ▾ chevron in the clock
+  gutter cell, persisted as `cctrace-traj-fold`): the lanes fold away
+  and the ~13px clock row stays — a thin ruler is still an overview,
+  and it is the reopen target. Replaying overrides the fold (the
+  instrument needs its lanes); the chevron hides while replaying.
+
 ## The screen
 
-Session view, `body.replaying`. No new tab.
+Session view. The bar is on top always (rev 3); `body.replaying` adds
+the loop row, the transport, the veil and the playhead. No new tab.
 
     +- head ---------------------------------------------------------- [F] -+
     | TRAJECTORY (#rp-lanes: frame element, never scrolls away)               |

@@ -290,11 +290,13 @@ describe("sessionLanes / soFar / beatAt / chaptersOf", () => {
     expect(ex.t0).toBe(1_000_000);
     expect(ex.t1).toBe(1_105_500);
     // the model spans, the tools gap and the retry fuse into one busy run;
-    // the 89s the human spent thinking between the loops is NOT busy — it is
-    // exactly the kind of hole the axis compresses.
+    // the 89s the human spent thinking between the loops is NOT busy, and
+    // neither is the waiting gap between C and D (nobody worked — the axis
+    // compresses both the same way). The extent still covers it.
     expect(ex.busy).toEqual([
       [1_000_000, 1_011_000],
-      [1_100_000, 1_105_500],
+      [1_100_000, 1_100_500],
+      [1_105_000, 1_105_500],
     ]);
     // no key = every item in the lanes; a key nothing carries = nothing
     expect(threadExtent(lanes, "")).toEqual(ex);

@@ -549,11 +549,14 @@ export function scaleT(scale: any, x: number): number {
 
 /**
  * One thread's own extent on the wall clock, and the time inside it that
- * carries activity: its model / tools / waiting spans, its human points,
- * cuts and failed marks, plus the agent spans it spawned (and its OWN span
- * when a child is the selection — the same ownership the strip's focus
- * uses). Points widen to nothing. `threadKey` empty = every item in the
- * lanes. null when the thread has nothing on the wire.
+ * carries activity: its model / tools spans, its human points, cuts and
+ * failed marks, plus the agent spans it spawned (and its OWN span when a
+ * child is the selection — the same ownership the strip's focus uses).
+ * Waiting spans stretch the EXTENT (the thread owns that clock) but never
+ * the busy union: a harness-wait is nobody working, so a long one
+ * compresses on the axis exactly like the idle between loops. Points widen
+ * to nothing. `threadKey` empty = every item in the lanes. null when the
+ * thread has nothing on the wire.
  */
 export function threadExtent(lanes: any, threadKey?: any): any {
   const L = lanes || {};
@@ -561,15 +564,19 @@ export function threadExtent(lanes: any, threadKey?: any): any {
   const busy: any[] = [];
   let lo = Infinity;
   let hi = -Infinity;
-  const add = (a: number, b: number) => {
+  const span = (a: number, b: number) => {
     if (!isFinite(a) || !isFinite(b)) return;
-    busy.push([a, b]);
     if (a < lo) lo = a;
     if (b > hi) hi = b;
   };
+  const add = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b)) return;
+    busy.push([a, b]);
+    span(a, b);
+  };
   for (const x of L.model || []) if (!key || x.threadKey === key) add(x.t0, x.t1);
   for (const g of L.tools || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
-  for (const g of L.waiting || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const g of L.waiting || []) if (!key || g.threadKey === key) span(g.t0, g.t1);
   for (const h of L.human || []) if (!key || h.threadKey === key) add(h.t, h.t);
   for (const c of L.cuts || []) if (!key || c.threadKey === key) add(c.t, c.t);
   for (const f of L.failed || []) if (!key || f.threadKey === key) add(f.t, f.t);

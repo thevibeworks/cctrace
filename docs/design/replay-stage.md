@@ -1,6 +1,6 @@
 # Replay stage: trajectory, now, beat
 
-Status: REVISION 4 (2026-09-01). Revision 1 shipped in 0.45.0 (PR #101):
+Status: REVISION 5 (2026-09-01). Revision 1 shipped in 0.45.0 (PR #101):
 the trajectory strip, a six-node state DIAGRAM, the beat, the live `start`
 event. Eric's read of it: "the replay should tail the session; the
 transition stage is inaccurate and a bad representation of Claude Code
@@ -32,6 +32,12 @@ overview syncs with the conversation. Eric, after using rev 2.2's
 flowchart on real sessions: "remove the diagram; it's shit and
 useless; the trajectory bar should sync with the session turns".
 "Revision 4: the diagram goes, the bar becomes the minimap" below.
+
+Revision 5 (2026-09-01, same PR): replay stops stealing the reader's
+thread — the selection pins to the full capture for the whole replay,
+enter/⏮/Home park on the thread's own edges, ←/→ step its own pairs,
+and waiting gaps fold like idle. "Revision 5: replay holds the
+reader's thread" below.
 
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
@@ -330,6 +336,44 @@ is the session's MINIMAP now, bidirectionally tied to the conversation:
   cursor IS the position, the convo follows it, seeks land on its
   bottom.
 
+## Revision 5: replay holds the reader's thread
+
+Rev 4 in real use (2026-09-01, Eric: "replay is like broken now,
+sessions not focused, the nav bar not following"). Root cause: with
+replay active the session rebuilds from the wire AS OF the cursor, and
+`showSession` re-resolved the selection against that cursored subset —
+before the selected thread's first response it resolved to the
+FALLBACK (`newestMainThread` of whatever existed at the cursor) and
+OVERWROTE `sessionSelKey`. The rail flipped to a stranger, the convo
+followed, and the strip's axis (the selected thread's extent) re-ruled
+itself to the stranger's — on a merged capture the bar re-scaled on
+every other tick of playback. Fixes, all selection-side, lanes
+untouched:
+
+- **The selection is the reader's, pinned for the whole replay.** With
+  replay active the intended thread resolves once against the FULL
+  capture (`fullThreads`, same resolution the stage already used); the
+  cursored rebuild renders that thread's cursored counterpart, and
+  before its first response the convo says "nothing on this thread's
+  wire yet at this moment" instead of switching threads. The axis
+  never re-rules mid-replay; the playhead crosses one stable ruler.
+- **Enter / ⏮ / Home park on the THREAD's edges, not the tape's.** A
+  merged capture's tape can start 44 minutes inside another session
+  and end 8 hours after this one — entering replay used to park the
+  cursor there, the whole strip behind one break column. `enterReplay`
+  (reading pages) parks at the thread extent's end; `rpHome()` (⏮,
+  Home, play-at-the-end restart) seeks its start. ⏭ / End stay the
+  TAPE's live edge — "catch up to live" is about the capture.
+- **←/→ step THIS conversation.** The turn stepper filters boundaries
+  to the selected thread's own pairs; other sessions in a merged
+  capture no longer eat keypresses. Shift+arrow keeps every wire
+  boundary, playback still walks the whole tape (other sessions'
+  pairs are invisible here and tick past).
+
+Same session, the waiting fold: see "The strip's axis" — waiting gaps
+left the busy union, so a 45-minute harness wait compresses instead of
+holding half the strip.
+
 ## The screen
 
 Session view. The bar is on top always (rev 3); `body.replaying` adds
@@ -426,10 +470,15 @@ axis, nothing on the lanes:
    axis (the strip memo key already carries `selKey`).
 2. **Idle is compressed**: a gap in the thread's BUSY time (the union of
    its focus spans, points widened to nothing) longer than `RP_IDLE_MS`
-   (5 min) collapses to a fixed `RP_BREAK_PX` (28px) break, drawn as a
+   (2 min) collapses to a fixed `RP_BREAK_PX` (28px) break, drawn as a
    hatched column across every lane with the skipped duration in the
    clock row (`⧸⧸ 1h 29m`). A human who went to lunch is 28px, not
-   half the strip.
+   half the strip. Waiting gaps are NOT busy (rev 5): a call-less gap
+   the harness sat out stretches the extent but joins the compressible
+   idle — nobody worked, so a 45-minute wait folds exactly like the
+   45 minutes before the next prompt (dsh's Trajectory tab compresses
+   every uncovered stretch the same way; ours keeps the threshold so
+   short waits still read as time).
 
 `timeScale(busy, t0, t1, px, idleMs, breakPx)` in src/replay.ts (pure,
 unit-tested) builds the mapping: `busy` are sorted, merged [t0,t1]

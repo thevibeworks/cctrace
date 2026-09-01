@@ -3604,7 +3604,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           stepReplay(e.key === 'ArrowRight' ? 1 : -1, !e.shiftKey);
         } else if (e.key === 'Home' && replay.active) {
           e.preventDefault();
-          seekReplay(replaySpan(pairs).t0);
+          seekReplay(rpHome());
           updateReplayHash();
         } else if (e.key === 'End' && replay.active) {
           e.preventDefault();
@@ -4331,7 +4331,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tailPill.classList.remove('show');
         return;
       }
-      const sel = resolveThreadSel(threads, key, sub);
+      let sel = resolveThreadSel(threads, key, sub);
+      // Replaying: the SELECTION is the reader's, resolved once against the
+      // whole capture. The cursored rebuild must never steal it — before the
+      // selected thread's first response it resolves to the fallback, which
+      // used to flip the rail, the convo AND the strip's axis to whatever
+      // thread happened to exist at the cursor (rev 5).
+      if (replay.active) {
+        const want = resolveThreadSel(fullThreads(), key || sessionSelKey, sub);
+        if (want) {
+          sessionSelKey = want.key;
+          const cur = threads.find(t => t.key === want.key);
+          if (cur) sel = cur;
+          else {
+            // Not on the wire yet at this moment: the rail renders without a
+            // selection to mark, the convo says so, the stage still stands.
+            renderThreadsPane(threads, { key: want.key });
+            convoEl.innerHTML = '<div class="empty">Nothing on this thread\\u2019s wire yet at this moment \\u2014 step forward (\\u2192) or press play.</div>';
+            convoKey = null;
+            tailPill.classList.remove('show');
+            renderReplayBar();
+            return;
+          }
+        }
+      }
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       agentThreadStats = {};
@@ -5605,7 +5628,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpRead.style.display = 'block';
     }
     function rpQueueSyncRead() {
-      if (typeof requestAnimationFrame !== 'function') { rpSyncRead(); return; }
+      // A hidden tab never fires rAF — sync now so the marker is right the
+      // moment the reader comes back, instead of one frame stale.
+      if (typeof requestAnimationFrame !== 'function' || document.hidden) { rpSyncRead(); return; }
       if (rpReadQueued) return;
       rpReadQueued = true;
       requestAnimationFrame(() => { rpReadQueued = false; rpSyncRead(); });
@@ -7607,7 +7632,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const IDLE_CAP_MS = 2000;
     const RP_ZOOM_MAX = 32;    // 1 = the whole axis fits the frame
     const RP_AGENT_ROWS = 4;   // visible agent rows; deeper ones fold into "+k more"
-    const RP_IDLE_MS = 300000; // idle longer than this compresses on the axis
+    const RP_IDLE_MS = 120000; // idle longer than this compresses on the axis
     const RP_BREAK_PX = 28;    // ...to exactly this much track, hatched
 
     // The slice: a selected range of the timeline (shift+drag on the track).
@@ -7640,7 +7665,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = replaySpan(pairs);
       if (!span) return;
       replay.active = true;
-      replay.cursor = cursor == null ? span.t1 : cursor;
+      // A reading page parks on the SELECTED thread's edge, not the tape's:
+      // a merged capture used to enter hours past this session's last pair,
+      // the whole strip behind one break column. A live page keeps the tape
+      // end — entering replay there means tailing.
+      const ex = IS_READING && cursor == null
+        ? threadExtent(laneData(), (stageThread() || {}).key || '') : null;
+      replay.cursor = cursor != null ? cursor : (ex ? Math.min(span.t1, ex.t1) : span.t1);
       document.body.classList.add('replaying');
       tailPill.classList.remove('show');
       if (view !== 'session') { location.hash = '#/session'; }
@@ -7675,7 +7706,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!replay.active) enterReplay(span.t0);
       // Play at the end of the tape (or slice) restarts from its top.
       if (!nextBoundary(replayEvents(slicePairs(pairs)), replay.cursor)) {
-        replay.cursor = sliceActive() ? Math.min(replay.sliceA, replay.sliceB) - 1 : span.t0;
+        replay.cursor = sliceActive() ? Math.min(replay.sliceA, replay.sliceB) - 1 : rpHome() - 1;
         refreshReplay();
       }
       replay.playing = true;
@@ -7708,7 +7739,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       if (!replay.active) enterReplay(dir > 0 ? span.t0 - 1 : span.t1);
       pausePlayback();
-      const events = replayEvents(slicePairs(pairs));
+      // The turn stepper steps THIS conversation: ←/→ walk the selected
+      // thread's own pairs, so a merged capture's other sessions never eat
+      // a keypress (shift+arrow keeps every wire boundary).
+      let src = slicePairs(pairs);
+      if (turnsOnly) {
+        const th = stageThread();
+        if (th && th.pairIds && th.pairIds.length) {
+          const ids = {};
+          for (const id of th.pairIds) ids[id] = 1;
+          const own = src.filter(p => ids[p.id]);
+          if (own.length) src = own;
+        }
+      }
+      const events = replayEvents(src);
       const b = dir > 0 ? nextBoundary(events, replay.cursor, turnsOnly) : prevBoundary(events, replay.cursor, turnsOnly);
       if (b) { replay.cursor = b.t; refreshReplay(); }
       updateReplayHash();
@@ -7737,6 +7781,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       seekReplay(span.t1);
       updateReplayHash();
+    }
+
+    // The top of THIS thread's tape: a merged capture's tape t0 can sit an
+    // hour inside another session — ⏮ / Home / play-from-the-end restart at
+    // the selected thread's own first pair, not there.
+    function rpHome() {
+      const ex = threadExtent(laneData(), (stageThread() || {}).key || '');
+      const span = replaySpan(pairs);
+      return ex ? ex.t0 : (span ? span.t0 : 0);
     }
 
     function fmtClock(ms) {
@@ -8390,7 +8443,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     rpExit.onclick = exitReplay;
     rpRestart.onclick = () => {
       if (!replay.active) enterReplay();
-      seekReplay(replaySpan(pairs).t0);
+      seekReplay(rpHome());
       updateReplayHash();
     };
     rpEnd.onclick = seekEnd;

@@ -624,10 +624,16 @@ hash-routed:
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the
   session rebuilds from the visible subset via the normal `buildSession`
-  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps turns, shift+←/→
-  steps wire requests, Space plays (setTimeout ladder over response-end
-  boundaries, idle gaps compressed to ≤2s, speeds 1/2/8/60x), Home/End
-  jump, Esc exits. The scrubber doubles as a minimap (turns = tall accent
+  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps the SELECTED
+  thread's own turns (a merged capture's other sessions never eat a
+  keypress), shift+←/→ steps wire requests, Space plays (setTimeout
+  ladder over response-end boundaries, idle gaps compressed to ≤2s,
+  speeds 1/2/8/60x), Home/End jump, Esc exits. The selection PINS for
+  the whole replay (resolved against the full capture — a cursor
+  before the thread's first response says "nothing on this thread's
+  wire yet" instead of flipping to the fallback thread), and
+  enter/⏮/Home park on the thread's own edges while ⏭/End stay the
+  tape's live edge (replay-stage.md rev 5). The scrubber doubles as a minimap (turns = tall accent
   marks, errors red, probes short ticks). Deep links anchor on pair id —
   `#/session/<key>/@<pair-id>` opens paused at that moment (ids survive
   cross-run merges; wall-clock offsets wouldn't). SLICES: shift+drag on
@@ -683,8 +689,10 @@ hash-routed:
   rev 4 (Eric, after real use) — the state at any moment is read off
   the strip, the beat and the conversation.
   The strip's axis is the selected thread's own extent
-  (`threadExtent`), idle gaps ≥ 5 min folded to 28px hatched `rp-break`
-  columns labelled `⧸⧸ <skipped>` in the clock row (`timeScale` /
+  (`threadExtent`), idle gaps ≥ 2 min folded to 28px hatched `rp-break`
+  columns labelled `⧸⧸ <skipped>` in the clock row — waiting gaps
+  stretch the extent but are NOT busy, so a long harness-wait folds
+  like idle (replay-stage.md rev 5) (`timeScale` /
   `scaleX` / `scaleT` — the ONE x<->t mapping every strip surface uses:
   spans, ticks, veil, playhead, slice, drag, wheel zoom); the transport's
   clock and length stay real wall-clock.

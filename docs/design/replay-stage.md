@@ -1,6 +1,6 @@
 # Replay stage: trajectory, now, beat
 
-Status: REVISION 3 (2026-08-31). Revision 1 shipped in 0.45.0 (PR #101):
+Status: REVISION 4 (2026-09-01). Revision 1 shipped in 0.45.0 (PR #101):
 the trajectory strip, a six-node state DIAGRAM, the beat, the live `start`
 event. Eric's read of it: "the replay should tail the session; the
 transition stage is inaccurate and a bad representation of Claude Code
@@ -24,8 +24,14 @@ Revision 3 (2026-08-31): the trajectory strip is the session view's
 OVERVIEW, always on top — Eric: "make the session's trajectory bar
 always on top (collapsible of course); not only for the replay, useful
 to overall view the whole traced session". The strip no longer waits
-for replay; replay's own chrome (loop row, transport, veil, playhead,
-slice) still does. "Revision 3: the strip is the overview" below.
+for replay; replay's own chrome (transport, veil, playhead, slice)
+still does. "Revision 3: the strip is the overview" below.
+
+Revision 4 (2026-09-01, same PR): the loop row is REMOVED and the
+overview syncs with the conversation. Eric, after using rev 2.2's
+flowchart on real sessions: "remove the diagram; it's shit and
+useless; the trajectory bar should sync with the session turns".
+"Revision 4: the diagram goes, the bar becomes the minimap" below.
 
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
@@ -268,39 +274,76 @@ adds:
   The strip renders on every session render and grows on every landed
   pair, replaying or not. A trace with no session pairs yet hides the
   bar (`.rp-empty`) — an empty band asserting nothing is not a frame.
-- **Replay-only chrome stays replay's** (`body.replaying`): the loop
-  row, the transport, the veil, the playhead and the slice band are
-  hidden outside replay. The strip without a cursor states history;
-  the cursor states a moment.
-- **Touching the strip enters replay at that moment.** The pointerdown
-  handler already did this (`if (!replay.active) enterReplay()`);
-  now it is reachable: click a span and the page replays from that
-  pair's end, drag and you are scrubbing. Wheel zoom works without
-  entering replay — reading closer is not seeking. Exit (Esc/✕) puts
-  the reader back at the full session with the overview still on top.
+- **Replay-only chrome stays replay's** (`body.replaying`): the
+  transport, the veil, the playhead and the slice band are hidden
+  outside replay. The strip without a cursor states history; the
+  cursor states a moment.
+- **Clicking the strip navigates the conversation** (revised by rev 4
+  — the first cut entered replay on any touch, which made an overview
+  click a mode switch): outside replay a click jumps the convo to the
+  turn at that time; replay is entered by ⏵ / the keyboard, as before.
+  Wheel zoom works without entering replay — reading closer is not
+  seeking.
 - **Collapsible, to the clock row** (the ▾ chevron in the clock
   gutter cell, persisted as `cctrace-traj-fold`): the lanes fold away
   and the ~13px clock row stays — a thin ruler is still an overview,
   and it is the reopen target. Replaying overrides the fold (the
   instrument needs its lanes); the chevron hides while replaying.
 
+## Revision 4: the diagram goes, the bar becomes the minimap
+
+The loop row lasted three revisions of redesign and one week of real
+use. Eric's verdict on the shipped flowchart: "remove the diagram;
+it's shit and useless". The autopsy, so the next diagram idea reads it
+first: the machine has three states and never changes shape, so after
+one glance the drawing carries no information — the READER's question
+at any moment is "what is happening / what did it do", and the beat,
+the strip and the convo already answer that at the cursor. 70px of
+frame restated a fact three other surfaces state better. The row, its
+data layer (`loopAt`, `nowAt`, `stateAt`) and its motion (the flowing
+edge, the heartbeat) are deleted; the motion budget returns to ONE
+owner, the playhead. `sessionLanes`, `soFar`, `beatAt`, `axisTicks`
+and the `start` event stay — they feed surfaces that survived.
+
+What replaces it is not another drawing but the second half of Eric's
+ask: "the trajectory bar should sync with the session turns". The bar
+is the session's MINIMAP now, bidirectionally tied to the conversation:
+
+- **Convo -> strip: the reading marker** (`#rp-read`). As the reader
+  scrolls the conversation, a quiet 1px line (surface-colored halo, a
+  hollow ▿ on the clock row) marks the topmost visible turn's wall-
+  clock on the strip — every rendered `.turn` carries `data-ts` (the
+  same timestamp its role bar shows), the scroll handler reads the
+  first one visible and positions the marker through the SCALE like
+  every other mark. It moves only under the reader's own scroll
+  (direct manipulation — the scrollbar-thumb exemption, ui.md 5),
+  rAF-throttled, and hides while replaying: the playhead owns
+  position there.
+- **Strip -> convo: click jumps the conversation.** Outside replay a
+  click on the track scrolls the convo to the last turn at or before
+  that instant (`data-rpt` is already the time; the walk is over
+  `data-ts`) — the same jump the outline makes, same scroll math.
+  Clicking no longer enters replay (rev 3's first cut did; an
+  overview click must not be a mode switch). Replay entry stays on
+  ⏵ / Space / arrows.
+- While replaying, the sync already exists and is unchanged: the
+  cursor IS the position, the convo follows it, seeks land on its
+  bottom.
+
 ## The screen
 
 Session view. The bar is on top always (rev 3); `body.replaying` adds
-the loop row, the transport, the veil and the playhead. No new tab.
+the transport, the veil and the playhead. No new tab.
 
     +- head ---------------------------------------------------------- [F] -+
     | TRAJECTORY (#rp-lanes: frame element, never scrolls away)               |
-    |  clock   | 21:44        22:00        22:15        22:30        22:45   |
-    |  human   |  #           #                        #                     |
-    |  model   |   ##  ## ## ####     ######   ## ###  ▒▒  ▒▒▒                |
-    |  tools   |     ==  ==      ==         ==    ====  ▒▒▒                  |
+    |  clock   | 21:44     ▿  22:00        22:15        22:30        22:45   |
+    |  human   |  #        ┆  #                        #                     |
+    |  model   |   ##  ## #┆####      ######   ## ###  ▒▒  ▒▒▒               |
+    |  tools   |     ==  ==┆     ==         ==    ====  ▒▒▒                  |
     |  agents  |           [----- explore -----]   [-- review --]            |
-    |  harness |                    ✂        ~~            ✂                 |
-    |                               ▼ playhead; right of it: the veil (▒)     |
-    |  now     | human ─▸ model ─▸ [tools]   Bash · Read ×2 · 24ms   since 00:32:58 |
-    |          |   ▲        ▲ ◂──────┘                                        |
-    |          |   └────────┘                                                 |
+    |  harness |           ┆        ✂        ~~            ✂                 |
+    |             reading marker ▴ (¬replaying) · playhead ▼ + veil (replay)  |
     |  [⏮][▶][⏭] 1x 2x 8x 60x   00:32:58 · +2:48:54 / 3:51:52  [● live][✕] |
     +---------------------------+--------------------------------------------+
     | STAGE (top of #threads)   | CONVO as of the cursor, bottom = the moment |
@@ -338,10 +381,11 @@ the loop row, the transport, the veil and the playhead. No new tab.
   spans of any hue, and a small ▼ flag on the clock row. It is the ONE
   moving thing on the page.
 - Same `left%` math everywhere; the slice band spans all lanes.
-  shift+drag selects a slice; drag scrubs; click a span seeks to that
-  pair's end (the boundary where it became visible — the same event
-  `replayEvents` walks); click a human point seeks to the end of the
-  request that carried it.
+  While replaying: shift+drag selects a slice, drag scrubs, click seeks
+  to that pair's end (the boundary where it became visible — the same
+  event `replayEvents` walks; a human point seeks to the end of the
+  request that carried it). Outside replay: click jumps the
+  CONVERSATION to the turn at that instant (rev 4), drag does nothing.
 - Wheel zooms around the cursor, 1x fit to 32x, the context overview's
   helpers (one brush implementation). The strip scrolls horizontally
   inside its frame and follows the playhead only when it LEAVES the
@@ -355,89 +399,14 @@ the loop row, the transport, the veil and the playhead. No new tab.
   to the live edge when the reader was there. An open `start` draws as a
   dashed model stub hugging the right edge.
 
-### The loop row (`#rp-now`): the flowchart
+### The loop row — REMOVED (rev 4)
 
-Between the strip and the transport, aligned to the strip's 56px gutter
-and labelled `now`: Claude Code's loop as a FLOWCHART, drawn once, lit at
-the cursor, the active edge flowing — `loopAt` rendered. Revision 2.2
-(2026-08-29): rev 2.1's three 16px chips on a 30px row read as a legend,
-not a diagram ("it's damn shit again; make it like a flow chart live
-diagram"). The row grows to ~70px and the drawing becomes the flowchart
-below, with the loop's DECISION drawn as the diamond it is.
-
-                    ┌──────────── results ─────────────┐
-                    ▼                                  │
-    ┌───────┐ prompt ┌───────┐        ◇        yes  ┌──┴─────┐
-    │ human │ ─────▸ │ model │ ─────▸ calls? ─────▸ │ tools  │      tools   Bash · Read ×2 · 24ms
-    └───────┘        └───────┘          │ no        └────────┘              since 00:32:58
-        ▲                               │ answer
-        └───────────────────────────────┘
-
-- **Nodes** (`#rp-loop`, inline SVG at FIXED pixel size, ~440x68, no
-  viewBox scaling; labels 11px in the boxes, 9px on the edges): three
-  process boxes — `human`, `model`, the hand-off SLOT (label `tools` /
-  `agents` / `waiting`, its flavor when lit or when it is the lit edge's
-  other end, `tools` otherwise) — and one DECISION diamond, `calls?`:
-  did the reply make tool calls. The diamond is a wire fact
-  (stop_reason tool_use / the reply's tool_use blocks), not a state the
-  agent occupies — it never carries "since" or "held"; it lights with
-  the decision edge that is lit.
-- **Edges**, five, each labelled: `prompt` (human -> model), model ->
-  diamond (unlabelled), `yes` (diamond -> slot), `results` (slot ->
-  model, the arc OVER the row), `no · answer` (diamond -> human, the arc
-  UNDER the row). The two arcs sit on opposite sides so they never cross
-  (their x-extents interleave: any two-arcs-below layout crosses).
-  Arrowheads are filled triangles at the target (no shared `<marker>`:
-  markers cannot take the group's currentColor).
-- **What lights** — from `loopAt`, unchanged:
-
-      state    node lit        edges lit                              flow
-      -------  --------------  -------------------------------------  ---------------
-      model    model           prompt (human>model) OR results        the lit edge
-                               (slot>model); live: results if the
-                               newest landed reply made calls
-      tools    slot = tools    model->diamond, diamond yes -> slot     yes
-      agents   slot = agents   same                                   yes
-      waiting  slot = waiting  same                                   yes
-      human    human (hollow)  model->diamond, diamond no -> answer   answer
-                               (only when the last step's next is
-                               reply)
-      failed   model, red      none                                   none
-      idle     none            none                                   none
-
-  A child running while the actor is elsewhere half-lights the slot as
-  `agents` (`.also`).
-- **Live, meaning motion**: the LIT edge flows — a 4/4 dash pattern
-  whose offset animates along the edge's direction (`rlflow`, ~0.9s
-  linear, infinite), so the eye reads "this is the transition in
-  progress". The lit node is filled (14%) with a 2px stroke; at the live
-  edge with a request in flight the model box breathes (the heartbeat
-  keyframes). Nothing else on the drawing moves: geometry is fixed
-  pixels, a state change swaps which parts are lit. This is a DELIBERATE
-  second motion owner while replaying (ui.md's budget names the playhead
-  as the one) — the loop row's job is to show the loop running, and a
-  static lit chip failed that job on inspection. `prefers-reduced-motion`
-  drops the flow and the heartbeat both; the lit edge then reads as a
-  solid 2px stroke.
-- **The facts beside it** (right of the drawing, vertically centred, two
-  lines): line 1 `.rn-state` (the state word, in the state color)
-  `.rn-what` (what is running, `.rn-held` after it where the extent is
-  a wire fact); line 2 `.rn-since` — the absolute local clock the state
-  began at, never a ticking counter (ui.md). A live in-flight request
-  shows `since` only. Idle: `idle` and the clock the hole began at.
-- Colors are the lanes' own: human accent, model / tools / waiting the
-  time-track vars, agents purple, failed red; the diamond and the
-  unlabelled edge take the row's state color when lit.
-- **Click** the row: seek to the step that opened the state
-  (`data-rpseek`). Hover: the page tip — the state, what it means on the
-  wire (`NOW_WHY`), the running children, the click hint.
-- **Rendering discipline**: the row re-renders on every bar update but
-  rewrites its markup only when the picture changes; a held duration
-  that merely grew patches its own span (rebuilding under the pointer
-  kills the hover and can eat a click — and would restart the flow
-  animation every tick).
-- No counts. The per-tool tally is "so far", times are the beat and the
-  strip tips — a number is stated once per view.
+Rev 2.1/2.2 drew Claude Code's machine as a flowchart here (`#rp-now`:
+human / model / hand-off boxes, a `calls?` diamond, the lit edge
+flowing). Removed 2026-09-01 on Eric's verdict after real use — see
+"Revision 4" for the autopsy. The row, `loopAt`/`nowAt`/`stateAt`, the
+`.rl-*` CSS and the flow/heartbeat animations are gone; the state at
+any moment is read off the strip, the beat and the conversation.
 
 ### The strip's axis: the thread's own time, idle compressed
 
@@ -623,15 +592,12 @@ slice; the stage and the strip read them. Nothing new in the URL.
 
 ## Rules kept
 
-- Motion: two owners while replaying, both deliberate — the playhead and
-  the loop row's lit edge (the flow, rev 2.2). The model box beats only
-  for a live in-flight request (the status dot's heartbeat, same
-  keyframes); a state change lights different parts of a fixed drawing,
-  it moves nothing. `prefers-reduced-motion` drops the flow and the
-  heartbeat.
+- Motion: ONE owner, the playhead (rev 4 restored this — rev 2.2's
+  flowing edge went with the loop row). The reading marker moves only
+  under the reader's own scroll (the scrollbar-thumb exemption).
   No flow tokens, no tweened counts, no ticking clocks; the convo jumps,
   never glides, on cursor changes. `prefers-reduced-motion` drops the
-  fade and the heartbeat.
+  live-arrived fade.
 - A number is stated once per view: the call tally in "so far", times in
   the beat / strip tips / convo header, never twice.
 - Snapshots and `cctrace view` pages get the whole stage (pure client
@@ -643,21 +609,21 @@ slice; the stage and the strip read them. Nothing new in the URL.
 
 ## Verification
 
-- `bun test`: tests/replay.test.ts (nowAt per state incl. live, loopAt —
-  the lit chip and the edge per state, the live edge rule, failed, the
-  half-lit slot —, soFar, axisTicks step choice + day-major, beatAt.head;
-  the parallel-agents and failed-request fixtures stay; timeScale — no
-  gap is one linear segment, a 20-minute gap is busy / 28px break / busy
-  with scaleX·scaleT round-tripping in busy time and inside the break,
-  breaks exceeding the width fall back to linear; threadExtent scoped to
-  a thread, the human pause kept as a gap),
-  tests/ui-grammar.test.ts (the loop row is in the bar: idle lights
-  nothing, the results edge lights out of an agents-flavored slot, a
-  `start` lights the model chip beating with no edge after a final reply;
+- `bun test`: tests/replay.test.ts (soFar, axisTicks step choice +
+  day-major, beatAt.head; the parallel-agents and failed-request
+  fixtures stay; timeScale — no gap is one linear segment, a 20-minute
+  gap is busy / 28px break / busy with scaleX·scaleT round-tripping in
+  busy time and inside the break, breaks exceeding the width fall back
+  to linear; threadExtent scoped to a thread, the human pause kept as a
+  gap; the loopAt/nowAt/stateAt blocks went with the loop row, rev 4),
+  tests/ui-grammar.test.ts (the page renders no `#rp-now` and the bar
+  holds strip + transport only; every session-view turn carries
+  `data-ts`; a click on the track outside replay jumps the convo to the
+  turn at that instant and does NOT enter replay; the reading marker
+  positions off the topmost visible turn and hides while replaying;
   the stage renders beat + so-far and no `#stage-now` / `#sd`; a `pair`
   frame while replaying at the edge ADVANCES the cursor and a frame while
-  behind does not; the tools state lights the diamond and its `yes` edge,
-  the human-after-reply state lights `no · answer`; a selected thread with
+  behind does not; a selected thread with
   a >5 min idle gap draws an `rp-break` column and a `⧸⧸` label in the
   clock row, a thread without one draws none; the strip carries a clock row, the
   veil, `.other` on unselected threads; ⏭ / End seek to the edge; entering

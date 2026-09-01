@@ -649,17 +649,22 @@ hash-routed:
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
-- **The trajectory bar is the session view's OVERVIEW** (replay-stage.md
-  rev 3): `#replay-bar` is FRAME in the session view at all times — the
-  strip draws the whole session's shape (lanes, clock row, idle folded,
-  thread focus, the live open-request stub) without a replay running;
-  the loop row, transport, veil, playhead and slice stay hidden until
-  `body.replaying`. Touching the strip enters replay at that moment
-  (click a span replays from its end, a drag scrubs); wheel zoom works
-  without entering. The ▾ chevron in the clock gutter cell folds the
-  lanes to the ~13px clock row (persisted, `cctrace-traj-fold`); replay
-  overrides the fold. A trace with no session pairs hides the bar
-  (`.rp-empty`).
+- **The trajectory bar is the session view's OVERVIEW and its minimap**
+  (replay-stage.md rev 3 + 4): `#replay-bar` is FRAME in the session
+  view at all times — the strip draws the whole session's shape (lanes,
+  clock row, idle folded, thread focus, the live open-request stub)
+  without a replay running; the transport, veil, playhead and slice
+  stay hidden until `body.replaying`. The bar syncs with the session's
+  TURNS both ways: every rendered `.turn` carries `data-ts`, a faint
+  reading marker (`#rp-read`, the playhead's quiet twin, hidden while
+  replaying) tracks the topmost visible turn as the reader scrolls
+  (rAF-throttled, `rpSyncRead`), and a click on the track outside
+  replay jumps the conversation to the last turn at or before that
+  instant (`rpJumpConvoTo`) — it does NOT enter replay; ⏵ / Space /
+  arrows do. Wheel zoom works without entering. The ▾ chevron in the
+  clock gutter cell folds the lanes to the ~13px clock row (persisted,
+  `cctrace-traj-fold`); replay overrides the fold. A trace with no
+  session pairs hides the bar (`.rp-empty`).
 - **The replay stage** (docs/design/replay-stage.md — the rules live
   there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
   `axisTicks` in the page's local time, a major tick dropping a rule
@@ -672,19 +677,12 @@ hash-routed:
   `.other` (~30%); `#rp-veil` dims everything RIGHT of the playhead — a
   replay never shows what has not happened. Wheel zooms around the cursor
   (1x-32x, the same helper the context overview uses) and sets
-  `data-depth` map/read/full; click a span seeks to its pair's END (the
-  boundary where it became visible). While replaying the bar carries the
-  LOOP ROW (`#rp-now`, between the strip and the transport, `loopAt`):
-  Claude Code's loop as a FLOWCHART in fixed-pixel inline SVG — boxes
-  human / model / the hand-off slot (tools | agents | waiting), a
-  `calls?` decision diamond, five labelled edges (prompt, yes, results
-  over the row, no · answer under it) — the state at the cursor lit, the
-  edge it came in by lit and FLOWING (an animated dash, the page's
-  deliberate second motion owner while replaying), and beside it the
-  state word, what is running, the held duration where the extent is a
-  wire fact, and the absolute clock it began at; click seeks to the step
-  that opened it; the model box beats only for a request in flight at
-  the live edge. The strip's axis is the selected thread's own extent
+  `data-depth` map/read/full; while replaying, click seeks to that
+  pair's END (the boundary where it became visible). The loop-row
+  flowchart that sat between the strip and the transport was removed in
+  rev 4 (Eric, after real use) — the state at any moment is read off
+  the strip, the beat and the conversation.
+  The strip's axis is the selected thread's own extent
   (`threadExtent`), idle gaps ≥ 5 min folded to 28px hatched `rp-break`
   columns labelled `⧸⧸ <skipped>` in the clock row (`timeScale` /
   `scaleX` / `scaleT` — the ONE x<->t mapping every strip surface uses:
@@ -697,8 +695,8 @@ hash-routed:
   tally as of the cursor — the only place the per-tool count is stated).
   `[`/`]` walk `chaptersOf`; `F` toggles `body.present` (chrome hidden,
   type scale unchanged); Esc peels present -> replay -> view. Open
-  `start`s (below) draw as a dashed model span to the newest known time
-  and beat the loop row's model chip — never a ticking clock.
+  `start`s (below) draw as a dashed model span to the newest known
+  time — never a ticking clock.
 - **Replay TAILS a live run.** The transport is
   `[⏮][▶][⏭] 1x 2x 8x 60x  <local clock> · +<offset> / <length>  [live]
   [✕ exit]`. `⏭` / `End` seek the end of the tape — on a live page the

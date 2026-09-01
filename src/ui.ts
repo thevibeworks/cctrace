@@ -2846,10 +2846,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 replay is a STAGE \\u2014 a clock axis over five lanes of wall-clock (human, model, tools, agents, harness); the selected thread draws full, the future is dimmed; wheel to zoom, click a span to jump there\\n' +
-        '\\u00b7 the LOOP ROW \\u2014 the agent\\u2019s machine (human \\u2192 model \\u2192 tools/agents/waiting \\u2192 model \\u2026 \\u2192 human) with the state at the cursor lit, what is running, and since when; nothing inferred, nothing ticking\\n' +
-        '\\u00b7 the BEAT \\u2014 what the agent did at this step: the prompt that started the loop, every tool call fused with its result, spawns linked to their thread, the reply\\u2019s first line, the window delta\\n' +
-        '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor follows every pair that lands, with the conversation scrolled to the moment\\n' +
+        '\\u00b7 COST is a reading of the Context view \\u2014 a per-step cost track (74% of a real $81 thread was cache reads), amber $ BUMPS with their wire cause (retry / expired / prefix changed) priced against a warm cache, where-the-money-went, and the account quota the client polled\\n' +
+        '\\u00b7 the LOOP ROW is a live flowchart \\u2014 human / model / hand-off boxes, a calls? diamond, the lit edge FLOWS; the state at the cursor, what is running, since when; click it to jump\\n' +
+        '\\u00b7 the strip rules the selected thread\\u2019s OWN time \\u2014 idle gaps fold to \\u29f8\\u29f8 breaks, so a 1h34m session fills the frame instead of a corner of a 10h axis; wall-clock ticks, the future veiled, other threads ghosted\\n' +
+        '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor, the loop row and the conversation follow every pair that lands\\n' +
         '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';

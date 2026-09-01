@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.46.0
 
 - Added COST as a third reading of the Context view, not a fourth tab. The overview grows a cost track beside ctx and time: one column per step (or per turn, same granularity toggle), stacked cache read / cache write / input / output against the thread's dearest column, under the same brush, with the same hover-scrub, click-pin and dimming. The gutter states the top of scale. Measured on a real 1209-pair trace: 74% of the ≈$81 that thread spent was cache READS - re-reading the assembled window on every step - 15% cache writes, 11% output, and fresh input rounded to zero. That is the shape the track exists to show
 - Marked the cost BUMPS: a step whose cache hit was under 90% (or cold) after some earlier step had already banked a prefix. Each one wears an amber $ on its column the way a compaction wears a scissors mark, and names its cause off the wire in precedence order - retry (the previous request failed, errored, or was cut off before it completed, so it never banked its write), expired (the gap from the previous request's end exceeded that write's TTL: 1h when it wrote 1h tokens, else 5m, and a pure read refreshes 5m), or prefix changed (with the same-step timeline event that explains it - system prompt, tool schemas, a compaction, a model switch - or an honest "cause not on the wire"). A conversation's first request is a start, not a bump, and a thread that never used the cache reports none

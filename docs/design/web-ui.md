@@ -482,7 +482,7 @@ hash-routed:
   OVERVIEW, then a margin beside a deck — each of the two scrolling
   itself. The OVERVIEW (`renderCtxOverview` / `wireCtxOverview`, `.cx-ov`)
   is the page's time axis and never scrolls away, because every deck
-  below reads its selection. Two tracks on one x axis, under one brush:
+  below reads its selection. Three tracks on one x axis, under one brush:
   **ctx** (one stacked column per step — or per turn, toggle persisted in
   `cctrace-ctx-gran` — height anchored to actual prompt tokens and scaled
   to this thread's own peak, segment split from the estimate, ✂ plus a
@@ -492,7 +492,13 @@ hash-routed:
   margin's balance, stated once) and **time** (that step's model duration
   then its tools/waiting gap, off `threadTimeSplit.byPair` — every figure
   a wire timestamp, floor of one PIXEL so a short step under a 2m outlier
-  still reads as a baseline; totals and legend live in the margin).
+  still reads as a baseline; totals and legend live in the margin) and
+  **cost** (that step's estimated bill stacked cache read / cache write /
+  input / output against the thread's dearest column, amber $ marks on
+  the cache BUMPS with their wire cause — retry / expired / prefix
+  changed — priced against a warm cache; "where the money went" and the
+  polled account quota live in the margin; the full contract is
+  docs/design/cost.md).
   Columns are equal-width and GAPLESS with the bar inside capped at 28px,
   because the brush's edges sit at `i/N` of the track and a gap would
   drift the overlay by a column across 100 steps.

@@ -44,6 +44,13 @@ src/
 │                   #   header). The namer is the cctrace-title skill (subagent fan-out);
 │                   #   cctrace itself never calls a model. `title --json` lists digests,
 │                   #   `title set <id> "<title>"` writes one
+├── insights.ts     # `cctrace insights`: the DATA layer for windowed usage
+│                   #   questions (title precedent: cctrace computes, the
+│                   #   cctrace-insights skill reasons). foldRuns aggregates
+│                   #   registry exit stats by day/project/client + heaviest
+│                   #   runs; createScanFold streams the window's traces for
+│                   #   the wire truth — cache read/write split + est $ per
+│                   #   component, per-model, per-session, quota polls
 ├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
 │                   #   category, wall-clock, on-disk size, sids, tokens+cache%,
 │                   #   est cost — this run's pairs only, prior merges excluded)

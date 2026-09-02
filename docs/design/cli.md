@@ -99,6 +99,13 @@ cctrace history [--limit N | --all]       # global run log: every traced run (li
           [--json]                        # newest first, across all projects sharing the
                                           # data dir; rows whose trace file doesn't resolve
                                           # here (another container's, never adopted) dim
+cctrace insights [--since 7d] [--scan]    # windowed usage aggregates across every project:
+          [--json]                        # runs/tokens/est cost by day/project/client, the
+                                          # heaviest sessions (fast: registry exit stats);
+                                          # --scan streams the window's traces for the wire
+                                          # truth — cache read/write split, per-model,
+                                          # per-session, the quota % the client polled.
+                                          # --json is the cctrace-insights skill's input
 cctrace store [--json]                    # the store: root, one row per project (size,
                                           # traces + plain count, newest, path from the
                                           # project.json marker), total, and the reclaim

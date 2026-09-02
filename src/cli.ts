@@ -8,7 +8,8 @@ import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
 import { parseCliArgs, CliUsageError } from "./args";
-import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, readTracePairs } from "./history";
+import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, readTracePairs, traceLines } from "./history";
+import { parseWindow, runInWindow, foldRuns, createScanFold } from "./insights";
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
@@ -70,7 +71,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt", "title"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt", "title", "insights"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // Internal detached helper (`cctrace __seal <job>`): skip client/flag
 // parsing entirely — it is spawned by the exit path, never typed.
@@ -653,6 +654,131 @@ async function runHistory(args: string[]) {
   if (live.length) log(`Dashboard (all runs): http://localhost:${live[0]!.port}/dashboard`, C.dim);
 }
 
+// `cctrace insights` — windowed usage aggregates across every project
+// sharing the data dir: the DATA layer the cctrace-insights skill reasons
+// over (src/insights.ts). Fast path folds registry tombstones; --scan
+// streams the window's traces for the wire truth (cache split, per-model,
+// per-session, the quota percentages the client polled). Every dollar is
+// an estimate and prints with ≈.
+async function runInsights(args: string[]) {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        json: { type: "boolean" },
+        scan: { type: "boolean" },
+        since: { type: "string" },
+        "data-dir": { type: "string" },
+      },
+      allowPositionals: false,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] insights: ${(err as Error).message}\n  usage: cctrace insights [--since 7d] [--scan] [--json] [--data-dir PATH]`);
+    process.exit(1);
+  }
+  const dataDir = parsed.values["data-dir"] ? resolve(parsed.values["data-dir"] as string) : DATA_DIR;
+  let w;
+  try {
+    w = parseWindow((parsed.values.since as string) || "7d");
+  } catch (err) {
+    console.error(`[cctrace] insights: ${(err as Error).message}`);
+    process.exit(1);
+  }
+  const live = await listLiveInstances(dataDir, { scanPorts: SCAN_PORTS });
+  const liveIds = new Set(live.map((i) => i.id).filter(Boolean));
+  const past = listPastRuns(dataDir).filter((i) => !liveIds.has(i.id));
+  const runs = [...live.map((i) => ({ ...i, live: true })), ...past.map((i) => ({ ...i, live: false }))];
+  const runsFold = foldRuns(runs, w, titleLookup(dataDir));
+
+  let scan: (ReturnType<ReturnType<typeof createScanFold>["result"]> & {
+    tracesScanned: number; tracesMissing: number; decodedBytes: number; damagedLines: number;
+  }) | null = null;
+  if (parsed.values.scan) {
+    // Ambient catalog for stepCost — the exit report's own convention.
+    (globalThis as { __PRICING__?: unknown }).__PRICING__ = pricingCatalog(dataDir);
+    const fold = createScanFold(w, wireTables());
+    // One read per distinct carrier: two runs of one session both resolve
+    // to its session-<sid8> file after the exit auto-merge.
+    const carriers = new Map<string, number>();
+    let missing = 0;
+    for (const r of runs) {
+      if (!runInWindow(r, w) || !r.logFile) continue;
+      const c = carrierOf(r);
+      if (c) carriers.set(resolve(c.path), c.bytes);
+      else missing++;
+    }
+    let decoded = 0;
+    let damaged = 0;
+    for (const [path, bytes] of carriers) {
+      if (bytes > 16 * 1024 * 1024 && !parsed.values.json) log(`scanning ${basename(path)} (${human(bytes)} on disk)…`, C.dim);
+      try {
+        for await (const line of traceLines(path)) {
+          decoded += line.length + 1;
+          if (!line.trim()) continue;
+          let p: TracePair;
+          try { p = JSON.parse(line); } catch { damaged++; continue; }
+          fold.add(p);
+        }
+      } catch {
+        damaged++;
+      }
+    }
+    scan = { tracesScanned: carriers.size, tracesMissing: missing, decodedBytes: decoded, damagedLines: damaged, ...fold.result() };
+  }
+
+  const out = {
+    window: { spec: w.spec, since: new Date(w.sinceMs).toISOString(), until: new Date(w.untilMs).toISOString() },
+    dataDir,
+    runs: runsFold,
+    ...(scan ? { scan } : {}),
+  };
+  if (parsed.values.json) {
+    console.log(JSON.stringify(out, null, 2));
+    return;
+  }
+
+  // Human summary — the skill consumes --json; this is the glance.
+  const cost = (n: number | undefined) => (n && n > 0 ? `≈$${n.toFixed(2)}` : "");
+  const tok = (n: number) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
+  const day = (iso: string) => iso.slice(5, 10);
+  log(`Insights · last ${w.spec} (${day(out.window.since)} → ${day(out.window.until)}) · every project sharing ${dataDir}`, C.cyan);
+  const rf = runsFold;
+  let vol = `${rf.total} run(s)` + (rf.live ? ` (${rf.live} live)` : "") + ` · ${rf.withStats} with exit stats`;
+  log(vol);
+  const sum = Object.values(rf.byProject).reduce((a, b) => ({
+    runs: 0, pairs: a.pairs + b.pairs, messages: a.messages + b.messages,
+    tokensIn: a.tokensIn + b.tokensIn, tokensOut: a.tokensOut + b.tokensOut, estCostUsd: a.estCostUsd + b.estCostUsd,
+  }), { runs: 0, pairs: 0, messages: 0, tokensIn: 0, tokensOut: 0, estCostUsd: 0 });
+  if (sum.pairs) log(`volume    ${sum.pairs.toLocaleString()} pairs · in ${tok(sum.tokensIn)} · out ${tok(sum.tokensOut)}${sum.estCostUsd ? ` · ${cost(sum.estCostUsd)}` : ""}`);
+  const projs = Object.entries(rf.byProject).sort((a, b) => b[1].estCostUsd - a[1].estCostUsd).slice(0, 5);
+  if (projs.length) log(`projects  ` + projs.map(([p, b]) => `${p} ${cost(b.estCostUsd) || b.runs + " runs"}`).join(" · "));
+  for (const r of rf.top.slice(0, 5)) {
+    const label = (r.title || r.firstPrompt || "").replace(/\s+/g, " ").slice(0, 56);
+    log(`  ${(cost(r.estCostUsd) || "?").padStart(9)}  ${(r.startedAt || "").slice(5, 16).replace("T", " ")}  ${(r.client || "?").padEnd(6)} ${(r.project || "?").padEnd(14)} ${r.sessionId ? r.sessionId.slice(0, 8) : "-"}  ${label}`, C.dim);
+  }
+  if (scan) {
+    const u = scan.usage;
+    if (u.calls) {
+      const est = u.est;
+      log(`cache     hit ${u.cacheHitPct == null ? "n/a" : u.cacheHitPct + "%"} · read ${tok(u.cacheRead)} · write ${tok(u.cacheWrite)} · uncached ${tok(u.input)}` +
+        (est.total ? ` · ${cost(est.cacheRead)} of ${cost(est.total)} was cache reads` : ""));
+      const models = Object.entries(scan.byModel).sort((a, b) => b[1].estTotal - a[1].estTotal).slice(0, 4);
+      if (models.length) log(`models    ` + models.map(([m, s]) => `${m} ${cost(s.estTotal) || s.calls + " calls"}`).join(" · "));
+      const q = Object.entries(scan.quota.windows);
+      if (q.length) log(`quota     ` + q.map(([k, v]) => `${k}: last ${v.last}% (peak ${v.max}%)`).join(" · "));
+      log(`scanned   ${scan.tracesScanned} trace(s), ${human(scan.decodedBytes)} decoded` +
+        (scan.tracesMissing ? ` · ${scan.tracesMissing} run(s) whose trace is not on this machine` : "") +
+        (scan.deduped ? ` · ${scan.deduped} duplicate pair(s) skipped` : ""), C.dim);
+    } else {
+      log(`scan found no model calls in the window`, C.dim);
+    }
+  } else {
+    log(`(--scan reads the wire: cache split, per-model, quota · --json for the full data)`, C.dim);
+  }
+}
+
 // `cctrace store` — where traces live and what they cost: the store root,
 // one row per project (biggest first), plain-vs-archived counts, the total.
 // The answer to "where did 73 GB go" in one screen (docs/design/store.md).
@@ -1214,6 +1340,13 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           The global run log: every traced run (live + past),
                           newest first, across all projects sharing the data
                           dir. ps = what's running; history = what ran.
+  ${C.cyan}insights${C.reset} [--since 7d] [--scan] [--json]
+                          Windowed usage aggregates across every project:
+                          runs/tokens/est cost by day, project, client, the
+                          heaviest sessions. --scan streams the window's
+                          traces for the wire truth — cache read/write split,
+                          per-model, the quota %% the client polled. Data for
+                          the cctrace-insights skill (--json).
   ${C.cyan}store${C.reset} [--json]            Where traces live and what they cost: the store
                           root, one row per project (size, traces, newest),
                           the total — and the commands that reclaim space.
@@ -2233,6 +2366,7 @@ async function main() {
     else if (SUBCOMMAND === "spec") await runSpec(rest);
     else if (SUBCOMMAND === "ps") await runPs(rest);
     else if (SUBCOMMAND === "history") await runHistory(rest);
+    else if (SUBCOMMAND === "insights") await runInsights(rest);
     else if (SUBCOMMAND === "store") runStore(rest);
     else if (SUBCOMMAND === "adopt") await runAdopt(rest);
     else if (SUBCOMMAND === "title") await runTitle(rest);

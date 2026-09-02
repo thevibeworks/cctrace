@@ -11,7 +11,8 @@ import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
-import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { listLiveInstances, listPastRuns, listAllRuns, requestStop, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
+import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } from "./maintenance";
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier, traceSizes, VIEW_BYTES } from "./view";
 import { titleLookup } from "./title";
@@ -71,6 +72,20 @@ interface ServerConfig {
    * first live pair carries a session id.
    */
   speculate?: string;
+  /**
+   * Stop this run on request from the dashboard (POST /api/shutdown, proven
+   * by this run's instance id). Absent = the endpoint refuses: a server
+   * that can't name its own exit path must not half-die.
+   *
+   * A capture run's implementation ends the traced session the way Ctrl-C
+   * does — child first, then the normal close-out (flush, receipt, seal),
+   * so stopping from the page never costs a trace. `force` escalates to
+   * SIGKILL for a child that ignores SIGTERM.
+   */
+  onShutdown?: (opts: { force: boolean }) => void;
+  /** What stopping this server ends, for the reply the page shows:
+   * "run" (a capture — ends the traced session) or "view" (a viewer). */
+  stopKind?: "run" | "view";
 }
 
 const clients = new Set<ServerWebSocket<unknown>>();
@@ -412,6 +427,52 @@ export function createServer(config: ServerConfig) {
           self: config.instanceId ? i.id === config.instanceId : i.pid === process.pid,
         })));
       }
+      if (url.pathname === "/api/shutdown" && req.method === "POST") {
+        // Stop THIS run. Authenticated by this run's own instance id, the
+        // same token /api/pair uses: the socket is reachable from other
+        // containers and the LAN, and a mistargeted stop would end someone
+        // else's session. The id is not a secret the page has to keep — it
+        // reads it from /api/instances, same origin — it is proof that the
+        // caller means THIS run and not whatever now holds this port.
+        const body = (await req.json().catch(() => ({}))) as { id?: unknown; force?: unknown };
+        if (!config.instanceId || typeof body?.id !== "string" || body.id !== config.instanceId) {
+          return Response.json({ error: "id does not match this instance" }, { status: 403 });
+        }
+        if (!config.onShutdown) {
+          return Response.json({ error: "this instance has no remote stop" }, { status: 501 });
+        }
+        const force = body.force === true;
+        const kind = config.stopKind ?? "run";
+        // Answer first, exit after: the page must learn it was accepted,
+        // and the close-out (flush, receipt, seal) needs the process alive.
+        setTimeout(() => config.onShutdown!({ force }), 100);
+        return Response.json({ ok: true, stopping: true, id: config.instanceId, kind, force });
+      }
+      if (url.pathname === "/api/instances/stop" && req.method === "POST") {
+        // The dashboard's stop button. The page always talks to the server
+        // that served it (one origin, no CORS on a kill path); THIS server
+        // relays to the target's own port, exactly how liveness is probed.
+        // The registry is the address book, the id is the proof — a pid is
+        // neither addressable nor trustworthy across the namespaces that
+        // share this data dir (instances.ts).
+        const body = (await req.json().catch(() => ({}))) as { id?: unknown; force?: unknown };
+        const id = typeof body?.id === "string" ? body.id : "";
+        const force = body?.force === true;
+        if (!id) return Response.json({ error: "id required" }, { status: 400 });
+        if (id === config.instanceId) {
+          if (!config.onShutdown) return Response.json({ error: "this instance has no remote stop" }, { status: 501 });
+          setTimeout(() => config.onShutdown!({ force }), 100);
+          return Response.json({ ok: true, stopping: true, id, self: true, kind: config.stopKind ?? "run", force });
+        }
+        if (!config.dataDir) return Response.json({ error: "no registry on this server" }, { status: 501 });
+        const target = (await listLiveInstances(config.dataDir, { scanPorts: SCAN_PORTS })).find((i) => i.id === id);
+        if (!target) return Response.json({ error: "not a live instance" }, { status: 404 });
+        const reply = await requestStop(target.port, id, force);
+        return Response.json(
+          { ...reply, id, port: target.port, stopping: reply.ok },
+          { status: reply.ok ? 200 : 502 },
+        );
+      }
       if (url.pathname === "/api/runs") {
         // Finished runs (registry tombstones) for the dashboard — the live
         // side is /api/instances. The trace is re-resolved per request via
@@ -434,6 +495,28 @@ export function createServer(config: ServerConfig) {
             ...(carrier && carrier.path !== i.logFile ? { traceCarrier: carrier.path } : {}),
           };
         }));
+      }
+      if (url.pathname === "/api/store") {
+        // The store picture: what the traces cost on disk and how much of
+        // that is still plain .jsonl, plus the archive job if one is
+        // running. The plan here IS the plan the button executes — same
+        // planCompress, same live-run exclusion (maintenance.ts).
+        if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
+        return Response.json({ ...(await storePictureCached(config.dataDir)), job: currentArchiveJob() });
+      }
+      if (url.pathname === "/api/store/archive" && req.method === "POST") {
+        // The web face of `cctrace compress --all --yes` — which is exactly
+        // what it spawns. Archiving never loses pairs (verify-then-unlink,
+        // union-never-overwrite), so it needs no id proof; it's the same
+        // trust boundary as /api/compact.
+        if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
+        const body = (await req.json().catch(() => ({}))) as { cancel?: unknown };
+        if (body?.cancel === true) {
+          const stopped = cancelArchive();
+          return Response.json({ ok: stopped, job: currentArchiveJob() }, { status: stopped ? 200 : 409 });
+        }
+        const { job, started } = await startArchive(config.dataDir);
+        return Response.json({ ok: started, running: !started, job }, { status: started ? 200 : 409 });
       }
       if (url.pathname.startsWith("/view/")) {
         // Direct-open for a finished run: the dashboard row's click target.

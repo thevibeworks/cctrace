@@ -3,12 +3,14 @@
 (Moved verbatim from CLAUDE.md 2026-07-30 — the behavior spec for ui.ts.
 Design rules live in ui.md; read that before adding UI.)
 
-One self-contained page (`getLiveHtml` in `ui.ts`) — three view tabs:
+One self-contained page (`getLiveHtml` in `ui.ts`) — a destination RAIL on
+the left and a work column on the right, with three destinations:
 Requests, Sessions, and Context (the agent's context window over time: an
 interactive overview driving a window / stream / events deck,
 docs/design/context-view.md) — serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
-The header identifies the run: traced client (icon + name chip — quiet
+The rail identifies the run (0.48 — identity belongs to the navigation, not
+to a strip above the content): the mark, then a RUN CARD carrying traced client (icon + name chip — quiet
 generic monograms in `CLIENT_ICONS`, not vendor logos — from
 `PageMeta.client` or the newest labeled pair; absent for pre-0.13 traces),
 the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
@@ -27,18 +29,24 @@ on the detail panel's cache chip and the outline's newest-turn hover
 — newest model call ONLY (later hits refresh the TTL);
 clicking the title copies PageMeta.traceRelPath — absolute into the store,
 project-relative for a legacy trace — ready for `cctrace view`) and the current session id (extracted
-client-side from pairs, newest live pair wins, click to copy) — the tab
-title is brand-first: `CCTrace · <client> · <project> · <sid>`. The page
+client-side from pairs, newest live pair wins, click to copy) and the live
+dot (connected / offline / snapshot) — the browser tab title is
+brand-first: `CCTrace · <client> · <project> · <sid>`. Under the card sit
+the destinations (`Requests` / `Sessions` / `Context` / `Runs`, the last
+only on served pages), each a button whose `.active` state the view
+switcher drives; the work column's own header then names the destination
+(`#page-title`) and carries that destination's numbers. The page
 opens its WebSocket origin-relative (never a baked port: behind
 container/host port forwards the bound port isn't the browser's port, and a
 baked URL once handed a view page another instance's live stream). The
-right side is trace totals · instance-switcher · live-dot · version · mask/theme/github
+work header carries trace totals and the truncation chip; the rail's foot
+carries the instance switcher, the version and mask/theme/github
 (totals = requests · in/out tokens · est cost across the whole trace,
 live-updating, breakdown in the hover — per-pair call info memoized on the
 pair since extractCallInfo parses SSE):
-the live status sits beside the "⇄ N more" switcher (both are
-instance-level facts), and the cctrace version (+ amber update link) sits
-with the page chrome in its own `#ver` mount, hover = a miniature release
+the live status sits in the run card (it is a fact about THIS run), the
+"⇄ N more" switcher and the cctrace version (+ amber update link) sit in
+the rail's foot with the page chrome, in their own `#inst` / `#ver` mounts, hover = a miniature release
 note (slogan + fresh-features list in renderVer — refresh it when cutting
 a release). Chrome tooltips (toolbar/header/replay bar) all speak the
 designed tip grammar: heading line, `---` divider, `> ` interaction hints.
@@ -59,7 +67,8 @@ header): downloads (/api/snapshot.html, /api/spec.json|.md — CLI
 redaction rules — a /dashboard link (the central instances page:
 verified live runs + recent tombstones across every project sharing the
 data dir, served identically by any instance; also linked from the
-instance switcher menu) — and per-session dumps: /api/session.jsonl|.md?sid=…,
+instance switcher menu — and the one page that OPERATES: stop a live run,
+archive the store, see below) — and per-session dumps: /api/session.jsonl|.md?sid=…,
 one row pair per sid on the page, newest first, capped at 4 — the .jsonl
 is the same pair set `cctrace merge` writes (viewer-only prior/
 speculative markers stripped), the .md a readable transcript
@@ -89,11 +98,23 @@ hash-routed:
   CLI's onPurge to rewrite the backing .jsonl(s) (`purgePairsById` in
   src/storage.ts: atomic, archive-preserving, torn lines kept, skips files
   changed mid-flight), and broadcasts `purged` so every page removes the
-  rows. Content chips read
+  rows. A row is a RULE, not a card (0.48): 26px, one line, opening with
+  the PEN — the row's own stroke on a shared scale, full-scale deflection
+  30s of wall-clock, the faint head time-to-first-token and the solid tail
+  the streaming that followed, inked in the category's own color, tooltip
+  stating the scale and whether the row pinned at full width. Then
+  method · status (a soft-ground tag, not a filled pill) · category (dot +
+  label) · url. Content chips read
   left-to-right — model · effort · think · in/out · ≡cache · cost — then
   the wire transport facts sit as right-aligned COLUMNS: ↑req ↓resp sizes ·
   ttft · duration · time (the flexible gap between chips and columns is
-  structural, `.sum` flex). The chips: model; requested reasoning effort
+  structural, `.sum` flex). The chip line ellipsizes as a LINE, never
+  mid-token, and the columns drop in a decided order as the viewport
+  narrows: bytes at 900px, clock at 820, ttft at 700, the chips at 560.
+  Between two rows more than two minutes apart the list draws a hatched
+  GAP band naming the wait ("1h 28m with nothing on the wire") — the same
+  threshold the trajectory bar folds idle at, maintained on live arrivals
+  too (`lastRowEnd`), so an hour of nothing never reads as the next line. The chips: model; requested reasoning effort
   (`extractEffort` in src/summarize.ts, one function for every wire shape:
   Anthropic `output_config.effort` / transitional `thinking.effort` (kimi
   too) / classic `thinking.budget_tokens` / bare `thinking.type: adaptive`,
@@ -749,6 +770,41 @@ hash-routed:
   after 10 minutes. A start is never written to the trace: it is live
   state, not wire data, so snapshots and `cctrace view` pages say nothing
   about "now" (docs/design/replay-stage.md).
+- **Dashboard** (`/dashboard`, src/dashboard.ts — every live/view server
+  serves the same page from the shared registry): live runs, the store,
+  finished runs. Two of those three sections ACT.
+  - Each live row carries a **stop** button. It arms on the first click
+    ("end session?" for a capture, "close?" for a viewer) and sends on the
+    second; arming decays after 5s. The page always posts to ITS OWN
+    origin — `POST /api/instances/stop {id[,force]}` — and that server
+    relays to the target's own port (`POST /api/shutdown`, node:http,
+    exactly how liveness is probed): a pid is neither addressable nor
+    trustworthy across the pid namespaces that share a data dir, while
+    port + run id name one run. The receiver compares the id against its
+    own before acting, so a stale row pointing at a recycled port cannot
+    kill the newcomer. A capture run stops the way Ctrl-C stops it — the
+    traced child takes SIGTERM and its exit runs the whole close-out
+    (flush, receipt, seal, tombstone), so stopping from the page never
+    costs a trace; `force` escalates to SIGKILL for a child that ignores
+    the polite ask. Rows for instances the port sweep found without an id
+    (pre-0.10 servers) get no button: unaddressable is not stoppable.
+    Stopping the instance that served the page is allowed and says so —
+    the note turns amber instead of freezing on a stale picture.
+  - The **store** section is the housekeeping picture (`GET /api/store`,
+    src/maintenance.ts): bytes on disk, traces, projects, and the exact
+    archive plan — plain traces and their weight, legacy `.gz` to
+    re-encode, interrupted exit seals, plus how many plain traces a live
+    run is holding (informational: a trace being written can't be
+    archived, so it never justifies the button). **archive now**
+    (`POST /api/store/archive`) spawns `cctrace compress --all --yes` as a
+    CHILD process and streams its output into the job record the page
+    polls every 2s; `{"cancel":true}` kills it between files. The child
+    is the point twice over: there is exactly one implementation of
+    archiving (the CLI), and a multi-GB archive never runs on the event
+    loop of a capture run, whose MITM proxy the traced session depends on
+    — the same reason the exit seal is a detached helper
+    (docs/design/store.md). What the job reports as reclaimed comes from
+    re-measuring the store before and after, never from parsing the log.
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
   `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.

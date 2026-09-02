@@ -1,0 +1,9 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="cctrace">
+  <title>cctrace — Claude Design System lockup</title>
+  <g fill="none" stroke-linecap="round">
+    <path d="M270.75 175.6 A 125 125 0 1 0 270.75 336.4" stroke="#c6613f" stroke-width="30"/>
+    <path d="M395.75 175.6 A 125 125 0 1 0 395.75 336.4" stroke="#c6613f" stroke-width="30"/>
+    <line x1="258" y1="256" x2="448" y2="256" stroke="#0b0b0b" stroke-width="12"/>
+    <circle cx="448" cy="256" r="20" fill="#d97757"/>
+  </g>
+</svg>

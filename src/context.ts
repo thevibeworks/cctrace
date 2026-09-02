@@ -23,15 +23,16 @@ import {
 /**
  * The six context categories, in stacking order (envelope first, then the
  * conversation surface). Colors are data colors (same rule as
- * src/categorize.ts CATEGORIES): fixed hex, readable on both themes.
+ * src/categorize.ts CATEGORIES): fixed hex, readable on both themes, one
+ * each of the six hues CDS ships for git status.
  */
 export const CTX_CATS = [
-  { id: "system", label: "system prompt", color: "#8957e5" },
-  { id: "tools", label: "tool schemas", color: "#d29922" },
-  { id: "user", label: "user messages", color: "#3fb950" },
-  { id: "inject", label: "injected context", color: "#db61a2" },
-  { id: "assistant", label: "assistant replies", color: "#4184e4" },
-  { id: "toolResult", label: "tool results", color: "#39c5cf" },
+  { id: "system", label: "system prompt", color: "#8e6bd9" },
+  { id: "tools", label: "tool schemas", color: "#c39b2b" },
+  { id: "user", label: "user messages", color: "#1e9e3c" },
+  { id: "inject", label: "injected context", color: "#c5621b" },
+  { id: "assistant", label: "assistant replies", color: "#4a8fdb" },
+  { id: "toolResult", label: "tool results", color: "#1baf7a" },
 ] as const;
 
 /**

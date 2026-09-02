@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cctrace web interface — two design directions</title>
+<link rel="stylesheet" href="review-tokens.css">
+<link rel="stylesheet" href="review.css">
+</head>
+<body>
+<div class="wrap">
+  <h1>cctrace web interface — two design directions</h1>
+  <p class="lead">Two complete worlds for the same product, built on the same sample data so they can be judged on the
+    same facts. Direction A was designed here, from our own instrument. Direction B adopts the Claude Design System
+    as measured off claude.ai. Both are working pages: switch screens, flip themes, drag the playhead, open the
+    inspector, resize to 390.</p>
+
+  <div class="two">
+    <div class="card">
+      <header>
+        <span class="stamp">A</span><b>the recorder</b><span>designed here · roll 8e4546b4, candidate 1 of 7</span>
+      </header>
+      <div class="pad">
+        <div class="mark" id="markA"></div>
+        <p><b>A trace is a recording, so the page is the chart it was written on.</b> The paper advances with the
+          clock — the blank between two rows is the wait between two requests, and an idle stretch over five minutes
+          folds to a hatched band that says how long. Every row opens with its own pen stroke: light for time to
+          first token, solid for the rest, inked by its channel. Mono everywhere, 25px rows, no radius above 2px.
+          Dark is the instrument's screen at night; light is the paper roll on the desk.</p>
+        <p><a href="recorder/">open the demo</a> · <a href="recorder/DESIGN.md">DESIGN.md</a> ·
+          <a href="recorder/tokens.css">tokens.css</a></p>
+      </div>
+    </div>
+    <div class="card">
+      <header>
+        <span class="stamp">B</span><b>Claude Design System</b><span>adopted · measured 2026-09-02</span>
+      </header>
+      <div class="pad">
+        <div class="mark" id="markB"></div>
+        <p><b>cctrace traces Claude Code, so it should read as part of the same product.</b> Warm paper, 8px radius,
+          14px sans with mono only for wire values, clay for identity and the one primary action, a destination rail
+          instead of tabs. The conversation is the object; the wire is one control away.</p>
+        <p><a href="claude-cds/">open the demo</a> · <a href="claude-cds/DESIGN.md">DESIGN.md</a> ·
+          <a href="claude-cds/tokens.css">tokens.css</a></p>
+      </div>
+    </div>
+  </div>
+
+  <h2>the same screen, side by side</h2>
+  <div class="controls">
+    <span>screen</span>
+    <button class="sw" data-screen="requests" aria-pressed="true">requests</button>
+    <button class="sw" data-screen="session">session</button>
+    <button class="sw" data-screen="context">context</button>
+    <button class="sw" data-screen="runs">runs</button>
+    <button class="sw" data-screen="brand">brand</button>
+    <span style="padding-left:12px">theme</span>
+    <button class="sw" data-theme="dark" aria-pressed="true">dark</button>
+    <button class="sw" data-theme="light">light</button>
+    <span style="padding-left:12px">width</span>
+    <button class="sw" data-width="full" aria-pressed="true">1440</button>
+    <button class="sw" data-width="768">768</button>
+    <button class="sw" data-width="390">390</button>
+  </div>
+  <div class="frames">
+    <figure><figcaption><span class="stamp">A</span> the recorder</figcaption><iframe id="fa" title="direction A"></iframe></figure>
+    <figure><figcaption><span class="stamp">B</span> Claude Design System</figcaption><iframe id="fb" title="direction B"></iframe></figure>
+  </div>
+
+  <h2>what actually differs</h2>
+  <table>
+    <tr><th></th><th>A — the recorder</th><th>B — Claude Design System</th></tr>
+    <tr><td>where the look comes from</td>
+      <td>a rolled world: chart recorder, paper and pens. Palette authored from that material.</td>
+      <td>an official system adopted whole. Palette read out of claude.ai's live tokens, both themes.</td></tr>
+    <tr><td>ground</td><td>enamel panel / chart stock, with the printed rule as the page's ground</td>
+      <td>warm paper <code>--cds-page-bg</code> / near-black in dark, rules at 10% ink</td></tr>
+    <tr><td>type</td><td>one mono family, 10–15px, one 24px display number</td>
+      <td>CDS ramp: 14px sans body, mono only for wire values, 22px title</td></tr>
+    <tr><td>density (measured)</td><td>25px rows — <b>40 rows per 1000px</b> of list. Some of that gain is spent
+      back on the paper feed, which trades rows for elapsed time on purpose</td>
+      <td>30px rows — <b>33 rows per 1000px</b>. One row in six, and a 38rem reading measure on the conversation</td></tr>
+    <tr><td>accent</td><td>one ink blue for interactive; four pens for data; state stays green/amber/red</td>
+      <td>clay for identity and the single primary action, CDS blue for interactive, CDS's six git hues as data</td></tr>
+    <tr><td>frame</td><td>identity strip + toolbar, tabs; every view is rail | work</td>
+      <td>destination rail with the run's identity card; header carries the title and the numbers</td></tr>
+    <tr><td>signature</td><td><b>the paper advances with the clock</b> (waits are drawn to scale and fold when long)
+      and <b>the carriage</b> — one hairline that is the playhead, the hover readout and the pin on all three views</td>
+      <td><b>read / wire</b> — any turn flips to the exact request that produced it, in place</td></tr>
+    <tr><td>adaptive</td><td>container queries: chips and columns drop, rail becomes a page, toolbar scrolls</td>
+      <td>rail collapses to icons at 1000, becomes a bottom bar at 620, drawer goes full width</td></tr>
+    <tr><td>what it risks</td>
+      <td>a world nobody asked for; the grid can read as noise on a cheap panel; it is further from Claude Code than
+        today's UI is</td>
+      <td>looks like every other Claude surface, so it inherits their density; the trace is a dense instrument and CDS
+        is tuned for reading, not for 668 rows</td></tr>
+    <tr><td>cost to ship</td>
+      <td>token block + ~320 lines of CSS in <code>src/ui.ts</code>; the markup barely moves — today's classes map
+        one to one</td>
+      <td>token block + ~260 lines, but the frame changes: tabs become a rail, the session view becomes
+        conversation-first, drawers replace two panels</td></tr>
+  </table>
+
+  <h2>what the cold review changed</h2>
+  <p>Both directions were audited by reviewers with no build history, against the design instrument's own rubric.
+    Both graded <b>P0</b> on the first pass. What they caught is worth knowing before you look:</p>
+  <ul>
+    <li><b>A was a skin.</b> The requests view was the DevTools network panel with a texture behind it — the exact
+      page the direction says it refuses. Fixed structurally: the paper now advances with the clock and every row
+      carries its own stroke, so the ruled ground measures something and the list is a recording, not a table.</li>
+    <li><b>B's evidence lied.</b> This container had no sans face at all, so every capture rendered B's 14px sans
+      body as mono — the one thing that direction is. Fonts installed, everything recaptured.</li>
+    <li>Both hid facts at narrow widths (a clipped toolbar in A, values cut mid-token in B), both faked keyboard
+      support (highlight without focus, and j/k firing while you typed in the filter), both asserted states they
+      never showed, and both had a colour system where one ink carried two meanings. All fixed; the brand screens
+      now show hover / focus / disabled-with-reason / loading / empty / error / select-to-purge / masked identity.</li>
+    <li>Three invented numbers were removed — including <code>41% under</code> on the one view whose entire point is
+      that the numbers reconcile. It is 19%.</li>
+  </ul>
+  <p>What still stands against each: <b>A</b>'s session, context and dashboard views are the shipped layouts
+    re-inked — only the requests view is structurally new, and whether that is a defect or the point is your call.
+    <b>B</b> reads as a generic Claude-coloured admin panel unless you use the two moves only it has — flip a turn
+    to <code>Wire</code>, and open the drawer. Each direction's <code>DESIGN.md</code> carries the full audit.</p>
+
+  <h2>the standing exit</h2>
+  <p>Keeping today's UI is a real option and costs nothing: GitHub-dark, tabs, one accent, 11–13px mono. It is not
+    bad — it is the category's default, which is exactly why it reads as a devtools panel rather than as ours. Read
+    both proposals against it with <code>bun src/cli.ts view &lt;trace&gt; --no-open --port 8791</code>.</p>
+
+  <h2>how to review</h2>
+  <ul>
+    <li>Open each demo full screen and drive it: <b>j/k</b> through rows, <b>/</b> to search, click a turn block,
+      drag the playhead, open an icicle node, press <b>esc</b>.</li>
+    <li>Flip the theme on both. Dark is where the work happens; light must not be an afterthought.</li>
+    <li>Set the width to 390 and check what each one drops first.</li>
+    <li>Then answer one question: <b>is cctrace a piece of lab equipment, or part of Claude?</b> Everything else in
+      these two files follows from that.</li>
+  </ul>
+
+  <div class="foot">
+    Sample data throughout — wire-shaped, values invented, no real session content. Direction A: design-skill,
+    direction scope, roll 8e4546b4 over a pool of 7 candidates. Direction B: Claude Design System, 769 custom
+    properties read from claude.ai on 2026-09-02; anthropic-sans and anthropic-mono are licensed faces we do not
+    ship, so the demo renders CDS's own declared fallback chain.
+  </div>
+</div>
+<script>
+const MARK_A = '<svg viewBox="0 0 512 512" style="color:var(--ink)"><g stroke="currentColor" fill="none" opacity="0.3" stroke-width="10"><path d="M96 192h320M96 320h320"/><path d="M224 96v320M352 96v320"/></g><rect x="96" y="96" width="320" height="320" stroke="currentColor" fill="none" stroke-width="14"/><path d="M96 336 L160 336 L192 208 L224 208 L256 288 L320 288 L352 176 L416 176" stroke="currentColor" fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/><path d="M288 64 L288 448" stroke="currentColor" stroke-width="10" fill="none" opacity="0.5"/><circle cx="288" cy="288" r="30" fill="currentColor"/></svg>';
+const MARK_B = '<svg viewBox="0 0 512 512" fill="none" stroke-linecap="round"><path d="M270.75 175.6 A 125 125 0 1 0 270.75 336.4" stroke="var(--stamp)" stroke-width="30"/><path d="M395.75 175.6 A 125 125 0 1 0 395.75 336.4" stroke="var(--stamp)" stroke-width="30"/><line x1="258" y1="256" x2="448" y2="256" stroke="var(--ink)" stroke-width="12"/><circle cx="448" cy="256" r="20" fill="var(--stamp)"/></svg>';
+document.getElementById('markA').innerHTML = MARK_A + '<span style="font-size:22px;font-weight:700">cctrace</span>';
+document.getElementById('markB').innerHTML = MARK_B + '<span style="font-size:22px;font-weight:700;font-family:var(--font-read)">cctrace</span>';
+
+const state = { screen: 'requests', theme: 'dark', width: 'full' };
+const SCREEN_B = { requests: 'requests', session: 'session', context: 'context', runs: 'runs', brand: 'brand' };
+const SCREEN_A = { requests: 'requests', session: 'session', context: 'context', runs: 'dashboard', brand: 'brand' };
+function load() {
+  const q = s => '?chrome=off&bare=1&screen=' + s + '&theme=' + state.theme + '&width=' + state.width;
+  document.getElementById('fa').src = 'recorder/' + q(SCREEN_A[state.screen]);
+  document.getElementById('fb').src = 'claude-cds/' + q(SCREEN_B[state.screen]);
+}
+document.querySelector('.controls').addEventListener('click', e => {
+  const b = e.target.closest('button.sw'); if (!b) return;
+  const key = b.dataset.screen ? 'screen' : b.dataset.theme ? 'theme' : 'width';
+  const val = b.dataset[key];
+  state[key] = val;
+  document.querySelectorAll('button.sw[data-' + key + ']').forEach(x => x.setAttribute('aria-pressed', String(x.dataset[key] === val)));
+  load();
+});
+load();
+</script>
+</body>
+</html>

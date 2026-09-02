@@ -47,6 +47,19 @@ export function versionWithCommit(): string {
   const sha = cctraceCommit();
   return sha ? `${CCTRACE_VERSION} (${sha})` : CCTRACE_VERSION;
 }
+
+/** A `bun build --compile` binary: sources live in a virtual filesystem. */
+export const IS_COMPILED = import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN");
+
+/**
+ * argv that re-invokes THIS cctrace (compiled binary, or bun + entry) — how
+ * cctrace hands work to a helper process: the detached exit seal (cli.ts)
+ * and the dashboard's archive job (maintenance.ts). Lives here because it
+ * describes the build, not either caller.
+ */
+export function selfExecArgv(extra: string[]): string[] {
+  return IS_COMPILED ? [process.execPath, ...extra] : [process.execPath, Bun.main, ...extra];
+}
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE}/latest`;
 
 export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;

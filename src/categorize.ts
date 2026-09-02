@@ -4,16 +4,26 @@ export interface CatMeta {
   color: string;
 }
 
+/**
+ * Category inks. These are DATA colors: one fixed hex per category, the
+ * same in both themes (a wire fact is not a chrome decision), mid-tone so
+ * each reads on paper and on near-black. They are the six hues the Claude
+ * Design System already ships for git status — green, blue, violet, gold,
+ * orange, gray, plus its aqua — so a cctrace category and a Claude Code
+ * diff badge are the same inks. The model family gets the blues, tools the
+ * aqua, identity the violet, money the gold, foreign hosts the orange,
+ * noise the grays.
+ */
 export const CATEGORIES: CatMeta[] = [
-  { id: "messages", label: "Messages", color: "#3fb950" },
-  { id: "tokens", label: "Count Tokens", color: "#56d364" },
-  { id: "usage", label: "Usage/Credits", color: "#d29922" },
-  { id: "oauth", label: "OAuth", color: "#a371f7" },
-  { id: "mcp", label: "MCP", color: "#39c5cf" },
-  { id: "bootstrap", label: "Bootstrap", color: "#2f81a3" },
-  { id: "telemetry", label: "Telemetry", color: "#6e7681" },
-  { id: "external", label: "External", color: "#f0883e" },
-  { id: "other", label: "Other", color: "#8b949e" },
+  { id: "messages", label: "Messages", color: "#4a8fdb" },
+  { id: "tokens", label: "Count Tokens", color: "#86b6ef" },
+  { id: "usage", label: "Usage/Credits", color: "#c39b2b" },
+  { id: "oauth", label: "OAuth", color: "#8e6bd9" },
+  { id: "mcp", label: "MCP", color: "#1baf7a" },
+  { id: "bootstrap", label: "Bootstrap", color: "#3f9d8f" },
+  { id: "telemetry", label: "Telemetry", color: "#737373" },
+  { id: "external", label: "External", color: "#c5621b" },
+  { id: "other", label: "Other", color: "#8a8a83" },
 ];
 
 /**

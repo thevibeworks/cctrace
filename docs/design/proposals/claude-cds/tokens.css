@@ -1,0 +1,192 @@
+/* cctrace direction B -- Claude Design System (CDS), adopted.
+ *
+ * PALETTE PROVENANCE -- measured, not guessed.
+ * Source: claude.ai/new, 2026-09-02, read out of the live page with
+ * getComputedStyle over every --cds-* custom property (769 resolved).
+ * Both themes come from the same read: the light values off the running
+ * .cds-root, the dark values off a probe element carrying the app's own
+ * dark hooks. Geometry measured the same way: a CDS button is 32px tall
+ * with an 8px radius and weight 400; the sidebar rule is 0.5px at 10%
+ * ink; body type is 14px.
+ *
+ * This is a GOVERNED context (design-skill kit/README.md): an official
+ * system is the material. We adopt the palette, the geometry, the type
+ * ramp and the semantic names whole, and spend our own judgement only on
+ * what CDS leaves undecided -- density inside its own range, and the
+ * data colors a wire tracer needs (below).
+ *
+ * The kit's contract names are aliases over the CDS values so the rest of
+ * the sheet reads like any other build; the CDS name is on every line.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ---- ground / ink / rule ---- */
+  --bg:          #fcfcfb;   /* --cds-page-bg   */
+  --surface:     #f9f9f7;   /* --cds-surface-0 */
+  --surface-2:   #fff;      /* --cds-surface-2 */
+  --overlay:     #fff;      /* --cds-surface-3 */
+  --fg:          #0b0b0b;   /* --cds-text-primary   */
+  --fg-2:        #52514e;   /* --cds-text-secondary */
+  --fg-3:        hsl(from #0b0b0b h s l / 62%);   /* CDS keeps --cds-text-disabled at 35%; content that is
+                                                    read, not disabled, gets the contrast floor instead */
+  --line:        hsl(from #0b0b0b h s l / 10%);   /* --cds-border        */
+  --line-strong: hsl(from #0b0b0b h s l / 20%);   /* --cds-border-strong */
+
+  /* ---- brand and accent. CDS keeps them apart and so do we:
+     clay is the product's identity and its ONE primary action;
+     blue is "this is interactive / this is selected". ---- */
+  --clay:         #d97757;  /* --cds-clay      */
+  --clay-strong:  #c6613f;  /* --cds-fill-brand */
+  --accent:       #184f95;  /* --cds-text-accent   */
+  --accent-hover: #2a78d6;  /* --cds-bg-accent-muted base */
+  --accent-fg:    #fcfcfb;
+  --accent-soft:  #cde2fb;  /* --cds-bg-accent     */
+  --accent-line:  #86b6ef;  /* --cds-border-accent */
+
+  /* ---- state: CDS semantic backgrounds and text ---- */
+  --ok: #1e9e3c; --ok-soft: #caeac7;          /* --cds-bg-success */
+  /* CDS ships success as a FILL hue; as 12px text on paper it reads 3.4:1,
+     so text gets its own step. Same for the brand fill under white 14px
+     text: clay at 100% is 3.97:1, mixed 15% into the ink it clears 4.5. */
+  --ok-text:    color-mix(in srgb, #1e9e3c 78%, #0b0b0b);
+  --clay-press: color-mix(in srgb, #c6613f 85%, #0b0b0b);
+  --warn: #98801f; --warn-soft: #f9dca4;      /* --cds-bg-warning */
+  --danger: #8e2626; --danger-soft: #fad6d6;  /* --cds-text-danger / --cds-bg-danger */
+  --danger-line: #f09595;                     /* --cds-border-danger */
+  --focus: #2a78d6;
+
+  /* ---- data colors: what CDS leaves undecided.
+     Taken from the six hues CDS already ships for git status, so a
+     cctrace lane and a Claude Code diff badge are the same six inks. ---- */
+  --lane-model:   color-mix(in srgb, #2a78d6 84%, #0b0b0b);  /* one step off the accent blue */
+  --lane-tools:   #1baf7a;                                    /* --cds-aqua-350, not --ok green */
+  --lane-waiting: color-mix(in srgb, #98801f 72%, #fcfcfb);   /* one step off the warn gold */
+  --lane-agents:  #8e6bd9;                                    /* violet: no semantic twin */
+  --agents-text:  color-mix(in srgb, #8e6bd9 72%, #0b0b0b);   /* the same violet, at the text floor */
+  --lane-extra:   #c5621b;                                    /* orange: no semantic twin */
+  --lane-idle:    #737373;
+
+  /* ---- cost: one sequential ramp off the brand ink, cheap to expensive ---- */
+  --cost-read:   color-mix(in srgb, #d97757 28%, #fcfcfb);
+  --cost-write:  color-mix(in srgb, #d97757 52%, #fcfcfb);
+  --cost-input:  color-mix(in srgb, #d97757 76%, #fcfcfb);
+  --cost-output: #c6613f;
+
+  /* ---- faces. anthropic-sans / anthropic-mono are licensed and not ours
+     to ship, so the stack is CDS's own declared fallback chain. ---- */
+  --font-body: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --font-display: var(--font-body);
+
+  /* ---- type: the CDS ramp, six sizes ---- */
+  --text-caption-xs: 11px;  /* --cds-font-size-caption--xs */
+  --text-caption:    12px;  /* --cds-font-size-caption     */
+  --text-code:       13px;  /* --cds-font-size-code        */
+  --text-body:       14px;  /* --cds-font-size-body        */
+  --text-heading:    15px;  /* --cds-font-size-heading     */
+  --text-title:      22px;  /* --cds-font-size-title       */
+  --weight-normal: 400;     /* measured: CDS controls are 400, not 600 */
+  --weight-medium: 500;
+  --weight-bold:   600;
+  --leading-body: 1.5;
+  --measure: 68ch;
+
+  /* ---- space and geometry ---- */
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --radius:    8px;   /* measured on a CDS button */
+  --radius-sm: 5px;   /* --cds-checkbox-radius */
+  --radius-lg: 12px;
+  --radius-full: 999px;
+  --line-w: 1px;
+  --control-h: 32px;  /* measured */
+  --row-h: 30px;      /* ours: density inside the system's range */
+
+  --shadow-1: 0 1px 2px 0 hsl(from #0b0b0b h s l / 6%), 0 2px 8px 0 hsl(from #0b0b0b h s l / 8%);
+  --shadow-2: 0 2px 4px 0 hsl(from #0b0b0b h s l / 7%), 0 6px 16px 0 hsl(from #0b0b0b h s l / 8%);
+
+  --dur-micro: 100ms;
+  --dur-base:  180ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --nav: 200px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:          #0b0b0b;   /* --cds-page-bg   dark */
+  --surface:     #151515;   /* --cds-surface-1 dark */
+  --surface-2:   #1a1a19;   /* --cds-surface-2 dark */
+  --overlay:     #20201f;   /* --cds-surface-3 dark */
+  --fg:          #f0efec;   /* --cds-text-primary   dark */
+  --fg-2:        #c3c2b7;   /* --cds-text-secondary dark */
+  --fg-3:        hsl(from #f0efec h s l / 68%);
+  --line:        hsl(from #fff h s l / 10%);
+  --line-strong: hsl(from #fff h s l / 20%);
+
+  --accent:       #6da7ec;  /* --cds-text-accent dark */
+  --accent-hover: #86b6ef;
+  --accent-fg:    #0b0b0b;
+  --accent-soft:  #032042;  /* --cds-bg-accent dark */
+  --accent-line:  #184f95;
+
+  --ok-soft:     #11260f;   /* --cds-bg-success dark */
+  --ok-text:     #4cc46a;
+  --clay-press:  #c6613f;
+  --warn-soft:   #311a00;   /* --cds-bg-warning dark */
+  --danger:      #ec7e7e;   /* --cds-text-danger dark */
+  --danger-soft: #3c0e0e;   /* --cds-bg-danger  dark */
+
+  --agents-text: color-mix(in srgb, #8e6bd9 62%, #f0efec);
+  --lane-model:  color-mix(in srgb, #6da7ec 88%, #f0efec);
+  --lane-waiting: color-mix(in srgb, #98801f 40%, #f0efec);
+  --cost-read:   color-mix(in srgb, #d97757 30%, #0b0b0b);
+  --cost-write:  color-mix(in srgb, #d97757 50%, #0b0b0b);
+  --cost-input:  color-mix(in srgb, #d97757 72%, #0b0b0b);
+  --cost-output: #d97757;
+
+  --shadow-1: 0 1px 2px 0 hsl(from #000 h s l / 40%), 0 2px 8px 0 hsl(from #000 h s l / 30%);
+  --shadow-2: 0 2px 6px 0 hsl(from #000 h s l / 45%), 0 8px 20px 0 hsl(from #000 h s l / 35%);
+}
+
+/* the same dark, chosen by the reader's system rather than the toggle */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --bg:          #0b0b0b;   /* --cds-page-bg   dark */
+  --surface:     #151515;   /* --cds-surface-1 dark */
+  --surface-2:   #1a1a19;   /* --cds-surface-2 dark */
+  --overlay:     #20201f;   /* --cds-surface-3 dark */
+  --fg:          #f0efec;   /* --cds-text-primary   dark */
+  --fg-2:        #c3c2b7;   /* --cds-text-secondary dark */
+  --fg-3:        hsl(from #f0efec h s l / 68%);
+  --line:        hsl(from #fff h s l / 10%);
+  --line-strong: hsl(from #fff h s l / 20%);
+
+  --accent:       #6da7ec;  /* --cds-text-accent dark */
+  --accent-hover: #86b6ef;
+  --accent-fg:    #0b0b0b;
+  --accent-soft:  #032042;  /* --cds-bg-accent dark */
+  --accent-line:  #184f95;
+
+  --ok-soft:     #11260f;   /* --cds-bg-success dark */
+  --ok-text:     #4cc46a;
+  --clay-press:  #c6613f;
+  --warn-soft:   #311a00;   /* --cds-bg-warning dark */
+  --danger:      #ec7e7e;   /* --cds-text-danger dark */
+  --danger-soft: #3c0e0e;   /* --cds-bg-danger  dark */
+
+  --agents-text: color-mix(in srgb, #8e6bd9 62%, #f0efec);
+  --lane-model:  color-mix(in srgb, #6da7ec 88%, #f0efec);
+  --lane-waiting: color-mix(in srgb, #98801f 40%, #f0efec);
+  --cost-read:   color-mix(in srgb, #d97757 30%, #0b0b0b);
+  --cost-write:  color-mix(in srgb, #d97757 50%, #0b0b0b);
+  --cost-input:  color-mix(in srgb, #d97757 72%, #0b0b0b);
+  --cost-output: #d97757;
+
+  --shadow-1: 0 1px 2px 0 hsl(from #000 h s l / 40%), 0 2px 8px 0 hsl(from #000 h s l / 30%);
+  --shadow-2: 0 2px 6px 0 hsl(from #000 h s l / 45%), 0 8px 20px 0 hsl(from #000 h s l / 35%);
+  }
+}

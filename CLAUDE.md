@@ -61,6 +61,12 @@ src/
 ├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply);
 │                   #   the zstd codec (streamed, L9 + 128MB window) + the exit-time
 │                   #   archive/stale-sweep helpers
+├── maintenance.ts  # The dashboard's operator half: the store picture
+│                   #   (/api/store — per-project sizes + the exact archive
+│                   #   plan, live runs excluded) and the archive JOB, which
+│                   #   spawns `cctrace compress --all --yes` as a child so
+│                   #   there is one implementation of archiving and no
+│                   #   multi-GB walk on a capture run's event loop
 ├── store.ts        # The trace store: <data-dir>/traces/<project-key>/ layout, project
 │                   #   marker, legacy ./.cctrace detection, `cctrace store` listing,
 │                   #   `cctrace adopt` (docs/design/store.md)
@@ -70,10 +76,16 @@ src/
 │                   #   names, body shapes, SSE events — counts + provenance,
 │                   #   values redacted except negotiation headers/model ids;
 │                   #   diff = what changed on the wire between observations)
-├── icons.ts        # Per-client icon glyphs — ONE source for every surface that
-│                   #   labels a CLI (trace view header, dashboard rows)
-├── ui.ts           # The whole web UI: Requests list + detail panel +
-│                   #   Sessions + Context views (three tabs). Context is a
+├── icons.ts        # Per-client icon glyphs + the PRODUCT mark — ONE source
+│                   #   for every surface that labels a CLI or wears the
+│                   #   brand (trace view rail, dashboard header, favicon)
+├── ui.ts           # The whole web UI: a destination RAIL (mark, run card,
+│                   #   Requests / Sessions / Context / Runs, page chrome)
+│                   #   beside the work column. The material is the Claude
+│                   #   Design System, measured off claude.ai 2026-09-02 and
+│                   #   adopted whole (docs/design/ui.md; the token block
+│                   #   names the CDS token behind every value). Requests
+│                   #   list + detail panel + Sessions + Context. Context is a
 │                   #   DevTools-shaped shell: an interactive overview
 │                   #   (two tracks, one brush) driving three decks —
 │                   #   window / stream / events — and ONE inspector: a
@@ -351,7 +363,12 @@ by that machine's project paths, which is what the shared registry
 records; `--copy --zst` builds a verified compressed mirror without
 touching the sources). Every trace-reading subcommand defaults to the
 project's store dir; the housekeeping five take `--all`. `cctrace store`
-is the size picture.
+is the size picture — and so is the dashboard's store section
+(`/api/store`), which reports the same plan and can RUN it: `archive now`
+spawns `cctrace compress --all --yes` as a child process (src/
+maintenance.ts) and streams its output to the page. Child, not in-process:
+one implementation of archiving, and a multi-GB walk must never sit on the
+event loop of a capture run whose proxy the traced session depends on.
 
 **Multi-instance**: every live run registers itself in `<data-dir>/instances/
 <run-id>.json` (unique run id, port, project, session id once seen on the
@@ -380,7 +397,15 @@ GC), and the listing also sweeps the port walk (8722..8731, plus the legacy 9317
 entries for live-but-unregistered instances straight from `/api/self`
 (`src/instances.ts`). `cctrace ps` lists live runs; the server exposes
 `/api/instances` (verified listing) and `/api/self` (identity, from memory —
-never triggers registry reads). The web UI header grows a "⇄ N more"
+never triggers registry reads). A run can also be STOPPED from the
+dashboard: the page posts to its own origin (`POST /api/instances/stop
+{id[,force]}`) and that server relays to the target's own port
+(`POST /api/shutdown`) — addressed like a liveness probe and proven by the
+run's unique id, which the receiver checks against its own, because a pid
+is neither addressable nor trustworthy across the namespaces sharing this
+registry. A capture run stops the way Ctrl-C stops it (SIGTERM to the
+traced child, then the normal close-out: flush, receipt, seal, tombstone),
+`force` escalates to SIGKILL, and a view server just exits. The web UI header grows a "⇄ N more"
 switcher when other instances exist. EVERY live/view server also serves
 `/dashboard` — the central picture: verified live instances + finished
 runs (`/api/runs`, traceExists + on-disk size re-resolved per request via
@@ -402,7 +427,11 @@ sid-bearing runs merge every trace of that session, same continuity as
 STORE dir — so an adopted or store-native trace opens even from a
 tombstone that named the legacy path). Linked from the switcher menu, the
 ⌘ actions menu, an always-visible ▦ header icon on http-served pages, a
-startup `Dashboard (all runs)` line, and a `cctrace ps` footer line. Port
+startup `Dashboard (all runs)` line, and a `cctrace ps` footer line. The
+page also OPERATES (docs/design/web-ui.md): a two-step `stop` on every
+live row, and a STORE section — bytes/traces/projects plus the archive
+plan (plain traces and their weight, legacy .gz, interrupted seals, what
+a live run is holding) with one `archive now` button behind it. Port
 allocation walks 8722..8821 (`PORT_WALK` = 100) before falling back to an
 OS-assigned port, so concurrent runs land on predictable neighbors — the
 same walk the discovery sweep covers. Env `PORT` is not honored (0.41):

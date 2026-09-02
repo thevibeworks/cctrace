@@ -1,0 +1,223 @@
+/* cctrace direction A -- "the recorder"
+ *
+ * The only file in this proposal that may carry a raw color.
+ *
+ * PALETTE PROVENANCE
+ * Material: a multi-channel chart recorder. Two states of the same
+ * machine, so two themes that are the same instrument, not one look
+ * inverted.
+ *   light  the paper roll on the desk: warm chart stock, salmon grid
+ *          printed 1mm minor / 5mm major, graphite pen, fiber pens.
+ *   dark   the same chart on the recorder's own screen at night:
+ *          enamel panel, dim phosphor rule, the pens luminous.
+ * Values authored by eye from the material (ECG/strip-chart stock, fiber
+ * tip inks, instrument enamel); NOT sampled from a scan -- stated so the
+ * next person can improve the provenance rather than trust it.
+ *
+ * THE IRREGULARITY
+ * Four materials, four hues, and they do not agree. The stock is warm
+ * (88); the graphite is cool (250) -- pencil on warm paper never carries
+ * the paper's hue; the grid is printed ink, so it is the only chromatic
+ * neutral (32) and it is LIGHTER than a diluted graphite would be; the
+ * enamel is green-black (175) because instrument cases were. The one
+ * accent is pen blue, the second pen in the carriage, and it is a
+ * different material again (250, high chroma).
+ *
+ * MUST NOT BECOME
+ * Near-black + acid accent (the calibration cluster): the enamel is
+ * green and desaturated, the pens are mid-tone inks, nothing glows.
+ * And not "terminal green on black" -- the grid is a printed rule at
+ * 3% of the frame, not a phosphor screen.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- ground / ink / rule: the panel at night ---- */
+  --bg:          oklch(0.170 0.012 175);   /* enamel */
+  --surface:     oklch(0.213 0.008 128);   /* the chart field */
+  --surface-2:   oklch(0.262 0.010 152);   /* a raised panel plate */
+  --overlay:     oklch(0.232 0.011 160);
+  --fg:          oklch(0.930 0.012 95);    /* paper white under the lamp */
+  --fg-2:        oklch(0.742 0.010 100);
+  --fg-3:        oklch(0.660 0.014 140);
+  --line:        oklch(0.330 0.022 165);   /* the rule that separates rows */
+  --line-strong: oklch(0.442 0.030 168);   /* the rule that separates regions */
+  /* the printed grid on the stock itself: a ground, not a divider */
+  --rule-minor:  oklch(0.243 0.012 168);
+  --rule-major:  oklch(0.290 0.018 168);
+
+  /* ---- the one accent: pen 2, ink blue ---- */
+  --accent:       oklch(0.720 0.130 245);
+  --accent-hover: oklch(0.790 0.120 245);
+  --accent-fg:    oklch(0.170 0.012 175);
+  --accent-soft:  oklch(0.300 0.055 245);
+
+  /* ---- state: lamps on the panel, never data ---- */
+  --ok:     oklch(0.700 0.120 158);  --ok-soft:     oklch(0.270 0.040 158);
+  --warn:   oklch(0.780 0.120  78);  --warn-soft:   oklch(0.280 0.045  78);
+  --danger: oklch(0.680 0.160  27);  --danger-soft: oklch(0.285 0.055  27);
+  --focus:  oklch(0.780 0.130 245);
+
+  /* ---- the pens: DATA. One hue per wire fact, both themes, never state.
+     Mid-tone on purpose: the same ink has to read on cream and on enamel. */
+  --pen-model:   oklch(0.620 0.095 252);
+  --pen-tools:   oklch(0.660 0.100 178);
+  --pen-waiting: oklch(0.720 0.110  78);
+  --pen-agents:  oklch(0.620 0.130 300);
+  --pen-ink:     oklch(0.170 0.012 175);   /* text ON a pen span */
+
+  /* ---- pen pressure: the billed components, cheap to expensive.
+     A sequential ramp of ONE ink, so it can never read as a second
+     categorical set beside the pens. */
+  --cost-read:   oklch(0.520 0.045 250);
+  --cost-write:  oklch(0.580 0.080 262);
+  --cost-input:  oklch(0.660 0.105 275);
+  --cost-output: oklch(0.740 0.130 288);
+
+  /* ---- category marks: the request taxonomy, quiet by design ---- */
+  --cat-messages: oklch(0.660 0.095 252);   /* the model pen */
+  --cat-count:    oklch(0.660 0.095 252);   /* also the model, asking what it costs */
+  --cat-mcp:      oklch(0.680 0.100 178);   /* the tools pen */
+  --cat-oauth:    oklch(0.660 0.130 300);   /* the account: the agents pen */
+  --cat-telemetry:oklch(0.620 0.020 140);   /* quiet by design */
+  --cat-external: oklch(0.700 0.100  55);   /* the one ink outside the channels */
+  /* the same six marks as TEXT (badges, labels): a mid-tone ink that reads on
+     enamel is too light on stock, so the text cut is stated per theme */
+  --ink-notable:  oklch(0.620 0.130 300);
+
+  /* ---- faces: the instrument prints in mono; the panel is engraved in
+     a condensed grotesk. System stacks only -- the product ships one
+     self-contained HTML file and must never fetch a face. ---- */
+  --font-mono:    ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --font-body:    var(--font-mono);
+  --font-panel:   system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: var(--font-mono);
+
+  /* ---- six sizes, three weights. Nothing else exists. ---- */
+  --text-micro: 0.625rem;   /* 10px  channel legend, badges */
+  --text-xs:    0.6875rem;  /* 11px  chips, columns */
+  --text-sm:    0.75rem;    /* 12px  rows */
+  --text-base:  0.8125rem;  /* 13px  reading text */
+  --text-lg:    0.9375rem;  /* 15px  wordmark, panel heads */
+  --text-display: 1.5rem;   /* 24px  ONE number per view */
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold:   700;
+
+  --leading-body:  1.5;
+  --leading-tight: 1.2;
+  --measure:       74ch;
+
+  /* ---- space: 4px, the grid's minor division ---- */
+  --density: 1;
+  --space-1: calc(0.25rem * var(--density));
+  --space-2: calc(0.5rem  * var(--density));
+  --space-3: calc(0.75rem * var(--density));
+  --space-4: calc(1rem    * var(--density));
+  --space-5: calc(1.5rem  * var(--density));
+  --space-6: calc(2rem    * var(--density));
+  --space-7: calc(3rem    * var(--density));
+
+  /* ---- shape: an instrument has no rounded corners; a moulded button
+     has 2px. One radius. ---- */
+  --radius: 2px;
+  --line-w: 1px;
+
+  /* ---- elevation: none on the chart. One overlay shadow, tinted. ---- */
+  --shadow-1: 0 2px 10px oklch(0.10 0.010 175 / 0.55);
+
+  /* ---- motion: the carriage moves, the paper advances, nothing else ---- */
+  --dur-micro: 90ms;
+  --dur-base:  160ms;
+  --ease-out:  cubic-bezier(0.16, 1, 0.3, 1);
+
+  --rail: 15.5rem;
+  --strip-h: 116px;
+}
+
+/* the paper roll on the desk */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg:          oklch(0.965 0.016 88);    /* chart stock */
+  --surface:     oklch(0.940 0.020 74);    /* the printed field, pinker */
+  --surface-2:   oklch(0.900 0.028 60);
+  --overlay:     oklch(0.975 0.012 88);
+  --fg:          oklch(0.240 0.010 250);   /* graphite: cool on warm stock */
+  --fg-2:        oklch(0.462 0.012 240);
+  --fg-3:        oklch(0.500 0.014 60);
+  --line:        oklch(0.860 0.045 32);    /* printed salmon rule */
+  --line-strong: oklch(0.740 0.075 30);
+  --rule-minor:  oklch(0.930 0.028 32);
+  --rule-major:  oklch(0.885 0.048 31);
+
+  --accent:       oklch(0.460 0.130 250);
+  --accent-hover: oklch(0.390 0.140 250);
+  --accent-fg:    oklch(0.975 0.012 88);
+  --accent-soft:  oklch(0.900 0.045 250);
+
+  --ok:     oklch(0.460 0.110 158);  --ok-soft:     oklch(0.920 0.040 158);
+  --warn:   oklch(0.600 0.120  78);  --warn-soft:   oklch(0.930 0.045  78);
+  --danger: oklch(0.500 0.170  27);  --danger-soft: oklch(0.930 0.040  27);
+  --focus:  oklch(0.480 0.140 250);
+
+  --pen-ink: oklch(0.965 0.016 88);
+
+  --cost-read:   oklch(0.600 0.045 250);
+  --cost-write:  oklch(0.530 0.085 262);
+  --cost-input:  oklch(0.470 0.110 275);
+  --cost-output: oklch(0.410 0.130 288);
+
+  --cat-messages:  oklch(0.450 0.100 252);
+  --cat-count:     oklch(0.450 0.100 252);
+  --cat-mcp:       oklch(0.450 0.100 178);
+  --cat-oauth:     oklch(0.450 0.130 300);
+  --cat-telemetry: oklch(0.470 0.020 140);
+  --cat-external:  oklch(0.470 0.100 55);
+  --ink-notable:   oklch(0.450 0.130 300);
+  --shadow-1: 0 2px 10px oklch(0.35 0.030 40 / 0.20);
+}
+
+/* the same paper, chosen by the reader's system rather than the toggle */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --bg:          oklch(0.965 0.016 88);    /* chart stock */
+  --surface:     oklch(0.940 0.020 74);    /* the printed field, pinker */
+  --surface-2:   oklch(0.900 0.028 60);
+  --overlay:     oklch(0.975 0.012 88);
+  --fg:          oklch(0.240 0.010 250);   /* graphite: cool on warm stock */
+  --fg-2:        oklch(0.462 0.012 240);
+  --fg-3:        oklch(0.500 0.014 60);
+  --line:        oklch(0.860 0.045 32);    /* printed salmon rule */
+  --line-strong: oklch(0.740 0.075 30);
+  --rule-minor:  oklch(0.930 0.028 32);
+  --rule-major:  oklch(0.885 0.048 31);
+
+  --accent:       oklch(0.460 0.130 250);
+  --accent-hover: oklch(0.390 0.140 250);
+  --accent-fg:    oklch(0.975 0.012 88);
+  --accent-soft:  oklch(0.900 0.045 250);
+
+  --ok:     oklch(0.460 0.110 158);  --ok-soft:     oklch(0.920 0.040 158);
+  --warn:   oklch(0.600 0.120  78);  --warn-soft:   oklch(0.930 0.045  78);
+  --danger: oklch(0.500 0.170  27);  --danger-soft: oklch(0.930 0.040  27);
+  --focus:  oklch(0.480 0.140 250);
+
+  --pen-ink: oklch(0.965 0.016 88);
+
+  --cost-read:   oklch(0.600 0.045 250);
+  --cost-write:  oklch(0.530 0.085 262);
+  --cost-input:  oklch(0.470 0.110 275);
+  --cost-output: oklch(0.410 0.130 288);
+
+  --cat-messages:  oklch(0.450 0.100 252);
+  --cat-count:     oklch(0.450 0.100 252);
+  --cat-mcp:       oklch(0.450 0.100 178);
+  --cat-oauth:     oklch(0.450 0.130 300);
+  --cat-telemetry: oklch(0.470 0.020 140);
+  --cat-external:  oklch(0.470 0.100 55);
+  --ink-notable:   oklch(0.450 0.130 300);
+  --shadow-1: 0 2px 10px oklch(0.35 0.030 40 / 0.20);
+  }
+}

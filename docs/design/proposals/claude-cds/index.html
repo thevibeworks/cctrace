@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cctrace design B — Claude Design System</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!--
+  THESIS       cctrace traces Claude Code, so it should read as part of the
+               same product: the conversation is the object and the wire is
+               its detail, one keystroke away. The look is not invented at
+               all -- the Claude Design System is adopted whole, which is
+               what a governed context asks for and what a house style
+               would have quietly refused.
+  OWN-WORLD    CDS measured off claude.ai on 2026-09-02: warm paper ground,
+               0.5-1px rules at 10% ink, 8px radius, 14px sans with mono
+               only where wire characters matter, clay for identity and the
+               single primary action, blue for interactive, and the six
+               hues CDS already ships for git status doing duty as lanes.
+  STORY        The reader recognizes the family before reading a word, reads
+               a session the way they read a chat, and flips any turn to the
+               exact request that produced it without leaving the page.
+  FIRST VIEWPORT  A destination rail carrying the run's identity, the session
+               title with its numbers, the timeline, then the conversation at
+               a reading measure -- the wire waiting behind read / wire.
+  FORM         governed adoption: CDS, measured; no world rolled. Direction
+               A's roll 8e4546b4 (pool 7) covers the invented half of this
+               pair -- this half is the standing exit played straight.
+-->
+<div class="demo">
+  <div class="demobar">
+    <strong>direction B · Claude Design System</strong>
+    <span class="t">screen</span>
+    <span class="seg" id="screens">
+      <button data-screen="brand">brand</button>
+      <button data-screen="requests">requests</button>
+      <button data-screen="session" aria-pressed="true">session</button>
+      <button data-screen="context">context</button>
+      <button data-screen="runs">runs</button>
+    </span>
+    <span class="t">width</span>
+    <span class="seg" id="widths">
+      <button data-w="390">390</button>
+      <button data-w="768">768</button>
+      <button data-w="full" aria-pressed="true">1440</button>
+    </span>
+    <button class="btn btn-sm" id="theme">dark</button>
+    <span class="t" style="margin-left:auto">sample data · j/k rows · / search · esc closes</span>
+  </div>
+  <div class="frame">
+    <div class="viewport" id="vp">
+
+      <!-- ============================ brand ============================ -->
+      <section class="screen" data-screen="brand">
+        <div class="shell"><div class="nav" id="navBrand"></div>
+        <div class="main">
+          <div class="hdr"><h1>Brand</h1><span class="sub">adopted, not invented</span></div>
+          <div class="body"><div class="sheetpad">
+            <div>
+              <div class="lockup" id="lockup"></div>
+              <p class="note" style="margin-top:12px">The monogram survives the redesign — it is the mark people already know — but it is
+                redrawn in CDS geometry: 34px round-capped strokes in clay, the trace in ink, the terminal dot in clay. Beside a
+                Claude Code surface it reads as the same family; on its own it still says cc.</p>
+            </div>
+            <div>
+              <div class="h">the mark at working sizes — 16 / 24 / 48 px</div>
+              <div class="row-of" id="sizes"></div>
+            </div>
+            <div>
+              <div class="h">palette — every value read from claude.ai, 2026-09-02</div>
+              <div class="swatches" id="swPal"></div>
+            </div>
+            <div>
+              <div class="h">data colors — the six hues CDS already ships for git status</div>
+              <div class="swatches" id="swData"></div>
+            </div>
+            <div>
+              <div class="h">type — the CDS ramp, unchanged</div>
+              <div style="display:grid;gap:8px">
+                <div style="font-size:var(--text-title);font-weight:600">186,204 prompt tokens <span style="font-size:var(--text-caption);font-weight:400;color:var(--fg-2)">22px title</span></div>
+                <div style="font-size:var(--text-heading);font-weight:500">Session · fable-5 <span style="font-size:var(--text-caption);font-weight:400;color:var(--fg-2)">15px heading</span></div>
+                <div style="font-size:var(--text-body)">Body and conversation text — 14px, the size Claude reads at</div>
+                <div class="wire">POST /v1/messages · 250,113 cache read — 13px mono, wire values only</div>
+                <div style="font-size:var(--text-caption);color:var(--fg-2)">12px caption · labels, meta, chips</div>
+                <div style="font-size:var(--text-caption-xs);color:var(--fg-3)">11px caption-xs · dense columns</div>
+              </div>
+            </div>
+            <div>
+              <div class="h">client marks</div>
+              <div class="row-of" id="glyphs"></div>
+            </div>
+            <div>
+              <div class="h">states — shown, not asserted</div>
+              <div class="states">
+                <div class="staterow">
+                  <button class="btn">Default</button>
+                  <button class="btn" style="border-color:var(--line-strong)">Hover</button>
+                  <button class="btn" style="outline:2px solid var(--focus);outline-offset:2px">Focus</button>
+                  <button class="btn" disabled title="Purge needs a live server — a snapshot has no trace to rewrite">Disabled</button>
+                  <button class="btn" data-primary>Primary</button>
+                  <span class="tag" data-tone="danger">429 rate limited</span>
+                  <span class="tag" data-tone="ok">200</span>
+                </div>
+                <div class="staterow">
+                  <span class="tag" data-tone="ok">live · heartbeat 30s</span>
+                  <span class="tag">snapshot · no server</span>
+                  <span class="tag">stopped 14:22</span>
+                  <span style="font-size:var(--text-caption);color:var(--fg-2)">a snapshot never claims to be live, and every control that needs a server is disabled with its reason</span>
+                </div>
+                <div class="staterow">
+                  <span style="font-size:var(--text-caption);color:var(--fg-2)">loading a 512MB trace, tail first:</span>
+                  <span class="skel" data-w="l"></span><span class="skel" data-w="m"></span><span class="skel" data-w="s"></span>
+                </div>
+                <div class="empty">No requests match <b>status:5xx</b> in this run. The filter is on — clear it, or widen the window.</div>
+                <div class="staterow">
+                  <span style="font-size:var(--text-caption);color:var(--fg-2)">select to purge:</span>
+                  <span class="chip" aria-pressed="true">3 selected</span>
+                  <button class="btn btn-sm" style="color:var(--danger);border-color:var(--danger-line)">Purge 3 pairs…</button>
+                  <span style="font-size:var(--text-caption-xs);color:var(--fg-3)">rewrites the trace file on disk; the confirm says so</span>
+                </div>
+                <div class="staterow">
+                  <span style="font-size:var(--text-caption);color:var(--fg-2)">screen sharing:</span>
+                  <span class="num masked">a71f9c30</span>
+                  <span style="font-size:var(--text-caption-xs);color:var(--fg-3)">identity values blur; hover reveals one deliberately</span>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="h">motion budget</div>
+              <p class="note">CDS durations only: 100ms micro, 180ms base, one easing. The live dot beats at 2.4s while a request is in
+                flight; the playhead follows the pointer. Nothing else moves, and both drop under prefers-reduced-motion.</p>
+            </div>
+          </div></div>
+        </div></div>
+      </section>
+
+      <!-- =========================== requests =========================== -->
+      <section class="screen" data-screen="requests">
+        <div class="shell"><div class="nav" id="navA"></div>
+        <div class="main">
+          <div class="hdr">
+            <div><h1>Requests</h1><div class="sub">31.2m in · 96k out · est $18.40 · tailing</div></div>
+            <div class="acts">
+              <input class="search" id="search" placeholder="Filter by url, method, status…">
+              <button class="btn" data-quiet>Select</button>
+              <button class="btn" aria-pressed="true">Tail</button>
+              <button class="btn" data-primary>Replay</button>
+            </div>
+          </div>
+          <div class="body" data-flush>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;padding:12px 12px 10px" id="cats"></div>
+            <div class="list" id="rows"></div>
+          </div>
+        </div>
+        <div class="drawer" id="drawerA" hidden></div>
+        </div>
+      </section>
+
+      <!-- ============================ session =========================== -->
+      <section class="screen" data-screen="session" data-on>
+        <div class="shell"><div class="nav" id="navB"></div>
+        <div class="main">
+          <div class="hdr">
+            <div><h1>make the strip fold long idle gaps</h1>
+              <div class="sub">chat · 119 turns · fable-5 · 55m 18s · <span class="num">$11.01</span> · <span class="num">186k</span> context</div></div>
+            <div class="acts">
+              <span class="seg" id="readwire"><button aria-pressed="true">Read</button><button>Wire</button></span>
+              <button class="btn" data-quiet>Export</button>
+              <button class="btn">Pause</button>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-rows:auto minmax(0,1fr);min-height:0">
+            <div class="timeline" id="timeline"></div>
+            <div class="body"><div class="convo" id="convo"></div></div>
+          </div>
+        </div></div>
+      </section>
+
+      <!-- ============================ context =========================== -->
+      <section class="screen" data-screen="context">
+        <div class="shell"><div class="nav" id="navC"></div>
+        <div class="main">
+          <div class="hdr">
+            <div><h1>Context</h1><div class="sub">turn 04 · step 58 · fable-5 · what is in the window this request sent</div></div>
+            <div class="acts">
+              <span class="seg"><button aria-pressed="true">Window</button><button>Stream</button><button>Events</button></span>
+            </div>
+          </div>
+          <div class="body">
+            <div style="display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start">
+              <div style="display:grid;gap:16px">
+                <section class="panel">
+                  <header><b>Composition</b><span>six categories, summing to the window</span><span style="margin-left:auto" class="tag" data-tone="accent">click to zoom</span></header>
+                  <div class="pad" style="display:grid;gap:12px">
+                    <div class="bar" id="bar"></div>
+                    <div class="legend" id="legend"></div>
+                  </div>
+                </section>
+                <section class="panel">
+                  <header><b>What is eating the window</b><span>heaviest first</span></header>
+                  <div class="pad"><div class="ice" id="ice"></div></div>
+                </section>
+              </div>
+              <div style="display:grid;gap:16px">
+                <section class="panel">
+                  <div class="pad" style="display:grid;gap:10px">
+                    <div class="stat"><span class="big num">186k</span><span class="sub" style="color:var(--fg-2)">prompt tokens</span></div>
+                    <div style="font-size:var(--text-caption);color:var(--fg-2)">18% of a 1.00m window · ≈151k estimated from chars/4, which reads 19% under the billed figure</div>
+                    <div style="border-top:1px solid var(--line);padding-top:10px;font-size:var(--text-caption);color:var(--fg-2)">
+                      <b class="num" style="color:var(--fg)">$0.271</b> this step · 100% served from cache</div>
+                  </div>
+                </section>
+                <section class="panel">
+                  <header><b>Cost by component</b></header>
+                  <div class="pad"><div class="legend" id="costLegend"></div></div>
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="drawer" id="drawerC" hidden></div>
+        </div>
+      </section>
+
+      <!-- ============================= runs ============================= -->
+      <section class="screen" data-screen="runs">
+        <div class="shell"><div class="nav" id="navD"></div>
+        <div class="main">
+          <div class="hdr">
+            <div><h1>Runs</h1><div class="sub">every project sharing this data directory</div></div>
+            <div class="acts">
+              <span class="seg"><button aria-pressed="true">Project</button><button>Client</button><button>Day</button></span>
+              <input class="search" placeholder="Filter runs…">
+            </div>
+          </div>
+          <div class="body"><div class="runs" id="runs"></div></div>
+        </div></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+/* Sample data — identical to direction A's, so the two can be compared
+   on the same facts. Wire-shaped, values invented, no real session text. */
+const ICONS = {
+  claude: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
+  codex: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
+  grok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
+  kimi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
+  opencode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M14 18h5"/></svg>'
+};
+const MARK = '<svg viewBox="0 0 512 512" fill="none" stroke-linecap="round">' +
+  '<path d="M270.75 175.6 A 125 125 0 1 0 270.75 336.4" stroke="var(--clay-strong)" stroke-width="30"/>' +
+  '<path d="M395.75 175.6 A 125 125 0 1 0 395.75 336.4" stroke="var(--clay-strong)" stroke-width="30"/>' +
+  '<line x1="258" y1="256" x2="448" y2="256" stroke="currentColor" stroke-width="12"/>' +
+  '<circle cx="448" cy="256" r="20" fill="var(--clay)"/></svg>';
+const MARK_SMALL = '<svg viewBox="0 0 512 512" fill="none" stroke-linecap="round">' +
+  '<path d="M330 150 A 150 150 0 1 0 330 362" stroke="var(--clay-strong)" stroke-width="44"/>' +
+  '<line x1="300" y1="256" x2="452" y2="256" stroke="currentColor" stroke-width="26"/>' +
+  '<circle cx="452" cy="256" r="30" fill="var(--clay)"/></svg>';
+
+const REQ = [
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · in 2 · out 332 · cache 250k 99%','$0.151','2.21s','08:41:35'],
+  ['GET','200','mcp','/mcp-registry/v0/servers','205.9KB','','1.36s','08:41:37'],
+  ['POST','200','messages','/v1/messages','fable-5 · xhigh · in 2 · out 103 · cache 15.9k 29%','$0.079','3.51s','08:41:37'],
+  ['POST','200','telemetry','/api/event_logging/v2/batch','142 events','','1.81s','08:41:41'],
+  ['POST','200','messages','/v1/messages','sonnet-5 · in 90 · out 9 · stop_sequence','$0.013','1.47s','08:41:41'],
+  ['CONNECT','200','external','bridge.claudeusercontent.com','tunnel 1.9MB down','','23.1s','08:41:44'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · in 853 · out 14 · cache 182k 100%','$0.096','2.46s','08:41:44'],
+  ['POST','202','telemetry','http-intake.logs.datadoghq.com/api/v2/logs','33.7KB','','1.74s','08:41:45'],
+  ['GET','200','oauth','/api/oauth/usage','5h window · 41% used','','0.42s','08:41:47'],
+  ['POST','200','count','/v1/messages/count_tokens','opus-5 · 186,204 tokens','','0.91s','08:41:48'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · in 1.8k · out 20 · cache 253k 99%','$0.136','1.35s','08:41:49'],
+  ['POST','429','messages','/v1/messages','rate limited · retried after 8s','','0.28s','08:41:52'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · think 292 · out 636 · cache 184k 99%','$0.117','1.92s','08:42:01'],
+  ['GET','200','external','api.github.com/repos','tunnel 6.8KB down','','0.71s','08:42:04'],
+  ['POST','200','messages','/v1/messages','fable-5 · xhigh · in 4 · out 812 · cache 191k 99%','$0.121','2.04s','08:42:09'],
+  ['POST','200','messages','/v1/messages','sonnet-5 · subagent · in 12 · out 288 · cache 62k 100%','$0.021','0.88s','08:42:11'],
+  ['GET','200','mcp','/mcp-registry/v0/servers','','','1.12s','08:42:12'],
+  ['POST','200','count','/v1/messages/count_tokens','fable-5 · 191,880 tokens','','0.77s','08:42:14'],
+  ['POST','200','telemetry','/api/event_logging/v2/batch','88 events','','1.42s','08:42:16'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · think 118 · out 240 · cache 254k 99%','$0.144','2.31s','08:42:20'],
+  ['CONNECT','200','external','registry.npmjs.org','tunnel 402KB down','','4.10s','08:42:24'],
+  ['POST','200','messages','/v1/messages','sonnet-5 · subagent · in 8 · out 96 · cache 63k 100%','$0.011','0.71s','08:42:25'],
+  ['POST','200','telemetry','http-intake.logs.datadoghq.com/api/v2/logs','21.4KB','','1.63s','08:42:27'],
+  ['GET','200','oauth','/api/oauth/credits','balance unchanged','','0.38s','08:42:29'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · in 2 · out 1.4k · cache 256k 99%','$0.192','2.88s','08:42:36'],
+  ['POST','200','messages','/v1/messages','fable-5 · xhigh · in 2 · out 64 · cache 193k 99%','$0.068','1.19s','08:42:41'],
+  ['GET','200','external','api.github.com/repos','tunnel 9.1KB down','','0.66s','08:42:44'],
+  ['POST','200','messages','/v1/messages','opus-5 · xhigh · think 402 · out 918 · cache 257k 99%','$0.208','3.42s','08:42:52']
+];
+const CATS = [['All','',''],['Messages','messages',196],['Count tokens','count',12],['OAuth','oauth',8],['MCP','mcp',22],['Telemetry','telemetry',131],['External','external',39]];
+const LANES = [
+  ['model',   [[2,7],[12,9],[24,6],[33,11],[47,8],[58,4],[64,9],[77,6],[86,10]]],
+  ['tools',   [[9,3],[21,3],[30,3],[44,3],[55,3],[62,2],[73,4],[83,3],[96,2]]],
+  ['waiting', [[38,8],[68,5],[90,5]]],
+  ['agents',  [[16,22],[52,18],[80,14]]]
+];
+const TURNS = [[0,11,'01'],[11,13,'02'],[24,9,'03'],[33,14,'04'],[47,11,'05'],[58,10,'06'],[68,14,'07'],[82,18,'08']];
+const LEDGER = [
+  ['Tool results','≈73.0k','48%','var(--lane-tools)'],
+  ['Injected context','≈26.0k','17%','var(--lane-agents)'],
+  ['Assistant replies','≈25.6k','17%','var(--lane-model)'],
+  ['Tool schemas','≈15.5k','10%','var(--lane-extra)'],
+  ['User messages','≈5.8k','4%','var(--lane-waiting)'],
+  ['System prompt','≈4.7k','3%','var(--lane-idle)']
+];
+const COSTS = [
+  ['Cache read','≈$0.183','68%','var(--cost-read)'],
+  ['Cache write','≈$0.052','19%','var(--cost-write)'],
+  ['Input','≈$0.021','8%','var(--cost-input)'],
+  ['Output','≈$0.015','5%','var(--cost-output)']
+];
+const RUNS = [
+  ['claude','cctrace','make the strip fold long idle gaps','a71f9c30','512.6MB','412 req','≈186k','14:22'],
+  ['claude','cctrace','ship the cost view behind the context tab','3ed43391','88.1MB','96 req','≈41k','11:05'],
+  ['codex','workbench','port the tokenizer bench to the new runner','c0d3x001','24.3MB','58 req','≈12k','09:41'],
+  ['kimi','csxsj','修复编辑器的光标跳动','k3sess77','9.8MB','31 req','≈7k','08:12'],
+  ['opencode','playground','try zen routing against the local model','ses_9f21','4.1MB','22 req','≈3k','yesterday'],
+  ['grok','rescue','diagnose the stuck deploy','g4rescue','2.2MB','11 req','≈1k','yesterday']
+];
+
+const $ = (s, r) => (r || document).querySelector(s);
+const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h != null) n.innerHTML = h; return n; };
+
+/* ---- the destination rail ---- */
+const DEST_ICON = {
+  requests: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/></svg>',
+  session:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>',
+  context:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 12.5v-4M6 12.5v-9M9.5 12.5v-6M13 12.5v-2"/></svg>',
+  runs:     '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M2.5 2.5h5v5h-5zM8.5 2.5h5v5h-5zM2.5 8.5h5v5h-5zM8.5 8.5h5v5h-5z"/></svg>'
+};
+function nav(current) {
+  const dests = [['requests', 'Requests', '412'], ['session', 'Session', '119'], ['context', 'Context', '186k'], ['runs', 'Runs', '48']];
+  return '<a class="brand" href="#">' + MARK + '<b>cctrace</b></a>' +
+    '<div class="runcard">' +
+      '<div class="who">' + ICONS.claude + ' claude · cctrace</div>' +
+      '<div class="name" data-mask>trace-2026-08-28T06-07-12</div>' +
+      '<div class="live"><i></i> live · a71f9c30</div>' +
+    '</div>' +
+    '<div class="dests">' + dests.map(([k, label, n]) =>
+      '<button class="dest" data-goto="' + k + '" title="' + label + '"' + (k === current ? ' aria-current="page"' : '') + '>' +
+      '<span class="gl">' + DEST_ICON[k] + '</span><span class="lb">' + label + '</span><span class="n">' + n + '</span></button>').join('') + '</div>' +
+    '<div class="navfoot">' +
+      '<button class="btn btn-sm" data-quiet><span class="wide">2 other instances</span></button>' +
+      '<button class="btn btn-sm" data-quiet><span class="wide">Dashboard</span></button>' +
+    '</div>';
+}
+[['navA', 'requests'], ['navB', 'session'], ['navC', 'context'], ['navD', 'runs'], ['navBrand', '']].forEach(([id, cur]) => {
+  const n = document.getElementById(id); if (n) n.innerHTML = nav(cur);
+});
+/* the runs screen is every run in the data directory, so its card states that */
+document.querySelector('#navD .runcard').innerHTML =
+  '<div class="who">all runs · one data directory</div>' +
+  '<div class="name">4 projects · 5 clients</div>' +
+  '<div class="live"><i></i> 2 live · 4.3GB on disk</div>';
+
+/* ---- requests ---- */
+const cats = $('#cats');
+CATS.forEach(([label, cat, n], i) => {
+  const c = el('button', 'chip', (cat ? '<span class="dot" data-cat="' + cat + '"></span>' : '') + label + (n ? ' <span class="n">' + n + '</span>' : ''));
+  c.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+  c.onclick = () => {
+    cats.querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', 'false'));
+    c.setAttribute('aria-pressed', 'true');
+    rows.querySelectorAll('.r').forEach(r => { r.style.display = (!cat || r.dataset.cat === cat) ? '' : 'none'; });
+  };
+  cats.appendChild(c);
+});
+const rows = $('#rows');
+rows.setAttribute('role', 'listbox');
+rows.setAttribute('aria-label', 'captured request pairs');
+REQ.forEach(([m, st, cat, url, meta, cost, dur, clock], i) => {
+  const r = el('div', 'r');
+  r.dataset.cat = cat; r.tabIndex = 0; r.setAttribute('role', 'option');
+  r.innerHTML = '<span class="m">' + m + '</span>' +
+    '<span class="s"' + (st[0] !== '2' ? ' data-err' : '') + '>' + st + '</span>' +
+    '<span class="cat"><span class="dot" data-cat="' + cat + '"></span>' + cat + '</span>' +
+    '<span class="u">' + url + '</span>' +
+    '<span class="meta"><span class="sum">' + meta + '</span>' + (cost ? '<b class="num cost">' + cost + '</b>' : '') +
+    '<span class="num dur">' + dur + '</span><span class="num clk" style="color:var(--fg-3)">' + clock + '</span></span>';
+  r.dataset.tip = m + ' ' + url + '\n---\n' + meta + '\n> click to open the pair';
+  r.onclick = () => pick(i);
+  rows.appendChild(r);
+});
+let sel = -1;
+function pick(i) {
+  const rs = [...rows.querySelectorAll('.r')];
+  if (i < 0 || i >= rs.length) return;
+  rs.forEach(r => r.setAttribute('aria-selected', 'false'));
+  rs[i].setAttribute('aria-selected', 'true');
+  rs[i].focus({ preventScroll: true });
+  rs[i].scrollIntoView({ block: 'nearest' });
+  sel = i;
+  const d = REQ[i];
+  const drawer = $('#drawerA');
+  drawer.hidden = false;
+  drawer.closest('.shell').querySelector('.main').dataset.drawer = '';
+  drawer.innerHTML =
+    '<div class="facets">' + ['Summary', 'Request', 'Response', 'Timing'].map((f, k) =>
+      '<button class="facet"' + (k === 0 ? ' aria-selected="true"' : '') + '>' + f + '</button>').join('') + '</div>' +
+    '<div class="dpanel">' +
+      '<div class="dhead"><b>' + d[0] + ' ' + d[3].split("/").pop() + '</b><span class="tag" data-tone="' + (d[1][0] === '2' ? 'ok' : 'danger') + '">' + d[1] + '</span>' +
+      '<button class="btn btn-sm x" id="closeA" data-quiet>Close</button></div>' +
+      '<dl class="kv"><dt>url</dt><dd>' + d[3] + '</dd><dt>clock</dt><dd>' + d[7] + '</dd><dt>duration</dt><dd>' + d[6] + '</dd>' +
+      '<dt>content</dt><dd>' + (d[4] || 'none') + '</dd>' + (d[5] ? '<dt>est cost</dt><dd>' + d[5] + '</dd>' : '') + '</dl>' +
+      '<section class="panel"><header><b>Response</b><span>sse · 41 events</span></header>' +
+      '<div class="pad wire" style="color:var(--fg-2);white-space:pre-wrap">message_start\ncontent_block_delta ×36\nusage: input 2, output 332,\n  cache_read 250,113, cache_write 2,841</div></section>' +
+      '<section class="panel"><header><b>Subagent</b><span>Task(verify the fold)</span></header>' +
+      '<div class="pad" style="font-size:var(--text-caption);color:var(--fg-2)">child session c0ffee12 · 14 pairs · returned 2m 14s later</div></section>' +
+    '</div>';
+  $('#closeA').onclick = () => { drawer.hidden = true; delete drawer.closest('.shell').querySelector('.main').dataset.drawer; };
+}
+
+/* ---- session ---- */
+const tl = $('#timeline');
+tl.innerHTML = '<div class="tl-head"><b style="color:var(--fg);font-weight:500">Timeline</b><span>08:45 — 09:20 · idle over 5m folded</span>' +
+  '<span style="margin-left:auto" class="tag">turn 04 selected</span></div>' +
+  '<div class="tl-lane"><span class="nm">turns</span><span class="tl-track" id="tlTurns"></span></div>' +
+  LANES.map(([n]) => '<div class="tl-lane"><span class="nm">' + n + '</span><span class="tl-track" data-lane="' + n + '"></span></div>').join('') +
+  '<div class="tl-axis">' + ['08:45', '08:50', '08:55', '09:00', '09:05', '09:10', '09:15'].map(t => '<span>' + t + '</span>').join('') + '</div>' +
+  '<div class="tl-now" id="tlNow" style="left:33%"><b>08:56:45</b></div>';
+TURNS.forEach(([x, w, n]) => {
+  const b = el('div', 'tl-turn', n);
+  b.style.left = x + '%'; b.style.width = w + '%';
+  b.dataset.tip = 'Turn ' + n + '\n---\n4 tool calls · 2 subagents\n≈' + (12 + +n * 3) + 'k tokens';
+  b.onclick = () => { $('#tlTurns').querySelectorAll('.tl-turn').forEach(t => t.dataset.here = 'false'); b.dataset.here = 'true'; };
+  $('#tlTurns').appendChild(b);
+});
+$('#tlTurns').querySelectorAll('.tl-turn')[3].dataset.here = 'true';
+LANES.forEach(([name, spans]) => {
+  const track = tl.querySelector('.tl-track[data-lane="' + name + '"]');
+  spans.forEach(([x, w]) => { const s = el('span', 'tl-span'); s.dataset.lane = name; s.style.left = x + '%'; s.style.width = w + '%'; track.appendChild(s); });
+});
+tl.addEventListener('pointermove', e => {
+  const t = tl.querySelector('.tl-track'); const r = t.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100));
+  const now = $('#tlNow'); now.style.left = pct + '%';
+  const d = new Date(Date.UTC(2026, 7, 28, 8, 45, 0) + (pct / 100) * 35 * 60 * 1000);
+  now.querySelector('b').textContent = d.toISOString().slice(11, 19);
+});
+
+const CONVO = [
+  ['user', 'you', '08:45:24', 'make the strip fold long idle gaps — a lunch break should not own half the frame'],
+  ['assistant', 'fable-5', '08:45:31', 'I will read the replay stage spec first, then change the axis to the selected thread’s own time.'],
+  ['calls', [['Read', 'src/replay.ts, docs/design/replay-stage.md', '1.2s'], ['Bash', 'rg "axisTicks" -n src/', '0.4s'], ['Task', 'subagent: verify the fold on a 9h trace', '2m 14s', 1]]],
+  ['assistant', 'fable-5', '08:49:42', 'Idle over five minutes now folds to a 28px hatched break. On the 9h trace the working hours fill the strip and the break reads as one mark, labelled with its length.']
+];
+const convo = $('#convo');
+CONVO.forEach(part => {
+  if (part[0] === 'calls') {
+    const box = el('div', 'calls');
+    part[1].forEach(([nm, arg, dur, notable]) => {
+      const c = el('div', 'call', '<b>' + nm + '</b><span class="arg">' + arg + '</span><span class="d">' + dur + '</span>');
+      if (notable) c.dataset.notable = 'true';
+      c.dataset.tip = nm + '\n---\n' + arg + '\n> one line each: the reply is what you came for';
+      box.appendChild(c);
+    });
+    convo.appendChild(box);
+    return;
+  }
+  const [role, who, clock, text] = part;
+  const m = el('div', 'msg');
+  m.dataset.role = role;
+  if (role === 'assistant' && convo.querySelector('.msg[data-role="assistant"]')) m.dataset.second = '1';
+  m.innerHTML = '<div class="who"><b>' + who + '</b>' + (role === 'assistant' ? '<span class="tag">turn 04</span>' : '') +
+    '<span class="clock">' + clock + '</span></div><div class="text">' + text + '</div>';
+  convo.appendChild(m);
+});
+const WIRE_2 = '<div class="panel"><header><b>POST /v1/messages</b><span>the request this turn produced</span></header>' +
+  '<div class="pad wire" style="color:var(--fg-2);white-space:pre-wrap">{ "model": "claude-fable-5", "stream": true,\n  "system": [ 2 blocks ], "messages": [ 126 ],\n  "tools": [ 23 ] }\n\nusage: input 4 · output 812\ncache_read 191,204 · cache_write 1,996\nttft 2.04s · total 6.71s</div></div>';
+const WIRE = '<div class="panel"><header><b>POST /v1/messages</b><span>the request this turn produced</span></header>' +
+  '<div class="pad wire" style="color:var(--fg-2);white-space:pre-wrap">{ "model": "claude-fable-5", "stream": true,\n  "system": [ 2 blocks ], "messages": [ 118 ],\n  "tools": [ 23 ] }\n\nusage: input 2 · output 332\ncache_read 250,113 · cache_write 2,841\nttft 2.21s · total 4.36s</div></div>';
+$('#readwire').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('#readwire').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  const wire = b.textContent === 'Wire';
+  convo.querySelectorAll('.msg[data-role="assistant"]').forEach(m => {
+    if (wire) { m.dataset.saved = m.querySelector('.text').innerHTML; m.querySelector('.text').innerHTML = (m.dataset.second ? WIRE_2 : WIRE); }
+    else if (m.dataset.saved) m.querySelector('.text').innerHTML = m.dataset.saved;
+  });
+});
+
+/* ---- context ---- */
+$('#bar').innerHTML = LEDGER.map(l => '<i style="background:' + l[3] + ';width:' + l[2] + '" title="' + l[0] + '"></i>').join('');
+$('#legend').innerHTML = LEDGER.map(l =>
+  '<div class="lrow"><span class="sw" style="background:' + l[3] + '"></span><span>' + l[0] + '</span><span></span><b>' + l[1] + '</b><span class="pct">' + l[2] + '</span></div>').join('');
+$('#costLegend').innerHTML = COSTS.map(l =>
+  '<div class="lrow"><span class="sw" style="background:' + l[3] + '"></span><span>' + l[0] + '</span><span></span><b>' + l[1] + '</b><span class="pct">' + l[2] + '</span></div>').join('');
+const IC = [
+  [['Tool results 48%', 48], ['Injected 17%', 17], ['Replies 17%', 17], ['Schemas 10%', 10], ['User 4%', 4], ['Sys 3%', 3]],
+  [['Read ×25 ≈139k', 39], ['Bash ×18 ≈21k', 9], ['SessionStart ≈26k', 17], ['replies ≈25.6k', 17], ['mcp ≈15.5k', 10], ['≈5.8k', 4], ['', 3]],
+  [['src/ui.ts ≈41k', 12], ['src/replay.ts ≈18k', 6], ['docs ≈22k', 7], ['bun test ≈8k', 5], ['the rest', 70]]
+];
+const ice = $('#ice');
+IC.forEach(row => {
+  const r = el('div', 'ice-row');
+  row.forEach(([label, w]) => {
+    const c = el('button', 'ice-c', label);
+    c.type = 'button';
+    c.style.flex = w;
+    c.dataset.tip = (label || 'the rest') + '\n---\n> click for provenance and wire';
+    c.onclick = () => {
+      ice.querySelectorAll('.ice-c').forEach(x => x.setAttribute('aria-pressed', 'false'));
+      c.setAttribute('aria-pressed', 'true');
+      const d = $('#drawerC'); d.hidden = false;
+      d.closest('.shell').querySelector('.main').dataset.drawer = '';
+      d.innerHTML = '<div class="facets">' + ['Content', 'Origin', 'Wire'].map((f, k) => '<button class="facet"' + (k === 0 ? ' aria-selected="true"' : '') + '>' + f + '</button>').join('') + '</div>' +
+        '<div class="dpanel"><div class="dhead"><b>' + (label || 'the rest') + '</b><button class="btn btn-sm x" id="closeC" data-quiet>Close</button></div>' +
+        '<dl class="kv"><dt>first sent</dt><dd>step 12 · 08:47:19</dd><dt>re-sent by</dt><dd>46 requests</dd><dt>until</dt><dd>compaction at step 58</dd>' +
+        '<dt>cache</dt><dd>ephemeral 1h</dd><dt>billed</dt><dd>139,204 read</dd><dt>rate</dt><dd>$0.30 / mtok</dd></dl>' +
+        '<section class="panel"><header><b>Newest first</b></header><div class="pad wire" style="color:var(--fg-2);white-space:pre-wrap">src/ui.ts        ≈41k  09:12:04\nsrc/replay.ts    ≈18k  09:08:51\ndocs/replay…md   ≈22k  08:59:12\n… 22 more</div></section></div>';
+      $('#closeC').onclick = () => { d.hidden = true; delete d.closest('.shell').querySelector('.main').dataset.drawer; };
+    };
+    r.appendChild(c);
+  });
+  ice.appendChild(r);
+});
+
+/* ---- runs ---- */
+$('#runs').innerHTML = RUNS.map(([client, project, prompt, sid, size, req, tok, when]) =>
+  '<a class="runrow" href="#/view/' + sid + '"><span class="ic">' + ICONS[client] + '</span>' +
+  '<span class="who">' + client + ' · ' + project + ' · <span class="num">' + sid + '</span></span>' +
+  '<span class="what">' + prompt + '</span>' +
+  '<span class="nums"><span>' + size + '</span><span>' + req + '</span><span>' + tok + '</span><span>' + when + '</span></span></a>').join('') +
+  '<span class="runrow" data-missing aria-disabled="true"><span class="ic">' + ICONS.codex + '</span>' +
+  '<span class="who">codex · rescue</span><span class="what">rerun the failing migration</span>' +
+  '<span class="nums"><span>trace not on this machine</span><span>08:04</span></span></span>';
+
+/* ---- brand sheet ---- */
+$('#lockup').innerHTML = MARK + '<div><div class="wm">cctrace</div><div class="note" style="font-size:var(--text-body)">the wire, in the family</div></div>';
+$('#sizes').innerHTML = [16, 24, 48].map(s => '<span style="display:grid;justify-items:center;gap:6px;color:var(--fg-3);font-size:var(--text-caption-xs)">' +
+  '<span style="width:' + s + 'px;height:' + s + 'px;display:block">' + (s <= 20 ? MARK_SMALL : MARK) + '</span>' + s + 'px</span>').join('');
+$('#glyphs').innerHTML = Object.entries(ICONS).map(([k, v]) =>
+  '<span style="display:grid;justify-items:center;gap:6px;color:var(--fg-2)"><span style="width:20px;height:20px;display:block">' + v + '</span><span style="font-size:var(--text-caption-xs)">' + k + '</span></span>').join('');
+const PAL = [['--bg', 'page-bg'], ['--surface', 'surface-0'], ['--surface-2', 'surface-2'], ['--fg', 'text-primary'], ['--fg-2', 'text-secondary'], ['--line', 'border 10%'], ['--accent', 'text-accent'], ['--accent-soft', 'bg-accent'], ['--clay', 'clay'], ['--clay-strong', 'fill-brand'], ['--danger', 'text-danger'], ['--ok', 'success']];
+$('#swPal').innerHTML = PAL.map(([v, n]) => '<div class="sw-card"><i style="background:var(' + v + ')"></i><span>' + v + '<br>--cds-' + n + '</span></div>').join('');
+const DAT = [['--lane-model', 'model'], ['--lane-tools', 'tools'], ['--lane-waiting', 'waiting'], ['--lane-agents', 'subagents'], ['--lane-extra', 'external'], ['--lane-idle', 'idle'], ['--cost-read', 'cache read'], ['--cost-output', 'output']];
+$('#swData').innerHTML = DAT.map(([v, n]) => '<div class="sw-card"><i style="background:var(' + v + ')"></i><span>' + v + '<br>' + n + '</span></div>').join('');
+
+/* ---- one tooltip ---- */
+const tip = $('#tip');
+let tipT = 0;
+document.addEventListener('pointerover', e => {
+  const t = e.target.closest('[data-tip]');
+  clearTimeout(tipT);
+  if (!t) { tip.removeAttribute('data-on'); return; }
+  tipT = setTimeout(() => {
+    tip.innerHTML = t.dataset.tip.split('\n').map((l, i) => l === '---' ? '<hr style="border:0;border-top:1px solid var(--line);margin:5px 0">'
+      : (i === 0 ? '<b>' + l + '</b>' : (l.startsWith('> ') ? '<span style="color:var(--fg-3)">' + l.slice(2) + '</span>' : l))).join('<br>');
+    const r = t.getBoundingClientRect();
+    tip.style.left = Math.min(window.innerWidth - 340, r.left) + 'px';
+    tip.style.top = (r.bottom + 6) + 'px';
+    tip.setAttribute('data-on', '');
+  }, 120);
+});
+
+/* ---- demo chrome ---- */
+function goto(name) {
+  document.querySelectorAll('.screen').forEach(s => s.toggleAttribute('data-on', s.dataset.screen === name));
+  $('#screens').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.screen === name)));
+}
+$('#screens').addEventListener('click', e => { const b = e.target.closest('button'); if (b) goto(b.dataset.screen); });
+document.addEventListener('click', e => { const d = e.target.closest('.dest'); if (d) goto(d.dataset.goto); });
+$('#widths').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('#widths').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  const vp = $('#vp');
+  if (b.dataset.w === 'full') vp.removeAttribute('data-w'); else vp.dataset.w = b.dataset.w;
+});
+$('#theme').onclick = e => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  if (dark) delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = 'dark';
+  e.currentTarget.textContent = dark ? 'dark' : 'light';
+};
+
+/* the review page frames these demos: honour its query */
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('chrome') === 'off') document.querySelector('.demobar').style.display = 'none';
+  if (q.get('theme') === 'dark') { document.documentElement.dataset.theme = 'dark'; const t = $('#theme'); if (t) t.textContent = 'light'; }
+  if (q.get('theme') === 'light') { delete document.documentElement.dataset.theme; const t = $('#theme'); if (t) t.textContent = 'dark'; }
+  const w = q.get('width');
+  if (w && w !== 'full') { $('#vp').dataset.w = w; }
+  const s = q.get('screen');
+  if (s) { const b = document.querySelector('#screens [data-screen="' + s + '"]'); if (b) b.click(); }
+  if (q.get('bare') === '1') {
+    const vp = $('#vp');
+    vp.style.border = '0'; vp.style.boxShadow = 'none'; vp.style.height = '100vh';
+    document.querySelector('.frame').style.padding = '0';
+  }
+})();
+
+document.addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+  if (typing) { if (e.key === 'Escape') e.target.blur(); return; }
+  if (e.key === 'j') pick(sel + 1);
+  if (e.key === 'k') pick(sel - 1);
+  if (e.key === '/') { e.preventDefault(); const s = $('#search'); if (s) s.focus(); }
+  if (e.key === 'Escape') document.querySelectorAll('.drawer').forEach(d => {
+    d.hidden = true; const m = d.closest('.shell').querySelector('.main'); delete m.dataset.drawer;
+  });
+});
+document.addEventListener('click', e => {
+  const b = e.target.closest('.facet'); if (!b) return;
+  b.closest('.facets').querySelectorAll('.facet').forEach(x => x.setAttribute('aria-selected', 'false'));
+  b.setAttribute('aria-selected', 'true');
+});
+</script>
+</body>
+</html>

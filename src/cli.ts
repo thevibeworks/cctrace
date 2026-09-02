@@ -23,7 +23,7 @@ import { registerInstance, patchEntry, listLiveInstances, listPastRuns, listAllR
 import { CLIENTS, findClientBinary, wireTables } from "./clients";
 import {
   CCTRACE_VERSION, NPM_PACKAGE, readUpdateCache, writeUpdateCache, refreshUpdateCache, availableUpdate,
-  versionWithCommit,
+  versionWithCommit, selfExecArgv, IS_COMPILED,
 } from "./version";
 import type { PageMeta } from "./ui";
 import { pricingCatalog, refreshPricingCache } from "./pricing-catalog";
@@ -41,10 +41,10 @@ import type { TracePair, TraceStart } from "./types";
 // Live-UI port: DEFAULT_PORT (8722 — TRAC on a phone keypad) lives in
 // instances.ts so the discovery sweep and the allocation walk stay one list.
 
-// True when running as a `bun build --compile` standalone binary (sources live
-// in the virtual /$bunfs). Matters twice: the on-disk cache can't sit next to
-// the (virtual) sources, and bun's CLI quirk below doesn't apply.
-const IS_COMPILED = import.meta.path.includes("$bunfs") || import.meta.path.includes("~BUN");
+// IS_COMPILED (version.ts): running as a `bun build --compile` standalone
+// binary, sources in the virtual /$bunfs. Matters twice here: the on-disk
+// cache can't sit next to the (virtual) sources, and bun's CLI quirk below
+// doesn't apply.
 
 // cctrace [OPTIONS] [-- CLAUDE_ARGS...] — everything after "--" goes to the
 // Claude CLI verbatim; unknown flags before it error with a hint (args.ts).
@@ -480,6 +480,10 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
   const server = createServer({
     port: opts.port,
     logDir,
+    stopKind: "view",
+    // A viewer holds nothing but a rendered trace: closing it from the
+    // dashboard is the same as the Ctrl-C this run advertises.
+    onShutdown: () => { log("Stopped from the dashboard", C.yellow); process.exit(0); },
     meta: {
       ...pageMeta(client), project: viewProject, projectPath: projectRoot,
       traceFile: viewTrace, traceRelPath: traceRelPath(projectRoot, viewTracePath),
@@ -1793,11 +1797,6 @@ interface SealJob {
  * archives what is plain. */
 const SEAL_MAX_ATTEMPTS = 3;
 
-/** argv that re-invokes THIS cctrace (compiled binary, or bun + entry). */
-function selfExecArgv(extra: string[]): string[] {
-  return IS_COMPILED ? [process.execPath, ...extra] : [process.execPath, Bun.main, ...extra];
-}
-
 /**
  * The detached seal helper. Finishes merge/archive/sweep for a run whose
  * parent already exited, then re-points that run's tombstone at where the
@@ -2049,12 +2048,19 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
 
   let shuttingDown = false;
   const handleSignal = (sig: string) => {
-    if (shuttingDown) return;
+    // Already stopping: a repeat is noise — except SIGKILL, the escalation
+    // for a child that ignored the polite ask (the dashboard's force stop,
+    // the terminal's second Ctrl-C).
+    if (shuttingDown && sig !== "SIGKILL") return;
     shuttingDown = true;
     child.kill(sig as NodeJS.Signals);
   };
   process.on("SIGINT", () => handleSignal("SIGINT"));
   process.on("SIGTERM", () => handleSignal("SIGTERM"));
+  // The dashboard's stop button ends the run through this same door: the
+  // child goes first, then its exit runs the normal close-out (flush,
+  // receipt, seal). Stopping from the page therefore costs no trace.
+  return { stop: handleSignal };
 }
 
 async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs: string[], opts: RunOpts) {
@@ -2079,6 +2085,8 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // outside the live block on purpose — the spawn call below needs it too
   // (0.42.0 shadowed it inside the block: ReferenceError on every live run).
   const instanceId = crypto.randomUUID();
+  // Set when the client is spawned: how a dashboard stop reaches the child.
+  let stopRun: ((sig: string) => void) | null = null;
   if (opts.liveMode) {
     // Register in the live-instance registry so `cctrace ps` and the UI's
     // instance switcher can find concurrent runs. The session id joins the
@@ -2090,6 +2098,16 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       port: opts.port,
       logDir: opts.logDir,
       readDirs: opts.readDirs,
+      stopKind: "run",
+      // Stop from the dashboard = Ctrl-C from the terminal: the traced child
+      // takes the signal and its exit runs the full close-out, so stopping
+      // from the page never costs a trace. stopRun is set once the client is
+      // spawned; before that there is nothing to stop but this process.
+      onShutdown: ({ force }) => {
+        log(`Stop requested from the dashboard — ending the traced session${force ? " (force)" : ""}`, C.yellow);
+        if (stopRun) stopRun(force ? "SIGKILL" : "SIGTERM");
+        else process.exit(0);
+      },
       logFile,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
@@ -2209,7 +2227,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   // from it anytime, so don't also write a snapshot .html at exit (on big
   // sessions it runs to hundreds of MB). Static mode's whole point is the
   // self-contained .html, so it keeps the finalize step.
-  spawnClaudeWithCapturer(
+  stopRun = spawnClaudeWithCapturer(
     claudePath, childArgs, capturer, opts, logFile,
     traceIdentityEnv(resolve(logFile), liveInstance?.snapshot() ?? null),
     opts.liveMode ? undefined : sink.writeHtml,
@@ -2222,7 +2240,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     // Static mode has no registry entry to patch; the seal job keys its
     // file by pid then.
     opts.liveMode ? instanceId : undefined,
-  );
+  ).stop;
 }
 
 async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOpts) {
@@ -2234,6 +2252,8 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
   let livePort = opts.port;
   // The child process authenticates its /api/pair POSTs with this id.
   const instanceId = crypto.randomUUID();
+  // Set when node spawns: how a dashboard stop reaches the traced child.
+  let stopNode: ((sig: string) => void) | null = null;
   if (opts.liveMode) {
     // Legacy mode: the preload names the log file itself, so the server can't
     // exclude it from prior-trace scans — pair-id dedupe covers that instead.
@@ -2243,6 +2263,12 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
       logDir: opts.logDir,
       noHistory: opts.fresh,
       withFiles: opts.withFiles,
+      stopKind: "run",
+      onShutdown: ({ force }) => {
+        log(`Stop requested from the dashboard — ending the traced session${force ? " (force)" : ""}`, C.yellow);
+        if (stopNode) stopNode(force ? "SIGKILL" : "SIGTERM");
+        else process.exit(0);
+      },
       meta: pageMeta(CLIENT.name),
       dataDir: DATA_DIR,
       instanceId,
@@ -2303,10 +2329,11 @@ async function runNodeMode(claudePath: string, claudeArgs: string[], opts: RunOp
 
   let shuttingDown = false;
   const handleSignal = (sig: string) => {
-    if (shuttingDown) return;
+    if (shuttingDown && sig !== "SIGKILL") return;
     shuttingDown = true;
     child.kill(sig as NodeJS.Signals);
   };
+  stopNode = handleSignal;
   process.on("SIGINT", () => handleSignal("SIGINT"));
   process.on("SIGTERM", () => handleSignal("SIGTERM"));
 }

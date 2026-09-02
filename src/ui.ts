@@ -1,7 +1,7 @@
 import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
 import { wireTables } from "./clients";
-import { CLIENT_ICONS } from "./icons";
+import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
 import {
   parseSse,
   fmtCompact,
@@ -121,15 +121,27 @@ import {
 
 // The cctrace mark: "cc" monogram + a dot->ring trace line. Kept as raw
 // geometry (no font) so it renders identically inline and as a favicon.
-const LOGO_PATHS = `<path stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle stroke-width="9" cx="452" cy="256" r="17"/>`;
-const HEADER_LOGO = `<svg class="logo" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-linecap="round">${LOGO_PATHS}<circle fill="currentColor" stroke="none" cx="250" cy="256" r="12"/></g></svg>`;
+// The mark lives in src/icons.ts (one source for every surface). Here it
+// is the header lockup and the favicon; the favicon must be self-contained
+// (a data: URL cannot read the page's custom properties), so it carries the
+// same clay with the ink flipped by its own media query.
+const HEADER_LOGO = CCTRACE_MARK;
 const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
-  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><style>@media(prefers-color-scheme:dark){.s{stroke:#e6edf3}.f{fill:#e6edf3}}</style><g fill="none" stroke="#0d1117" stroke-linecap="round"><path class="s" stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path class="s" stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line class="s" stroke-width="9" x1="250" y1="256" x2="452" y2="256"/><circle class="s" stroke-width="9" cx="452" cy="256" r="17"/><circle class="f" fill="#0d1117" stroke="none" cx="250" cy="256" r="12"/></g></svg>`,
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><style>@media(prefers-color-scheme:dark){.ink{stroke:#f0efec}}</style><g fill="none" stroke-linecap="round"><path stroke="#d97757" stroke-width="30" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/><path stroke="#d97757" stroke-width="30" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/><line class="ink" stroke="#0b0b0b" stroke-width="12" x1="258" y1="256" x2="448" y2="256"/><circle fill="#d97757" stroke="none" cx="448" cy="256" r="20"/></g></svg>`,
 );
 const GITHUB_ICON = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
 
 // Dashboard entry: a 2x2 grid — "all the runs", not just this page's.
 const DASH_ICON = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="1.5" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="1.5" y="9.3" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="9.3" width="5.2" height="5.2" rx="1"/></svg>`;
+
+// Destination glyphs for the rail: one 16px line mark each, so the
+// navigation still names where it goes when the labels drop at narrow
+// widths. Same weight as DASH_ICON above (which is the Runs destination).
+const DEST_ICONS = {
+  requests: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/></svg>`,
+  session: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`,
+  context: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 12.5v-4M6 12.5v-9M9.5 12.5v-6M13 12.5v-2"/></svg>`,
+};
 
 /** Run identity shown in the page header. All fields optional: `cctrace view`
  * rebuilds from a saved trace where the original cwd is unknown. */
@@ -179,49 +191,135 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   <link rel="icon" href="${FAVICON_HREF}">
   <script>(function(){var t=localStorage.getItem('cctrace-theme');if(t&&t!=='system')document.documentElement.setAttribute('data-theme',t)})()</script>
   <style>
+    /* ---- The material: the Claude Design System, adopted ----
+       cctrace traces Claude Code, so it reads as part of the same product.
+       Nothing here is invented: every value was MEASURED off claude.ai on
+       2026-09-02 (769 --cds-* custom properties resolved in the live page,
+       both themes) — palette, geometry, type ramp. The names below are
+       cctrace's own; the CDS token behind each value is on the line.
+       What CDS leaves undecided is decided here and marked "ours": row
+       density inside the system's range, and the data colors a wire tracer
+       needs. Provenance and the rules: docs/design/ui.md. */
     :root {
-      --bg: #0d1117; --bg-surface: #161b22; --border: #30363d;
-      --text: #c9d1d9; --text-muted: #8b949e; --text-faint: #6e7681;
-      --accent: #58a6ff; --text-method: #79c0ff;
-      --green: #3fb950; --red: #f85149; --amber: #d29922; --purple: #a371f7;
-      --status-ok: #238636; --status-warn: #9e6a03; --status-err: #da3633;
-      --btn-bg: #21262d; --hover: #1f2428;
-      /* Where wall-clock went: model / tools / waiting. One wire fact, one
-         hue, wherever it is drawn — the context overview's time track and
-         the replay strip's lanes. Deliberately theme-independent (these
-         are data colors, not chrome) and mid-tone enough to read on both
-         backgrounds. */
-      --lane-model: #4184e4; --lane-tools: #39c5cf; --lane-waiting: #d29922;
-      --lane-ink: #0d1117;   /* text ON a lane span: the hues never flip, so neither does the ink */
-      /* Where the money went: the four billed components, cheap to
-         expensive. A sequential ramp, not six categorical hues — the cost
-         track must not read as a second composition track. Data colors,
-         so they are stated per theme only for contrast, never for state:
-         green/red stay reserved for state. */
-      --cost-read: #4c7f9b; --cost-write: #7c6fd0; --cost-input: #d4753c; --cost-output: #48a68a;
       color-scheme: dark;
+      --bg: #0b0b0b;                        /* --cds-page-bg   */
+      --bg-surface: #151515;                /* --cds-surface-1 */
+      --surface-2: #1a1a19;                 /* --cds-surface-2 */
+      --overlay: #20201f;                   /* --cds-surface-3 */
+      --text: #f0efec;                      /* --cds-text-primary   */
+      --text-muted: #c3c2b7;                /* --cds-text-secondary */
+      --text-faint: rgba(240,239,236,0.62);
+      --border: rgba(255,255,255,0.10);     /* --cds-border        */
+      --border-strong: rgba(255,255,255,0.20); /* --cds-border-strong */
+      /* Clay is IDENTITY and the one primary action on a screen; blue is
+         "this is interactive / this is selected". CDS keeps them apart and
+         so do we — a page that paints its buttons orange is not this
+         system. */
+      --clay: #d97757;                      /* --cds-clay       */
+      --clay-strong: #c6613f;               /* --cds-fill-brand */
+      --clay-text: #d97757;                 /* clay as TEXT: its own step (light darkens it) */
+      --accent: #6da7ec;                    /* --cds-text-accent   dark */
+      --accent-hover: #86b6ef;
+      --accent-soft: #032042;               /* --cds-bg-accent     dark */
+      --accent-line: #184f95;               /* --cds-border-accent */
+      --accent-fg: #0b0b0b;
+      --text-method: #6da7ec;
+      /* State: CDS ships these as fills, so text gets its own step. */
+      --green: #4cc46a; --green-soft: #11260f;   /* --cds-bg-success dark */
+      --red: #ec7e7e;   --red-soft: #3c0e0e;     /* --cds-text-danger / --cds-bg-danger dark */
+      --red-line: #8e2626;                       /* --cds-border-danger */
+      --amber: #cba43c; --amber-soft: #311a00;   /* --cds-bg-warning dark */
+      --purple: #a78bea;
+      --btn-bg: #1a1a19; --hover: #20201f;
+      /* Where wall-clock went: model / tools / waiting / subagents. One
+         wire fact, one hue, wherever it is drawn — the context overview's
+         time track and the trajectory bar's lanes. Deliberately
+         theme-independent (these are data colors, not chrome) and taken
+         from the six hues CDS already ships for git status, so a cctrace
+         lane and a Claude Code diff badge are the same six inks. */
+      --lane-model: #4a8fdb; --lane-tools: #1baf7a; --lane-waiting: #c39b2b;
+      --lane-agents: #8e6bd9; --lane-extra: #c5621b; --lane-idle: #737373;
+      --lane-ink: #0b0b0b;   /* text ON a lane span: the hues never flip, so neither does the ink */
+      /* Where the money went: the four billed components, cheap to
+         expensive. One sequential ramp off the brand ink — never six
+         categorical hues, so the cost track cannot read as a second
+         composition track. */
+      --cost-read: color-mix(in srgb, #d97757 30%, #0b0b0b);
+      --cost-write: color-mix(in srgb, #d97757 50%, #0b0b0b);
+      --cost-input: color-mix(in srgb, #d97757 72%, #0b0b0b);
+      --cost-output: #d97757;
+      /* Faces. anthropic-sans / anthropic-mono are licensed and not ours to
+         ship, so the stack is CDS's own declared fallback chain. Mono
+         appears only where wire characters matter: urls, ids, numbers,
+         payloads. */
+      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
+      /* Type: the CDS ramp, six sizes, weights 400/500/600 (measured: CDS
+         controls are 400, not 600). */
+      --text-xs: 11px;      /* --cds-font-size-caption--xs */
+      --text-sm: 12px;      /* --cds-font-size-caption     */
+      --text-code: 13px;    /* --cds-font-size-code        */
+      --text-body: 14px;    /* --cds-font-size-body        */
+      --text-heading: 15px; /* --cds-font-size-heading     */
+      --text-title: 22px;   /* --cds-font-size-title       */
+      /* Geometry, measured: a CDS button is 32px tall with an 8px radius;
+         the checkbox radius is 5px; panels 12px. */
+      --radius: 8px; --radius-sm: 5px; --radius-lg: 12px; --radius-full: 999px;
+      --control-h: 32px;
+      --row-h: 26px;        /* ours: density inside the system's range — an
+                               operator surface reads 38 rows per 1000px */
+      --shadow-1: 0 1px 2px 0 rgba(0,0,0,0.40), 0 2px 8px 0 rgba(0,0,0,0.30);
+      --shadow-2: 0 2px 6px 0 rgba(0,0,0,0.45), 0 8px 20px 0 rgba(0,0,0,0.35);
+      --dur-micro: 100ms; --dur-base: 180ms;
+      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+      --nav: 208px;
     }
     @media (prefers-color-scheme: light) {
       :root:not([data-theme="dark"]) {
-        --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
-        --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
-        --accent: #0969da; --text-method: #0550ae;
-        --green: #1a7f37; --red: #cf222e; --amber: #9a6700; --purple: #8250df;
-        --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
-        --btn-bg: #e1e4e8; --hover: #eef1f4;
-        --cost-read: #35708c; --cost-write: #6355b8; --cost-input: #b25a24; --cost-output: #2f8a70;
         color-scheme: light;
+        --bg: #fcfcfb; --bg-surface: #f9f9f7; --surface-2: #fff; --overlay: #fff;
+        --text: #0b0b0b; --text-muted: #52514e; --text-faint: rgba(11,11,11,0.58);
+        --border: rgba(11,11,11,0.10); --border-strong: rgba(11,11,11,0.20);
+        --accent: #184f95; --accent-hover: #2a78d6; --accent-soft: #cde2fb;
+        --accent-line: #86b6ef; --accent-fg: #fcfcfb; --text-method: #184f95;
+        --clay-text: color-mix(in srgb, #c6613f 80%, #0b0b0b);
+        /* CDS ships success and warning as FILL hues. As text they need
+           their own step, and the floor that binds is the text ON its own
+           soft ground (a 200 tag, a warn chip), not on paper: green at 78%
+           reads 3.95:1 on --green-soft and gold at 100% reads 4.08:1 on
+           --amber-soft. Measured with kit/render-check.mjs. */
+        --green: color-mix(in srgb, #1e9e3c 65%, #0b0b0b); --green-soft: #caeac7;
+        --red: #8e2626; --red-soft: #fad6d6; --red-line: #f09595;
+        --amber: color-mix(in srgb, #98801f 70%, #0b0b0b); --amber-soft: #f9dca4;
+        --purple: color-mix(in srgb, #8e6bd9 72%, #0b0b0b);
+        --btn-bg: #fff; --hover: #f9f9f7;
+        --cost-read: color-mix(in srgb, #d97757 28%, #fcfcfb);
+        --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
+        --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
+        --cost-output: #c6613f;
+        --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
+        --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
       }
     }
     [data-theme="light"] {
-      --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
-      --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
-      --accent: #0969da; --text-method: #0550ae;
-      --green: #1a7f37; --red: #cf222e; --amber: #9a6700; --purple: #8250df;
-      --status-ok: #1a7f37; --status-warn: #9a6700; --status-err: #cf222e;
-      --btn-bg: #e1e4e8; --hover: #eef1f4;
-      --cost-read: #35708c; --cost-write: #6355b8; --cost-input: #b25a24; --cost-output: #2f8a70;
       color-scheme: light;
+      --bg: #fcfcfb; --bg-surface: #f9f9f7; --surface-2: #fff; --overlay: #fff;
+      --text: #0b0b0b; --text-muted: #52514e; --text-faint: rgba(11,11,11,0.58);
+      --border: rgba(11,11,11,0.10); --border-strong: rgba(11,11,11,0.20);
+      --accent: #184f95; --accent-hover: #2a78d6; --accent-soft: #cde2fb;
+      --accent-line: #86b6ef; --accent-fg: #fcfcfb; --text-method: #184f95;
+      --clay-text: color-mix(in srgb, #c6613f 80%, #0b0b0b);
+      --green: color-mix(in srgb, #1e9e3c 65%, #0b0b0b); --green-soft: #caeac7;
+      --red: #8e2626; --red-soft: #fad6d6; --red-line: #f09595;
+      --amber: color-mix(in srgb, #98801f 70%, #0b0b0b); --amber-soft: #f9dca4;
+      --purple: color-mix(in srgb, #8e6bd9 72%, #0b0b0b);
+      --btn-bg: #fff; --hover: #f9f9f7;
+      --cost-read: color-mix(in srgb, #d97757 28%, #fcfcfb);
+      --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
+      --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
+      --cost-output: #c6613f;
+      --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
+      --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Chrome-quality details: quiet scrollbars, accent selection, visible
@@ -230,115 +328,203 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ::-webkit-scrollbar { width: 10px; height: 10px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
-      background: var(--border); border-radius: 5px;
+      background: var(--border); border-radius: var(--radius-sm);
       border: 2px solid transparent; background-clip: padding-box;
     }
     ::-webkit-scrollbar-thumb:hover { background-color: var(--text-faint); }
     ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
     :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
     body {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px;
-      background: var(--bg);
+      font-family: var(--font-body);
+      font-size: var(--text-body);
+      line-height: 1.5;
+      background: var(--bg-surface);
       color: var(--text);
       height: 100vh;
-      display: flex;
-      flex-direction: column;
+      overflow: hidden;
     }
-    header {
-      padding: 12px 16px;
+    /* Wire surfaces are mono; everything else is the reading face. A url,
+       an id, a status code, a byte count and a payload are characters the
+       reader compares column-wise — prose, labels and controls are not. */
+    .url, .method, .status-code, .size, .ttft, .duration, .time, .num,
+    pre, code, kbd, .hdr-k, .hdr-v, .detail-url, .detail-id, .detail-pos,
+    .ctx-proj, .ctx-sess, .inst-sess, .inst-port, .tmodel, .tool-name,
+    .cat-chip .n, .dest .n, .sum, .ubar-pct, #rp-time, .rp-lbl, .rp-mk,
+    .rp-tick, .st-sofar, .sb-amt, .turn-usage, .turn-time, .turn-ord,
+    .turn-sord, .fold-stat, .chip b, .ver-badge, .ver-upd {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+    }
+    /* ---- The shell: rail | work ---- */
+    #shell { display: flex; height: 100%; min-height: 0; }
+    #work {
+      flex: 1; min-width: 0; display: flex; flex-direction: column;
+      background: var(--bg); min-height: 0;
+    }
+    /* ---- The destination rail ---- */
+    #nav {
+      flex: 0 0 var(--nav); width: var(--nav);
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 12px; min-height: 0;
+      border-right: 1px solid var(--border);
       background: var(--bg-surface);
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      gap: 16px;
     }
-    .brand { display: flex; align-items: center; gap: 9px; }
-    .logo { width: 24px; height: 24px; color: var(--accent); flex-shrink: 0; }
-    h1 { font-size: 16px; color: var(--accent); letter-spacing: 0.5px; }
-    .ctx { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12px; color: var(--text-muted); }
-    .ctx-proj { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #nav .brand {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px; color: var(--text); text-decoration: none;
+    }
+    #nav .brand b { font-size: var(--text-heading); font-weight: 600; letter-spacing: -0.01em; }
+    .logo { width: 22px; height: 22px; color: var(--clay); flex-shrink: 0; }
+    /* The run card: what am I looking at. Client, trace, session id, and
+       whether this page is live — the identity that used to sit in a strip
+       above the content. */
+    .runcard {
+      border: 1px solid var(--border); border-radius: var(--radius);
+      background: var(--surface-2); padding: 7px 9px;
+      display: grid; gap: 3px; min-width: 0;
+    }
+    .ctx { display: grid; gap: 3px; min-width: 0; font-size: var(--text-sm); color: var(--text-muted); }
+    .ctx-sep { display: none; }
+    .ctx-proj { color: var(--text); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* The trace title copies its path (into the store, or project-relative
        for a legacy trace) — the string you paste into "cctrace view" or
        hand to an agent. */
     .ctx-proj.ctx-copy { cursor: pointer; }
     .ctx-proj.ctx-copy:hover { color: var(--accent); }
     .ctx-proj.copied { color: var(--green); }
-    .ctx-title { color: var(--muted); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 34ch; }
+    .ctx-title { color: var(--text-muted); font-size: var(--text-xs); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ctx-client {
       display: inline-flex; align-items: center; gap: 5px;
-      border: 1px solid var(--border); border-radius: 4px;
-      padding: 1px 6px; font-size: 11px; color: var(--text-muted); flex: none;
+      font-size: var(--text-sm); color: var(--text-muted); min-width: 0;
     }
-    .ctx-client svg { width: 11px; height: 11px; flex-shrink: 0; }
-    .ctx-sep { color: var(--text-faint); }
+    .ctx-client svg { width: 13px; height: 13px; flex-shrink: 0; }
     .ctx-sess {
-      font: inherit; color: var(--text-muted); cursor: pointer; flex-shrink: 0;
-      background: var(--btn-bg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 1px 7px;
+      font: inherit; font-family: var(--font-mono); font-size: var(--text-xs);
+      color: var(--text-faint); cursor: pointer; justify-self: start;
+      background: none; border: none; padding: 0; text-align: left;
     }
-    .ctx-sess:hover { color: var(--text); }
-    .ctx-sess.copied { color: var(--green); border-color: var(--green); }
-    /* Version badge: right side with the page chrome — what produced the
-       page is a brand fact, separate from the run identity in .ctx. The
-       hover tooltip is a miniature release note: slogan + fresh features. */
-    .ver { display: inline-flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
-    .ver-badge { color: var(--text-faint); font-size: 11px; cursor: default; }
+    .ctx-sess:hover { color: var(--accent); }
+    .ctx-sess.copied { color: var(--green); }
+    /* Destinations: one row each, the count on the right. */
+    .dests { display: grid; gap: 2px; align-content: start; }
+    .dest {
+      display: flex; align-items: center; gap: 8px;
+      height: var(--control-h); padding: 0 8px;
+      border: 0; border-radius: var(--radius); background: transparent;
+      color: var(--text-muted); font: inherit; font-size: var(--text-body);
+      text-align: left; text-decoration: none; cursor: pointer;
+      transition: background var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
+    }
+    .dest:hover { background: var(--surface-2); color: var(--text); }
+    .dest.active {
+      background: var(--surface-2); color: var(--text); font-weight: 500;
+      box-shadow: inset 0 0 0 1px var(--border);
+    }
+    .dest .gl { display: flex; width: 16px; height: 16px; color: var(--text-faint); flex-shrink: 0; }
+    .dest .gl svg { width: 16px; height: 16px; }
+    .dest.active .gl { color: var(--accent); }
+    .dest .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dest .n { margin-left: auto; font-size: var(--text-sm); color: var(--text-faint); }
+    .dest .n:empty { display: none; }
+    .navfoot {
+      margin-top: auto; display: grid; gap: 6px;
+      border-top: 1px solid var(--border); padding-top: 10px;
+    }
+    .nav-icons { display: flex; align-items: center; gap: 2px; }
+    /* The rail holds its labels as long as it can: four glyphs beside four
+       numbers is a rebus, not navigation. Under 1000px it narrows, under
+       760px it becomes a labelled bottom bar with 44px targets. */
+    @media (max-width: 1000px) { :root { --nav: 168px; } }
+    @media (max-width: 760px) {
+      #shell { flex-direction: column-reverse; }
+      #nav {
+        flex: none; width: 100%; flex-direction: row; align-items: center;
+        gap: 10px; padding: 6px 10px; overflow-x: auto;
+        border-right: none; border-top: 1px solid var(--border);
+      }
+      #nav .brand b, .runcard, .navfoot .ver { display: none; }
+      .dests { grid-auto-flow: column; grid-auto-columns: max-content; }
+      .dest { height: 44px; }
+      .navfoot { margin-top: 0; margin-left: auto; border-top: none; padding-top: 0; }
+      /* a bar you touch: every target in it clears 44px */
+      #nav .brand, .nav-icons .icon-btn { width: 44px; height: 44px; justify-content: center; }
+      .inst-menu { bottom: calc(100% + 8px); left: auto; right: 0; }
+    }
+    /* ---- The work surface's own header: this destination, its numbers ---- */
+    header {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    h1 {
+      font-size: var(--text-heading); font-weight: 600; letter-spacing: -0.01em;
+      color: var(--text); white-space: nowrap;
+    }
+    /* Version badge: with the rail's footer chrome — what produced the page
+       is a brand fact, separate from the run identity in the card above.
+       The hover tooltip is a miniature release note: slogan + fresh
+       features. */
+    .ver { display: inline-flex; align-items: baseline; gap: 6px; flex: 1; min-width: 0; }
+    .ver-badge { color: var(--text-faint); font-size: var(--text-xs); cursor: default; }
     .ver-badge:hover { color: var(--text-muted); }
     .ver-upd {
-      color: var(--amber); font-size: 11px;
-      text-decoration: none; border-bottom: 1px dashed var(--amber);
+      color: var(--clay-text); font-size: var(--text-xs);
+      text-decoration: none; border-bottom: 1px dashed var(--clay-text);
     }
     /* Instance switcher: appears only when other live cctrace runs exist. */
-    .inst { position: relative; flex-shrink: 0; }
+    .inst { position: relative; min-width: 0; }
+    .inst:empty { display: none; }
     .inst-btn {
-      font: inherit; font-size: 12px; color: var(--text-muted); cursor: pointer;
-      background: var(--btn-bg); border: 1px solid var(--border);
-      border-radius: 6px; padding: 1px 7px;
+      font: inherit; font-size: var(--text-sm); color: var(--text-muted); cursor: pointer;
+      width: 100%; text-align: left;
+      background: var(--surface-2); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 3px 8px;
     }
-    .inst-btn:hover { color: var(--text); border-color: var(--accent); }
+    .inst-btn:hover { color: var(--text); border-color: var(--border-strong); }
     .inst-menu {
-      display: none; position: absolute; top: calc(100% + 8px); right: 0; z-index: 30;
-      min-width: 260px; padding: 4px;
-      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+      display: none; position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30;
+      min-width: 280px; padding: 4px;
+      background: var(--overlay); border: 1px solid var(--border); border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-2);
     }
     .inst-menu.open { display: block; }
     .inst-row {
       display: flex; align-items: baseline; gap: 8px;
-      padding: 6px 10px; border-radius: 5px;
-      color: var(--text); text-decoration: none; font-size: 12px;
+      padding: 6px 10px; border-radius: var(--radius-sm);
+      color: var(--text); text-decoration: none; font-size: var(--text-sm);
       white-space: nowrap;
     }
     .inst-row:hover { background: var(--hover); }
-    .inst-sess { color: var(--text-muted); font-size: 11px; }
-    .inst-port { margin-left: auto; color: var(--text-faint); font-size: 11px; font-variant-numeric: tabular-nums; }
-    .status { font-size: 12px; color: var(--text-muted); flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; }
-    .status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .inst-sess { color: var(--text-muted); font-size: var(--text-xs); }
+    .inst-port { margin-left: auto; color: var(--text-faint); font-size: var(--text-xs); }
+    .status { font-size: var(--text-xs); color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+    .status::before { content: ''; width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; flex-shrink: 0; }
     .status.connected { color: var(--green); }
     .status.connected::before { animation: heartbeat 2.4s ease-in-out infinite; }
     .status.disconnected { color: var(--red); }
-    .status.snapshot { color: var(--accent); }
+    .status.snapshot { color: var(--text-faint); }
     @keyframes heartbeat { 50% { opacity: 0.3; } }
     @media (prefers-reduced-motion: reduce) {
       .status.connected::before { animation: none; }
       * { scroll-behavior: auto !important; }
     }
     /* the page holds a budgeted tail of the trace, and says so */
-    .trunc { font-size: 12px; color: var(--amber); flex-shrink: 0; white-space: nowrap; }
+    .trunc { font-size: var(--text-sm); color: var(--amber); flex-shrink: 0; white-space: nowrap; }
     .trunc:empty { display: none; }
     .trunc a { color: inherit; text-decoration: underline dotted; }
-    .count { color: var(--text-muted); margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .header-actions { display: flex; align-items: center; gap: 2px; }
+    .count { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .icon-btn {
       display: inline-flex; align-items: center; justify-content: center;
-      width: 28px; height: 28px; border-radius: 6px;
+      width: 26px; height: 26px; border-radius: var(--radius-sm);
       background: none; border: 1px solid transparent;
       color: var(--text-faint); cursor: pointer; padding: 0;
-      text-decoration: none; transition: color .15s, background .15s;
+      text-decoration: none; transition: color var(--dur-micro) var(--ease-out), background var(--dur-micro) var(--ease-out);
     }
-    .icon-btn:hover { background: var(--btn-bg); border-color: var(--border); color: var(--text); }
-    .icon-btn svg { width: 16px; height: 16px; }
+    .icon-btn:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
+    .icon-btn svg { width: 15px; height: 15px; }
     /* Mask mode: blur identity values for screen sharing; hover to reveal
        one deliberately. Display-layer only (see src/redact.ts for capture). */
     /* mask categories: body carries mask-<key> classes for the enabled
@@ -350,13 +536,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .mask-menu {
       position: absolute; right: 8px; top: 34px; z-index: 30; display: none;
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 6px; padding: 6px 10px; font-size: 11px;
+      border-radius: var(--radius); padding: 6px 10px; font-size: 11px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
     }
     .mask-menu.open { display: block; }
     #act-wrap { position: relative; display: inline-block; }
     .act-menu { position: absolute; right: 0; top: 30px; z-index: 30; display: none;
-      background: var(--bg-surface); border: 1px solid var(--border); border-radius: 6px;
+      background: var(--bg-surface); border: 1px solid var(--border); border-radius: var(--radius);
       padding: 5px 0; font-size: 11px; min-width: 230px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35); }
     .act-menu.open { display: block; }
@@ -370,7 +556,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .mask-menu label { display: flex; gap: 6px; align-items: center; padding: 3px 0; cursor: pointer; color: var(--text-muted); }
     .mask-menu .mm-head { color: var(--text-faint); padding-bottom: 3px; }
     /* rich tool bodies: git-style diffs, checklists, plan markdown */
-    .diffview { margin: 4px 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; font-size: 11px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+    .diffview { margin: 4px 0; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 11px; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
     .dv-del { display: block; background: color-mix(in srgb, var(--red) 11%, transparent); }
     .dv-add { display: block; background: color-mix(in srgb, var(--green) 11%, transparent); }
     .dv-note { color: var(--text-faint); font-size: 10px; padding: 2px 0; }
@@ -385,53 +571,51 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     details.rawin summary { color: var(--text-faint); font-size: 10px; cursor: pointer; }
     .toolbar {
       padding: 8px 16px;
-      background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
       display: flex;
-      gap: 8px;
+      gap: 10px;
       align-items: center;
+      flex-shrink: 0;
     }
-    .tabs { display: flex; gap: 4px; }
-    .tab {
-      padding: 6px 12px;
-      background: var(--btn-bg);
-      border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text-muted);
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
-    }
-    .tab:hover { color: var(--text); }
-    .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    /* Controls are CDS controls, measured: 28px tall here (a dense operator
+       toolbar sits one step under the 32px reading control), 8px radius,
+       weight 400, a hairline at 10% ink over the raised surface. */
     .toolbar input {
       flex: 1;
-      padding: 6px 10px;
-      background: var(--bg);
+      height: 28px; padding: 0 10px;
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius);
       color: var(--text);
-      font-family: inherit;
-      font-size: 12px;
+      font: inherit; font-size: var(--text-sm);
     }
-    .toolbar input:focus { outline: none; border-color: var(--accent); }
+    .toolbar input::placeholder { color: var(--text-faint); }
+    .toolbar input:focus { outline: none; border-color: var(--accent-line); }
     .toolbar button {
-      padding: 6px 12px;
-      background: var(--btn-bg);
+      height: 28px; padding: 0 10px;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius);
       color: var(--text);
       cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
+      font: inherit; font-size: var(--text-sm); font-weight: 400;
+      transition: border-color var(--dur-micro) var(--ease-out), background var(--dur-micro) var(--ease-out);
     }
-    .toolbar button:hover { background: var(--border); }
-    /* Pressed toggles wear a quiet accent tint — accent means interactive
-       (ui.md one-accent rule); green/red stay reserved for state. */
+    .toolbar button:hover { border-color: var(--border-strong); }
+    /* Pressed toggles wear the accent's own soft surface — accent means
+       interactive (ui.md one-accent rule); clay is identity and the single
+       primary action; green/red stay reserved for state. */
     .toolbar button.active {
-      background: color-mix(in srgb, var(--accent) 12%, var(--btn-bg));
-      border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+      background: var(--accent-soft);
+      border-color: var(--accent-line);
       color: var(--accent);
+    }
+    /* Touch tier: the operator's 28px controls are pointer-sized. On a
+       surface reached by thumb they grow to the 44px floor. */
+    @media (max-width: 760px) {
+      .toolbar button { height: 44px; min-width: 44px; justify-content: center; }
+      .toolbar input { height: 40px; }
     }
     /* Toolbar groups: tight gap inside a group, the toolbar's own gap
        between groups; page + trace groups open with a hairline. The list
@@ -467,7 +651,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     body.view-session .cats { display: none; }
     .cats {
       padding: 8px 16px;
-      background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
       display: flex;
       gap: 6px;
@@ -477,30 +660,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 10px;
-      background: var(--bg);
+      height: 24px; padding: 0 10px;
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 999px;
+      border-radius: var(--radius-full);
       color: var(--text-muted);
       cursor: pointer;
-      font-size: 11px;
+      font-size: var(--text-sm);
       user-select: none;
+      transition: border-color var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
     }
-    .cat-chip:hover { border-color: var(--accent); }
-    .cat-chip.active { border-color: currentColor; }
-    .cat-chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cat, var(--text-faint)); }
+    .cat-chip:hover { color: var(--text); border-color: var(--border-strong); }
+    .cat-chip.active { color: var(--text); border-color: currentColor; }
+    .cat-chip .dot { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--cat, var(--text-faint)); }
     .cat-chip .n { color: var(--text-faint); font-variant-numeric: tabular-nums; }
     .cat-chip.active .n { color: var(--text); }
-    .cat-badge {
-      padding: 1px 7px;
-      border-radius: 999px;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-      color: #fff;
-      background: var(--cat, var(--text-faint));
-      flex-shrink: 0;
-    }
     /* Pairs merged in from a previous run's trace (same Claude session). */
     .pair.prior .pair-header { opacity: 0.72; }
     /* Live arrivals only: one 160ms opacity fade says "this row just landed"
@@ -511,7 +685,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .pair.arrived { animation: arrive 160ms cubic-bezier(0.23, 1, 0.32, 1); }
     .prior-badge {
       padding: 1px 7px;
-      border-radius: 999px;
+      border-radius: var(--radius-full);
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.03em;
@@ -588,14 +762,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .rp-btn {
       font: inherit; font-size: 12px; line-height: 1;
       background: var(--btn-bg); border: 1px solid var(--border);
-      border-radius: 4px; color: var(--text); cursor: pointer;
+      border-radius: var(--radius-sm); color: var(--text); cursor: pointer;
       padding: 4px 9px;
     }
     .rp-btn:hover { border-color: var(--accent); }
     .rp-speeds { display: inline-flex; gap: 2px; }
     .rp-speed {
       font: inherit; font-size: 11px; line-height: 1;
-      background: none; border: 1px solid transparent; border-radius: 4px;
+      background: none; border: 1px solid transparent; border-radius: var(--radius-sm);
       color: var(--text-faint); cursor: pointer; padding: 4px 6px;
       font-variant-numeric: tabular-nums;
     }
@@ -783,7 +957,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-size: 11px; color: var(--text-faint); white-space: nowrap;
     }
     #rp-live .at-edge::before {
-      content: ''; width: 7px; height: 7px; border-radius: 50%;
+      content: ''; width: 7px; height: 7px; border-radius: var(--radius-full);
       background: var(--green); flex-shrink: 0;
     }
     /* ---- the stage (#stage): the beat, the tally ----
@@ -837,7 +1011,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sb-none { font-size: 11px; color: var(--text-faint); padding: 4px 6px; }
     /* presentation (F): the chrome steps out, the panes take the viewport.
        Type scale unchanged — a presentation is the same page, undressed. */
-    body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail { display: none; }
+    body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail, body.present #nav { display: none; }
     /* boot placeholder: a verb while the wire loads (ccx tradition) */
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
     .bw-star { color: var(--accent); display: inline-block; animation: bwPulse 1.6s ease-in-out infinite; }
@@ -883,7 +1057,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       display: none; align-items: center; gap: 6px;
       font: inherit; font-size: 12px; color: var(--text);
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 999px; padding: 5px 12px; cursor: pointer;
+      border-radius: var(--radius-full); padding: 5px 12px; cursor: pointer;
       box-shadow: 0 2px 8px rgba(0,0,0,0.35);
     }
     #tail-pill.show { display: inline-flex; }
@@ -896,62 +1070,120 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* No entry animation on .pair itself: bulk renders and filter
        re-renders must be instant (motion budget) — live arrivals get the
        one .arrived opacity fade below. */
-    .pair {
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      margin-bottom: 6px;
-      overflow: hidden;
-    }
-    .pair.selected { border-color: var(--accent); }
-    .pair.selected .pair-header { background: var(--hover); }
+    /* ---- The request list: rules, not cards ----
+       A request is not a discrete object you pick up — it is one line in a
+       recording. Cards were 44px of chrome per fact; the row is a rule, the
+       height is ours (26px, density inside CDS's range) and what it costs
+       in reading comfort it buys back in requests per screen. */
+    .pair { border-bottom: 1px solid var(--border); }
+    .pair.selected { background: var(--accent-soft); }
     .pair-header {
       display: flex;
       align-items: center;
       gap: 10px;
-      padding: 8px 12px;
-      background: var(--bg-surface);
+      min-height: var(--row-h);
+      padding: 3px 12px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: var(--text-sm);
       color: inherit;
       text-decoration: none;
+      transition: background var(--dur-micro) var(--ease-out);
     }
     .pair-header:hover { background: var(--hover); }
-    .method { font-weight: 600; color: var(--text-method); min-width: 45px; flex-shrink: 0; }
+    .pair.selected .pair-header:hover { background: var(--accent-soft); }
+    /* The PEN: every row opens with its own stroke on a shared scale — the
+       light part is time to first token, the solid part the rest, the ink is
+       its category's own. The row is a recording before it is a record, and
+       a slow request is visible before it is read (direction A's channel,
+       kept in a CDS frame). */
+    .pen { flex: 0 0 42px; height: 9px; position: relative; }
+    .pen i {
+      position: absolute; top: 3px; height: 3px; border-radius: var(--radius-full);
+      background: var(--cat, var(--lane-idle));
+    }
+    .pen i.wait { opacity: 0.34; }
+    .method { font-weight: 500; color: var(--text-muted); min-width: 42px; flex-shrink: 0; font-size: var(--text-xs); }
+    /* Status is a CDS tag: the state's own soft ground under its own text,
+       never a saturated fill with white on it. */
     .status-code {
-      padding: 2px 6px;
-      border-radius: 3px;
-      color: #fff;
-      font-weight: 500;
-      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: var(--radius-sm);
+      font-weight: 400;
+      font-size: var(--text-xs);
       flex-shrink: 0;
     }
-    .status-2xx { background: var(--status-ok); }
-    .status-4xx { background: var(--status-warn); }
-    .status-5xx { background: var(--status-err); }
-    .status-err { background: var(--status-err); }
+    .status-2xx { background: var(--green-soft); color: var(--green); }
+    .status-4xx { background: var(--amber-soft); color: var(--amber); }
+    .status-5xx { background: var(--red-soft); color: var(--red); }
+    .status-err { background: var(--red-soft); color: var(--red); }
+    /* The category reads as a labelled ink, not a shouting pill: the dot
+       carries the color, the word carries the meaning. */
+    .cat-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: var(--text-xs);
+      color: var(--text-muted);
+      flex: 0 0 auto; min-width: 84px;
+      white-space: nowrap;
+    }
+    .cat-badge::before {
+      content: ''; width: 7px; height: 7px; border-radius: var(--radius-full);
+      background: var(--cat, var(--text-faint)); flex-shrink: 0;
+    }
     .url {
       flex: 0 1 auto;
       min-width: 60px;
+      font-size: var(--text-code);
+      color: var(--text);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    /* One line of chips that ellipsizes as a LINE, never mid-token: a
+       block (not a flex row) so text-overflow can do its job — "cache 25"
+       and "stop_se" were the narrow-width bug. */
     .sum {
       flex: 1 1 auto;
       min-width: 0;
-      display: flex;
-      align-items: center;
+      display: block;
       overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
       color: var(--text-muted);
-      font-size: 11px;
+      font-size: var(--text-xs);
     }
-    .sum > span { flex-shrink: 0; }
+    .sum > span { display: inline; }
     .sum > span + span::before { content: '\\00B7'; margin: 0 7px; color: var(--text-faint); }
-    .size { color: var(--text-faint); font-size: 11px; min-width: 84px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-    .ttft { color: var(--text-faint); font-size: 11px; min-width: 52px; text-align: right; flex-shrink: 0; font-variant-numeric: tabular-nums; }
-    .duration { color: var(--text-muted); min-width: 50px; text-align: right; flex-shrink: 0; }
-    .time { color: var(--text-faint); font-size: 11px; flex-shrink: 0; }
+    .size { color: var(--text-faint); font-size: var(--text-xs); min-width: 84px; text-align: right; flex-shrink: 0; }
+    .ttft { color: var(--text-faint); font-size: var(--text-xs); min-width: 52px; text-align: right; flex-shrink: 0; }
+    .duration { color: var(--text-muted); font-size: var(--text-xs); min-width: 50px; text-align: right; flex-shrink: 0; }
+    .time { color: var(--text-faint); font-size: var(--text-xs); flex-shrink: 0; }
+    /* Narrow: the transport columns drop in a decided order — bytes, then
+       the clock, then time-to-first-token — so a row never cuts a value in
+       half. The url, the category and the pen are the row; they stay. */
+    @media (max-width: 900px) {
+      .size { display: none; }
+      /* the url is the row's subject — it takes the width the bytes freed */
+      .url { flex: 1 1 42%; }
+      .sum { flex: 1 1 30%; }
+    }
+    @media (max-width: 820px) { .time { display: none; } }
+    @media (max-width: 700px) { .ttft { display: none; } .url { flex: 1 1 auto; } }
+    @media (max-width: 560px) { .sum { display: none; } }
+    /* The wait between two requests, folded and named. An empty stretch is
+       the answer to "what was it doing" — a list that silently closes the
+       gap makes an hour of nothing look like the next line. */
+    .gap-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 12px; height: 22px;
+      color: var(--text-faint); font-size: var(--text-xs);
+      font-family: var(--font-mono);
+      border-bottom: 1px solid var(--border);
+      background: repeating-linear-gradient(
+        135deg, transparent 0 5px, var(--border) 5px 6px);
+    }
+    .gap-row span {
+      background: var(--bg); padding: 0 8px; border-radius: var(--radius-full);
+    }
     .empty {
       text-align: center;
       padding: 40px;
@@ -962,13 +1194,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .empty-hint kbd {
       font: inherit; color: var(--text-muted);
       border: 1px solid var(--border); border-bottom-width: 2px;
-      border-radius: 4px; padding: 0 5px;
+      border-radius: var(--radius-sm); padding: 0 5px;
     }
     .broken-item {
       margin: 4px 0; padding: 6px 10px;
       font-size: 11px; color: var(--red);
       border: 1px dashed color-mix(in srgb, currentColor 40%, transparent);
-      border-radius: 6px; overflow-wrap: anywhere;
+      border-radius: var(--radius); overflow-wrap: anywhere;
     }
     .section { margin-bottom: 14px; }
     .section:last-child { margin-bottom: 0; }
@@ -981,7 +1213,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     pre {
       background: var(--bg-surface);
       padding: 10px;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       overflow-x: auto;
       white-space: pre-wrap;
       word-break: break-word;
@@ -993,7 +1225,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .pre-wrap .copy-btn {
       position: absolute; top: 6px; right: 6px;
       background: var(--btn-bg); border: 1px solid var(--border);
-      border-radius: 4px; padding: 3px 5px; cursor: pointer;
+      border-radius: var(--radius-sm); padding: 3px 5px; cursor: pointer;
       color: var(--text-faint); display: none;
       align-items: center; justify-content: center;
       z-index: 1; line-height: 1;
@@ -1037,7 +1269,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       width: 26px; height: 22px; padding: 0;
       display: inline-flex; align-items: center; justify-content: center;
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 4px; color: var(--text-muted); cursor: pointer;
+      border-radius: var(--radius-sm); color: var(--text-muted); cursor: pointer;
       font: inherit; font-size: 11px; line-height: 1;
     }
     .nav-rail button:hover { color: var(--text); border-color: var(--accent); }
@@ -1045,36 +1277,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #rail-detail { display: none; top: 48px; }
     body.detail-open #rail-detail { display: flex; }
     .btn {
-      padding: 4px 10px;
-      background: var(--btn-bg);
+      height: 26px; padding: 0 10px;
+      background: var(--surface-2);
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius);
       color: var(--text);
       cursor: pointer;
-      font-family: inherit;
-      font-size: 12px;
+      font: inherit; font-size: var(--text-sm); font-weight: 400;
       text-decoration: none;
       display: inline-flex;
-      align-items: center;
+      align-items: center; gap: 5px;
+      transition: border-color var(--dur-micro) var(--ease-out);
     }
-    .btn:hover { background: var(--border); }
+    .btn:hover { border-color: var(--border-strong); }
+    /* The one primary action on a screen wears the brand ink; everything
+       else interactive is the accent. Clay is identity, not interaction. */
+    .btn.primary { background: var(--clay-strong); border-color: var(--clay-strong); color: var(--accent-fg); }
+    .btn.primary:hover { background: var(--clay); border-color: var(--clay); }
     .btn[disabled] { opacity: 0.4; pointer-events: none; }
     .detail-req {
       display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
       padding: 10px 12px; background: var(--bg-surface);
-      border: 1px solid var(--border); border-radius: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius);
       margin-bottom: 8px; font-size: 12px;
     }
     .detail-url { flex: 1; min-width: 200px; word-break: break-all; }
     .chips {
       display: flex; flex-wrap: wrap; gap: 4px 18px;
       padding: 8px 12px; background: var(--bg-surface);
-      border: 1px solid var(--border); border-radius: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius);
       margin-bottom: 8px; font-size: 12px;
     }
     .chip { font-variant-numeric: tabular-nums; }
     .chip b { color: var(--text-muted); font-weight: 500; margin-right: 6px; }
-    .turn { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
+    .turn { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
     .turn-role {
       display: flex; align-items: center; gap: 8px;
       padding: 5px 12px; font-size: 10px;
@@ -1116,18 +1352,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums;
     }
     .turn-time.tt-solo { margin-left: auto; }
+    /* The conversation is the object of this product, so it reads at the
+       system's body step in the reading face; the wire inside it (code,
+       tool calls, ids) stays mono. */
     .msg-text {
       padding: 10px 12px;
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 12px;
-      line-height: 1.5;
+      font-family: var(--font-body);
+      font-size: var(--text-body);
+      line-height: 1.6;
+      max-width: 46rem;
     }
     .msg-text.think { color: var(--text-muted); font-style: italic; }
     /* Inline code + code blocks (shared by old snapshots and marked output) */
     .msg-text code {
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 3px; padding: 0 4px; font-size: 11px;
+      border-radius: var(--radius-sm); padding: 0 4px; font-size: 11px;
     }
     .msg-text .md-code { margin: 6px 0; font-size: 11px; }
     .msg-text .md-code code {
@@ -1215,7 +1456,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .msg-imgwrap { padding: 6px 12px; }
     .msg-img {
       display: block; max-width: 320px; max-height: 240px;
-      border: 1px solid var(--border); border-radius: 4px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
       cursor: zoom-in; background: var(--bg-surface);
     }
     .msg-img.full { max-width: 100%; max-height: none; cursor: zoom-out; }
@@ -1241,12 +1482,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       color: var(--text-faint);
     }
     .fold-body { border-top: 1px solid var(--border); }
-    .fold-body > .pre-wrap > pre { border-radius: 0 0 6px 6px; }
+    .fold-body > .pre-wrap > pre { border-radius: 0 0 var(--radius) var(--radius); }
     /* Small mode buttons living inside a fold summary (headers raw toggle,
        body pretty/raw toggle, copy). Quiet until hovered, like the rail. */
     .fold-btn {
       font: inherit; font-size: 10px; line-height: 1; flex-shrink: 0;
-      background: none; border: 1px solid var(--border); border-radius: 4px;
+      background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
       color: var(--text-faint); cursor: pointer; padding: 2px 7px;
     }
     .fold-btn:hover { color: var(--text); border-color: var(--accent); }
@@ -1267,7 +1508,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .hdr-fold[data-alt="1"] .hdr-table { display: none; }
     .hdr-fold[data-alt="1"] .hdr-pre { display: block; }
     .turn .fold { border-top: 1px solid var(--border); }
-    .fold.box { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 8px; }
+    .fold.box { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
     .fold.errline > summary .fold-title { color: var(--red); }
     /* Notable tool events keep their color even folded: subagent spawns,
        skill invocations, MCP calls. Everything else stays quiet. */
@@ -1303,16 +1544,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       flex: 0 1 240px; height: 8px;
       background: var(--bg-surface);
       border: 1px solid var(--border);
-      border-radius: 99px; overflow: hidden;
+      border-radius: var(--radius-full); overflow: hidden;
     }
-    .ubar-fill { display: block; height: 100%; border-radius: 99px; }
+    .ubar-fill { display: block; height: 100%; border-radius: var(--radius-full); }
     .ubar-fill.ok { background: var(--green); }
     .ubar-fill.warn { background: var(--amber); }
     .ubar-fill.err { background: var(--red); }
     .ubar-pct { flex: 0 0 48px; text-align: right; font-variant-numeric: tabular-nums; }
     .ubar-resets { color: var(--text-faint); font-size: 11px; }
     /* ---- Session view components ---- */
-    .thread { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; overflow: hidden; }
+    .thread { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; overflow: hidden; }
     /* Selection is a wash, not an edge (accent edges read as chrome —
        same rule as user-turn emphasis). The expanded request list below
        the selected card is the louder signal anyway. */
@@ -1329,7 +1570,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* One accent (ui.md rule 2): kind chips are neutral outlines — the
        word carries the meaning; red/amber stay reserved for state. */
     .tkind {
-      padding: 1px 7px; border-radius: 999px; font-size: 10px;
+      padding: 1px 7px; border-radius: var(--radius-full); font-size: 10px;
       text-transform: uppercase; color: var(--text-muted);
       border: 1px solid var(--border); flex-shrink: 0;
     }
@@ -1379,7 +1620,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* epoch node: a hollow accent ring on the rail — structure, not a
        message; bigger than turn dots, same family as the klabel tint */
     .enode {
-      position: relative; width: 8px; height: 8px; border-radius: 50%;
+      position: relative; width: 8px; height: 8px; border-radius: var(--radius-full);
       flex: none; background: var(--bg); box-shadow: 0 0 0 2px var(--bg);
       border: 1.5px solid color-mix(in srgb, var(--accent) 55%, var(--text-faint));
     }
@@ -1448,7 +1689,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       position: fixed; z-index: 100; display: none;
       max-width: 320px; padding: 7px 10px;
       background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+      border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,0.35);
       font-size: 11px; line-height: 1.55; color: var(--text-muted);
       pointer-events: none; font-variant-numeric: tabular-nums;
       overflow-wrap: break-word;
@@ -1470,7 +1711,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        green = healthy cache hit, amber = weak hit (<90%) / cold / miss,
        red = failed request, neutral = no cache in play / unattributed. */
     .cdot {
-      position: relative; width: 6px; height: 6px; border-radius: 50%;
+      position: relative; width: 6px; height: 6px; border-radius: var(--radius-full);
       background: var(--border); flex: none;
       box-shadow: 0 0 0 2px var(--bg);
     }
@@ -1519,7 +1760,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sys-tag {
       font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
       color: var(--text-muted); border: 1px solid var(--border);
-      border-radius: 4px; padding: 0 4px; margin-right: 6px; flex: none;
+      border-radius: var(--radius-sm); padding: 0 4px; margin-right: 6px; flex: none;
     }
     /* a superseded exchange at its timeline position: grey, half-present —
        it happened here, then left history */
@@ -1535,7 +1776,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        bodies, failed requests — quiet bordered tags, no fill */
     .treq-mark {
       font-size: 10px; color: var(--text-faint); align-self: center;
-      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 4px;
       white-space: nowrap;
     }
     .treq-mark.amber { color: var(--amber); border-color: var(--amber); }
@@ -1545,7 +1786,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        as a thread card, one level up. Threads flatten to divided rows
        inside it; invisible on single-session traces (zero new chrome). */
     .sess {
-      border: 1px solid var(--border); border-radius: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius);
       margin-bottom: 8px; overflow: hidden;
     }
     .sess > summary {
@@ -1607,7 +1848,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tparent:hover { color: var(--accent); }
     .agent-note {
       padding: 8px 12px; margin-bottom: 8px;
-      border: 1px dashed var(--purple); border-radius: 6px;
+      border: 1px dashed var(--purple); border-radius: var(--radius);
       font-size: 12px; color: var(--text-muted);
     }
     /* an exchange that left history — grey, not amber: it's a timeline
@@ -1638,7 +1879,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .sum-tag {
       font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
       color: var(--text-muted); border: 1px solid var(--border);
-      border-radius: 4px; padding: 0 4px; margin-left: 8px; flex: none;
+      border-radius: var(--radius-sm); padding: 0 4px; margin-left: 8px; flex: none;
     }
     /* epoch divider: a hairline where a /model switch takes over — the
        conversation flows through it, so a rule, not a box */
@@ -1691,10 +1932,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        own tab; it is a READING of the same selection, so it is a deck. */
     .tj-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .tj-lvls, .tj-kinds { display: inline-flex; gap: 2px; }
-    .tj-lvl, .tj-kind { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text-faint); border: 1px solid var(--border); padding: 2px 8px; border-radius: 5px; cursor: pointer; }
+    .tj-lvl, .tj-kind { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text-faint); border: 1px solid var(--border); padding: 2px 8px; border-radius: var(--radius-sm); cursor: pointer; }
     .tj-lvl.active { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .tj-kind.active { color: var(--text); border-color: var(--tjc, var(--accent)); background: color-mix(in srgb, var(--tjc, var(--accent)) 14%, transparent); }
-    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 170px; }
+    .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: var(--radius-sm); width: 170px; }
     .tj-hidden { font-size: 10px; color: var(--text-faint); }
     /* the list is the deck's main column; its rows bleed to the canvas
        edge (the turn dividers are sticky inside the deck's own scroll) */
@@ -1749,7 +1990,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-insp-tok { flex: none; margin-left: auto; color: var(--text-faint); white-space: nowrap; }
     .cx-insp-x {
       flex: none; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
-      background: none; border: 0; border-radius: 4px; color: var(--text-faint); padding: 2px 5px;
+      background: none; border: 0; border-radius: var(--radius-sm); color: var(--text-faint); padding: 2px 5px;
     }
     .cx-insp-x:hover { color: var(--text); background: var(--hover); }
     .cx-insp-cols { flex: 1; min-height: 0; display: flex; }
@@ -1791,7 +2032,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .cx-mode {
       font: inherit; font-size: 11px; background: none; cursor: pointer;
-      border: 1px solid transparent; border-radius: 5px; color: var(--text-faint); padding: 3px 10px;
+      border: 1px solid transparent; border-radius: var(--radius-sm); color: var(--text-faint); padding: 3px 10px;
     }
     .cx-mode:hover { color: var(--text); background: var(--hover); }
     .cx-mode.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
@@ -1809,7 +2050,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-bal-d { display: block; font-size: 10px; color: var(--text-muted); padding: 3px 0 8px; }
     /* the composition bar: six colored segments + the grey headroom track */
     .cx-bar {
-      display: flex; height: 10px; border-radius: 4px; overflow: hidden;
+      display: flex; height: 10px; border-radius: var(--radius-sm); overflow: hidden;
       background: var(--bg-surface); border: 1px solid var(--border);
     }
     .cx-seg { height: 100%; min-width: 0; }
@@ -1825,7 +2066,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-topt b { color: var(--text-muted); font-weight: 500; }
     /* where the thread's wall-clock went: the time track's totals, and the
        legend that names its three hues */
-    .cx-lanes { display: flex; height: 8px; border-radius: 3px; overflow: hidden; margin: 2px 0 6px; background: var(--bg-surface); }
+    .cx-lanes { display: flex; height: 8px; border-radius: var(--radius-sm); overflow: hidden; margin: 2px 0 6px; background: var(--bg-surface); }
     .cx-lane { min-width: 2px; }
     .cx-lane-key { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--text-faint); }
     .cx-lane-key i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
@@ -1976,7 +2217,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-dhead .cx-dt { color: var(--text); flex-basis: 100%; font-size: 11px; }
     .cx-crow {
       display: flex; align-items: center; gap: 7px; padding: 3px 4px; margin: 0 -4px;
-      border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums;
+      border-radius: var(--radius-sm); font-size: 11px; font-variant-numeric: tabular-nums;
       color: inherit; text-decoration: none; cursor: pointer;
     }
     .cx-crow:hover { background: var(--hover); }
@@ -1985,7 +2226,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-crow:hover .cx-crow-label, .cx-crow.sel .cx-crow-label { color: var(--text); }
     .cx-crow-label > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cx-track {
-      flex: none; width: 54px; height: 5px; border-radius: 99px; overflow: hidden;
+      flex: none; width: 54px; height: 5px; border-radius: var(--radius-full); overflow: hidden;
       background: var(--bg-surface); border: 1px solid var(--border);
     }
     .cx-fill { display: block; height: 100%; background: var(--cx, var(--text-faint)); }
@@ -1994,18 +2235,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* context events */
     .cx-fchip {
       font: inherit; font-size: 10px; line-height: 1; cursor: pointer; white-space: nowrap;
-      background: none; border: 1px solid var(--border); border-radius: 999px;
+      background: none; border: 1px solid var(--border); border-radius: var(--radius-full);
       color: var(--text-muted); padding: 3px 9px;
     }
     .cx-fchip:hover { border-color: var(--accent); }
     .cx-fchip.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 4px; margin: 0 -4px; border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; }
+    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 4px; margin: 0 -4px; border-radius: var(--radius-sm); font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; }
     .cx-ev:hover { background: var(--hover); }
     .cx-ev.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .cx-ev-kind {
       flex: 0 0 58px; text-align: center; font-size: 9px; text-transform: uppercase;
       letter-spacing: 0.03em; color: var(--text-muted);
-      border: 1px solid var(--border); border-radius: 4px; padding: 0 4px;
+      border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 4px;
     }
     .cx-ev-glyph { flex: 0 0 12px; text-align: center; color: var(--text-faint); }
     .cx-ev-label { flex: 0 1 46ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
@@ -2056,7 +2297,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        folds; a container: its children ranked) */
     .cx-pane-body { font-size: 11px; }
     .cx-prow {
-      display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px;
+      display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: var(--radius-sm);
       font-size: 11px; color: var(--text-muted); text-decoration: none; font-variant-numeric: tabular-nums;
     }
     .cx-prow:hover { background: var(--hover); color: var(--text); }
@@ -2078,7 +2319,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-item-err .fold-title { color: var(--red); }
     /* the weight track, reused by the pane's ranked rows */
     .cx-wt {
-      flex: none; width: 120px; height: 5px; border-radius: 99px;
+      flex: none; width: 120px; height: 5px; border-radius: var(--radius-full);
       background: var(--bg-surface); border: 1px solid var(--border); overflow: hidden;
     }
     .cx-wf { display: block; height: 100%; min-width: 1px; }
@@ -2090,7 +2331,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-sess { display: flex; align-items: baseline; gap: 8px; padding: 5px 0 1px; font-size: 9px; color: var(--text-faint); }
     .cx-sess-t { margin-left: auto; }
     .cx-th {
-      display: flex; align-items: center; gap: 6px; padding: 2px 4px; margin: 0 -4px; border-radius: 4px;
+      display: flex; align-items: center; gap: 6px; padding: 2px 4px; margin: 0 -4px; border-radius: var(--radius-sm);
       font-size: 11px; color: var(--text-muted); text-decoration: none;
       font-variant-numeric: tabular-nums;
     }
@@ -2099,7 +2340,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-th.selected .cx-th-label { color: var(--text); }
     .cx-th-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .cx-th-bar {
-      flex: none; width: 44px; height: 4px; border-radius: 99px; overflow: hidden;
+      flex: none; width: 44px; height: 4px; border-radius: var(--radius-full); overflow: hidden;
       background: var(--bg-surface); border: 1px solid var(--border);
     }
     .cx-th-fill { display: block; height: 100%; min-width: 1px; background: var(--text-faint); }
@@ -2136,7 +2377,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* the rail's trajectory gutter: per-step context occupancy, split into
        the cached prefix and what was billed fresh (session view) */
     .tctx {
-      flex: none; width: 30px; height: 4px; border-radius: 99px; overflow: hidden;
+      flex: none; width: 30px; height: 4px; border-radius: var(--radius-full); overflow: hidden;
       background: var(--bg-surface); border: 1px solid var(--border); display: flex;
     }
     .tctx-b { display: flex; height: 100%; min-width: 1px; }
@@ -2148,31 +2389,46 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </style>
 </head>
 <body>
+  <!-- The frame (0.48): a destination RAIL on the left carrying the run's
+       identity, and a header over the work surface that says what THIS
+       destination is. The card that answers "what am I looking at" belongs
+       to the navigation, not to a strip above the content; the header then
+       spends its width on the destination's own numbers and controls. -->
+  <div id="shell">
+  <nav id="nav" aria-label="destinations">
+    <a class="brand" href="#" title="cctrace &#8212; requests">${HEADER_LOGO}<b>cctrace</b></a>
+    <div class="runcard">
+      <span class="ctx" id="ctx"></span>
+      <span class="status disconnected" id="status">offline</span>
+    </div>
+    <div class="dests">
+      <button class="dest active" id="tab-requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
+      <button class="dest" id="tab-session"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
+      <button class="dest" id="tab-context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it"><span class="gl">${DEST_ICONS.context}</span><span class="lb">Context</span><span class="n" id="dest-n-ctx"></span></button>
+      <a class="dest" id="dash-link" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page."><span class="gl">${DASH_ICON}</span><span class="lb">Runs</span></a>
+    </div>
+    <div class="navfoot">
+      <span class="inst" id="inst"></span>
+      <span class="nav-icons">
+        <span class="ver" id="ver"></span>
+        <button class="icon-btn" id="mask-toggle" title="mask identity"></button>
+        <button class="icon-btn" id="theme-toggle" title="theme"></button>
+        <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
+      </span>
+    </div>
+  </nav>
+  <div id="work">
   <header>
-    <span class="brand">${HEADER_LOGO}<h1>cctrace</h1></span>
-    <span class="ctx" id="ctx"></span>
+    <h1 id="page-title">Requests</h1>
     <span class="count" id="stats"></span>
-    <span class="inst" id="inst"></span>
-    <span class="status disconnected" id="status">offline</span>
     <span class="trunc" id="trunc"></span>
-    <span class="ver" id="ver"></span>
-    <span class="header-actions">
-      <a class="icon-btn" id="dash-link" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page.">${DASH_ICON}</a>
-      <button class="icon-btn" id="mask-toggle" title="mask identity"></button>
-      <button class="icon-btn" id="theme-toggle" title="theme"></button>
-      <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
-    </span>
   </header>
-  <!-- Toolbar grammar: scope narrows left to right — view tabs, then the
-       list group (query + list-scoped toggles), then page behavior, then
-       the trace controls holding the right edge in both views. Groups are
-       spans so the session view hides whole groups, not button ids. -->
+  <!-- Toolbar grammar: scope narrows left to right — the list group
+       (query + list-scoped toggles), then page behavior, then the trace
+       controls holding the right edge in both views. Groups are spans so
+       the session view hides whole groups, not button ids. Destinations
+       are not here: they live on the rail. -->
   <div class="toolbar" id="toolbar">
-    <span class="tabs">
-      <button class="tab active" id="tab-requests">requests</button>
-      <button class="tab" id="tab-session">sessions</button>
-      <button class="tab" id="tab-context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it">context</button>
-    </span>
     <span class="tb-group" id="tb-list">
       <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
       <button id="prior-toggle" class="active" title="previous runs&#10;Requests merged from earlier runs of this session — same wire session id, older trace files.&#10;---&#10;> click shows/hides them in the list">prev runs</button>
@@ -2245,6 +2501,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <div id="pulse"></div>
   </div>
   <div id="context-view"></div>
+  </div><!-- /#work -->
+  </div><!-- /#shell -->
 
   <script>${markedSrc}</script>
   <script>
@@ -2772,7 +3030,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderStats() {
       let calls = 0, inTok = 0, outTok = 0, cr = 0, cw = 0, think = 0, cost = 0, errs = 0;
       let t0 = Infinity, t1 = 0;
+      // Distinct wire sessions on this page — the Sessions destination's
+      // own count. Memoized per pair: this runs on every live arrival.
+      const sids = new Set();
       for (const p of pairs) {
+        if (p._sid === undefined) p._sid = extractSessionId(p, CLIENT_WIRE) || null;
+        if (p._sid) sids.add(p._sid);
         const ts = p.request.timestamp || 0;
         if (ts) { if (ts < t0) t0 = ts; if (ts > t1) t1 = ts; }
         if (!p.response || p.response.status >= 400) errs++;
@@ -2814,6 +3077,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       statsEl.textContent = t;
       statsEl.dataset.tip = tip.join('\\n');
+      // The rail's destination counts: what each place holds, in its own
+      // unit — requests on the wire, model calls behind the conversation.
+      setDestCount('dest-n-req', pairs.length);
+      setDestCount('dest-n-sess', sids.size);
+    }
+    function setDestCount(id, n) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = n > 0 ? fmtCompact(n) : '';
     }
 
     let ctxKey = null;
@@ -2888,11 +3159,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
+        '\\u00b7 the page wears the Claude Design System \\u2014 measured off claude.ai, adopted whole: warm paper and near-black grounds, hairlines at 10% ink, the reading face for prose with mono kept for the wire, clay for identity and the one primary action, blue for everything interactive\\n' +
+        '\\u00b7 a destination rail replaces the tabs \\u2014 the mark, the run card (client, trace, session, live), Requests / Sessions / Context / Runs with their counts, and the page chrome in its foot; the header above the work now names where you are and spends its width on that destination\\u2019s numbers\\n' +
+        '\\u00b7 the request list is a recording \\u2014 rules instead of cards at 26px, every row opening with its own PEN stroke (faint head = time to first token, solid tail = the streaming after it, inked by category, 30s full scale), and a hatched band naming every wait over two minutes\\n' +
+        '\\u00b7 the dashboard OPERATES \\u2014 a two-step stop on every live row (a capture run ends the way Ctrl-C ends it: flush, receipt, seal) and a store section with the archive plan and one archive now button\\n' +
         '\\u00b7 the Context view has ONE inspector \\u2014 a right panel a pick opens (an icicle node, a stream record, an event row), a vertical rail of facets the wire can answer: content, a tool\\u2019s schema and weight, the ORIGIN (which step carried it in, how many requests re-sent it since), the wire request; \\u00d7 or Esc closes it\\n' +
-        '\\u00b7 the trajectory bar is the session\\u2019s minimap, always on top \\u2014 one clickable block per TURN (its tally on hover, the one you are reading lit), the selected thread\\u2019s own time with idle folded to \\u29f8\\u29f8 breaks, synced with the conversation both ways; the loop-row diagram is gone\\n' +
-        '\\u00b7 replay holds your thread \\u2014 enters and restarts on its own edges, the arrows step its own turns, waiting folds like idle, and a live run still tails\\n' +
-        '\\u00b7 pricing follows the 2026-09 docs \\u2014 Fable 5.1 / Mythos 5.1 cache reads at 0.025x, Sonnet 5 at $2/$10, 1M windows on Claude 4.6+, and two modifiers read off the wire: fast mode (usage.speed) doubles every rate, US-only inference is 1.1x \\u2014 named in the cost tooltip\\n' +
-        '\\u00b7 cctrace insights folds every run sharing the data dir into windowed aggregates (runs / tokens / \\u2248$ by day, project, client; --scan for the cache split and quota off the wire) \\u2014 the cctrace-insights skill reads it; /view/<run-id> budgets long sessions and says what it left out\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -3073,6 +3344,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           renderCtx();
           renderPulse();
           if (passesFilters(msg.pair)) {
+            const st = (msg.pair.request.timestamp || 0) * 1000;
+            if (lastRowEnd && st > lastRowEnd) appendGap(st - lastRowEnd, lastRowEnd, st);
+            lastRowEnd = st + (msg.pair.duration || 0);
             appendPair(msg.pair, true);
             if (autoScroll && !detailId) pairsEl.scrollTop = pairsEl.scrollHeight;
           }
@@ -3349,11 +3623,39 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<span class="size" title="' + escapeHtml(sizeTitle(s)) + '">' + bits.join(' ') + '</span>';
     }
 
+    // Latency is read once per pair and kept: the ttft column and the pen
+    // stroke are two readings of the same wire fact.
+    function latOf(p) {
+      if (p._lat === undefined) p._lat = extractLatency(p) || null;
+      return p._lat;
+    }
+
+    // The PEN: the row's own stroke on a shared scale. Full-scale
+    // deflection is 30s of wall-clock — a fixed reference, so two rows are
+    // comparable across the whole list and across traces; anything longer
+    // pins at full width and says so in the tooltip. The light head is the
+    // wait for the first token, the solid tail the streaming that followed.
+    const PEN_FULL_MS = 30000, PEN_W = 42;
+    function penCell(pair, cat) {
+      const d = pair.duration || 0;
+      if (!(d > 0)) return '<span class="pen"></span>';
+      const w = Math.max(2, Math.min(PEN_W, PEN_W * d / PEN_FULL_MS));
+      const lat = latOf(pair);
+      const t = lat && lat.isToken ? Math.max(0, Math.min(d, lat.ttftMs)) : 0;
+      const wt = t > 0 ? Math.min(w, Math.max(1, w * t / d)) : 0;
+      const tip = fmtSpan(d) + ' of 30s full scale' +
+        (wt ? ' \u00b7 ' + fmtMs(t) + ' to first token' : '') +
+        (d > PEN_FULL_MS ? ' \u2014 pinned at full width' : '');
+      return '<span class="pen" style="--cat:' + cat.color + '" title="' + escapeHtml(tip) + '">' +
+        (wt ? '<i class="wait" style="left:0;width:' + wt.toFixed(1) + 'px"></i>' : '') +
+        '<i style="left:' + wt.toFixed(1) + 'px;width:' + (w - wt).toFixed(1) + 'px"></i></span>';
+    }
+
     // First-token delay as its own right-aligned wire column (row order:
-    // content chips · sizes · ttft · duration · time). Empty when the pair
-    // never streamed a token event.
+    // pen \u00b7 content chips \u00b7 sizes \u00b7 ttft \u00b7 duration \u00b7 time). Empty when the
+    // pair never streamed a token event.
     function ttftCell(pair) {
-      const lat = extractLatency(pair);
+      const lat = latOf(pair);
       if (!lat || !lat.isToken) return '<span class="ttft"></span>';
       return '<span class="ttft" title="' + escapeHtml('time to first streamed token' +
         (lat.pct != null ? ' \\u2014 ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
@@ -3372,6 +3674,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const when = new Date(request.timestamp * 1000);
         div.innerHTML =
           '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
+            penCell(pair, cat) +
             '<span class="method">' + escapeHtml(request.method) + '</span>' +
             '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
             '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
@@ -3391,6 +3694,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       pairsEl.appendChild(div);
     }
 
+    // The wait between two requests, folded and named. Below the fold
+    // threshold nothing is drawn (a dense list must not spend a row on two
+    // seconds of nothing); at or above it the blank becomes one hatched
+    // band that says how long the wire was quiet — the same 2-minute
+    // threshold the trajectory bar folds idle at.
+    const GAP_FOLD_MS = 120000;
+    // The end of the newest row on the page, so a pair landing after a long
+    // quiet stretch draws its own band instead of waiting for a re-render.
+    let lastRowEnd = 0;
+    function appendGap(ms, fromMs, toMs) {
+      if (ms < GAP_FOLD_MS) return;
+      const div = document.createElement('div');
+      div.className = 'gap-row';
+      div.title = fmtDateTime(new Date(fromMs)) + ' \u2192 ' + fmtDateTime(new Date(toMs)) +
+        '\\nnothing on the wire';
+      div.innerHTML = '<span>' + escapeHtml(fmtSpan(ms)) + ' with nothing on the wire</span>';
+      pairsEl.appendChild(div);
+    }
+
     function render() {
       renderCats();
       renderCtx();
@@ -3403,8 +3725,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       let any = false;
+      lastRowEnd = 0;
       for (const p of pairs) {
-        if (passesFilters(p)) { appendPair(p); any = true; }
+        if (!passesFilters(p)) continue;
+        const start = (p.request.timestamp || 0) * 1000;
+        if (lastRowEnd && start > lastRowEnd) appendGap(start - lastRowEnd, lastRowEnd, start);
+        lastRowEnd = start + (p.duration || 0);
+        appendPair(p); any = true;
       }
       if (!any) {
         pairsEl.innerHTML = '<div class="empty">No requests match this filter.</div>';
@@ -3507,6 +3834,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       tabRequests.classList.toggle('active', v === 'requests');
       tabSession.classList.toggle('active', v === 'session');
       tabContext.classList.toggle('active', v === 'context');
+      // The rail says where you are; the header says what this destination
+      // is. aria-current carries it for a screen reader.
+      for (const [el, name] of [[tabRequests, 'requests'], [tabSession, 'session'], [tabContext, 'context']]) {
+        if (v === name) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+      }
+      const h1 = document.getElementById('page-title');
+      if (h1) h1.textContent = v === 'session' ? 'Sessions' : v === 'context' ? 'Context' : 'Requests';
     }
     tabRequests.onclick = () => { location.hash = ''; };
     tabSession.onclick = () => { location.hash = '#/session'; };

@@ -1,17 +1,18 @@
 <svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="cctrace">
   <style>
+    /* The ink flips with the reader's theme; clay does not — it is the
+       identity. Redrawn in Claude Design System geometry (0.48): 30px
+       round-capped arcs, the trace in ink, the terminal dot in clay. */
     @media (prefers-color-scheme: dark) {
-      .s { stroke: #e6edf3; }
-      .f { fill: #e6edf3; }
+      .ink { stroke: #f0efec; }
     }
   </style>
-  <g fill="none" stroke="#0d1117" stroke-linecap="round">
+  <g fill="none" stroke-linecap="round">
     <!-- cc monogram: two open-C arcs (open to the right), right C's left edge ~ left C's center -->
-    <path class="s" stroke-width="26" d="M 270.75 175.6 A 125 125 0 1 0 270.75 336.4" />
-    <path class="s" stroke-width="26" d="M 395.75 175.6 A 125 125 0 1 0 395.75 336.4" />
-    <!-- trace line: filled dot (center) -> hollow ring (right) -->
-    <line class="s" stroke-width="9" x1="250" y1="256" x2="452" y2="256" />
-    <circle class="s" stroke-width="9" cx="452" cy="256" r="17" />
-    <circle class="f" fill="#0d1117" stroke="none" cx="250" cy="256" r="12" />
+    <path stroke="#d97757" stroke-width="30" d="M 270.75 175.6 A 125 125 0 1 0 270.75 336.4" />
+    <path stroke="#d97757" stroke-width="30" d="M 395.75 175.6 A 125 125 0 1 0 395.75 336.4" />
+    <!-- the trace running out of the monogram to its terminal -->
+    <line class="ink" stroke="#0b0b0b" stroke-width="12" x1="258" y1="256" x2="448" y2="256" />
+    <circle fill="#d97757" stroke="none" cx="448" cy="256" r="20" />
   </g>
 </svg>

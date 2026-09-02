@@ -20,6 +20,7 @@ import {
   ctxWindowTurns,
   ctxTurnSig,
   ctxOriginTurn,
+  ctxCarrySpan,
 } from "../src/context";
 import { modelWindow } from "../src/pricing";
 import { filterCatalog } from "../src/pricing-catalog";
@@ -698,5 +699,62 @@ describe("provenance: ctxOriginTurn / ctxTurnSig / ctxWindowTurns", () => {
     expect(w.length).toBe(3);
     expect(w[0].blocks[0].text).toBe("ask");
     expect(ctxWindowTurns({ request: { body: { _cctrace_stub: true } } })).toEqual([]);
+  });
+});
+
+describe("ctxCarrySpan: how many requests re-sent an item", () => {
+  const steps = [
+    { pairId: "a" }, { pairId: "b" }, { pairId: "c", mark: "compact" }, { pairId: "d" }, { pairId: "e" },
+  ];
+  test("runs forward to the next boundary, exclusive, and names it", () => {
+    const s = ctxCarrySpan(steps, "a");
+    expect(s.n).toBe(2);
+    expect(s.from.pairId).toBe("a");
+    expect(s.to.pairId).toBe("b");
+    expect(s.boundary.pairId).toBe("c");
+  });
+  test("with a known end it counts through the boundary — the item is in that window", () => {
+    const s = ctxCarrySpan(steps, "a", "d");
+    expect(s.n).toBe(4);
+    expect(s.to.pairId).toBe("d");
+    expect(s.boundary).toBeNull();
+  });
+  test("no boundary ahead: to the thread's last request", () => {
+    const s = ctxCarrySpan(steps, "d");
+    expect(s.n).toBe(2);
+    expect(s.to.pairId).toBe("e");
+    expect(s.boundary).toBeNull();
+  });
+  test("an unknown origin is null; an end before the origin counts the origin alone", () => {
+    expect(ctxCarrySpan(steps, "zz")).toBeNull();
+    expect(ctxCarrySpan(steps, "d", "a").n).toBe(1);
+    expect(ctxCarrySpan([], "a")).toBeNull();
+  });
+});
+
+describe("contextItems: an image-bearing tool result still has a label", () => {
+  test("array content reads its text blocks and marks the image", () => {
+    const pair = {
+      request: {
+        url: "https://api.anthropic.com/v1/messages",
+        body: {
+          model: "claude-opus-4-1",
+          messages: [
+            { role: "user", content: "shoot" },
+            { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "mcp__browser__shot", input: {} }] },
+            { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [
+              { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+              { type: "text", text: "Successfully captured screenshot" },
+            ] }] },
+          ],
+        },
+      },
+      response: { status: 200, body: {} },
+    };
+    const items = contextItems(pair);
+    const res = items.cats.toolResult[0];
+    expect(res.toolName).toBe("mcp__browser__shot");
+    expect(res.label).toContain("[image]");
+    expect(res.label).toContain("Successfully captured screenshot");
   });
 });

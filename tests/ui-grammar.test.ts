@@ -1575,9 +1575,11 @@ describe("context view", () => {
     expect(page.errors).toEqual([]);
     const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain('class="cx-canvas mode-stream"');
-    // the record stream: rows with kind badges, the inspector beside them
+    // the record stream: rows with kind badges; the inspector beside them
+    // stays closed until a pick (no default record is opened)
     expect(cx).toContain('class="tj-list"');
-    expect(cx).toContain('id="tj-detail"');
+    expect(cx).toContain('<aside class="cx-insp" id="cx-insp" hidden></aside>');
+    expect(cx).not.toContain("tj-detail");
     expect(cx).toContain('class="tj-badge"');
     expect(cx).toContain("USER");
     expect(cx).toContain("CONTEXT"); // the reminder is the harness's, not the human's
@@ -1590,6 +1592,39 @@ describe("context view", () => {
     // ...but no second head: the page head and the margin already say it
     expect(cx).not.toContain("tj-head");
     expect(cx).not.toContain("tj-counts");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the inspector: one right panel beside the deck, a vertical facet rail, open on the window deck's default pick", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    // the deck row: the deck's main column beside the inspector
+    expect(cx).toContain('id="cx-deck-main"');
+    expect(cx).toContain('<aside class="cx-insp" id="cx-insp">');
+    // the head names the pick and carries the close; the rail lists the
+    // facets the wire can answer, content first and active
+    expect(cx).toContain('class="cx-insp-h"');
+    expect(cx).toContain('data-cxinsp="close"');
+    expect(cx).toContain('class="cx-insp-rail"');
+    expect(cx).toContain('class="cx-facet active" data-cxfacet="content"');
+    expect(cx).toContain('id="cx-insp-body"');
+    // the under-graph pane is gone: the pick opens beside the graph
+    expect(cx).not.toContain('id="cx-pane"');
+    expect(cx).not.toContain("cx-pane-h");
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("the events deck: every row is a pick, the inspector waits for one", () => {
+    const page = bootSnapshotPage(renderSnapshot(CTX_PAIRS));
+    page.goto("#/context/=events");
+    expect(page.errors).toEqual([]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-canvas mode-events"');
+    expect(cx).toContain('<aside class="cx-insp" id="cx-insp" hidden></aside>');
+    const rows = (cx.match(/class="cx-ev"/g) || []).length;
+    expect((cx.match(/data-cxev="/g) || []).length).toBe(rows);
     expect(fragmentErrors(page)).toEqual([]);
   });
 

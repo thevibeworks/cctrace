@@ -589,8 +589,16 @@ hash-routed:
   turns, the CONTEXT the harness injected INLINE at the moment it entered
   the window, the model's thinking, each tool call fused with its result,
   the reply. Kind-badged, in spine order, `turn NN` sticky dividers, the
-  amount on the right edge. Two panes (list | inspector); the inspector
-  opens the picked record with the detail panel's own block renderers.
+  amount on the right edge. One column of rows; a picked record opens in
+  the INSPECTOR — the right panel every deck shares: a pick (an icicle
+  node, a stream record, an event row) opens it beside the deck, × / Esc
+  closes it, and inside a VERTICAL facet rail lists only what the wire can
+  answer for that pick — content (the detail panel's own block renderers,
+  the picked fold open), schema (the tool's declaration in the carrying
+  request, with its weight and rank), origin (the step it entered with and
+  the carry: how many requests re-sent it, ≈tokens × N), wire (the
+  carrying request in brief, both links out). Spec:
+  docs/design/context-view.md §The inspector.
   archify's MAP / READ / FULL level FILTERS and never summarizes (hidden
   rows are counted out loud, persisted in `cctrace-tj-level`), plus a kind
   filter — **context only** is the killer use, the context trajectory

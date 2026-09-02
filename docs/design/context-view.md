@@ -170,8 +170,8 @@ route still resolves: it lands on the stream deck and rewrites itself to
 The page is an app SHELL, not a scroll: `#context-view` is a flex column
 whose head and overview are fixed and whose margin and deck scroll
 themselves. That is what retired the `max-height: calc(100vh - 120px)`
-magic constant the sticky margin needed, and it is what lets the stream
-deck's list and inspector be their own scroll columns.
+magic constant the sticky margin needed, and it is what lets every deck
+and the inspector beside it be their own scroll columns.
 
 ### The form: an overview that drives three decks
 
@@ -201,18 +201,18 @@ by clicking a tab to ask a different question about them.
     │ ≈$6.85 ▁▁▂█▁▁▁  COST read / write / input / output, $ = bump   │
     ├──────────────────┬─────────────────────────────────────────────┤
     │ MARGIN (scrolls) │ [window] [stream] [events]     deck controls│
-    │ 260k             │                                             │
-    │ 37% of 200k ▓░░  │  window — the pinned step as an icicle      │
-    │ ≈137k · 47% under│  stream — every record, injections inline   │
-    │ ── composition ──│  events — what grew, reclaimed or re-bought │
-    │ six ledger lines │                                             │
-    │ ── this step ────│                                             │
-    │ ── tool schemas ─│                                             │
-    │ ── money went ───│                                             │
-    │ ── time went ────│                                             │
-    │ ── quota ────────│                                             │
-    │ ── other threads │                                             │
-    └──────────────────┴─────────────────────────────────────────────┘
+    │ 260k             ├──────────────────────────┬──────────────────┤
+    │ 37% of 200k ▓░░  │ DECK (scrolls)           │ INSPECTOR      × │
+    │ ≈137k · 47% under│  window — the pinned     │ what is picked   │
+    │ ── composition ──│   step as an icicle      ├────────┬─────────┤
+    │ six ledger lines │  stream — every record,  │content │ the     │
+    │ ── this step ────│   injections inline      │schema  │ facet's │
+    │ ── tool schemas ─│  events — what grew,     │origin  │ body    │
+    │ ── money went ───│   reclaimed, re-bought   │wire    │(scrolls)│
+    │ ── time went ────│                          │        │         │
+    │ ── quota ────────│  a pick opens the        │        │         │
+    │ ── other threads │  inspector; × / esc close│        │         │
+    └──────────────────┴──────────────────────────┴────────┴─────────┘
 
 Two selections, and they mean different things — which is why one page
 can carry all three readings without ambiguity:
@@ -286,7 +286,7 @@ second):
 | wheel | zooms around the cursor (1× fit … 32×); the track is a width change on a flex row, so nothing re-renders |
 | shift+wheel | left to the browser — native horizontal scroll |
 | `←` / `→` | walks the pinned step |
-| `Esc` | peels one layer: the range, then the zoom, then the view |
+| `Esc` | peels one layer: the inspector, the range, then the zoom, then the view |
 | `1` / `2` / `3` | the three decks |
 
 The range is stored in **step indices**, never column indices, so
@@ -356,7 +356,8 @@ thread label counts MESSAGE turns, the addresses count WORKING LOOPS), so
 both are named in full rather than guessed at.
 
 **1. window** — the pinned step's context, decomposed as an icicle (see
-below) with its pane underneath. It carries no head of its own: the
+below); the picked node opens in the inspector beside it, on the heaviest
+group by default. It carries no head of its own: the
 margin beside it already names the step, its estimate, its billed prompt
 and both links. The one thing the old head said that the margin does not
 — *decomposed from the captured request body, exact, not reconstructed* —
@@ -367,8 +368,8 @@ a harness-log reconstruction.
 (`trajectoryRecords`), sliced to the brushed range. This is the whole of
 what shipped as the Trajectory tab in 0.44, and the form is unchanged:
 every record is a row, in spine order, with the context the harness
-injected **inline at the moment it entered the window**. Two panes, the
-requests grammar (list | inspector).
+injected **inline at the moment it entered the window**. One column of
+rows; a picked record opens in the inspector.
 
 The range is a SLICE, not a membership test — from the first record
 attributed to the range's first step to the last attributed to its last
@@ -392,7 +393,50 @@ AGENTS.md, environment context, recap, the reminder's own opening
 words), then the token delta (+amber = grew, −green = reclaimed) *beside
 the label*, because the delta is what the event did to the window
 (content); ×N, the turn·step link and the wall-clock hold the right edge
-(transport). Capped at 200 rows with an honest "+N older" line.
+(transport). Capped at 200 rows with an honest "+N older" line. Every
+row is a pick: it opens the event in the inspector — the injected text
+itself, a compaction's before → after by category, a bump's cause and
+counterfactual (§The inspector).
+
+#### The inspector (`renderCtxInsp`, `.cx-insp`)
+
+ONE right panel for every deck, opened by a pick — an icicle node, a
+stream record, an event row — closed by × / Esc, and absent otherwise:
+the deck takes the whole width back until the next pick. Before it, the
+window deck's pane sat UNDER the icicle in the same scroll (a leaf's
+bytes pushed the graph off the sheet), the stream's inspector was always
+there (40% of the deck spent on "pick a record"), and events had no
+detail at all. Now the deck row is `deck | inspector`, each its own
+scroll column, under the deck bar that spans both.
+
+Inside: a head that names the pick in the deck's own vocabulary (the
+category dot for a node, the kind badge for a record, the kind chip for an
+event; the address; the weight; ×), then a VERTICAL rail of facets beside
+the facet's body. The rail is vertical because it is a table of contents,
+not a toolbar — it grows down, never wraps, and the labels line up. The
+facets are the questions the wire can answer about the pick, and only
+those; a facet that would say "n/a" is not listed, so the rail never
+carries a dead tab:
+
+| facet | what | when |
+| --- | --- | --- |
+| content | what it is — the block(s) rendered with the requests detail's own renderers (a tool call fused with its result, the system blocks, a text/thinking block; a group's heaviest items as folds; a container's children ranked). The picked leaf's or record's own fold OPENS — the reader picked it to read it; a group's fifteen folds stay closed | always |
+| schema | the tool's declaration in the request that carried this call: description, input schema, and its standing cost — `≈N tokens in every request that carries it · #k of M tools by weight` (`ctxEnvelope` ranking). Not declared there = a server-side tool or a deferred schema, said so | a tool record / a `tool_use` item, carrying request loaded |
+| origin | the step it entered the window with (a pinnable chip), and the CARRY: `carried by N requests` and `≈tokens × N re-sent`. For an icicle item the count is exact — it is in the pinned step's window (content-verified), so it rode every request from its origin through the pin. For a stream record it runs forward to the next compaction/rewind boundary and says so: the window was rewritten there, and whether the record survived is that step's own reading. A reply and its calls are a step's OUTPUT: they enter with the next request, and the facet names the step that produced them too | a record with a turn, a leaf with a resolved origin |
+| wire | the carrying request in brief — the request row's figures without leaving the page: address and clock, model, status and stop reason (a failure in red with its error), duration and ttft, prompt by cache read / write / input with the cache share, output (and thinking), the step's ≈cost (the split on hover), and both ways out (`turn NN · step N →` into the rail, `wire →` to the pair) | a pick with a loaded carrying pair |
+
+The facet is a preference: it holds across picks (walking tool records
+with `schema` up stays on schema) and falls back to content when the new
+pick lacks it, without overwriting the preference. Esc peels the inspector
+first. The body's scroll survives a same-pick live repaint and resets when
+the pick or the facet changes (`ctxInspChanged`); `ctxRepaintInsp` repaints
+the panel alone, so a pick never rebuilds the overview under the cursor.
+
+The carry count comes from `ctxCarrySpan(steps, fromPairId, toPairId?)` in
+src/context.ts — pure, inlined, unit-tested: forward through the
+timeline's steps (failed ones included — the bar shows what was SENT), to
+`toPairId` when the item is known to be in that window, else up to the
+next marked step, exclusive.
 
 ### The record stream, in detail
 
@@ -460,10 +504,14 @@ its result / `renderBlock`), so a tool_use/thinking/text reads exactly as
 in the requests detail panel. A kind filter isolates one kind —
 **context only** is the killer use: the context trajectory alone.
 
-What is NOT borrowed: dsh's DevTools record inspector with
-Payload/Result/Schema/Timing tabs — cctrace reuses its existing block
-renderers instead, which already give payload+result+schema for a tool
-fold.
+dsh's record inspector — a right panel with Payload/Result/Schema/Timing
+tabs — was at first NOT borrowed (the block renderers already gave
+payload+result for a tool fold). It is now, in cctrace's terms
+(§The inspector): one panel for all three decks, and the tabs are the
+questions the wire answers — content, schema, origin, wire — standing
+vertical. What stays un-borrowed is a tab that restates what a fold already
+shows: payload and result are one content facet, because the fold fuses
+them.
 
 ### The icicle
 
@@ -513,7 +561,8 @@ The picked step as an **icicle**: rows top-down,
      slivers are reached by zooming their parent, which is what zoom is
      for. 75 labelled tab stops beats 400 unlabelled ones.
 
-   Under the graph, the **pane**: whatever node is selected, opened. A leaf
+   Beside the graph, in the inspector's content facet: whatever node is
+   selected, opened. A leaf
    gives its exact bytes; a group gives its heaviest 15 items as lazy
    folds (`renderBlock` reuse, so tool_use/tool_result/thinking render
    exactly as in the detail panel), saying out loud that it is showing 15
@@ -550,8 +599,9 @@ pair, and `turn NN · step N →` into the sessions timeline at that turn
 unattributed request has no turn to land on, and we do not invent one.
 
 Live behavior: the view re-renders on pair arrival with every position
-preserved — the margin's scroll, the deck's scroll, the stream list's
-scroll and its search box's focus and caret, the overview's horizontal
+preserved — the margin's scroll, the deck's scroll, the inspector's
+scroll (for the same pick and facet), the stream list's scroll and its
+search box's focus and caret, the overview's horizontal
 scroll (which also STICKS to the newest edge when it was already there),
 plus the zoom, the brushed range (clamped, never dropped, as steps
 arrive under it), the granularity, the pin, the filters and the fold

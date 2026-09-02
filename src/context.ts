@@ -256,8 +256,11 @@ export function contextItems(pair: any): any {
         }
       } else if (b.type === "tool_result") {
         const name = (b.tool_use_id && callNames[b.tool_use_id]) || "";
+        // The preview reads array content too (text blocks, [image] for a
+        // screenshot) — a string-only read left every image-bearing result
+        // (browser tools) as a blank row under its group.
         cats.toolResult.push({
-          label: (name ? name + " → " : "") + ctxSnippet(typeof b.content === "string" ? b.content : "", 100),
+          label: (name ? name + " → " : "") + ctxSnippet(trajResultPreview(b), 100),
           tokens, ti, kind: "tool_result", err: !!b.is_error, toolName: name, b,
         });
       } else if (b.type === "text") {
@@ -773,6 +776,38 @@ export function ctxOriginTurn(spine: any[], win: any[], ti: number, sigs?: strin
     if (c < cost) { best = i; cost = c; }
   }
   return best;
+}
+
+/**
+ * The CARRY: how many wire requests re-sent something that entered the
+ * window with `fromPairId` — the inspector's origin facet. Counted forward
+ * through the timeline's steps (every request sent it, failed ones
+ * included: the bar shows what was SENT):
+ *   - to `toPairId` when given — the item is KNOWN to be in that step's
+ *     window (the icicle's content-verified provenance), so it rode every
+ *     request between, compactions notwithstanding (a compaction removes
+ *     older turns; a turn still present after one was in every request);
+ *   - else up to the next compaction/rewind boundary (a marked step),
+ *     exclusive — the window was rewritten there, and whether the item
+ *     survived is that step's own reading, not this count's.
+ * Returns { n, from, to, boundary } or null when fromPairId is not a step.
+ */
+export function ctxCarrySpan(steps: any[], fromPairId: string, toPairId?: string | null): any {
+  const list = steps || [];
+  const i0 = list.findIndex((s: any) => s && s.pairId === fromPairId);
+  if (i0 < 0) return null;
+  let i1 = i0;
+  let boundary: any = null;
+  if (toPairId) {
+    const j = list.findIndex((s: any) => s && s.pairId === toPairId);
+    if (j >= i0) i1 = j;
+  } else {
+    for (let i = i0 + 1; i < list.length; i++) {
+      if (list[i] && list[i].mark) { boundary = list[i]; break; }
+      i1 = i;
+    }
+  }
+  return { n: i1 - i0 + 1, from: list[i0], to: list[i1], boundary };
 }
 
 // ============================================================================

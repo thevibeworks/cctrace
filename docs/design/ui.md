@@ -110,10 +110,21 @@ to protect that feeling.
 - Every view is two panes: a narrow left column that states what you are
   looking at, and a wide right column you work in — requests
   (list | detail), sessions (rail | convo), context (ledger | deck, and
-  the deck's own stream is list | inspector).
+  a pick opens the INSPECTOR beside the deck).
   The left column is fixed-measure; the right one scrolls.
   A view that is one full-width ribbon is the odd one out and reads as a
   different product.
+- The context decks share ONE inspector: a right panel opened by a pick
+  (an icicle node, a stream record, an event row), closed by × / Esc,
+  absent otherwise — the deck gets its width back. Inside, the facets
+  stand VERTICAL on the panel's left edge: a rail is a table of contents,
+  not a toolbar; it grows down, never wraps, the labels line up, and it
+  lists only the facets the wire can answer for that pick (a tab that
+  would say "n/a" is not a tab). The head names the pick in its deck's
+  own vocabulary — the category dot, the kind badge, the kind chip — and
+  the facet body scrolls alone. A detail that opens UNDER the thing you
+  clicked scrolls that thing away; a detail that is always open spends
+  its width on "pick something".
 - A control that scopes what is below it belongs to the FRAME, not to the
   scroll. The context overview brushes a range every deck under it reads;
   scrolling it away would leave the reader looking at filtered content

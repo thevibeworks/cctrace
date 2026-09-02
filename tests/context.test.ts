@@ -603,14 +603,29 @@ describe("modelWindow", () => {
     expect(modelWindow("claude-fable-5", cat)).toBe(300000);
     expect(modelWindow("gpt-5.6-sol", cat)).toBe(400000); // trailing-segment fallback
   });
-  test("classic claude families fall back to 200k offline; unknown-window models to 0", () => {
-    expect(modelWindow("claude-sonnet-5", null)).toBe(200000);
-    expect(modelWindow("claude-opus-4-6", null)).toBe(200000);
-    // Fable/Mythos windows are larger and not publicly fixed — an unknown
-    // window must render no %, never a wrong 200k (a real 431k prompt on
-    // fable-5 once read "100% of context used").
-    expect(modelWindow("claude-fable-5", null)).toBe(0);
+  test("offline fallback: Claude 4.6+ and Fable/Mythos are 1M, earlier tiers 200k, unknown models 0", () => {
+    // the docs' rule (2026-09): 4.6 and later ship the full 1M window at
+    // standard rates
+    expect(modelWindow("claude-opus-4-6", null)).toBe(1000000);
+    expect(modelWindow("claude-opus-4-8-20260528", null)).toBe(1000000);
+    expect(modelWindow("claude-opus-5", null)).toBe(1000000);
+    expect(modelWindow("claude-sonnet-4-6", null)).toBe(1000000);
+    expect(modelWindow("claude-sonnet-5", null)).toBe(1000000);
+    expect(modelWindow("anthropic.claude-sonnet-5", null)).toBe(1000000);
+    // a real 431k prompt on fable-5 once read "100% of context used"
+    // against a wrong 200k; the window is 1M
+    expect(modelWindow("claude-fable-5", null)).toBe(1000000);
+    expect(modelWindow("claude-fable-5-1", null)).toBe(1000000);
+    expect(modelWindow("claude-mythos-5-1", null)).toBe(1000000);
+    // earlier tiers stay 200k (Sonnet 4.5's 1M was a beta: the header override)
+    expect(modelWindow("claude-opus-4-5-20251101", null)).toBe(200000);
+    expect(modelWindow("claude-opus-4-1-20250805", null)).toBe(200000);
+    expect(modelWindow("claude-sonnet-4-5", null)).toBe(200000);
+    expect(modelWindow("claude-3-5-sonnet-20241022", null)).toBe(200000);
+    expect(modelWindow("claude-haiku-4-5-20251001", null)).toBe(200000);
+    // unknown: no denominator, never a guess
     expect(modelWindow("grok-4.5", null)).toBe(0);
+    expect(modelWindow("claude-opus", null)).toBe(0);
     expect(modelWindow("", null)).toBe(0);
   });
 });

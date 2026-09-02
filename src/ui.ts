@@ -57,7 +57,7 @@ import {
   diffHunk,
   richToolBody,
 } from "./session";
-import { modelPricing, modelWindow, pairCost, fmtCost, costTitle } from "./pricing";
+import { modelPricing, modelWindow, pairRates, pairCost, fmtCost, costTitle } from "./pricing";
 import { stepCost, threadCostSplit, costEvents, usagePolls } from "./cost";
 import {
   CTX_CATS,
@@ -2406,6 +2406,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Pricing + cost estimation, injected from src/pricing.ts.
     ${modelPricing.toString()}
+    ${pairRates.toString()}
     ${modelWindow.toString()}
     ${pairCost.toString()}
     ${fmtCost.toString()}

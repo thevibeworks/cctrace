@@ -22,7 +22,8 @@ function msgPair(u: Usage = {}, opts: any = {}): any {
     `"output_tokens":${u.output ?? 100},` +
     `"cache_read_input_tokens":${u.cacheRead ?? 0},` +
     `"cache_creation_input_tokens":${(u.cacheWrite5m ?? 0) + (u.cacheWrite1h ?? 0)},` +
-    `"cache_creation":{"ephemeral_5m_input_tokens":${u.cacheWrite5m ?? 0},"ephemeral_1h_input_tokens":${u.cacheWrite1h ?? 0}}}`;
+    `"cache_creation":{"ephemeral_5m_input_tokens":${u.cacheWrite5m ?? 0},"ephemeral_1h_input_tokens":${u.cacheWrite1h ?? 0}}` +
+    (opts.speed ? `,"speed":"${opts.speed}"` : "") + `}`;
   const model = opts.model || "claude-sonnet-4-6";
   const sse = [
     `data: {"type":"message_start","message":{"model":"${model}",${usage}}}`,
@@ -68,6 +69,19 @@ describe("stepCost", () => {
     expect(c.model).toBe("claude-sonnet-4-6");
     expect(p._sc).toBe(c);
     expect(stepCost(p)).toBe(c); // second call reads the memo
+  });
+
+  test("a fast-mode pair (usage.speed fast) bills at 2x and says so", () => {
+    const p = msgPair({ input: 1_000_000, output: 100_000 }, { model: "claude-opus-5", speed: "fast" });
+    const c = stepCost(p);
+    expect(c.input).toBeCloseTo(10); // 1M * $10/MTok, not $5
+    expect(c.output).toBeCloseTo(5); // 100k * $50/MTok
+    expect(c.mods).toEqual(["fast mode"]);
+    // the same request downgraded to standard speed (usage.speed
+    // "standard" — what Opus 4.6 reports) is a plain pair
+    const s = stepCost(msgPair({ input: 1_000_000, output: 100_000 }, { model: "claude-opus-5", speed: "standard" }));
+    expect(s.input).toBeCloseTo(5);
+    expect("mods" in s).toBe(false);
   });
 
   test("an unknown model is unpriced — null, never $0", () => {

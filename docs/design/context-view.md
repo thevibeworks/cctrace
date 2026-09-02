@@ -89,7 +89,11 @@ TO the provider-reported number, never instead of it:
 - the **segment split** inside a bar is the estimate's proportions;
 - the headline shows both ("413.2k prompt · estimated ≈229.4k") — on
   code-heavy sessions chars/4 undercounts (real density ≈3 chars/token),
-  and showing both is the honest form of that.
+  and showing both is the honest form of that. Claude 4.7 and later (and
+  Mythos) use a newer tokenizer that yields ~30% more tokens for the same
+  text (pricing docs, 2026-09), so the estimate reads further under on
+  those models; the reconciliation line states the gap per step rather
+  than the heuristic pretending to know the model's density.
 
 The **window** denominator comes from the models.dev catalog
 (`limit.context`, now carried by src/pricing-catalog.ts) via

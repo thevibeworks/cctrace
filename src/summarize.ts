@@ -188,6 +188,12 @@ export function extractMessageInfo(pair: any): any {
     cachePct: totalIn > 0 ? Math.round((cacheRead / totalIn) * 100) : null,
     stopReason: stopReason || null,
     serviceTier: u.service_tier || u0.service_tier || null,
+    // Pricing modifiers the wire states (pairRates in pricing.ts): the
+    // response's usage.speed is the billed speed — a request that asked
+    // for fast and was downgraded says "standard" — and inference_geo is
+    // the request's own field.
+    fast: (u.speed || u0.speed) === "fast",
+    geoUs: req.inference_geo === "us",
     error,
   };
 }

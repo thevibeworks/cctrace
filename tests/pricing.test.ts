@@ -1,12 +1,27 @@
 import { describe, test, expect } from "bun:test";
-import { modelPricing, pairCost, fmtCost, costTitle } from "../src/pricing";
+import { modelPricing, pairRates, pairCost, fmtCost, costTitle } from "../src/pricing";
 
 describe("modelPricing", () => {
   test("current models resolve to their per-MTok sticker price", () => {
     expect(modelPricing("claude-fable-5")).toMatchObject({ input: 10, output: 50 });
+    expect(modelPricing("claude-fable-5-1")).toMatchObject({ input: 10, output: 50 });
     expect(modelPricing("claude-opus-4-8")).toMatchObject({ input: 5, output: 25 });
-    expect(modelPricing("claude-sonnet-5")).toMatchObject({ input: 3, output: 15 });
+    // Sonnet 5's $2/$10 launch price became the standard price (the
+    // 2026-09-01 increase to $3/$15 was cancelled)
+    expect(modelPricing("claude-sonnet-5")).toMatchObject({ input: 2, output: 10 });
+    expect(modelPricing("claude-sonnet-4-6")).toMatchObject({ input: 3, output: 15 });
     expect(modelPricing("claude-haiku-4-5-20251001")).toMatchObject({ input: 1, output: 5 });
+  });
+
+  test("Fable 5.1 / Mythos 5.1 read the cache at 0.025x; Fable 5 / Mythos 5 keep 0.1x", () => {
+    expect(modelPricing("claude-fable-5-1").cacheRead).toBeCloseTo(0.25);
+    expect(modelPricing("claude-mythos-5-1").cacheRead).toBeCloseTo(0.25);
+    expect(modelPricing("claude-fable-5-1-20260901").cacheRead).toBeCloseTo(0.25);
+    expect(modelPricing("claude-fable-5").cacheRead).toBeCloseTo(1);
+    expect(modelPricing("claude-mythos-5").cacheRead).toBeCloseTo(1);
+    // writes are unchanged: 1.25x / 2x on $10
+    expect(modelPricing("claude-fable-5-1").cacheWrite5m).toBeCloseTo(12.5);
+    expect(modelPricing("claude-fable-5-1").cacheWrite1h).toBeCloseTo(20);
   });
 
   test("legacy opus 3/4.0/4.1 keep the old $15/$75; opus 4.5+ the new $5/$25", () => {
@@ -45,6 +60,30 @@ describe("modelPricing", () => {
   test("unknown future version of a known family falls back to the family's current price", () => {
     expect(modelPricing("claude-opus-5")).toMatchObject({ input: 5, output: 25 });
     expect(modelPricing("claude-haiku-5")).toMatchObject({ input: 1, output: 5 });
+  });
+});
+
+describe("pairRates: the wire's pricing modifiers", () => {
+  test("no modifier = the model's own rates, untouched", () => {
+    expect(pairRates({ model: "claude-opus-5" })).toEqual(modelPricing("claude-opus-5"));
+    expect(pairRates({ model: "claude-opus-5", fast: false, geoUs: false })).toEqual(modelPricing("claude-opus-5"));
+    expect(pairRates({ model: "gpt-4o", fast: true })).toBeNull();
+  });
+  test("fast mode (usage.speed fast) doubles every rate — $10/$50, cache multipliers on top", () => {
+    const p = pairRates({ model: "claude-opus-5", fast: true });
+    expect(p).toMatchObject({ input: 10, output: 50, mods: ["fast mode"] });
+    expect(p.cacheRead).toBeCloseTo(1);
+    expect(p.cacheWrite5m).toBeCloseTo(12.5);
+    expect(p.cacheWrite1h).toBeCloseTo(20);
+  });
+  test("us inference is 1.1x on every class, and stacks with fast mode", () => {
+    const g = pairRates({ model: "claude-sonnet-4-6", geoUs: true });
+    expect(g.input).toBeCloseTo(3.3);
+    expect(g.cacheRead).toBeCloseTo(0.33);
+    expect(g.mods).toEqual(["us inference"]);
+    const both = pairRates({ model: "claude-opus-4-8", fast: true, geoUs: true });
+    expect(both.output).toBeCloseTo(55);
+    expect(both.mods).toEqual(["fast mode", "us inference"]);
   });
 });
 
@@ -100,5 +139,13 @@ describe("costTitle", () => {
   test("lists only non-zero components", () => {
     const t = costTitle({ input: 0.5, output: 0.2, cacheRead: 0, cacheWrite: 0 });
     expect(t).toBe("estimated: input $0.50 + output $0.20");
+  });
+  test("names the wire's modifiers when a pair was billed under them", () => {
+    const c = pairCost({ model: "claude-opus-5", input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, fast: true });
+    expect(c.input).toBeCloseTo(10);
+    expect(c.mods).toEqual(["fast mode"]);
+    expect(costTitle(c)).toBe("estimated (fast mode): input $10.00");
+    // an unmodified pair carries no mods key at all
+    expect("mods" in pairCost({ model: "claude-opus-5", input: 10, output: 0, cacheRead: 0, cacheWrite: 0 })).toBe(false);
   });
 });

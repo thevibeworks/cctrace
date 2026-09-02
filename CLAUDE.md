@@ -69,10 +69,14 @@ src/
 │                   #   Sessions + Context views (three tabs). Context is a
 │                   #   DevTools-shaped shell: an interactive overview
 │                   #   (two tracks, one brush) driving three decks —
-│                   #   window / stream / events
+│                   #   window / stream / events — and ONE inspector: a
+│                   #   right panel a pick opens (icicle node / stream
+│                   #   record / event row), × or Esc closes, with a
+│                   #   VERTICAL facet rail — content / schema / origin
+│                   #   / wire — listing only what the wire can answer
 ├── replay.ts       # Session replay: the time cursor primitives (visibleAt,
 │                   #   boundaries, tick ladder, slices) + the STAGE readings
-│                   #   of a cursor — sessionLanes (human/model/tools/agents/
+│                   #   of a cursor — sessionLanes (turns/human/model/tools/agents/
 │                   #   harness over wall-clock), stateAt/nowAt/loopAt (the
 │                   #   observed state at the cursor, read into one NOW line
 │                   #   and lit on the LOOP ROW in the replay bar),
@@ -115,7 +119,10 @@ src/
 │                   #   that step. trajectoryRecords: the thread as one
 │                   #   linear stream of records (system/user/CONTEXT-inline/
 │                   #   assistant/tool call+result) — the context view's
-│                   #   STREAM deck, MAP/READ/FULL from archify
+│                   #   STREAM deck, MAP/READ/FULL from archify.
+│                   #   ctxCarrySpan: the CARRY behind the inspector's
+│                   #   origin facet — how many requests re-sent an
+│                   #   item, to a known window or the next ✂ boundary
 │                   #   (docs/design/context-view.md)
 ├── vendor/
 │   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)

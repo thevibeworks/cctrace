@@ -192,20 +192,23 @@ session) — the link a statusline can afford to print. Hash-routed views:
   Estimates carry ≈ and sit next to the provider-reported
   prompt tokens. Selection is shared with the Sessions view, and a step
   links back to its turn there.
+- **Trajectory bar** (Sessions view, always on top): five lanes over
+  wall-clock — turns (one clickable block per working loop, numbered, the
+  turn's tally on hover) · model requests · tools · subagents · harness
+  marks — drawn for the whole session even before any replay,
+  idle folded to `⧸⧸` breaks. It syncs with the conversation: a faint
+  marker tracks where you have scrolled, and a click jumps the
+  conversation to that moment (⏵ starts replay); the ▾ chevron folds
+  the lanes to the clock row.
 - **Replay** (inside Sessions view): "⏵ replay" or `←`/`→` steps through the
   session as it happened; `[`/`]` jump between working loops; `Space` plays
   at 1/2/8/60x (idle gaps compressed). The scrubber is a TRAJECTORY: five
-  lanes over wall-clock (human prompts · model requests · tools · subagents
+  lanes over wall-clock (turn blocks · model requests · tools · subagents
   stacked · harness cuts/failures) under a clock axis, everything right of
   the playhead dimmed and every thread but the selected one ghosted; wheel
   zooms around the cursor and the strip labels spans as you zoom in; click
   a span to jump there; the axis is the selected session's own time with
-  idle gaps over 5 min folded to a hatched `⧸⧸` break. Under the strip
-  the LOOP ROW is a live flowchart of the agent's loop — human -> model
-  -> calls? -> tools/agents/waiting -> model, or no -> answer -> human —
-  with the observed state (model/tools/agents/waiting/human/failed/idle)
-  lit, the transition it came in by flowing, what is running and since
-  when. The left
+  idle gaps over 5 min folded to a hatched `⧸⧸` break. The left
   pane carries the BEAT (this step's tool calls fused with results,
   spawns, the reply, the window delta, and the prompt that started the
   loop) and the call tally so far. On a LIVE run replay tails:

@@ -15,8 +15,7 @@ import { extractCallInfo } from "./summarize";
 // docs/design/session-replay.md). These are the pure primitives: the wire as
 // of a cursor, the event boundaries playback walks, and the tick scheduler —
 // plus the STAGE layer below them (docs/design/replay-stage.md): the trace as
-// lanes over time, the observed state at the cursor (stateAt) read into one
-// NOW line (nowAt) and placed on the loop row (loopAt), the tally behind it
+// lanes over time, the tally behind the cursor
 // (soFar), the beat (what the agent did at this step), the strip's clock
 // ruler (axisTicks) and its axis — the selected thread's own extent
 // (threadExtent) mapped to pixels with idle compressed (timeScale / scaleX /
@@ -191,7 +190,9 @@ export function stepOutcome(turn: any, isFinal: boolean, pair: any): any {
  * The trace as LANES over wall-clock — the trajectory strip's whole data
  * model. `threads` are buildSession threads (the caller decides which: pass
  * the utility threads in and they get lanes too), `pairOf(id)` resolves a
- * pair. Returns { t0, t1, human, model, tools, waiting, agents, cuts, failed }
+ * pair. Returns { t0, t1, human, turns, model, tools, waiting, agents, cuts, failed }
+ * — `turns` is each working loop as ONE block (the prompt's instant to the
+ * loop's last reply) with its tally: steps, calls, agents, cuts, failed.
  * with every lane sorted by time; t0/t1 are 0 when nothing resolved.
  *
  * Every span is a wire timestamp: model = [pair start, pair end], tools /
@@ -204,7 +205,7 @@ export function stepOutcome(turn: any, isFinal: boolean, pair: any): any {
  * produced no turn to attribute).
  */
 export function sessionLanes(threads: any[], pairOf: any): any {
-  const out: any = { t0: 0, t1: 0, human: [], model: [], tools: [], waiting: [], agents: [], cuts: [], failed: [] };
+  const out: any = { t0: 0, t1: 0, human: [], turns: [], model: [], tools: [], waiting: [], agents: [], cuts: [], failed: [] };
   let lo = Infinity;
   let hi = -Infinity;
   const mark = (a: number, b: number) => {
@@ -226,6 +227,11 @@ export function sessionLanes(threads: any[], pairOf: any): any {
     for (let li = 0; li < loops.length; li++) {
       const L = loops[li];
       let headPair: any = null;
+      // the loop as a TURN block: its last reply's end, its tally
+      let loopEnd = -Infinity;
+      let steps = 0;
+      let calls = 0;
+      const loopPairs: string[] = [];
       for (const v of L.members) {
         const turn = vis[v];
         if (!turn || turn.role !== "assistant" || !turn.pairId) continue;
@@ -240,6 +246,10 @@ export function sessionLanes(threads: any[], pairOf: any): any {
           err: oc.err, stop: oc.stop, next: oc.next,
         });
         mark(t0, t1);
+        if (t1 > loopEnd) loopEnd = t1;
+        steps++;
+        calls += oc.calls.length;
+        loopPairs.push(p.id);
         // The gap after this reply, exactly as threadTimeSplit counted it.
         // names carries EVERY call in wire order (three Bash calls are three
         // entries) — one gap covers them all, so count is names.length and
@@ -265,6 +275,19 @@ export function sessionLanes(threads: any[], pairOf: any): any {
         out.human.push({
           t: pairStartMs(headPair), threadKey: t.key, ord: li,
           label: label(turnSnippet((vis[L.head] || {}).blocks || [])), pairId: headPair.id,
+        });
+      }
+      // The TURN: the working loop as one block, from the instant the
+      // prompt hit the wire (its first request's start) to its last
+      // reply's end — the strip's clickable unit. A harness-started loop
+      // is still a turn (the rail numbers it), flagged `injected` so the
+      // block can say who started it. Subagents ride the agents lane.
+      if (L.head != null && headPair && !t.agentOf && loopEnd > -Infinity) {
+        out.turns.push({
+          t0: pairStartMs(headPair), t1: loopEnd, threadKey: t.key, ord: li,
+          label: label(turnSnippet((vis[L.head] || {}).blocks || [])),
+          injected: L.headInjected || "", pairId: headPair.id, pairIds: loopPairs,
+          steps, calls, agents: 0, cuts: 0, failed: 0,
         });
       }
     }
@@ -333,6 +356,17 @@ export function sessionLanes(threads: any[], pairOf: any): any {
   out.tools.sort((a: any, b: any) => a.t0 - b.t0);
   out.waiting.sort((a: any, b: any) => a.t0 - b.t0);
   out.human.sort((a: any, b: any) => a.t - b.t);
+  // The turn's marks: children spawned by its steps (spawn edge verified
+  // by tool_use id upstream), compactions carried by its steps, failed
+  // requests that fell inside it (a failure produces no turn, so it is
+  // placed by time — the retry is the next step of the same loop).
+  for (const tb of out.turns) {
+    const own = new Set(tb.pairIds);
+    for (const a of out.agents) if (a.parentKey === tb.threadKey && own.has(a.parentPairId)) tb.agents++;
+    for (const c of out.cuts) if (c.threadKey === tb.threadKey && own.has(c.pairId)) tb.cuts++;
+    for (const f of out.failed) if (f.threadKey === tb.threadKey && f.t >= tb.t0 && f.t <= tb.t1) tb.failed++;
+  }
+  out.turns.sort((a: any, b: any) => a.t0 - b.t0);
   out.cuts.sort((a: any, b: any) => a.t - b.t);
   out.failed.sort((a: any, b: any) => a.t - b.t);
   out.t0 = lo === Infinity ? 0 : lo;
@@ -340,223 +374,9 @@ export function sessionLanes(threads: any[], pairOf: any): any {
   return out;
 }
 
-/**
- * The agent's observed state AT the cursor: which lane covers it, since when,
- * and how many children are running. `threadKey` scopes to one thread — its
- * own spans plus the agents IT spawned (parentKey), which is what the stage
- * lights while a thread is selected.
- *
- * Precedence is actor-first: a request in flight is `model` even while its
- * children run (agentsRunning still reports them); then a child span; then
- * the gap the reply opened. Between spans the cursor is in a hole, and the
- * hole has a name: after a failed request it is `failed` (until the retry),
- * before a human point it is `human` (the reply landed, the human hasn't
- * spoken yet), otherwise `idle` — including before the first pair and after
- * the last, where nothing is happening at all.
- */
-export function stateAt(lanes: any, cursor: number, threadKey?: any): any {
-  const L = lanes || {};
-  const key = threadKey || "";
-  let running = 0;
-  let agent: any = null;
-  for (const a of L.agents || []) {
-    if (key && a.parentKey !== key) continue;
-    if (a.t0 <= cursor && cursor < a.t1) {
-      running++;
-      if (!agent || a.t0 > agent.t0) agent = a;
-    }
-  }
-  let m: any = null;
-  let lastT = -Infinity;
-  let lastItem: any = null;
-  let lastKind = "";
-  for (const x of L.model || []) {
-    if (key && x.threadKey !== key) continue;
-    // Half-open, like every span here: at exactly t1 the reply is visible
-    // (visibleAt) and the gap that follows owns the cursor.
-    if (x.t0 <= cursor && cursor < x.t1 && (!m || x.t0 > m.t0)) m = x;
-    if (x.t1 <= cursor && x.t1 >= lastT) { lastT = x.t1; lastItem = x; lastKind = "end"; }
-  }
-  if (m) return { state: "model", since: m.t0, item: m, agentsRunning: running };
-  if (agent) return { state: "agents", since: agent.t0, item: agent, agentsRunning: running };
-  for (const g of L.tools || []) {
-    if (key && g.threadKey !== key) continue;
-    if (g.t0 <= cursor && cursor < g.t1) return { state: "tools", since: g.t0, item: g, agentsRunning: running };
-  }
-  for (const g of L.waiting || []) {
-    if (key && g.threadKey !== key) continue;
-    if (g.t0 <= cursor && cursor < g.t1) return { state: "waiting", since: g.t0, item: g, agentsRunning: running };
-  }
-  for (const f of L.failed || []) {
-    if (key && f.threadKey !== key) continue;
-    if (f.t <= cursor && f.t >= lastT) { lastT = f.t; lastItem = f; lastKind = "failed"; }
-  }
-  if (lastT === -Infinity) return { state: "idle", since: L.t0 || 0, item: null, agentsRunning: running };
-  if (lastKind === "failed") return { state: "failed", since: lastT, item: lastItem, agentsRunning: running };
-  // A human point still ahead means the reply landed and the human hadn't
-  // answered yet. `item` stays the step that ENDED — a replay never shows
-  // the reader something that hasn't happened at the cursor.
-  for (const h of L.human || []) {
-    if (key && h.threadKey !== key) continue;
-    if (h.t > cursor) return { state: "human", since: lastT, item: lastItem, agentsRunning: running };
-  }
-  return { state: "idle", since: lastT, item: lastItem, agentsRunning: running };
-}
 
 /**
- * The NOW line: `stateAt` read into the one row the stage puts on screen —
- * what the agent is doing at the cursor, what is running, since when
- * (docs/design/replay-stage.md). Built ON stateAt, never forking its
- * precedence.
- *
- * `since` is always a wire timestamp. `held` is `cursor - since` only where
- * the state's extent is itself a wire fact — a span or gap with a t1. The
- * holes (`human`, `failed`, `idle`) are bounded by an event that has not
- * happened yet, so they hold nothing we observed: null.
- *
- * `liveStartMs` is an in-flight request's start (the proxies' `start` event)
- * at the live edge: the model IS thinking, the extent is unknown, and the
- * dot is the page's one heartbeat.
- */
-export function nowAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
-  const L = lanes || {};
-  const key = threadKey || "";
-  const st = stateAt(L, cursor, key);
-  if (liveStartMs && liveStartMs > 0) {
-    return {
-      state: "model", live: true, what: "thinking",
-      since: liveStartMs, held: null, agentsRunning: st.agentsRunning, pairId: "",
-    };
-  }
-  const s = st.state;
-  const item = st.item || null;
-  let what = "";
-  if (s === "model") what = "thinking";
-  else if (s === "tools") {
-    // Wire order of FIRST appearance, repeats folded: one gap covers three
-    // Bash calls, and "Bash ×3" is what the reader means by that.
-    const order: string[] = [];
-    const n: any = {};
-    for (const c of (item && item.names) || []) {
-      if (!c) continue;
-      if (n[c] == null) { n[c] = 0; order.push(c); }
-      n[c]++;
-    }
-    const parts: string[] = [];
-    for (const c of order) parts.push(c + (n[c] > 1 ? " ×" + n[c] : ""));
-    what = parts.join(" · ");
-  } else if (s === "agents") {
-    const labels: string[] = [];
-    for (const a of L.agents || []) {
-      if (key && a.parentKey !== key) continue;
-      if (a.t0 <= cursor && cursor < a.t1) labels.push(a.label || a.agentType || "subagent");
-    }
-    what = st.agentsRunning + " running";
-    if (labels.length) {
-      what += " · " + labels.slice(0, 3).join(", ") +
-        (labels.length > 3 ? " +" + (labels.length - 3) : "");
-    }
-  } else if (s === "waiting") what = "harness continued";
-  else if (s === "human") what = "awaiting the next prompt";
-  else if (s === "failed") what = ((item && item.status) || "failed") + " · the retry is next";
-  const extent = s === "model" || s === "tools" || s === "waiting" || s === "agents";
-  // The idle BEFORE the first pair has no beginning we observed — stateAt
-  // hands back the lane span's t0, which is still in the cursor's future.
-  // A now line never states a time that has not happened: 0 = say nothing.
-  const since = st.since > cursor ? 0 : st.since || 0;
-  return {
-    state: s,
-    live: false,
-    what,
-    since,
-    held: extent && item && item.t1 != null ? Math.max(0, cursor - st.since) : null,
-    agentsRunning: st.agentsRunning,
-    pairId: (item && (item.pairId || item.parentPairId)) || "",
-  };
-}
-
-/**
- * The LOOP row: `nowAt` placed on Claude Code's actual machine, drawn once
- * and lit at the cursor (docs/design/replay-stage.md, "The loop row"):
- *
- *     human --prompt--> model --calls--> [tools | agents | waiting]
- *       ^                 ^                        |
- *       |                 +--------results---------+
- *       +----------------answer--------------------+
- *
- * Three states the agent occupies — the hand-off SLOT is one position in
- * the loop with three flavors — and four edges. Returns nowAt's fields plus:
- *   node  'human' | 'model' | 'slot' | ''   the lit state ('' = idle: nothing lit)
- *   slot  'tools' | 'agents' | 'waiting'    the slot's label
- *   edge  'human>model' | 'model>slot' | 'slot>model' | 'model>human' | ''
- *         the transition INTO the lit node, where the wire shows one
- *   also  a child is running while the actor is elsewhere: the slot reads
- *         `agents`, half-lit, beside the lit node
- *
- * The edge into `model` is adjacency: the point or gap that ended exactly
- * where this request began (gap windows end at the next request's start —
- * threadTimeSplit's own rule). A live request has no gap yet, so its edge
- * is the protocol's: the newest landed reply made calls, and the request
- * in flight is the one that carries their results (`slot>model`); after a
- * final reply the wire cannot tell the human from a harness nudge until the
- * pair lands — no edge. The edge into `human` lights only when the reply
- * actually landed (the last step's `next` is reply): a loop the human
- * interrupted mid-tools lights the node, never the answer edge. A failed
- * request went nowhere: no edge.
- */
-export function loopAt(lanes: any, cursor: number, threadKey: any, liveStartMs?: number): any {
-  const L = lanes || {};
-  const key = threadKey || "";
-  const n = nowAt(L, cursor, key, liveStartMs);
-  const st = stateAt(L, cursor, key);
-  const s = n.state;
-  let node = "";
-  let slot = "tools";
-  let edge = "";
-  const near = (a: number, b: number) => Math.abs(a - b) <= 1;
-  const mine = (x: any) => !key || x.threadKey === key;
-  // the hand-off a gap stands for: its step's `next` (a Task beside a Bash
-  // is `agents` — the same coarser fact the lane and stateAt agree on)
-  const flavorOf = (pairId: string) => {
-    for (const x of L.model || []) if (x.pairId === pairId && x.next === "agents") return "agents";
-    return "tools";
-  };
-  if (s === "tools" || s === "agents" || s === "waiting") {
-    node = "slot";
-    slot = s;
-    edge = "model>slot";
-  } else if (s === "human") {
-    node = "human";
-    if (st.item && st.item.next === "reply") edge = "model>human";
-  } else if (s === "failed") {
-    node = "model";
-  } else if (s === "model") {
-    node = "model";
-    if (n.live) {
-      let last: any = null;
-      for (const x of L.model || []) {
-        if (!mine(x)) continue;
-        if (x.t1 <= cursor + 0.5 && (!last || x.t1 >= last.t1)) last = x;
-      }
-      if (last && (last.next === "tools" || last.next === "agents")) {
-        slot = last.next;
-        edge = "slot>model";
-      }
-    } else {
-      const at = n.since;
-      for (const h of L.human || []) if (mine(h) && near(h.t, at)) edge = "human>model";
-      if (!edge) for (const g of L.tools || []) if (mine(g) && near(g.t1, at)) { slot = flavorOf(g.pairId); edge = "slot>model"; }
-      if (!edge) for (const g of L.waiting || []) if (mine(g) && near(g.t1, at)) { slot = "waiting"; edge = "slot>model"; }
-      if (!edge) for (const a of L.agents || []) if ((!key || a.parentKey === key) && near(a.t1, at)) { slot = "agents"; edge = "slot>model"; }
-    }
-  }
-  const also = n.agentsRunning > 0 && s !== "agents";
-  if (also && node !== "slot") slot = "agents";
-  return Object.assign({}, n, { node, slot, edge, also });
-}
-
-/**
- * The tally behind the now line: how many steps ran, which tools were called
+ * The tally behind the cursor: how many steps ran, which tools were called
  * and how often, how many children, failures and cuts — all as of the cursor.
  * A span counts the moment it STARTS (t0 <= cursor), a mark when it lands.
  *
@@ -764,11 +584,14 @@ export function scaleT(scale: any, x: number): number {
 
 /**
  * One thread's own extent on the wall clock, and the time inside it that
- * carries activity: its model / tools / waiting spans, its human points,
- * cuts and failed marks, plus the agent spans it spawned (and its OWN span
- * when a child is the selection — the same ownership the strip's focus
- * uses). Points widen to nothing. `threadKey` empty = every item in the
- * lanes. null when the thread has nothing on the wire.
+ * carries activity: its model / tools spans, its human points, cuts and
+ * failed marks, plus the agent spans it spawned (and its OWN span when a
+ * child is the selection — the same ownership the strip's focus uses).
+ * Waiting spans stretch the EXTENT (the thread owns that clock) but never
+ * the busy union: a harness-wait is nobody working, so a long one
+ * compresses on the axis exactly like the idle between loops. Points widen
+ * to nothing. `threadKey` empty = every item in the lanes. null when the
+ * thread has nothing on the wire.
  */
 export function threadExtent(lanes: any, threadKey?: any): any {
   const L = lanes || {};
@@ -776,15 +599,19 @@ export function threadExtent(lanes: any, threadKey?: any): any {
   const busy: any[] = [];
   let lo = Infinity;
   let hi = -Infinity;
-  const add = (a: number, b: number) => {
+  const span = (a: number, b: number) => {
     if (!isFinite(a) || !isFinite(b)) return;
-    busy.push([a, b]);
     if (a < lo) lo = a;
     if (b > hi) hi = b;
   };
+  const add = (a: number, b: number) => {
+    if (!isFinite(a) || !isFinite(b)) return;
+    busy.push([a, b]);
+    span(a, b);
+  };
   for (const x of L.model || []) if (!key || x.threadKey === key) add(x.t0, x.t1);
   for (const g of L.tools || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
-  for (const g of L.waiting || []) if (!key || g.threadKey === key) add(g.t0, g.t1);
+  for (const g of L.waiting || []) if (!key || g.threadKey === key) span(g.t0, g.t1);
   for (const h of L.human || []) if (!key || h.threadKey === key) add(h.t, h.t);
   for (const c of L.cuts || []) if (!key || c.threadKey === key) add(c.t, c.t);
   for (const f of L.failed || []) if (!key || f.threadKey === key) add(f.t, f.t);

@@ -14,9 +14,6 @@ import {
   sliceWindow,
   stepOutcome,
   sessionLanes,
-  stateAt,
-  nowAt,
-  loopAt,
   soFar,
   axisTicks,
   mergeBusy,
@@ -233,7 +230,7 @@ describe("stepOutcome", () => {
 
 // loop 1: ask -> Bash call (A, 2s) -> [tools 8s, a 529 dies inside it] -> done (B, 1s)
 // loop 2: [human 89s] -> next -> sure (C, 0.5s) -> [harness nudge 4.5s] -> loaded (D, 0.5s)
-describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
+describe("sessionLanes / soFar / beatAt / chaptersOf", () => {
   const CALL = { type: "tool_use", id: "tu1", name: "Bash", input: { command: "ls", description: "list" } };
   const RES = { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "file.txt" }] };
   const h1 = [U("ask")];
@@ -282,88 +279,15 @@ describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
     expect(lanes.human.length).toBe(2);
   });
 
-  test("stateAt names the lane covering the cursor, and the holes between them", () => {
-    expect(stateAt(lanes, 999_000).state).toBe("idle"); // before the first pair
-    expect(stateAt(lanes, 1_001_000)).toMatchObject({ state: "model", since: 1_000_000, agentsRunning: 0 });
-    expect(stateAt(lanes, 1_004_000)).toMatchObject({ state: "tools", since: 1_002_000 });
-    // the 529 died inside the gap: the harness is still running tools
-    expect(stateAt(lanes, 1_007_000).state).toBe("tools");
-    expect(stateAt(lanes, 1_102_000)).toMatchObject({ state: "waiting", since: 1_100_500 });
-    // reply landed, the human hasn't answered yet
-    expect(stateAt(lanes, 1_050_000)).toMatchObject({ state: "human", since: 1_011_000 });
-    // after the last pair nothing is happening at all
-    expect(stateAt(lanes, 2_000_000)).toMatchObject({ state: "idle", since: 1_105_500 });
-  });
-
-  test("nowAt names the state, what is running, and how long it has held", () => {
-    // held is cursor - since wherever the extent is a wire fact (a span or a
-    // gap with a t1); the holes hold nothing we observed.
-    expect(nowAt(lanes, 1_001_000, "")).toMatchObject({
-      state: "model", live: false, what: "thinking", since: 1_000_000, held: 1000, pairId: "A",
-    });
-    expect(nowAt(lanes, 1_004_000, "")).toMatchObject({
-      state: "tools", what: "Bash", since: 1_002_000, held: 2000, pairId: "A",
-    });
-    expect(nowAt(lanes, 1_102_000, "")).toMatchObject({
-      state: "waiting", what: "harness continued", since: 1_100_500, held: 1500, pairId: "C",
-    });
-    expect(nowAt(lanes, 1_050_000, "")).toMatchObject({
-      state: "human", what: "awaiting the next prompt", since: 1_011_000, held: null, pairId: "B",
-    });
-    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", what: "", held: null });
-    expect(nowAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", what: "", since: 1_105_500, held: null });
-  });
-
-  test("the idle BEFORE the first pair states no since — it has not happened", () => {
-    // stateAt bounds the leading hole by the lane span's t0, which is in the
-    // cursor's future; a now line never dates a state to a clock the reader
-    // has not reached (the UI suppresses since === 0).
-    expect(stateAt(lanes, 999_000).since).toBe(1_000_000);
-    expect(nowAt(lanes, 999_000, "")).toMatchObject({ state: "idle", since: 0, held: null });
-  });
-
-  test("a live start overrides the cursor's state: thinking, since the start, no extent", () => {
-    expect(nowAt(lanes, 2_000_000, "", 2_100_000)).toEqual({
-      state: "model", live: true, what: "thinking",
-      since: 2_100_000, held: null, agentsRunning: 0, pairId: "",
-    });
-  });
-
-  test("loopAt lights the machine: the state's node and the edge it came in by", () => {
-    // in flight, entered by the human's prompt (the point sits at the request start)
-    expect(loopAt(lanes, 1_001_000, "")).toMatchObject({ state: "model", node: "model", edge: "human>model", slot: "tools", also: false });
-    // the reply made calls: the slot is lit, entered from the model
-    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ state: "tools", node: "slot", slot: "tools", edge: "model>slot" });
-    // the next request begins exactly where the tools gap ended: results came back
-    expect(loopAt(lanes, 1_010_500, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "tools" });
-    // the reply landed and the human has not spoken: the answer edge, into human
-    expect(loopAt(lanes, 1_050_000, "")).toMatchObject({ state: "human", node: "human", edge: "model>human" });
-    // a call-less reply the loop continued past: the slot reads waiting, both ways
-    expect(loopAt(lanes, 1_102_000, "")).toMatchObject({ state: "waiting", node: "slot", slot: "waiting", edge: "model>slot" });
-    expect(loopAt(lanes, 1_105_200, "")).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "waiting" });
-    // both ends of the tape: nothing lit
-    expect(loopAt(lanes, 999_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
-    expect(loopAt(lanes, 2_000_000, "")).toMatchObject({ state: "idle", node: "", edge: "" });
-    // nowAt's own fields ride along
-    expect(loopAt(lanes, 1_004_000, "")).toMatchObject({ what: "Bash", since: 1_002_000, held: 2000, pairId: "A" });
-  });
-
-  test("a live request's edge is the protocol's: after a tool_use reply the results are coming back; after a final reply, unknown", () => {
-    // A's reply called Bash; the request in flight carries the results
-    expect(loopAt(lanes, 1_002_000, "", 1_002_500)).toMatchObject({ state: "model", live: true, node: "model", edge: "slot>model", slot: "tools" });
-    // D's reply was final: the wire cannot tell the human from a harness nudge yet
-    expect(loopAt(lanes, 2_000_000, "", 2_100_000)).toMatchObject({ state: "model", live: true, node: "model", edge: "" });
-  });
-
-  test("a child running while the parent thinks: the slot reads agents, half-lit", () => {
-    const L = {
-      t0: 0, t1: 10, human: [], tools: [], waiting: [], cuts: [], failed: [],
-      model: [{ t0: 5, t1: 8, threadKey: "p", pairId: "m", next: "tools" }],
-      agents: [{ t0: 1, t1: 9, threadKey: "c", parentKey: "p", parentPairId: "m0", label: "x", agentType: "", row: 0 }],
-    };
-    expect(loopAt(L, 6, "p")).toMatchObject({ state: "model", node: "model", slot: "agents", also: true, agentsRunning: 1, edge: "" });
-    // scoped to the child itself: it is the actor, nothing runs under it
-    expect(loopAt(L, 6, "c")).toMatchObject({ state: "idle", also: false });
+  test("turns are blocks: the prompt's instant to the loop's last reply, with the tally", () => {
+    expect(lanes.turns.map((x: any) => [x.ord, x.t0, x.t1, x.steps, x.calls, x.failed, x.cuts, x.agents, x.label, x.pairId])).toEqual([
+      // loop 1 spans A's start to B's end; the 529 fell inside it
+      [0, 1_000_000, 1_011_000, 2, 1, 1, 0, 0, "ask", "A"],
+      // loop 2: the harness nudge is a member, not a head — one turn, two steps
+      [1, 1_100_000, 1_105_500, 2, 0, 0, 0, 0, "next", "C"],
+    ]);
+    expect(lanes.turns[0].injected).toBe("");
+    expect(lanes.turns[0].pairIds).toEqual(["A", "B"]);
   });
 
   test("soFar tallies steps, calls by name, children, failures and cuts", () => {
@@ -377,11 +301,13 @@ describe("sessionLanes / stateAt / nowAt / soFar / beatAt / chaptersOf", () => {
     expect(ex.t0).toBe(1_000_000);
     expect(ex.t1).toBe(1_105_500);
     // the model spans, the tools gap and the retry fuse into one busy run;
-    // the 89s the human spent thinking between the loops is NOT busy — it is
-    // exactly the kind of hole the axis compresses.
+    // the 89s the human spent thinking between the loops is NOT busy, and
+    // neither is the waiting gap between C and D (nobody worked — the axis
+    // compresses both the same way). The extent still covers it.
     expect(ex.busy).toEqual([
       [1_000_000, 1_011_000],
-      [1_100_000, 1_105_500],
+      [1_100_000, 1_100_500],
+      [1_105_000, 1_105_500],
     ]);
     // no key = every item in the lanes; a key nothing carries = nothing
     expect(threadExtent(lanes, "")).toEqual(ex);
@@ -440,15 +366,8 @@ describe("sessionLanes: a failed request holds the hole until its retry", () => 
     expect(lanes.failed.map((f: any) => [f.pairId, f.t, f.status])).toEqual([["F", 1_001_000, 529]]);
   });
 
-  test("between the failure and the retry the state is failed, and the now line says why", () => {
-    expect(stateAt(lanes, 1_005_000)).toMatchObject({ state: "failed", since: 1_001_000 });
-    expect(nowAt(lanes, 1_005_000, "")).toMatchObject({
-      state: "failed", what: "529 · the retry is next", since: 1_001_000, held: null, pairId: "F",
-    });
+  test("the tally counts the failure before any step completed", () => {
     expect(soFar(lanes, 1_005_000)).toMatchObject({ steps: 0, failed: 1 });
-    expect(stateAt(lanes, 1_010_500).state).toBe("model");
-    // a failed request went nowhere: the model chip in red, no edge lit
-    expect(loopAt(lanes, 1_005_000, "")).toMatchObject({ state: "failed", node: "model", edge: "" });
   });
 });
 
@@ -492,25 +411,6 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     });
   });
 
-  test("stateAt scoped to the parent reports the children running under it", () => {
-    expect(stateAt(lanes, 2_020_500, parent.key)).toMatchObject({ state: "agents", agentsRunning: 2 });
-    expect(stateAt(lanes, 2_025_000, parent.key)).toMatchObject({ state: "agents", agentsRunning: 1 });
-    // a request in flight is the actor even while a child runs
-    expect(stateAt(lanes, 2_020_500, lanes.agents[1].threadKey)).toMatchObject({ state: "model", agentsRunning: 0 });
-  });
-
-  test("the now line names the running children, and folds repeated calls", () => {
-    expect(nowAt(lanes, 2_020_500, parent.key)).toMatchObject({
-      state: "agents", agentsRunning: 2,
-      what: "2 running · [Explore] explore repo, [Review] review docs",
-      // stateAt's own precedence: the newest child span owns the cursor
-      since: 2_020_000, held: 500, pairId: "M1",
-    });
-    expect(nowAt(lanes, 2_025_000, parent.key).what).toBe("1 running · [Explore] explore repo");
-    // one gap, two Task calls: wire order of first appearance, repeats folded
-    expect(nowAt(lanes, 2_005_000, parent.key)).toMatchObject({ state: "tools", what: "Task ×2" });
-  });
-
   test("a thread's extent covers the children it spawned; a child's covers only itself", () => {
     const p = threadExtent(lanes, parent.key);
     // the parent's own requests are 2_000_000..2_200_500, but the children it
@@ -521,12 +421,6 @@ describe("sessionLanes: parallel subagents stack on rows", () => {
     expect([child.t0, child.t1]).toEqual([2_020_000, 2_021_000]);
   });
 
-  test("the loop row's slot reads agents for a spawning step, and the model returns from it", () => {
-    expect(loopAt(lanes, 2_020_500, parent.key)).toMatchObject({ state: "agents", node: "slot", slot: "agents", edge: "model>slot", also: false });
-    // M2 begins exactly where M1's gap ended, and M1's step was a spawn:
-    // the results edge, from an agents-flavored slot
-    expect(loopAt(lanes, 2_200_200, parent.key)).toMatchObject({ state: "model", node: "model", edge: "slot>model", slot: "agents" });
-  });
 });
 
 describe("sessionLanes: cuts (real compaction fixture)", () => {

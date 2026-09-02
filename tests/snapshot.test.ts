@@ -183,8 +183,8 @@ describe("page meta", () => {
     expect(html).toContain("function anchorAt");
     // the stage data layer rides along, inlined from src/replay.ts
     expect(html).toContain("function sessionLanes");
-    expect(html).toContain("function stateAt");
     expect(html).toContain("function beatAt");
+    expect(html).not.toContain("function loopAt"); // the loop row went (rev 4)
     expect(html).toContain("function chaptersOf");
   });
 });

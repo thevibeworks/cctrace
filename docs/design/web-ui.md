@@ -589,8 +589,16 @@ hash-routed:
   turns, the CONTEXT the harness injected INLINE at the moment it entered
   the window, the model's thinking, each tool call fused with its result,
   the reply. Kind-badged, in spine order, `turn NN` sticky dividers, the
-  amount on the right edge. Two panes (list | inspector); the inspector
-  opens the picked record with the detail panel's own block renderers.
+  amount on the right edge. One column of rows; a picked record opens in
+  the INSPECTOR — the right panel every deck shares: a pick (an icicle
+  node, a stream record, an event row) opens it beside the deck, × / Esc
+  closes it, and inside a VERTICAL facet rail lists only what the wire can
+  answer for that pick — content (the detail panel's own block renderers,
+  the picked fold open), schema (the tool's declaration in the carrying
+  request, with its weight and rank), origin (the step it entered with and
+  the carry: how many requests re-sent it, ≈tokens × N), wire (the
+  carrying request in brief, both links out). Spec:
+  docs/design/context-view.md §The inspector.
   archify's MAP / READ / FULL level FILTERS and never summarizes (hidden
   rows are counted out loud, persisted in `cctrace-tj-level`), plus a kind
   filter — **context only** is the killer use, the context trajectory
@@ -624,10 +632,16 @@ hash-routed:
   pairs whose response completed at or before the cursor are visible,
   everything after doesn't exist yet (`visibleAt` in `src/replay.ts`; the
   session rebuilds from the visible subset via the normal `buildSession`
-  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps turns, shift+←/→
-  steps wire requests, Space plays (setTimeout ladder over response-end
-  boundaries, idle gaps compressed to ≤2s, speeds 1/2/8/60x), Home/End
-  jump, Esc exits. The scrubber doubles as a minimap (turns = tall accent
+  path). Toolbar "⏵ replay" or ←/→ enters it; ←/→ steps the SELECTED
+  thread's own turns (a merged capture's other sessions never eat a
+  keypress), shift+←/→ steps wire requests, Space plays (setTimeout
+  ladder over response-end boundaries, idle gaps compressed to ≤2s,
+  speeds 1/2/8/60x), Home/End jump, Esc exits. The selection PINS for
+  the whole replay (resolved against the full capture — a cursor
+  before the thread's first response says "nothing on this thread's
+  wire yet" instead of flipping to the fallback thread), and
+  enter/⏮/Home park on the thread's own edges while ⏭/End stay the
+  tape's live edge (replay-stage.md rev 5). The scrubber doubles as a minimap (turns = tall accent
   marks, errors red, probes short ticks). Deep links anchor on pair id —
   `#/session/<key>/@<pair-id>` opens paused at that moment (ids survive
   cross-run merges; wall-clock offsets wouldn't). SLICES: shift+drag on
@@ -649,33 +663,47 @@ hash-routed:
   shipped; P3 (--record-timing chunk replay) + P4 + P5 (diff between two
   moments — slices give it endpoints) remain
   (docs/design/session-replay.md).
+- **The trajectory bar is the session view's OVERVIEW and its minimap**
+  (replay-stage.md rev 3 + 4): `#replay-bar` is FRAME in the session
+  view at all times — the strip draws the whole session's shape (lanes,
+  clock row, idle folded, thread focus, the live open-request stub)
+  without a replay running; the transport, veil, playhead and slice
+  stay hidden until `body.replaying`. The bar syncs with the session's
+  TURNS both ways: every rendered `.turn` carries `data-ts`, a faint
+  reading marker (`#rp-read`, the playhead's quiet twin, hidden while
+  replaying) tracks the topmost visible turn as the reader scrolls
+  (rAF-throttled, `rpSyncRead`), and a click on the track outside
+  replay jumps the conversation to the last turn at or before that
+  instant (`rpJumpConvoTo`) — it does NOT enter replay; ⏵ / Space /
+  arrows do. Wheel zoom works without entering. The ▾ chevron in the
+  clock gutter cell folds the lanes to the ~13px clock row (persisted,
+  `cctrace-traj-fold`); replay overrides the fold. A trace with no
+  session pairs hides the bar (`.rp-empty`).
 - **The replay stage** (docs/design/replay-stage.md — the rules live
   there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
   `axisTicks` in the page's local time, a major tick dropping a rule
-  through every lane) over five lanes x wall-clock (human points, model
-  spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
-  failed ✗), built from `sessionLanes` over the FULL threads (not the
+  through every lane) over five lanes x wall-clock (turn blocks — one
+  per working loop, the prompt's instant to its last reply, numbered at
+  any depth that fits, the tally on hover, lit under the conversation's
+  reading position, click = its prompt — model spans, tools/waiting
+  spans, agents stacked by row, harness cuts ✂ / failed ✗), built from
+  `sessionLanes` over the FULL threads (not the
   cursored ones) and positioned with the same `(t - t0)/dur` math the
   marks used; playhead, veil and slice span every lane. The rail's
   selected thread draws full and every other thread's items carry
   `.other` (~30%); `#rp-veil` dims everything RIGHT of the playhead — a
   replay never shows what has not happened. Wheel zooms around the cursor
   (1x-32x, the same helper the context overview uses) and sets
-  `data-depth` map/read/full; click a span seeks to its pair's END (the
-  boundary where it became visible). While replaying the bar carries the
-  LOOP ROW (`#rp-now`, between the strip and the transport, `loopAt`):
-  Claude Code's loop as a FLOWCHART in fixed-pixel inline SVG — boxes
-  human / model / the hand-off slot (tools | agents | waiting), a
-  `calls?` decision diamond, five labelled edges (prompt, yes, results
-  over the row, no · answer under it) — the state at the cursor lit, the
-  edge it came in by lit and FLOWING (an animated dash, the page's
-  deliberate second motion owner while replaying), and beside it the
-  state word, what is running, the held duration where the extent is a
-  wire fact, and the absolute clock it began at; click seeks to the step
-  that opened it; the model box beats only for a request in flight at
-  the live edge. The strip's axis is the selected thread's own extent
-  (`threadExtent`), idle gaps ≥ 5 min folded to 28px hatched `rp-break`
-  columns labelled `⧸⧸ <skipped>` in the clock row (`timeScale` /
+  `data-depth` map/read/full; while replaying, click seeks to that
+  pair's END (the boundary where it became visible). The loop-row
+  flowchart that sat between the strip and the transport was removed in
+  rev 4 (Eric, after real use) — the state at any moment is read off
+  the strip, the beat and the conversation.
+  The strip's axis is the selected thread's own extent
+  (`threadExtent`), idle gaps ≥ 2 min folded to 28px hatched `rp-break`
+  columns labelled `⧸⧸ <skipped>` in the clock row — waiting gaps
+  stretch the extent but are NOT busy, so a long harness-wait folds
+  like idle (replay-stage.md rev 5) (`timeScale` /
   `scaleX` / `scaleT` — the ONE x<->t mapping every strip surface uses:
   spans, ticks, veil, playhead, slice, drag, wheel zoom); the transport's
   clock and length stay real wall-clock.
@@ -686,8 +714,8 @@ hash-routed:
   tally as of the cursor — the only place the per-tool count is stated).
   `[`/`]` walk `chaptersOf`; `F` toggles `body.present` (chrome hidden,
   type scale unchanged); Esc peels present -> replay -> view. Open
-  `start`s (below) draw as a dashed model span to the newest known time
-  and beat the loop row's model chip — never a ticking clock.
+  `start`s (below) draw as a dashed model span to the newest known
+  time — never a ticking clock.
 - **Replay TAILS a live run.** The transport is
   `[⏮][▶][⏭] 1x 2x 8x 60x  <local clock> · +<offset> / <length>  [live]
   [✕ exit]`. `⏭` / `End` seek the end of the tape — on a live page the

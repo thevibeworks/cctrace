@@ -82,6 +82,7 @@ import {
   ctxWindowTurns,
   ctxTurnSig,
   ctxOriginTurn,
+  ctxCarrySpan,
   trajectoryRecords,
   trajectoryAtLevel,
   trajLabel,
@@ -102,9 +103,6 @@ import {
   sliceWindow,
   stepOutcome,
   sessionLanes,
-  stateAt,
-  nowAt,
-  loopAt,
   soFar,
   axisTicks,
   mergeBusy,
@@ -540,12 +538,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        conversation text never sits under it */
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 48px 12px 16px; }
     @media (max-width: 960px) { #threads { flex-basis: 220px; } }
-    /* ---- Replay transport bar (body.replaying) ---- */
+    /* ---- The trajectory bar: the session's overview, replay's instrument ---- */
     #replay-toggle { display: none; }
     body.view-session #replay-toggle { display: inline-block; }
     body.replaying #replay-toggle { background: var(--accent); border-color: var(--accent); color: #fff; }
-    /* Two rows: the trajectory strip over the transport. Both are FRAME —
-       they scope the panes below and must never scroll away with them. */
+    /* The bar is FRAME in the session view, ALWAYS (rev 3): the strip is
+       the session's overview even before any replay — touching it enters
+       replay at that moment. It scopes the panes below and must never
+       scroll away with them. */
     #replay-bar {
       display: none; flex-direction: column; align-items: stretch; gap: 6px;
       padding: 7px 16px;
@@ -553,7 +553,29 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-bottom: 1px solid var(--border);
       font-size: 12px;
     }
-    body.replaying #replay-bar { display: flex; }
+    body.view-session #replay-bar, body.replaying #replay-bar { display: flex; }
+    /* No session pairs yet: an empty band asserting nothing is not a frame */
+    body:not(.replaying) #replay-bar.rp-empty { display: none; }
+    /* Replay's own chrome waits for replay: the strip without a cursor
+       states history; the cursor states a moment. The veil/handle/slice
+       carry inline styles, hence the !important. */
+    body:not(.replaying) .rp-transport { display: none; }
+    body:not(.replaying) #rp-veil, body:not(.replaying) #rp-handle,
+    body:not(.replaying) #rp-slice { display: none !important; }
+    /* Collapsed (the chevron in the clock gutter cell): the lanes fold
+       away, the ~13px clock row stays — a thin ruler is still an overview.
+       Replay needs its lanes, so replaying overrides the fold. */
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-lanes-body,
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-rules,
+    body:not(.replaying) #replay-bar.rp-collapsed #rp-breaks,
+    body:not(.replaying) #replay-bar.rp-collapsed .rp-glbl:not(.rp-g0) { display: none; }
+    .rp-clps {
+      font: inherit; font-size: 9px; line-height: var(--rp-lh);
+      background: none; border: none; padding: 0 3px 0 0; margin: 0;
+      color: var(--text-faint); cursor: pointer;
+    }
+    .rp-clps:hover { color: var(--text); }
+    body.replaying .rp-clps { visibility: hidden; }
     .rp-transport { display: flex; align-items: center; gap: 8px; }
     .rp-btn {
       font: inherit; font-size: 12px; line-height: 1;
@@ -608,6 +630,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .rp-span.agent.more { opacity: 0.4; }
     .rp-span.open { background: none; border: 1px dashed var(--lane-model); color: var(--text-muted); }
     .rp-span.err { outline: 1px solid var(--red); outline-offset: -1px; }
+    /* the TURNS lane (rev 6): one block per working loop, the prompt's
+       instant (its accent left edge — what the human point was) to the
+       loop's last reply. The minimap's clickable unit: the number shows
+       at any depth the block can hold it, because the number IS the
+       point; the prompt's words wait for full depth. The block under the
+       conversation's reading position wears .cur — the sync, on the block. */
+    /* (.rp-turn, not .turn — the conversation's turns own that name) */
+    .rp-span.rp-turn {
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      box-shadow: inset 2px 0 0 var(--accent);
+      color: var(--text-muted); cursor: pointer;
+    }
+    .rp-span.rp-turn:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text); }
+    .rp-span.rp-turn.cur {
+      background: color-mix(in srgb, var(--accent) 36%, transparent); color: var(--text);
+      outline: 1px solid var(--accent); outline-offset: -1px;
+    }
+    /* a loop the harness started (a nudge, a loaded tool): a turn on the
+       rail, but not the human's — its edge is faint */
+    .rp-span.rp-turn.inj { box-shadow: inset 2px 0 0 var(--text-faint); opacity: 0.7; }
+    #rp-lanes .rp-span.rp-turn.w24 .rp-lbl.i { display: inline; }
+    #rp-lanes[data-depth="full"] .rp-span.rp-turn.w24 .rp-lbl.i { display: none; }
     .rp-point {
       position: absolute; top: 1px; bottom: 1px; width: 2px;
       transform: translateX(-1px);
@@ -706,6 +750,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-left: 3px solid transparent; border-right: 3px solid transparent;
       border-top: 5px solid var(--accent);
     }
+    /* the READING marker: where the conversation's viewport sits, on the
+       strip — the playhead's quiet reading-mode twin (replay-stage.md rev 4).
+       Moves only under the reader's own scroll; hides while replaying,
+       where the playhead owns position. */
+    #rp-read {
+      position: absolute; top: 0; bottom: 0; width: 0; display: none;
+      border-left: 1px solid var(--text-faint); opacity: 0.7;
+      pointer-events: none;
+    }
+    #rp-read::before {
+      content: ''; position: absolute; top: 0; left: -3px;
+      border-left: 3px solid transparent; border-right: 3px solid transparent;
+      border-top: 4px solid var(--text-faint);
+    }
+    body.replaying #rp-read { display: none !important; }
     #rp-time { margin-left: auto; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* the live chip: at the edge it is STATE (a green dot, the header status
        dot's own green), behind it is the control that snaps back. Live runs
@@ -719,82 +778,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       content: ''; width: 7px; height: 7px; border-radius: 50%;
       background: var(--green); flex-shrink: 0;
     }
-    /* ---- the loop row (#rp-now): Claude Code's machine as a FLOWCHART,
-       drawn once, lit at the cursor. Three process boxes (the hand-off slot
-       reads tools / agents / waiting), one "calls?" decision diamond, five
-       labelled edges; the now facts — what is running, how long it has held,
-       since when — ride beside it. Fixed pixel geometry: a still frame is
-       always complete, only the lit parts change, and the labels never
-       scale. The row's color is the lit state's hue — the strip's own lane
-       colors. */
-    #rp-now {
-      display: flex; align-items: center; gap: 10px; min-height: 70px;
-      font-size: 12px; color: var(--text-faint);
-    }
-    #rp-now .rp-glbl { flex: 0 0 56px; }  /* the strip's gutter: the bar reads as one table */
-    #rp-now[data-state="human"] { color: var(--accent); }
-    #rp-now[data-state="model"] { color: var(--lane-model); }
-    #rp-now[data-state="tools"] { color: var(--lane-tools); }
-    #rp-now[data-state="agents"] { color: var(--purple); }
-    #rp-now[data-state="waiting"] { color: var(--lane-waiting); }
-    #rp-now[data-state="failed"] { color: var(--red); }
-    #rp-now[data-rpseek] { cursor: pointer; }
-    #rp-loop { flex: none; display: block; overflow: visible; }
-    .rl-node { color: var(--text-faint); opacity: 0.5; }
-    .rl-node[data-node="human"] { color: var(--accent); }
-    .rl-node[data-node="model"] { color: var(--lane-model); }
-    .rl-node[data-slot="tools"] { color: var(--lane-tools); }
-    .rl-node[data-slot="agents"] { color: var(--purple); }
-    .rl-node[data-slot="waiting"] { color: var(--lane-waiting); }
-    .rl-node .rl-nb { fill: currentColor; fill-opacity: 0; stroke: currentColor; stroke-width: 1; }
-    .rl-node .rl-nl { fill: var(--text-muted); font-size: 11px; }
-    .rl-node.on { opacity: 1; }
-    .rl-node.on .rl-nb { stroke-width: 2; fill-opacity: 0.14; }
-    .rl-node.on .rl-nl { fill: currentColor; }
-    /* hollow = nothing is running: the human's turn */
-    .rl-node.on.hollow .rl-nb { fill-opacity: 0; }
-    /* a child is working while the actor is elsewhere: half-lit */
-    .rl-node.also { opacity: 0.85; }
-    .rl-node.also .rl-nb { fill-opacity: 0.08; }
-    /* the decision is a wire fact (did the reply make calls), not a state the
-       agent occupies: no hue of its own until a branch out of it is lit,
-       and then the row's */
-    .rl-node[data-node="decision"] { color: var(--text-faint); }
-    .rl-node[data-node="decision"].on { color: inherit; }
-    #rp-now[data-state="failed"] .rl-node.on { color: var(--red); }
-    /* live: a request is in flight right now — the ONE heartbeat the page
-       spends while replaying (the status dot's keyframes) */
-    #rp-now.live .rl-node.on .rl-nb { animation: heartbeat 2.4s ease-in-out infinite; }
-    .rl-edge { color: var(--text-faint); opacity: 0.5; }
-    .rl-edge .rl-e { fill: none; stroke: currentColor; stroke-width: 1; }
-    .rl-edge .rl-ah { fill: currentColor; stroke: none; }
-    /* the edge labels name the machine's transitions — they read a step
-       above the hairlines they belong to, and take the hue when lit */
-    .rl-edge .rl-el { fill: var(--text-muted); font-size: 9px; }
-    .rl-edge.on .rl-el { fill: currentColor; }
-    /* the lit edge takes the row's state color and FLOWS: the transition in
-       progress, drawn along the path's own direction. The page's second
-       motion owner while replaying, and a deliberate one — a static lit chip
-       did not read as a machine running (replay-stage.md, rev 2.2). */
-    .rl-edge.on { opacity: 1; color: inherit; }
-    .rl-edge.on .rl-e {
-      stroke-width: 2; stroke-dasharray: 4 4;
-      animation: rlflow 0.9s linear infinite;
-    }
-    @keyframes rlflow { from { stroke-dashoffset: 8; } to { stroke-dashoffset: 0; } }
-    /* the facts beside the drawing: two lines, vertically centred */
-    .rn-facts { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .rn-l1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-    .rn-state { flex: none; }
-    .rn-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
-    .rn-held { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
-    /* absolute wall-clock, never a ticking counter (ui.md) */
-    .rn-since { font-size: 11px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
     /* ---- the stage (#stage): the beat, the tally ----
        Top of the threads column while replaying (the rail stays under it:
        the strip is time navigation, the rail is still the outline). The
-       moment itself is stated in the frame — the loop row — so the stage
-       is what this STEP did. */
+       stage is what this STEP did; the moment is the strip's cursor. */
     #stage { padding: 2px 4px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
     /* so far: the call tally as of the cursor — the only place the
        per-tool count is stated */
@@ -804,8 +791,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-variant-numeric: tabular-nums;
     }
     @media (prefers-reduced-motion: reduce) {
-      #rp-now.live .rl-node.on .rl-nb { animation: none; }
-      .rl-edge.on .rl-e { stroke-dasharray: none; animation: none; }
       .sb.arrived { animation: none; }
     }
     /* the beat: what the agent did at this step, one row per fact */
@@ -1703,9 +1688,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tj-kind.active { color: var(--text); border-color: var(--tjc, var(--accent)); background: color-mix(in srgb, var(--tjc, var(--accent)) 14%, transparent); }
     .tj-search { font: inherit; font-size: 11px; background: var(--bg-surface); color: var(--text); border: 1px solid var(--border); padding: 3px 8px; border-radius: 5px; width: 170px; }
     .tj-hidden { font-size: 10px; color: var(--text-faint); }
-    .tj-body { flex: 1; min-height: 0; display: flex; margin: 0 -16px; }
-    .tj-list { flex: 1; min-width: 0; overflow-y: auto; padding: 4px 0 24px; }
-    .tj-detail { width: 40%; max-width: 560px; min-width: 280px; border-left: 1px solid var(--border); overflow-y: auto; padding: 10px 14px 24px; }
+    /* the list is the deck's main column; its rows bleed to the canvas
+       edge (the turn dividers are sticky inside the deck's own scroll) */
+    .tj-list { margin: 0 -16px; padding: 4px 0 24px; }
     .tj-turn { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
     .tj-row { display: flex; align-items: center; gap: 8px; padding: 3px 16px; text-decoration: none; color: var(--text); border-left: 2px solid transparent; font-size: 12px; }
     .tj-row:hover { background: var(--hover); }
@@ -1719,9 +1704,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tj-row.tj-err .tj-result, .tj-row.tj-err .tj-label { color: var(--red); }
     .tj-gap { flex: 1 1 auto; min-width: 8px; }
     .tj-tok { flex: 0 0 auto; color: var(--text-faint); font-size: 11px; }
-    .tj-dh { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px; }
-    .tj-dh-addr { font-size: 11px; color: var(--text-faint); }
-    .tj-dh-tok { margin-left: auto; font-size: 11px; color: var(--text-faint); }
     /* the shell: a fixed head, the OVERVIEW that never scrolls away, then
        a ruled margin that reconciles beside a deck that scrolls. The
        same two-pane grammar the requests (list|detail) and sessions
@@ -1733,11 +1715,58 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       flex: 0 0 300px; min-width: 0; overflow-y: auto;
       padding: 12px 16px 24px; border-right: 1px solid var(--border);
     }
-    .cx-canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-y: auto; padding: 0 16px 24px; }
-    /* stream mode owns its own scrolling (list | inspector, each its own
-       column) — the canvas must not add a second scrollbar around it. */
-    .cx-canvas.mode-stream { overflow: hidden; padding-bottom: 0; }
-    .cx-deck { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: 10px; }
+    .cx-canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; padding: 0 16px; }
+    /* the deck row: the deck's main column beside the INSPECTOR. Each
+       scrolls itself — the canvas never adds a scrollbar around them, so
+       the deck bar and the hint stay put while either column runs long. */
+    .cx-deck { flex: 1 1 auto; min-height: 0; display: flex; align-items: stretch; padding-top: 10px; }
+    .cx-deck-main { flex: 1; min-width: 0; overflow-y: auto; padding-bottom: 24px; }
+    /* ---- the inspector: ONE right panel for every deck ----
+       Opens on a pick (an icicle node, a stream record, an event row),
+       closes on × / Esc, and the deck takes the whole width until the
+       next pick. Inside: a head that names the picked thing, then a
+       VERTICAL rail of facets — the questions the wire can answer about
+       it (content · schema · origin · wire) — beside the facet's body.
+       The rail is vertical because it is a table of contents, not a
+       toolbar: it grows down, never wraps, and the labels line up. */
+    .cx-insp { flex: 0 0 40%; max-width: 560px; min-width: 300px; display: flex; flex-direction: column; min-height: 0; margin-left: 12px; border-left: 1px solid var(--border); }
+    .cx-insp[hidden] { display: none; }
+    .cx-insp-h {
+      flex: none; display: flex; align-items: center; gap: 8px; min-width: 0;
+      padding: 2px 8px 7px 12px; border-bottom: 1px solid var(--border);
+      font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+    }
+    .cx-insp-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+    .cx-insp-addr, .cx-insp-n { flex: none; color: var(--text-faint); font-size: 10px; white-space: nowrap; }
+    .cx-insp-tok { flex: none; margin-left: auto; color: var(--text-faint); white-space: nowrap; }
+    .cx-insp-x {
+      flex: none; font: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+      background: none; border: 0; border-radius: 4px; color: var(--text-faint); padding: 2px 5px;
+    }
+    .cx-insp-x:hover { color: var(--text); background: var(--hover); }
+    .cx-insp-cols { flex: 1; min-height: 0; display: flex; }
+    .cx-insp-rail { flex: 0 0 66px; display: flex; flex-direction: column; gap: 1px; padding-top: 8px; border-right: 1px solid var(--border); }
+    .cx-facet {
+      font: inherit; font-size: 11px; text-align: left; cursor: pointer;
+      background: none; border: 0; border-left: 2px solid transparent;
+      color: var(--text-faint); padding: 4px 6px 4px 10px;
+    }
+    .cx-facet:hover { color: var(--text); background: var(--hover); }
+    .cx-facet.active { color: var(--text); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .cx-insp-body { flex: 1; min-width: 0; overflow-y: auto; padding: 8px 12px 24px; font-size: 11px; }
+    /* a facet's key/value lines (the wire facet, the origin facet) */
+    .cx-kv { display: flex; gap: 10px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.5; }
+    .cx-kv-k { flex: 0 0 80px; color: var(--text-faint); }
+    .cx-kv-v { flex: 1; min-width: 0; color: var(--text-muted); overflow-wrap: anywhere; }
+    .cx-kv-v b { color: var(--text); font-weight: 500; }
+    .cx-kv-v .turn-wire { margin-right: 10px; }
+    .cx-insp-note { font-size: 11px; color: var(--text-faint); padding: 4px 0 8px; line-height: 1.5; }
+    .cx-insp-desc { font-size: 11px; color: var(--text-muted); white-space: pre-wrap; overflow-wrap: anywhere; padding: 4px 0 10px; line-height: 1.5; }
+    /* a compaction's before → after, one line per category */
+    .cx-cmp { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+    .cx-cmp-l { flex: 0 0 110px; display: inline-flex; align-items: center; gap: 6px; }
+    .cx-cmp-n { flex: 0 0 52px; text-align: right; }
+    .cx-cmp-d { flex: 0 0 62px; text-align: right; }
     .cx-head {
       flex: none; display: flex; align-items: center; gap: 8px; font-size: 12px;
       padding: 10px 16px 8px; border-bottom: 1px solid var(--border);
@@ -1962,8 +1991,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .cx-fchip:hover { border-color: var(--accent); }
     .cx-fchip.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+    .cx-ev { display: flex; align-items: baseline; gap: 10px; padding: 2px 4px; margin: 0 -4px; border-radius: 4px; font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; }
     .cx-ev:hover { background: var(--hover); }
+    .cx-ev.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .cx-ev-kind {
       flex: 0 0 58px; text-align: center; font-size: 9px; text-transform: uppercase;
       letter-spacing: 0.03em; color: var(--text-muted);
@@ -2013,18 +2043,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-fn-l { overflow: hidden; text-overflow: ellipsis; }
     .cx-fn-n { flex: none; color: var(--text-muted); font-size: 9px; }
     .cx-fn-t { flex: none; margin-left: auto; color: var(--text-muted); font-size: 9px; }
-    /* the pane under the graph: the selected node, opened */
-    /* the pane is a DRILL-DOWN, not the page: it scrolls inside itself so
-       15 open tool results can never push "what changed it" off the sheet */
-    .cx-pane { padding-top: 10px; max-height: 460px; overflow-y: auto; }
-    .cx-pane-h {
-      position: sticky; top: 0; z-index: 1; background: var(--bg);
-      display: flex; align-items: center; gap: 8px; font-size: 11px;
-      color: var(--text-muted); padding: 2px 0 5px; font-variant-numeric: tabular-nums;
-    }
-    .cx-pane-t { color: var(--text); }
-    .cx-pane-n { color: var(--text-faint); font-size: 10px; }
-    .cx-pane-tok { margin-left: auto; color: var(--text-faint); }
+    /* the picked node, opened — the inspector's content facet on the
+       window deck (a leaf: its bytes; a group: its heaviest items as
+       folds; a container: its children ranked) */
     .cx-pane-body { font-size: 11px; }
     .cx-prow {
       display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 4px;
@@ -2035,7 +2056,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        then the weight and the number, then the slack. A ranked list whose
        amounts sit 800px from their labels is not a column, it is a hunt. */
     .cx-prow-l { flex: 0 1 46ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .cx-prow, .cx-item > summary { max-width: 1100px; }
     /* .fold-hint is flex:1 app-wide (right for the detail panel, where the
        row IS the label). Here the row also carries a number, so the label
        gets a measure and the slack goes after it — scoped, never a change
@@ -2094,14 +2114,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
            and leave dead cells; columns just pack. */
         columns: 300px; column-gap: 28px;
       }
-      .cx-canvas, .cx-canvas.mode-stream { overflow: visible; }
+      .cx-canvas { overflow: visible; }
       #cx-bal { display: block; }
       .cx-mblock { break-inside: avoid; padding-bottom: 14px; }
       .cx-mblock + .cx-mblock,
       #cx-bal + .cx-mblock { padding-top: 0; margin-top: 0; border-top: none; }
-      .tj-body { flex-direction: column; }
-      .tj-list { max-height: 58vh; }
-      .tj-detail { width: auto; max-width: none; min-width: 0; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
+      /* the deck row stacks: the deck, then the inspector under it */
+      .cx-deck { flex-direction: column; }
+      .cx-deck-main { overflow: visible; }
+      .tj-list { max-height: 58vh; overflow-y: auto; }
+      .cx-insp { flex: none; max-width: none; min-width: 0; margin-left: 0; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
     }
     /* the rail's trajectory gutter: per-step context occupancy, split into
        the cached prefix and what was billed fresh (session view) */
@@ -2174,7 +2196,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div>
   <div id="session-view">
     <div id="replay-bar">
-      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> drag scrubs · shift+drag selects a slice · wheel zooms · click a span jumps there">
+      <div id="rp-lanes" data-depth="map" title="trajectory&#10;Lanes over wall-clock: the human's prompts, the model's requests, the tool gaps, the subagents, and the harness marks (✂ compaction, ✗ failed). The selected thread draws full, the others ghost; the faint marker tracks where the conversation is scrolled. While replaying, everything right of the playhead is dimmed — it has not happened yet.&#10;---&#10;> click jumps the conversation there · ⏵ replays · wheel zooms&#10;> replaying: drag scrubs · shift+drag selects a slice&#10;> the ▾ chevron folds the lanes to the clock row">
         <div id="rp-gut"></div>
         <div id="rp-scroll">
           <div id="rp-lanes-track">
@@ -2185,10 +2207,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             <div id="rp-veil"></div>
             <div id="rp-slice"></div>
             <div id="rp-handle"></div>
+            <div id="rp-read"></div>
           </div>
         </div>
       </div>
-      <div id="rp-now" data-state="idle"></div>
       <div class="rp-transport">
         <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
         <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
@@ -2295,7 +2317,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let ctxRange = null;
     let ctxZoom = 1;            // 1 = fit; >1 = the overview is N screens wide
     let ctxFocusKey = '';       // context graph zoom (a node key; falls back to root)
-    let ctxSelKey = '';         // context graph selection (drives the detail pane)
+    let ctxSelKey = '';         // context graph selection (the window deck's pick)
+    // The inspector — one right panel for every deck. Open while there is
+    // a pick and the reader has not closed it; × / Esc closes, the next
+    // pick reopens. The facet is a preference: it holds across picks and
+    // falls back to content when the picked thing lacks it.
+    let ctxInspOpen = true;
+    let ctxFacet = 'content';
+    let ctxEvSel = null;        // the events deck's pick: { key, pairId } of a rolled run
+    let ctxAddr = null;         // the current thread's pairId -> {ord, step} map
+    let ctxLastFl = null;       // the icicle layout drawn last (the pick resolves against it)
+    let ctxEvRolled = [];       // the events deck's rolled rows as drawn last
+    let ctxInspLastKey = '';    // what the inspector showed last (a changed pick drops its scroll)
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     // Requests FORWARDED with no response yet, keyed by the id the eventual
     // pair carries (the server's start events). Live state only: a
@@ -2399,6 +2432,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${ctxWindowTurns.toString()}
     ${ctxTurnSig.toString()}
     ${ctxOriginTurn.toString()}
+    ${ctxCarrySpan.toString()}
     ${trajectoryRecords.toString()}
     ${trajectoryAtLevel.toString()}
     ${trajLabel.toString()}
@@ -2425,9 +2459,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${isSpawnTool.toString()}
     ${stepOutcome.toString()}
     ${sessionLanes.toString()}
-    ${stateAt.toString()}
-    ${nowAt.toString()}
-    ${loopAt.toString()}
     ${soFar.toString()}
     ${axisTicks.toString()}
     ${mergeBusy.toString()}
@@ -2474,6 +2505,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpRestart = document.getElementById('rp-restart');
     const rpExit = document.getElementById('rp-exit');
     const rpLanes = document.getElementById('rp-lanes');
+    const rpBar = document.getElementById('replay-bar');
     const rpGut = document.getElementById('rp-gut');
     const rpScroll = document.getElementById('rp-scroll');
     const rpTrack = document.getElementById('rp-lanes-track');
@@ -2483,10 +2515,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const rpBreaks = document.getElementById('rp-breaks');
     const rpVeil = document.getElementById('rp-veil');
     const rpHandle = document.getElementById('rp-handle');
+    const rpRead = document.getElementById('rp-read');
     const rpTime = document.getElementById('rp-time');
     const rpEnd = document.getElementById('rp-end');
     const rpLive = document.getElementById('rp-live');
-    const rpNow = document.getElementById('rp-now');
     const rpSlice = document.getElementById('rp-slice');
     const pulseEl = document.getElementById('pulse');
     const rpSliceChip = document.getElementById('rp-slice-chip');
@@ -2847,7 +2879,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '---\\n' +
         'fresh off the wire:\\n' +
         '\\u00b7 COST is a reading of the Context view \\u2014 a per-step cost track (74% of a real $81 thread was cache reads), amber $ BUMPS with their wire cause (retry / expired / prefix changed) priced against a warm cache, where-the-money-went, and the account quota the client polled\\n' +
-        '\\u00b7 the LOOP ROW is a live flowchart \\u2014 human / model / hand-off boxes, a calls? diamond, the lit edge FLOWS; the state at the cursor, what is running, since when; click it to jump\\n' +
+        '\\u00b7 the trajectory bar is ALWAYS on top of the session view now \\u2014 the whole session\\u2019s shape before any replay, collapsible to its clock row, synced with the conversation: a faint marker tracks your scroll, a click jumps the convo to that moment\\n' +
         '\\u00b7 the strip rules the selected thread\\u2019s OWN time \\u2014 idle gaps fold to \\u29f8\\u29f8 breaks, so a 1h34m session fills the frame instead of a corner of a 10h axis; wall-clock ticks, the future veiled, other threads ghosted\\n' +
         '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor, the loop row and the conversation follow every pair that lands\\n' +
         '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
@@ -3546,10 +3578,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (view === 'context') {
         const ctxThread = () => getThreads().find(x => x.key === sessionSelKey);
         if (e.key === 'Escape') {
-          // Escape peels one layer at a time: the brushed range, then the
-          // zoom, then the view. Dropping straight out of a page you have
-          // scoped is the thing that makes a reader stop scoping.
+          // Escape peels one layer at a time: the inspector, the brushed
+          // range, then the zoom, then the view. Dropping straight out of
+          // a page you have scoped is the thing that makes a reader stop
+          // scoping.
           const t = ctxThread();
+          if (ctxInspOpen && ctxPick() && t) { ctxInspOpen = false; ctxRepaintInsp(); return; }
           if (ctxRange && t) { ctxRange = null; renderContextView(t); return; }
           if (ctxZoom > 1 && t) { ctxZoom = 1; renderContextView(t); return; }
           location.hash = '';
@@ -3644,7 +3678,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           stepReplay(e.key === 'ArrowRight' ? 1 : -1, !e.shiftKey);
         } else if (e.key === 'Home' && replay.active) {
           e.preventDefault();
-          seekReplay(replaySpan(pairs).t0);
+          seekReplay(rpHome());
           updateReplayHash();
         } else if (e.key === 'End' && replay.active) {
           e.preventDefault();
@@ -4371,7 +4405,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tailPill.classList.remove('show');
         return;
       }
-      const sel = resolveThreadSel(threads, key, sub);
+      let sel = resolveThreadSel(threads, key, sub);
+      // Replaying: the SELECTION is the reader's, resolved once against the
+      // whole capture. The cursored rebuild must never steal it — before the
+      // selected thread's first response it resolves to the fallback, which
+      // used to flip the rail, the convo AND the strip's axis to whatever
+      // thread happened to exist at the cursor (rev 5).
+      if (replay.active) {
+        const want = resolveThreadSel(fullThreads(), key || sessionSelKey, sub);
+        if (want) {
+          sessionSelKey = want.key;
+          const cur = threads.find(t => t.key === want.key);
+          if (cur) sel = cur;
+          else {
+            // Not on the wire yet at this moment: the rail renders without a
+            // selection to mark, the convo says so, the stage still stands.
+            renderThreadsPane(threads, { key: want.key });
+            convoEl.innerHTML = '<div class="empty">Nothing on this thread\\u2019s wire yet at this moment \\u2014 step forward (\\u2192) or press play.</div>';
+            convoKey = null;
+            tailPill.classList.remove('show');
+            renderReplayBar();
+            return;
+          }
+        }
+      }
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       agentThreadStats = {};
@@ -4393,8 +4450,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderConvoPane(sel);
       // The strip is RULED by the selected thread (its extent is the axis)
       // and ghosts every other one, so a rail click repaints the whole bar —
-      // keyed on the selection, so this is a no-op otherwise.
+      // keyed on the selection, so this is a no-op otherwise. Outside replay
+      // the strip alone renders (rev 3): it is the view's overview; the
+      // veil, the handle and the loop row wait for a cursor.
       if (replay.active) renderReplayBar();
+      else { renderReplayStrip(); rpQueueSyncRead(); }
       if (pendingSessionFocus) {
         pendingSessionFocus = false;
         focusThreadsPane();
@@ -5577,7 +5637,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const timeHtml = ts
         ? '<span class="turn-time' + (meta ? '' : ' tt-solo') + '" title="' + fmtDateTime(new Date(ts * 1000)) + '">' + fmtTime(new Date(ts * 1000)) + '</span>'
         : '';
-      return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '">' +
+      // data-ts (ms) is the trajectory bar's sync hook: the reading marker
+      // reads the topmost visible turn's time, a bar click walks these to
+      // find the turn at an instant (replay-stage.md rev 4).
+      return '<div class="turn turn-' + escapeHtml(String(turn.role)) + '"' + (ts ? ' data-ts="' + (ts * 1000) + '"' : '') + '>' +
         '<div class="turn-role">' + ordHtml + escapeHtml(String(turn.role)) + tag + meta + timeHtml + '</div>' + inner + '</div>';
     }
 
@@ -5612,7 +5675,73 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     convoEl.addEventListener('scroll', () => {
       if (convoAtBottom()) tailPill.classList.remove('show');
+      rpQueueSyncRead();
     });
+
+    // ---- the bar <-> convo sync (replay-stage.md rev 4) ----
+    // The READING marker: the topmost visible turn's wall-clock, marked on
+    // the strip through the same scale as every other position. It moves
+    // only under the reader's own scroll (the scrollbar-thumb exemption in
+    // the motion budget) and hides while replaying — the playhead owns
+    // position there.
+    let rpReadQueued = false;
+    function rpSyncRead() {
+      if (!rpRead || !rpRead.style) return;
+      if (replay.active || view !== 'session') { rpRead.style.display = 'none'; return; }
+      const sc = rpScale();
+      if (!sc || !convoEl.querySelectorAll) { rpRead.style.display = 'none'; return; }
+      const cbox = convoEl.getBoundingClientRect ? convoEl.getBoundingClientRect() : null;
+      let ts = 0;
+      for (const el of convoEl.querySelectorAll('.turn[data-ts]')) {
+        if (!cbox || !el.getBoundingClientRect) { ts = parseFloat(el.dataset.ts); break; }
+        if (el.getBoundingClientRect().bottom - cbox.top > 24) { ts = parseFloat(el.dataset.ts); break; }
+      }
+      if (!ts) { rpRead.style.display = 'none'; return; }
+      const frac = Math.min(1, Math.max(0, scaleX(sc, ts) / sc.px));
+      rpRead.style.left = (frac * 100).toFixed(3) + '%';
+      rpRead.style.display = 'block';
+      // The turn block under the reading position lights — the sync made
+      // visible on the block itself. A class flip under the reader's own
+      // scroll: no motion.
+      if (rpBody.querySelectorAll) {
+        for (const b of rpBody.querySelectorAll('.rp-span.rp-turn')) {
+          const on = ts >= parseFloat(b.dataset.t0) - 0.5 && ts <= parseFloat(b.dataset.t1) + 0.5;
+          b.classList.toggle('cur', on);
+        }
+      }
+    }
+    function rpQueueSyncRead() {
+      // A hidden tab never fires rAF — sync now so the marker is right the
+      // moment the reader comes back, instead of one frame stale.
+      if (typeof requestAnimationFrame !== 'function' || document.hidden) { rpSyncRead(); return; }
+      if (rpReadQueued) return;
+      rpReadQueued = true;
+      requestAnimationFrame(() => { rpReadQueued = false; rpSyncRead(); });
+    }
+
+    // A click on the bar outside replay jumps the CONVERSATION to the last
+    // turn at or before that instant — the outline's own jump, keyed by
+    // time. The bar is the minimap; replay entry stays on ⏵ / the keyboard.
+    // head: land on the FIRST turn at that instant, not the last — a turn
+    // block's prompt shares its timestamp with the harness turns the same
+    // request carried (the hook output, the reminders), and the reader who
+    // clicked the block wants the prompt, not the last banner before the
+    // reply.
+    function rpJumpConvoTo(t, head) {
+      if (!convoEl.querySelectorAll) return;
+      let target = null;
+      for (const el of convoEl.querySelectorAll('.turn[data-ts]')) {
+        const ts = parseFloat(el.dataset.ts);
+        if (head) { if (ts >= t - 0.5) { target = el; break; } continue; }
+        if (ts <= t + 0.5) target = el; else break;
+      }
+      if (!target) return;
+      if (target.getBoundingClientRect && convoEl.getBoundingClientRect) {
+        convoScrollTo(convoEl.scrollTop + target.getBoundingClientRect().top - convoEl.getBoundingClientRect().top - 8);
+      }
+      tailPill.classList.remove('show');
+      rpQueueSyncRead();
+    }
 
     function renderConvoPane(t) {
       const sameThread = convoKey === t.key;
@@ -6048,23 +6177,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return '<span class="tj-badge" style="--tjc:' + c + '">' + txt + '</span>';
     }
 
-    // The picked record, opened. A tool shows call + result + schema via the
-    // detail-panel's own tool renderer; a system record its blocks; anything
-    // else its block. The head names kind, turn.step, weight, and the wire.
+    // The picked record, opened — the inspector's content facet on the
+    // stream deck. A tool shows call + result via the detail-panel's own
+    // tool renderer; a system record its blocks; anything else its block.
+    // The inspector's head names kind, turn.step and weight; the wire and
+    // the schema are facets of their own.
     function renderTjDetail(r, results) {
       if (!r) return '<div class="cx-note">pick a record to open it</div>';
-      const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' · step ' + r.step : '') : '';
-      const wire = r.pairId ? '<a class="turn-wire" href="#/p/' + encodeURIComponent(r.pairId) + '" title="open the wire request that carried this record">wire →</a>' : '';
-      const head = '<div class="tj-dh">' + tjBadge(r) +
-        (addr ? '<span class="tj-dh-addr">' + addr + '</span>' : '') +
-        '<span class="tj-dh-tok">≈' + fmtCompact(r.tokens) + '</span>' + wire + '</div>';
       let body = '';
       try {
         if (r.kind === 'system') body = renderSystem((r.block && r.block.blocks) || []);
         else if (r.kind === 'tool') body = renderBlockS(r.block, results, true);
         else body = renderBlock(r.block, r.kind === 'assistant');
       } catch (e) { body = brokenItem('record', r.pairId, e); }
-      return head + '<div class="tj-dbody">' + body + '</div>';
+      return body;
     }
 
     // The stream deck's own controls — level, kind, search — for the deck
@@ -6101,7 +6227,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         for (const r of tjRecs) if (r.kind === 'tool' && r.block && r.block.id) tjResults[r.block.id] = r.result;
         tjCache = { key: t.key, n };
       }
-      if (tjSel == null || tjSel >= tjRecs.length) tjSel = tjRecs.length ? 0 : null;
+      // No default pick: the inspector opens when the reader asks, and a
+      // stale index past the end (the thread shrank) names nothing.
+      if (tjSel != null && tjSel >= tjRecs.length) tjSel = null;
       return trajectoryAtLevel(tjRecs, tjLevel);
     }
 
@@ -6135,9 +6263,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const q = tjQuery.trim().toLowerCase();
       if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
       // A pick outside the slice would leave the inspector showing a
-      // record the list does not have — land on the slice's first row
-      // instead. An in-slice pick is the reader's and survives.
-      if (bounds && shown.length && (tjSel == null || tjSel < bounds.lo || tjSel > bounds.hi)) tjSel = shown[0]._i;
+      // record the list does not have — drop it. An in-slice pick is the
+      // reader's and survives.
+      if (bounds && tjSel != null && (tjSel < bounds.lo || tjSel > bounds.hi)) tjSel = null;
       let rows = '';
       let lastOrd = -2;
       for (const r of shown) {
@@ -6156,26 +6284,385 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '</a>';
       }
       if (!shown.length) rows = '<div class="cx-note">no records match this ' + (bounds ? 'range/filter' : 'filter') + '</div>';
-      return '<div class="tj-body"><div class="tj-list" id="tj-list">' + rows + '</div>' +
-        '<aside class="tj-detail" id="tj-detail">' + renderTjDetail(tjRecs[tjSel], tjResults) + '</aside></div>';
+      return '<div class="tj-list" id="tj-list">' + rows + '</div>';
     }
 
-    // The stream's own wiring. Row clicks open the inspector in place (no
-    // navigation, like the requests list); the level/kind/search controls
-    // repaint just the deck, so the overview above never flickers.
+    // The stream's own wiring. A row click is a PICK: it opens the record
+    // in the inspector in place (no navigation, like the requests list);
+    // the level/kind/search controls repaint just the deck, so the
+    // overview above never flickers.
     function wireCtxStream(root, repaint) {
-      const detail = root.querySelector('#tj-detail');
       root.querySelectorAll('.tj-row').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
           tjSel = +a.dataset.tj;
+          ctxInspOpen = true;
           root.querySelectorAll('.tj-row.sel').forEach(x => x.classList.remove('sel'));
           a.classList.add('sel');
-          if (!detail) return;
-          detail.innerHTML = renderTjDetail(tjRecs[tjSel], tjResults);
-          detail.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
+          ctxRepaintInsp();
         });
       });
+    }
+
+    // ---- the inspector: ONE right panel for every deck ----
+    // A pick — an icicle node, a stream record, an event row — opens it;
+    // × / Esc closes it and the deck takes the whole width back. Inside,
+    // a head that names the picked thing, then a VERTICAL rail of facets
+    // beside the facet's body. The facets are the questions the wire can
+    // answer about the pick, and only those: content (what it is), schema
+    // (a tool's declared schema in the carrying request), origin (when it
+    // entered the window and how many requests re-sent it), wire (the
+    // request that carried it). A facet that would only say "n/a" is not
+    // offered, so the rail never lists a dead tab.
+
+    // What is picked on the current deck, resolved against what that deck
+    // drew last. Null = nothing to open. The key names the pick, so a
+    // repaint can tell "same thing, live pair" from "a different thing".
+    function ctxPick() {
+      if (ctxMode === 'window') {
+        const path = ctxLastFl && ctxSelKey ? ctxFlameFind(ctxLastFl.root, ctxSelKey) : null;
+        const hit = path && path[path.length - 1];
+        return hit ? { kind: 'node', key: 'n:' + ctxGraphAt + ':' + hit.key, hit, item: hit.item || null, pairId: ctxGraphAt } : null;
+      }
+      if (ctxMode === 'stream') {
+        const r = tjSel != null ? tjRecs[tjSel] : null;
+        return r ? { kind: 'rec', key: 'r:' + (tjCurThread ? tjCurThread.key : '') + ':' + tjSel, r, pairId: r.pairId || null } : null;
+      }
+      if (ctxMode === 'events' && ctxEvSel) {
+        const run = ctxEvRolled.find(x => x.key === ctxEvSel.key && x.ev.pairId === ctxEvSel.pairId);
+        return run ? { kind: 'ev', key: 'e:' + run.key + ':' + run.ev.pairId, run, ev: run.ev, pairId: run.ev.pairId || null } : null;
+      }
+      return null;
+    }
+
+    const CX_FACET_TIP = {
+      content: 'what it is \\u2014 rendered as in the requests detail panel',
+      schema: 'the tool\\u2019s declared schema in the request that carried this call, and what it costs to keep loaded',
+      origin: 'when it entered the window, and how many requests have re-sent it since',
+      wire: 'the request that carried it \\u2014 model, timing, usage, cost',
+    };
+    function ctxPickTool(pick) {
+      if (pick.kind === 'rec') return pick.r.kind === 'tool' ? pick.r.toolName : '';
+      if (pick.kind === 'node') return pick.item && pick.item.kind === 'tool_use' ? pick.item.toolName : '';
+      return '';
+    }
+    function ctxFacetsOf(pick) {
+      const out = ['content'];
+      if (!pick) return out;
+      const carried = !!(pick.pairId && pairOf(pick.pairId));
+      if (ctxPickTool(pick) && carried) out.push('schema');
+      const hasOrigin = pick.kind === 'rec' ? (pick.r.kind !== 'system' && carried)
+        : pick.kind === 'node' ? !!(pick.item && pick.item.ti != null && pick.item.ti >= 0 && carried)
+        : false;
+      if (hasOrigin) out.push('origin');
+      if (carried) out.push('wire');
+      return out;
+    }
+
+    // The head: what is picked, in the vocabulary of the deck it came from.
+    function ctxInspHead(pick) {
+      const x = '<button class="cx-insp-x" data-cxinsp="close" title="close the inspector \\u00b7 esc">\\u00d7</button>';
+      if (pick.kind === 'node') {
+        const h = pick.hit;
+        return '<span class="cx-dot" style="--cx:' + (h.color || 'var(--text-faint)') + '"></span>' +
+          '<span class="cx-insp-t">' + escapeHtml(h.label) + '</span>' +
+          (h.n > 1 ? '<span class="cx-insp-n">' + h.n + ' items</span>' : '') +
+          '<span class="cx-insp-tok">\\u2248' + fmtCompact(h.tokens) + ' \\u00b7 ' + ctxPctStr(h.tokens, ctxFlameTotal) + ' of the request</span>' + x;
+      }
+      if (pick.kind === 'rec') {
+        const r = pick.r;
+        const addr = r.ord != null ? 'turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + (r.step > 0 ? ' \\u00b7 step ' + r.step : '') : '';
+        return tjBadge(r) + '<span class="cx-insp-t">' + escapeHtml(r.label) + '</span>' +
+          (addr ? '<span class="cx-insp-addr">' + addr + '</span>' : '') +
+          '<span class="cx-insp-tok">\\u2248' + fmtCompact(r.tokens) + '</span>' + x;
+      }
+      const ev = pick.ev, run = pick.run;
+      const kind = ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind;
+      const amount = ev.kind === 'cost' ? '\\u2248+' + fmtCost(run.extra)
+        : ev.kind !== 'model' && run.tokens ? (run.tokens > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(run.tokens)) : '';
+      return '<span class="cx-ev-kind">' + kind + '</span>' +
+        '<span class="cx-insp-t">' + escapeHtml(ctxEvLabel(ev)) + '</span>' +
+        (run.n > 1 ? '<span class="cx-insp-n">\\u00d7' + run.n + '</span>' : '') +
+        '<span class="cx-insp-tok">' + amount + '</span>' + x;
+    }
+
+    let ctxInspChanged = false;
+    function renderCtxInsp() {
+      const pick = ctxPick();
+      const facets = ctxFacetsOf(pick);
+      const facet = facets.indexOf(ctxFacet) !== -1 ? ctxFacet : 'content';
+      const key = pick ? pick.key + '/' + facet : '';
+      ctxInspChanged = key !== ctxInspLastKey;
+      ctxInspLastKey = key;
+      if (!pick || !ctxInspOpen) return '';
+      let rail = '';
+      for (const f of facets) {
+        rail += '<button class="cx-facet' + (f === facet ? ' active' : '') + '" data-cxfacet="' + f + '" title="' + escapeHtml(CX_FACET_TIP[f]) + '">' + f + '</button>';
+      }
+      let body = '';
+      try {
+        if (facet === 'schema') body = ctxSchemaHtml(pick);
+        else if (facet === 'origin') body = ctxOriginHtml(pick);
+        else if (facet === 'wire') body = ctxWireHtml(pick.pairId);
+        // The reader picked this to READ it: a leaf's or a record's own
+        // fold opens. (The requests detail folds every tool to one line
+        // because nothing there was picked; here the pick already
+        // happened.) A group's ranked folds stay closed — fifteen open
+        // tool results is a wall, not an answer.
+        else if (pick.kind === 'node') body = pick.item ? ctxOpenTopFold(renderCtxPane(ctxLastFl)) : renderCtxPane(ctxLastFl);
+        else if (pick.kind === 'rec') body = ctxOpenTopFold(renderTjDetail(pick.r, tjResults));
+        else body = ctxEvContentHtml(pick);
+      } catch (e) { body = brokenItem('inspector', pick.pairId || '', e); }
+      return '<div class="cx-insp-h">' + ctxInspHead(pick) + '</div>' +
+        '<div class="cx-insp-cols"><div class="cx-insp-rail">' + rail + '</div>' +
+        '<div class="cx-insp-body" id="cx-insp-body">' + body + '</div></div>';
+    }
+
+    // Repaint the inspector alone — a pick, a facet switch or a close must
+    // not rebuild the overview under the reader's cursor. The body's
+    // scroll survives a same-pick repaint (a live pair) and resets when
+    // the pick or the facet changed.
+    function ctxRepaintInsp() {
+      const el = document.getElementById('cx-insp');
+      if (!el) return;
+      const oldBody = document.getElementById('cx-insp-body');
+      const top = oldBody ? oldBody.scrollTop : 0;
+      const html = renderCtxInsp();
+      if (!html) { el.hidden = true; el.innerHTML = ''; tipDetachedGuard(); return; }
+      el.hidden = false;
+      el.innerHTML = html;
+      const body = document.getElementById('cx-insp-body');
+      if (body && !ctxInspChanged) body.scrollTop = top;
+      el.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
+      wireCtxInsp(el);
+      tipDetachedGuard();
+    }
+    function wireCtxInsp(root) {
+      root.querySelectorAll('[data-cxfacet]').forEach(b => b.addEventListener('click', () => {
+        ctxFacet = b.dataset.cxfacet;
+        ctxRepaintInsp();
+      }));
+      root.querySelectorAll('[data-cxinsp="close"]').forEach(b => b.addEventListener('click', () => {
+        ctxInspOpen = false;
+        ctxRepaintInsp();
+      }));
+      root.querySelectorAll('[data-cxev]').forEach(row => row.addEventListener('click', (e) => {
+        // the row's wire link is its own control
+        if (e.target && e.target.closest && e.target.closest('a')) return;
+        const run = ctxEvRolled[+row.dataset.cxev];
+        if (!run) return;
+        ctxEvSel = { key: run.key, pairId: run.ev.pairId };
+        ctxInspOpen = true;
+        root.querySelectorAll('.cx-ev.sel').forEach(x => x.classList.remove('sel'));
+        row.classList.add('sel');
+        ctxRepaintInsp();
+      }));
+    }
+
+    const ctxKv = (k, v) => '<div class="cx-kv"><span class="cx-kv-k">' + k + '</span><span class="cx-kv-v">' + v + '</span></div>';
+    const ctxNote = (s) => '<div class="cx-insp-note">' + s + '</div>';
+    // The first fold in a rendered block is the block's own (a tool call,
+    // a result, a thinking block); open it — the inner raw-input folds
+    // stay closed.
+    const ctxOpenTopFold = (html) => html.replace('<details class="fold ', '<details open class="fold ');
+    // A step named as a control: click pins it (the overview and the
+    // window deck jump there) — the same chip the pane's provenance uses.
+    function ctxStepChip(s) {
+      if (!s) return '';
+      const lbl = ctxOrdLbl(ctxAddr, s.pairId) || 'wire request';
+      return '<span class="cx-since" role="button" tabindex="0" data-cxpin="' + escapeHtml(s.pairId) + '" data-tip="' +
+        escapeHtml(lbl + (s.t ? ' \\u00b7 ' + fmtDateTime(new Date(s.t * 1000)) : '') + '\\n> click to pin that step') + '">' + escapeHtml(lbl) + '</span>';
+    }
+
+    // SCHEMA: the tool's declaration in the request that carried this call
+    // — name, description, input schema — and its standing cost: what it
+    // weighs in every request that carries it, ranked among that
+    // request's tools. The window deck's tools category is the same data
+    // seen by weight; this is the one tool, read.
+    function ctxSchemaHtml(pick) {
+      const name = ctxPickTool(pick);
+      const p = pick.pairId ? pairOf(pick.pairId) : null;
+      if (!name || !p) return ctxNote('no carrying request loaded for this call');
+      const body = (p.request && p.request.body) || {};
+      const dialect = wireDialect(p) || 'anthropic';
+      const tools = dialect === 'openai' ? openaiTools(body) : (Array.isArray(body.tools) ? body.tools : []);
+      const tname = (t) => (t && (t.name || (t.function && t.function.name) || t.type)) || '';
+      const t = tools.find(x => tname(x) === name);
+      if (!t) {
+        return ctxNote('<b>' + escapeHtml(name) + '</b> is not declared in this request\\u2019s tools \\u2014 a server-side tool, or a schema the harness had not loaded yet');
+      }
+      let rank = '';
+      try {
+        const env = ctxEnvelope(body, dialect);
+        const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens);
+        const i = ranked.findIndex(x => x.name === name);
+        if (i !== -1) {
+          rank = ctxKv('weight', '<b>\\u2248' + fmtCompact(ranked[i].tokens) + '</b> tokens in every request that carries it \\u00b7 #' +
+            (i + 1) + ' of ' + ranked.length + ' tools by weight');
+        }
+      } catch (e) { /* an unparseable envelope costs the line, never the facet */ }
+      const desc = String(t.description || (t.function && t.function.description) || '');
+      const schema = t.input_schema || t.parameters || (t.function && t.function.parameters) || null;
+      return rank +
+        (desc ? '<div class="cx-insp-desc">' + escapeHtml(desc.length > 4000 ? desc.slice(0, 4000) + '\\u2026' : desc) + '</div>' : ctxNote('no description declared')) +
+        preBlock(formatJson(schema || t));
+    }
+
+    // ORIGIN: when the picked thing entered the window, and the CARRY —
+    // how many requests have re-sent it since, and what that weighs. For
+    // an icicle item the carry is exact: it is in the pinned step's window
+    // (content-verified), so it rode every request from its origin to the
+    // pin. For a stream record the count runs forward to the next
+    // compaction/rewind boundary and says so — the window was rewritten
+    // there, and whether the record survived is that step's own reading.
+    function ctxOriginHtml(pick) {
+      const steps = ctxCurThread ? ctxData(ctxCurThread).tl.steps : [];
+      let i0 = -1, tokens = 0, producedBy = null, toPid = null;
+      if (pick.kind === 'rec') {
+        const r = pick.r;
+        tokens = r.tokens;
+        const i = steps.findIndex(s => s.pairId === r.pairId);
+        if (i === -1) return ctxNote('no captured request carried this record \\u2014 it arrived inside a request body whose own request was not captured, or lives in a prior trace');
+        // A reply and the calls it made ARE a step's output; they enter
+        // the window with the NEXT request. A prompt, a result, an
+        // injection entered with the request the record names.
+        if (r.kind === 'assistant' || r.kind === 'tool') { producedBy = steps[i]; i0 = i + 1; }
+        else i0 = i;
+      } else {
+        const o = ctxOriginOf(pick.hit);
+        if (!o) return ctxNote('origin not on the wire for this item \\u2014 an envelope row (system prompt, schemas) has no turn, and a turn that matches nothing in the spine is not guessed at');
+        tokens = pick.hit.tokens;
+        const i = steps.findIndex(s => s.pairId === o.pid);
+        if (i === -1) return ctxNote('the carrying request is not in this thread\\u2019s timeline');
+        if (o.verb === 'from') { producedBy = steps[i]; i0 = i + 1; } else i0 = i;
+        toPid = ctxGraphAt;
+      }
+      let h = '';
+      if (producedBy) h += ctxKv('produced by', ctxStepChip(producedBy) + (producedBy.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(producedBy.t * 1000)) + '</span>' : ''));
+      if (i0 >= steps.length) return h + ctxNote('not re-sent yet \\u2014 no request has followed it');
+      const span = ctxCarrySpan(steps, steps[i0].pairId, toPid);
+      if (!span) return h + ctxNote('the carrying request is not in this thread\\u2019s timeline');
+      h += ctxKv('entered', ctxStepChip(span.from) + (span.from.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(span.from.t * 1000)) + '</span>' : ''));
+      const n = span.n;
+      const until = toPid ? (span.to.pairId === span.from.pairId ? '' : ', through the pinned step')
+        : span.boundary ? ', counted up to the \\u2702 at ' + ctxStepChip(span.boundary) + ' \\u2014 the window was ' +
+          (span.boundary.mark === 'rewind' ? 'rewound' : span.boundary.mark === 'rewrite' ? 'rewritten' : 'compacted') + ' there; pin that step to see what it kept'
+        : ' \\u2014 still in the window at the thread\\u2019s last request';
+      h += ctxKv('carried by', '<b>' + n + ' request' + (n === 1 ? '' : 's') + '</b>' + until);
+      h += ctxKv('re-sent', '<b>\\u2248' + fmtCompact(tokens * n) + '</b> tokens of prompt over those requests (\\u2248' + fmtCompact(tokens) + ' \\u00d7 ' + n + ')');
+      h += ctxNote('a carried prefix is mostly read from cache \\u2014 the per-step cache share is in the margin. What the window holds is exact; the weight is chars/4');
+      return h;
+    }
+
+    // WIRE: the request that carried the pick, in brief — the figures the
+    // request row shows, without leaving the page. The links are the way
+    // out: the turn in the sessions rail, the pair in the requests view.
+    function ctxWireHtml(pairId) {
+      const p = pairId ? pairOf(pairId) : null;
+      if (!p) return ctxNote('request not loaded');
+      const ci = p._ci || (p._ci = extractCallInfo(p));
+      const st = p.response ? p.response.status : 0;
+      const failed = !p.response || st >= 400;
+      const at = ctxOrdLbl(ctxAddr, pairId);
+      let h = '';
+      h += ctxKv('request', (at ? '<b>' + escapeHtml(at) + '</b> \\u00b7 ' : '') + (p.request.timestamp ? fmtDateTime(new Date(p.request.timestamp * 1000)) : 'wire request'));
+      h += ctxKv('model', '<b>' + escapeHtml(ci.model || (p.request.body && p.request.body.model) || '?') + '</b>');
+      h += ctxKv('status', failed
+        ? '<span style="color:var(--red)">' + (p.response ? st : 'no response') + '</span>' + (ci.error ? ' \\u00b7 ' + escapeHtml(String(ci.error).slice(0, 200)) : '')
+        : st + (ci.stopReason ? ' \\u00b7 stop ' + escapeHtml(ci.stopReason) : '') + (p.response && p.response.truncated ? ' \\u00b7 stream truncated' : ''));
+      h += ctxKv('timing', (p.duration ? fmtMs(p.duration) : '\\u2014') +
+        (p.response && typeof p.response.firstTokenMs === 'number' ? ' \\u00b7 ttft ' + fmtMs(p.response.firstTokenMs) : ''));
+      const tin = (ci.input || 0) + (ci.cacheRead || 0) + (ci.cacheWrite || 0);
+      if (tin) {
+        h += ctxKv('prompt', '<b>' + fmtCompact(tin) + '</b> = ' + fmtCompact(ci.cacheRead || 0) + ' cache read \\u00b7 ' +
+          fmtCompact(ci.cacheWrite || 0) + ' cache write \\u00b7 ' + fmtCompact(ci.input || 0) + ' input' +
+          (ci.cachePct != null ? ' \\u00b7 <b>' + ci.cachePct + '%</b> from cache' : ''));
+      }
+      if (ci.output) h += ctxKv('output', fmtCompact(ci.output) + (ci.thinking ? ' \\u00b7 ' + fmtCompact(ci.thinking) + ' thinking' : ''));
+      const sc = stepCost(p);
+      if (sc && sc.total > 0) {
+        h += ctxKv('\\u2248cost', '<span class="cx-dt" data-tip="' +
+          escapeHtml(costTitle(sc) + '\\n---\\n> every dollar is an estimate from catalog rates') + '"><b>' + fmtCost(sc.total) + '</b> this step \\u00b7 hover for the split</span>');
+      }
+      h += ctxKv('open', ctxTurnLink({ pairId }, ctxAddr) +
+        '<a class="turn-wire" href="#/p/' + encodeURIComponent(pairId) + '" title="open the captured pair in the requests view">wire \\u2192</a>');
+      return h;
+    }
+
+    // An event's content: the injected text itself, a compaction's
+    // before → after by category, a bump's cause and counterfactual, an
+    // envelope change's from → to. Everything here is the wire's.
+    function ctxEvContentHtml(pick) {
+      const ev = pick.ev, run = pick.run;
+      const p = ev.pairId ? pairOf(ev.pairId) : null;
+      const steps = ctxCurThread ? ctxData(ctxCurThread).tl.steps : [];
+      const i = steps.findIndex(s => s.pairId === ev.pairId);
+      const s = i !== -1 ? steps[i] : null;
+      let h = '';
+      if (run.n > 1) {
+        h += ctxNote(run.n + ' occurrences rolled into this row \\u2014 the most recent is shown' +
+          (run.t0 && run.t0 !== ev.t ? ' (' + fmtTime(new Date(run.t0 * 1000)) + ' \\u2192 ' + fmtTime(new Date(ev.t * 1000)) + ')' : ''));
+      }
+      if (ev.kind === 'inject') {
+        // the block: the carrying request's window, searched from its end
+        // (the injection rode the turns this request appended)
+        const win = p ? ctxWindowTurns(p) : [];
+        let blk = null;
+        for (let ti = win.length - 1; ti >= 0 && !blk; ti--) {
+          const turn = win[ti];
+          if (!turn || turn.role === 'assistant') continue;
+          for (const b of turn.blocks || []) {
+            if (b && b.type === 'text' && ctxTextCat(b.text) === 'inject' && ctxInjectLabel(b.text) === ev.label) { blk = b; break; }
+          }
+        }
+        h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
+        h += ctxKv('weight', '<b>\\u2248' + fmtCompact(ev.tokens || 0) + '</b> tokens added to the window');
+        h += blk ? renderBlock(blk, false)
+          : ctxNote('the injected text is not in this request\\u2019s captured body' + (s && s.stub ? ' \\u2014 folded by cctrace compact' : ''));
+        return h;
+      }
+      if (ev.kind === 'compact') {
+        let prev = null;
+        for (let j = i - 1; j >= 0 && !prev; j--) if (steps[j].sums) prev = steps[j];
+        h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
+        h += ctxKv('mode', '<b>' + (ev.mode === 'rewind' ? 'rewind' : ev.mode === 'rewrite' ? 'rewrite (continuation summary)' : 'fold') + '</b>' +
+          (ev.fromTurns ? ' \\u00b7 ' + ev.fromTurns + ' \\u2192 ' + ev.toTurns + ' turns' : ''));
+        h += ctxKv('prompt', ev.tokens ? '<b>' + (ev.tokens > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(ev.tokens)) + '</b> provider-reported, previous request \\u2192 this one' : 'delta not anchored (one side reported no usage)');
+        if (prev && s && s.sums) {
+          h += '<div class="cx-insp-note">by category, estimated (\\u2248 chars/4): before \\u2192 after</div>';
+          for (const c of CTX_CATS) {
+            const a = prev.sums[c.id] || 0, b = s.sums[c.id] || 0, d = b - a;
+            h += '<div class="cx-cmp"><span class="cx-cmp-l"><span class="cx-dot" style="--cx:' + c.color + '"></span>' + c.label + '</span>' +
+              '<span class="cx-cmp-n">\\u2248' + fmtCompact(a) + '</span><span class="cx-arrow">\\u2192</span><span class="cx-cmp-n">\\u2248' + fmtCompact(b) + '</span>' +
+              '<span class="cx-cmp-d ' + (d < 0 ? 'cx-delta minus' : d > 0 ? 'cx-delta plus' : '') + '">' + (d ? (d > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(d)) : '\\u00b7') + '</span></div>';
+          }
+        } else {
+          h += ctxNote('composition unavailable on one side of the boundary (a folded stub, or the request failed) \\u2014 the prompt delta above is anchored on the provider\\u2019s counts');
+        }
+        return h;
+      }
+      if (ev.kind === 'cost') {
+        h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
+        h += ctxKv('cause', '<b>' + escapeHtml(ctxBumpLabel(ev)) + '</b>');
+        if (ev.cause === 'expired' && ev.gap != null) h += ctxKv('gap', fmtMs(ev.gap * 1000) + ' since the previous request ended \\u00b7 its cache write had a ' + escapeHtml(String(ev.ttl || '')) + ' TTL');
+        if (ev.cause === 'retry' && ev.prevStatus) h += ctxKv('previous', 'status ' + escapeHtml(String(ev.prevStatus)) + ' \\u2014 it never banked its write');
+        h += ctxKv('re-billed', '<b>' + fmtCompact(ev.tokens || 0) + '</b> tokens at input / cache-write rate that a warm cache would have read');
+        h += ctxKv('over warm', '<b>\\u2248' + fmtCost(ev.extra) + '</b> \\u2014 what those tokens would have cost as cache reads, subtracted');
+        if (ev.hitPct != null) h += ctxKv('cache hit', ev.hitPct + '% of this prompt came from cache');
+        h += ctxNote('the cause is a wire fact; every dollar is an estimate from catalog rates');
+        return h;
+      }
+      h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
+      if (ev.kind === 'model') {
+        h += ctxKv('from', escapeHtml(ev.from || '?')) + ctxKv('to', escapeHtml(ev.to || '?')) +
+          ctxNote('a model change invalidates the whole cached prefix \\u2014 the next step re-bills it');
+      } else if (ev.kind === 'tools') {
+        h += ctxKv('tools', ev.from + ' \\u2192 ' + ev.to + ' declared') +
+          ctxKv('schemas', (ev.tokens > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(ev.tokens || 0)) + ' tokens (\\u2248) in every request from here on');
+      } else if (ev.kind === 'system') {
+        h += ctxKv('system', (ev.tokens > 0 ? '+' : '\\u2212') + fmtCompact(Math.abs(ev.tokens || 0)) + ' tokens (\\u2248) \\u2014 the system prompt the harness sends changed');
+      }
+      return h;
     }
 
     // Browser fold state survives re-renders: category opens by cat id,
@@ -6203,12 +6690,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // named ("since"); an assistant turn IS a step's reply ("from").
     // Envelope rows (system, schemas) have no turn and say nothing.
     function ctxSinceHtml(node) {
+      const o = ctxOriginOf(node);
+      if (!o) return '';
+      return '<span class="cx-since" role="button" tabindex="0" data-cxpin="' + escapeHtml(o.pid) + '" data-tip="' +
+        escapeHtml((o.verb === 'from' ? 'the reply of ' : 'in the window since ') + o.lbl + ' \\u2014 the request that first carried it') +
+        '\\n> click to pin that step">' + o.verb + ' ' + escapeHtml(o.lbl) + '</span>';
+    }
+    // The resolution behind that chip, shared with the inspector's origin
+    // facet: { pid, verb, lbl } — the carrying request, "since" (a turn
+    // that entered with it) or "from" (a reply that IS its step), and
+    // the turn address — or null when the wire does not say.
+    function ctxOriginOf(node) {
       const c = ctxSince;
-      if (!c || !ctxGraphAt) return '';
+      if (!c || !ctxGraphAt) return null;
       let n = node;
       while (n && !n.item && n.kids && n.kids.length) n = n.kids[0];
       const it = n && n.item;
-      if (!it || it.ti == null || it.ti < 0) return '';
+      if (!it || it.ti == null || it.ti < 0) return null;
       if (c.winPair !== ctxGraphAt) {
         const p = pairOf(ctxGraphAt);
         c.win = p ? ctxWindowTurns(p) : [];
@@ -6220,7 +6718,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         c.winEnd = end;
       }
       const vi = ctxOriginTurn(c.spine, c.win, it.ti, c.sigs, c.winEnd);
-      if (vi < 0) return '';
+      if (vi < 0) return null;
       const origin = c.spine[vi];
       let pid = null;
       if (origin.role === 'assistant') {
@@ -6233,13 +6731,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (tt && tt.role === 'assistant' && tt.pairId && c.addr[tt.pairId]) pid = tt.pairId;
         }
       }
-      if (!pid) return '';
+      if (!pid) return null;
       const lbl = ctxOrdLbl(c.addr, pid);
-      if (!lbl) return '';
+      if (!lbl) return null;
       const verb = c.spine[vi].role === 'assistant' ? 'from' : 'since';
-      return '<span class="cx-since" role="button" tabindex="0" data-cxpin="' + escapeHtml(pid) + '" data-tip="' +
-        escapeHtml((verb === 'from' ? 'the reply of ' : 'in the window since ') + lbl + ' \\u2014 the request that first carried it') +
-        '\\n> click to pin that step">' + verb + ' ' + escapeHtml(lbl) + '</span>';
+      return { pid, verb, lbl };
     }
     function ctxGraphOf(pairId) {
       let g = ctxGraphCache.get(pairId);
@@ -6389,6 +6885,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return chips;
     }
 
+    // An event's glyph and its one-line label — shared by the events rows
+    // and the inspector's head, so a picked event is named the same way
+    // in both places.
+    const CX_EV_GLYPH = { inject: '+', compact: '\\u2702', model: '\\u21c4', tools: '\\u00b1', system: '\\u00b1', cost: '$' };
+    function ctxEvLabel(ev) {
+      if (ev.kind === 'inject') return ev.label || 'context';
+      if (ev.kind === 'compact') {
+        return (ev.mode === 'rewind' ? 'history rewound' : ev.mode === 'rewrite' ? 'context rewritten (continuation summary)' : 'context compacted') +
+          (ev.fromTurns ? ' \\u00b7 ' + ev.fromTurns + ' \\u2192 ' + ev.toTurns + ' turns' : '');
+      }
+      if (ev.kind === 'model') return shortModel(ev.from) + ' \\u2192 ' + shortModel(ev.to);
+      if (ev.kind === 'tools') return 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools';
+      if (ev.kind === 'system') return 'system prompt changed';
+      if (ev.kind === 'cost') return ctxBumpLabel(ev);
+      return ev.kind;
+    }
+
     function renderCtxEvents(events, addr) {
       const list = events.filter(ev => ctxEvFilter === 'all' || ev.kind === ctxEvFilter);
       // Newest first — the question is "what just changed my window".
@@ -6411,26 +6924,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         rolled.push({ key, ev, n: 1, tokens: ev.tokens || 0, extra: ev.extra || 0, t0: ev.t });
       }
+      ctxEvRolled = rolled; // the inspector resolves a picked row against this
       let rows = '';
       const CAP = 200;
       for (let n = 0; n < rolled.length && n < CAP; n++) {
         const run = rolled[n];
         const ev = run.ev;
-        let glyph = '+', label = '', delta = run.tokens;
-        if (ev.kind === 'inject') { label = ev.label || 'context'; }
-        else if (ev.kind === 'compact') {
-          glyph = '\\u2702';
-          label = (ev.mode === 'rewind' ? 'history rewound' : ev.mode === 'rewrite' ? 'context rewritten (continuation summary)' : 'context compacted') +
-            (ev.fromTurns ? ' \\u00b7 ' + ev.fromTurns + ' \\u2192 ' + ev.toTurns + ' turns' : '');
-        }
-        else if (ev.kind === 'model') { glyph = '\\u21c4'; label = shortModel(ev.from) + ' \\u2192 ' + shortModel(ev.to); delta = 0; }
-        else if (ev.kind === 'tools') { glyph = '\\u00b1'; label = 'tool schemas \\u00b7 ' + ev.from + ' \\u2192 ' + ev.to + ' tools'; }
-        else if (ev.kind === 'system') { glyph = '\\u00b1'; label = 'system prompt changed'; }
+        const glyph = CX_EV_GLYPH[ev.kind] || '+';
+        const label = ctxEvLabel(ev);
         // A cost bump: the same row grammar, but the delta slot carries
         // DOLLARS \u2014 what the step paid over a warm cache, which is the
         // thing the reader is hunting. The cause is a wire fact; the
         // amount is an estimate and says so on hover.
-        else if (ev.kind === 'cost') { glyph = '$'; label = ctxBumpLabel(ev); delta = 0; }
+        const delta = ev.kind === 'model' || ev.kind === 'cost' ? 0 : run.tokens;
         const at = ctxOrdLbl(addr, ev.pairId);
         const money = ev.kind === 'cost'
           ? '<span class="cx-delta plus">\\u2248+' + fmtCost(run.extra) + '</span>'
@@ -6450,7 +6956,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // turn address and the clock hold the right edge \u2014 ui.md's row
         // grammar. A delta parked 800px from its own label is a saccade,
         // not a column.
-        rows += '<div class="cx-ev">' +
+        // The row is a PICK: it opens the event in the inspector (the
+        // injected text, a compaction's before/after, a bump's cause).
+        const picked = ctxEvSel && ctxEvSel.key === run.key && ctxEvSel.pairId === ev.pairId;
+        rows += '<div class="cx-ev' + (picked ? ' sel' : '') + '" data-cxev="' + n + '">' +
           '<span class="cx-ev-glyph">' + glyph + '</span>' +
           '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
           '<span class="cx-ev-label" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>' +
@@ -6514,7 +7023,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (n.err) bits.push(n.err + ' returned is_error');
       bits.push('---');
       bits.push(n.root ? '> the whole of what you are looking at'
-        : n.hasKids ? '> click to zoom in' : '> click to open its content below');
+        : n.hasKids ? '> click to zoom in' : '> click to open it in the inspector');
       return bits.join('\\n');
     }
 
@@ -6599,33 +7108,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         flame += '<div class="cx-frow" style="z-index:' + (9 - r) + '">' + cells + '</div>';
       }
       h += '<div class="cx-flame">' + flame + '</div>';
-      h += '<div class="cx-pane" id="cx-pane">' + renderCtxPane(fl) + '</div>';
+      // The picked node opens in the INSPECTOR beside the graph, not under
+      // it — the layout is kept so the inspector can resolve the pick.
+      ctxLastFl = fl;
       return h;
     }
 
-    // The detail pane under the graph: whatever node is selected, opened.
-    // A leaf gives its exact bytes; a group gives its items as folds; a
-    // container gives its children ranked, each one click from a zoom.
-    // Selection defaults to the heaviest group, so the section opens ON
-    // the answer instead of asking the reader to go find it.
+    // The picked node, opened — the inspector's content facet on the
+    // window deck. A leaf gives its exact bytes; a group gives its items
+    // as folds; a container gives its children ranked, each one click
+    // from a zoom. Selection defaults to the heaviest group, so the panel
+    // opens ON the answer instead of asking the reader to go find it.
+    // The inspector's head already names the node, its count and its
+    // weight, so this is the body alone.
     function renderCtxPane(fl) {
-      const path = ctxSelKey ? ctxFlameFind(fl.root, ctxSelKey) : null;
+      const path = fl && ctxSelKey ? ctxFlameFind(fl.root, ctxSelKey) : null;
       const hit = path && path[path.length - 1];
-      if (!hit) return '<div class="cx-note">pick a node above to open it</div>';
-      const head = '<div class="cx-pane-h">' +
-        '<span class="cx-dot" style="--cx:' + (hit.color || 'var(--text-faint)') + '"></span>' +
-        '<span class="cx-pane-t">' + escapeHtml(hit.label) + '</span>' +
-        (hit.n > 1 ? '<span class="cx-pane-n">' + hit.n + ' items</span>' : '') +
-        '<span class="cx-pane-tok">\\u2248' + fmtCompact(hit.tokens) + ' \\u00b7 ' + ctxPctStr(hit.tokens, ctxFlameTotal) + ' of the request</span>' +
-        '</div>';
+      if (!hit) return '<div class="cx-note">pick a node in the graph to open it</div>';
+      const head = '';
       // a leaf: its exact bytes, already open — that is what was asked for
       if (hit.item) {
         let body = '';
         try { body = ctxItemBody(hit.item); } catch (e) { body = brokenItem('context item', '', e); }
-        return head + '<div class="cx-pane-body">' + body + '</div>';
+        return '<div class="cx-pane-body">' + body + '</div>';
       }
       const kids = hit.kids || [];
-      if (!kids.length) return head + '<div class="cx-note">nothing under this node</div>';
+      if (!kids.length) return '<div class="cx-note">nothing under this node</div>';
       // a group: its items as lazy folds (a category: its groups, ranked)
       if (kids[0].item || !(kids[0].kids || []).length) {
         // The graph is the answer; the pane is the drill-down. Dumping 177
@@ -6655,7 +7163,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             '</summary><div class="fold-body" data-cxlazy="1"></div></details>';
         }
         if (ranked.length > CAP) rows += '<div class="cx-more">the ' + CAP + ' heaviest of ' + ranked.length +
-          ' \\u2014 pick any node in the graph above to open it</div>';
+          ' \\u2014 pick any node in the graph to open it</div>';
         return head + rows;
       }
       let rows = '';
@@ -6739,13 +7247,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       const gr = document.getElementById('cx-graph');
       if (gr && ctxLast.step) {
-        // a zoom/select CHANGES what the pane shows, so its old scroll is
-        // meaningless — but the margin beside it did not move.
+        // the margin beside the graph did not move; the inspector repaints
+        // for the new pick below (its own scroll resets when the pick
+        // changed, and only then)
         const tops = ctxCaptureTops();
-        delete tops['cx-pane'];
         gr.innerHTML = renderCtxGraph(ctxLast.step, ctxLast.addr);
         ctxRestoreTops(tops);
       }
+      // a pick opens the inspector — a zoom on a container too, since the
+      // panel then lists that container's children ranked
+      ctxInspOpen = true;
+      ctxRepaintInsp();
       // the ledger row wears the zoom too — margin and chart are one
       // selection, whichever side the click came from
       if (ctxLast.step) ctxRepaintMargin(ctxLast.step, ctxLast.addr);
@@ -6816,7 +7328,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // (it can outrun a short viewport), its thread list, and the graph's
     // pane. One list, so a fourth one is a one-line change and not a
     // fourth forgotten scroll reset.
-    const CTX_SCROLLERS = ['cx-margin', 'cx-pane'];
+    const CTX_SCROLLERS = ['cx-margin', 'cx-insp-body'];
     function ctxCaptureTops() {
       const out = {};
       for (const id of CTX_SCROLLERS) {
@@ -7313,7 +7825,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first — what is eating the window">by size</button>' +
           '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order — how the window was assembled">in order</button>' +
           '</span>';
-        hint = 'the pinned step’s window, decomposed from the captured request body — <b>exact, not reconstructed</b> · width is tokens, rows are levels · click to zoom, a leaf opens below';
+        hint = 'the pinned step’s window, decomposed from the captured request body — <b>exact, not reconstructed</b> · width is tokens, rows are levels · click to zoom, a leaf opens in the inspector';
         deck = '<div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div>';
       }
       const bar = '<div class="cx-modes">' +
@@ -7329,9 +7841,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         renderCtxQuotaBlock(usagePolls(pairs)) +
         renderCtxThreads(getThreads(), t) +
         '</aside>';
+      // The inspector renders AFTER the deck: the window deck's pick
+      // resolves against the icicle layout it just drew, the events
+      // deck's against the rows it just rolled.
+      ctxAddr = addr;
+      const insp = renderCtxInsp();
       const canvas = '<div class="cx-canvas mode-' + ctxMode + '" id="cx-canvas">' + bar +
         '<div class="cx-deck-hint">' + hint + '</div>' +
-        '<div class="cx-deck" id="cx-deck">' + deck + '</div></div>';
+        '<div class="cx-deck" id="cx-deck"><div class="cx-deck-main" id="cx-deck-main">' + deck + '</div>' +
+        '<aside class="cx-insp" id="cx-insp"' + (insp ? '' : ' hidden') + '>' + insp + '</aside></div></div>';
 
       // ---- assemble, preserving every position a live pair would steal ----
       // A live capture re-renders this whole view on every pair arrival, so
@@ -7340,28 +7858,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // terminal semantics forbid outright.
       const oldOv = document.getElementById('cx-ov-scroll');
       const ovLeft = oldOv ? (oldOv.scrollLeft + oldOv.clientWidth >= oldOv.scrollWidth - 8 ? -1 : oldOv.scrollLeft) : -1;
-      const oldCanvas = document.getElementById('cx-canvas');
-      const canvasTop = oldCanvas ? oldCanvas.scrollTop : 0;
+      const oldMain = document.getElementById('cx-deck-main');
+      const mainTop = oldMain ? oldMain.scrollTop : 0;
       const oldList = document.getElementById('tj-list');
       const listTop = oldList ? oldList.scrollTop : 0;
       const oldSearch = document.getElementById('tj-search');
       const searchFocused = !!oldSearch && document.activeElement === oldSearch;
       const caret = searchFocused ? oldSearch.selectionStart : 0;
       const keepTops = ctxCaptureTops();
-      // ...except the graph pane's, when the STEP changed under it (←/→
-      // walking the pin, a thread switch): its old offset points into
-      // content that is no longer there. Same step, live pair: keep it.
-      if (ctxLast.step && focus && ctxLast.step.pairId !== focus.pairId) delete keepTops['cx-pane'];
+      // ...except the inspector's, when its PICK changed under it (←/→
+      // walking the pin, a thread switch, a facet switch): its old offset
+      // points into content that is no longer there. Same pick, live
+      // pair: keep it.
+      if (ctxInspChanged) delete keepTops['cx-insp-body'];
 
       contextEl.innerHTML = head +
         renderCtxOverview(steps, addr, cols, maxT, split, loopCountOf(t), bumpBy) +
         '<div class="cx-cols">' + margin + canvas + '</div>';
 
       ctxRestoreTops(keepTops);
-      const canvasEl = document.getElementById('cx-canvas');
-      if (canvasEl) canvasEl.scrollTop = canvasTop;
+      const mainEl = document.getElementById('cx-deck-main');
+      if (mainEl) mainEl.scrollTop = mainTop;
       const listEl = document.getElementById('tj-list');
       if (listEl) listEl.scrollTop = listTop;
+      const inspEl = document.getElementById('cx-insp');
+      if (inspEl) inspEl.querySelectorAll('details[data-raw][open]').forEach(fillRaw);
       const ov = document.getElementById('cx-ov-scroll');
       // The overview sticks to the newest edge when it was already there —
       // a live run's newest request must not walk off screen.
@@ -7378,6 +7899,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       function repaintDeck() { renderContextView(t); }
 
       if (ctxMode === 'stream') wireCtxStream(contextEl, repaintDeck);
+      wireCtxInsp(contextEl);
       contextEl.querySelectorAll('[data-cxmode]').forEach(b => b.addEventListener('click', () => {
         setCtxMode(b.dataset.cxmode);
         history.replaceState(null, '', ctxHash(t.key, ctxMode));
@@ -7577,10 +8099,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // visible subset via the normal buildSession path; playback is a
     // setTimeout ladder over response-end boundaries with idle compression.
     const replay = { active: false, cursor: 0, playing: false, speed: 1, timer: null, sliceA: null, sliceB: null, zoom: 1 };
+    // The overview fold (rev 3): lanes collapsed to the clock row, outside
+    // replay only. Persisted — an overview the reader folded stays folded.
+    let rpCollapsed = false;
+    try { rpCollapsed = localStorage.getItem('cctrace-traj-fold') === '1'; } catch {}
+    if (rpCollapsed) rpBar.classList.add('rp-collapsed');
+    if (rpGut.addEventListener) rpGut.addEventListener('click', (e) => {
+      const b = e.target && e.target.closest ? e.target.closest('.rp-clps') : null;
+      if (!b) return;
+      rpCollapsed = !rpCollapsed;
+      rpBar.classList.toggle('rp-collapsed', rpCollapsed);
+      try { localStorage.setItem('cctrace-traj-fold', rpCollapsed ? '1' : '0'); } catch {}
+      renderReplayStrip(true); // the chevron redraws with the fold state
+    });
     const IDLE_CAP_MS = 2000;
     const RP_ZOOM_MAX = 32;    // 1 = the whole axis fits the frame
     const RP_AGENT_ROWS = 4;   // visible agent rows; deeper ones fold into "+k more"
-    const RP_IDLE_MS = 300000; // idle longer than this compresses on the axis
+    const RP_IDLE_MS = 120000; // idle longer than this compresses on the axis
     const RP_BREAK_PX = 28;    // ...to exactly this much track, hatched
 
     // The slice: a selected range of the timeline (shift+drag on the track).
@@ -7613,7 +8148,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const span = replaySpan(pairs);
       if (!span) return;
       replay.active = true;
-      replay.cursor = cursor == null ? span.t1 : cursor;
+      // A reading page parks on the SELECTED thread's edge, not the tape's:
+      // a merged capture used to enter hours past this session's last pair,
+      // the whole strip behind one break column. A live page keeps the tape
+      // end — entering replay there means tailing.
+      const ex = IS_READING && cursor == null
+        ? threadExtent(laneData(), (stageThread() || {}).key || '') : null;
+      replay.cursor = cursor != null ? cursor : (ex ? Math.min(span.t1, ex.t1) : span.t1);
       document.body.classList.add('replaying');
       tailPill.classList.remove('show');
       if (view !== 'session') { location.hash = '#/session'; }
@@ -7648,7 +8189,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!replay.active) enterReplay(span.t0);
       // Play at the end of the tape (or slice) restarts from its top.
       if (!nextBoundary(replayEvents(slicePairs(pairs)), replay.cursor)) {
-        replay.cursor = sliceActive() ? Math.min(replay.sliceA, replay.sliceB) - 1 : span.t0;
+        replay.cursor = sliceActive() ? Math.min(replay.sliceA, replay.sliceB) - 1 : rpHome() - 1;
         refreshReplay();
       }
       replay.playing = true;
@@ -7681,7 +8222,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       if (!replay.active) enterReplay(dir > 0 ? span.t0 - 1 : span.t1);
       pausePlayback();
-      const events = replayEvents(slicePairs(pairs));
+      // The turn stepper steps THIS conversation: ←/→ walk the selected
+      // thread's own pairs, so a merged capture's other sessions never eat
+      // a keypress (shift+arrow keeps every wire boundary).
+      let src = slicePairs(pairs);
+      if (turnsOnly) {
+        const th = stageThread();
+        if (th && th.pairIds && th.pairIds.length) {
+          const ids = {};
+          for (const id of th.pairIds) ids[id] = 1;
+          const own = src.filter(p => ids[p.id]);
+          if (own.length) src = own;
+        }
+      }
+      const events = replayEvents(src);
       const b = dir > 0 ? nextBoundary(events, replay.cursor, turnsOnly) : prevBoundary(events, replay.cursor, turnsOnly);
       if (b) { replay.cursor = b.t; refreshReplay(); }
       updateReplayHash();
@@ -7710,6 +8264,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) return;
       seekReplay(span.t1);
       updateReplayHash();
+    }
+
+    // The top of THIS thread's tape: a merged capture's tape t0 can sit an
+    // hour inside another session — ⏮ / Home / play-from-the-end restart at
+    // the selected thread's own first pair, not there.
+    function rpHome() {
+      const ex = threadExtent(laneData(), (stageThread() || {}).key || '');
+      const span = replaySpan(pairs);
+      return ex ? ex.t0 : (span ? span.t0 : 0);
     }
 
     function fmtClock(ms) {
@@ -7816,8 +8379,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!span) {
         rpGut.innerHTML = ''; rpAxis.innerHTML = ''; rpRules.innerHTML = '';
         rpBody.innerHTML = ''; rpBreaks.innerHTML = ''; rpStripKey = '';
+        rpBar.classList.add('rp-empty');
         return;
       }
+      rpBar.classList.remove('rp-empty');
       // The thread the rail has selected draws FULL; every other thread's
       // items ghost. Same resolution the stage uses — one selection, two
       // surfaces.
@@ -7934,15 +8499,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
       }
 
-      // human: a POINT at the start of the request that carried the prompt
-      let human = '';
-      for (const x of L.human) {
-        if (hidden(x.t, x.t)) continue;
-        const tip = 'human \\u00b7 turn ' + ord(x.ord) + '\\n' + clock(x.t) +
-          (x.label ? '\\n' + x.label : '') +
-          '\\n---\\n> click seeks to the end of the request that carried it';
-        human += '<span class="rp-point' + oth(x.threadKey) + '" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
-          ' data-tip="' + escapeHtml(tip) + '"><span class="rp-lbl">' + escapeHtml(x.label || '') + '</span></span>';
+      // turns: one BLOCK per working loop, from the instant the prompt hit
+      // the wire (the block's accent edge — what the human lane's point
+      // was) to the loop's last reply. The minimap's clickable unit (rev
+      // 6): the number shows whenever the block can hold it, the prompt's
+      // words at full depth, the tally on hover. data-rpj is the jump
+      // target outside replay (the prompt's own instant, so the convo
+      // lands on the turn's head); data-rpt stays the seek while
+      // replaying (where the prompt became visible).
+      let turns = '';
+      for (const x of L.turns) {
+        if (hidden(x.t0, x.t1)) continue;
+        const n = ord(x.ord);
+        const tally = [
+          x.steps + ' step' + (x.steps === 1 ? '' : 's'),
+          x.calls ? x.calls + ' call' + (x.calls === 1 ? '' : 's') : '',
+          x.agents ? x.agents + ' agent' + (x.agents === 1 ? '' : 's') : '',
+        ].filter(Boolean).join(' \\u00b7 ');
+        const marks = [
+          x.cuts ? '\\u2702 ' + x.cuts + ' compaction' + (x.cuts === 1 ? '' : 's') : '',
+          x.failed ? '\\u2717 ' + x.failed + ' failed request' + (x.failed === 1 ? '' : 's') : '',
+        ].filter(Boolean).join(' \\u00b7 ');
+        const tip = 'turn ' + n + ' \\u00b7 ' + tally +
+          (x.injected ? '\\nstarted by the harness \\u00b7 ' + x.injected : '') +
+          '\\n' + clock(x.t0) + ' \\u00b7 ' + fmtSpan(x.t1 - x.t0) +
+          (x.label ? '\\n' + x.label : '') + (marks ? '\\n' + marks : '') +
+          '\\n---\\n> click jumps to this turn \\u2014 the conversation, or the cursor while replaying';
+        const x0 = px(x.t0), x1 = px(x.t1);
+        const wide = frameW > 0 && (x1 - x0) / 100 * sc.px >= 24;
+        turns += '<span class="rp-span rp-turn' + (x.injected ? ' inj' : '') + oth(x.threadKey) + (wide ? ' w24' : '') +
+          '" data-rpt="' + seekOf(x.pairId, x.t0) + '" data-rpj="' + x.t0 + '" data-t0="' + x.t0 + '" data-t1="' + x.t1 + '"' +
+          ' style="left:' + x0.toFixed(3) + '%;width:' + Math.max(0, x1 - x0).toFixed(3) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '">' +
+          '<span class="rp-lbl i">' + n + '</span>' +
+          '<span class="rp-lbl n">' + n + (x.label ? ' \\u00b7 ' + escapeHtml(x.label) : '') + '</span></span>';
       }
 
       // model: the pair itself, [request start, response end]
@@ -7951,7 +8541,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (hidden(x.t0, x.t1)) continue;
         const tip = 'model \\u00b7 turn ' + ord(x.ord) + ' step ' + x.step + '\\n' + clock(x.t0) +
           '\\n' + fmtSpan(x.t1 - x.t0) + (x.stop ? ' \\u00b7 stop ' + x.stop : '') +
-          '\\n---\\n> click seeks to the end of this request';
+          '\\n---\\n> click jumps there \\u2014 the conversation, or the cursor while replaying';
         model += bar('model' + (x.err ? ' err' : '') + oth(x.threadKey), x.t0, x.t1, x.t1, tip, '', '');
       }
       // a request still in flight: a dashed stub hugging the live edge.
@@ -8000,7 +8590,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (r === RP_AGENT_ROWS) folded++;
         const label = a.label || a.agentType || 'subagent';
         const tip = 'agent \\u00b7 ' + label + '\\n' + clock(a.t0) + '\\n' + fmtSpan(a.t1 - a.t0) +
-          '\\n---\\n> click seeks to where its work landed';
+          '\\n---\\n> click jumps to where its work landed';
         arows[r] = (arows[r] || '') + bar('agent' + (r === RP_AGENT_ROWS ? ' more' : '') +
           oth(a.parentKey, a.threadKey), a.t0, a.t1, a.t1, tip, '', label);
       }
@@ -8024,9 +8614,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
       // Fixed geometry: an empty lane stays, labelled — a client with no
       // spawn tool reads as zero agents, never as a missing row.
-      let gut = '<span class="rp-glbl">clock</span><span class="rp-glbl">human</span>' +
+      // The clock cell carries the fold chevron (rev 3): outside replay the
+      // lanes collapse to the clock row, which stays the reopen target.
+      let gut = '<span class="rp-glbl rp-g0"><button class="rp-clps" data-tip="' +
+        escapeHtml('fold the trajectory\\nThe lanes collapse to the clock row \\u2014 a thin ruler is still an overview.\\n---\\n> click toggles \\u00b7 replay always unfolds it') +
+        '">' + (rpCollapsed ? '\\u25b8' : '\\u25be') + '</button>clock</span><span class="rp-glbl">turns</span>' +
         '<span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
-      let body = lane('human', human) + lane('model', model) + lane('tools', tools);
+      let body = lane('turns', turns) + lane('model', model) + lane('tools', tools);
       const nrows = Math.max(1, arows.length);
       for (let i = 0; i < nrows; i++) {
         gut += '<span class="rp-glbl">' +
@@ -8068,18 +8662,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // only, and a re-render is a still frame (no motion budget spent).
     let rpResizeTimer = null;
     window.addEventListener('resize', () => {
-      if (!replay.active) return;
+      if (!replay.active && view !== 'session') return;
       clearTimeout(rpResizeTimer);
       rpResizeTimer = setTimeout(() => renderReplayStrip(true), 150);
     });
 
     function rpLiveRefresh() {
-      if (!replay.active) return;
+      // The strip is the session view's overview (rev 3): it grows on every
+      // landed pair whether or not a replay is running. Replay's own chrome
+      // (the bar, the stage) refreshes only while replaying.
+      if (!replay.active && view !== 'session') return;
       const frameW = (rpScroll.getBoundingClientRect ? rpScroll.getBoundingClientRect().width : 0) || 0;
       const atEdge = !!frameW && (rpScroll.scrollLeft || 0) + frameW >= frameW * replay.zoom - 2;
       renderReplayStrip(true);
-      renderReplayBar();
-      renderStage(); // a start event rebuilds no pane, but it IS the live state
+      if (replay.active) {
+        renderReplayBar();
+        renderStage(); // a start event rebuilds no pane, but it IS the live state
+      } else rpQueueSyncRead();
       if (atEdge) rpScroll.scrollLeft = Math.max(0, frameW * replay.zoom - frameW);
     }
 
@@ -8103,7 +8702,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       rpTime.textContent = fmtTime(new Date(replay.cursor)) + ' \\u00b7 +' +
         fmtClock(replay.cursor - span.t0) + ' / ' + fmtClock(dur);
       renderLiveChip();
-      renderReplayNow();
       // The slice band + chip: the selected window, its size, and the two
       // actions it affords (export the artifact, clear the selection).
       if (sliceActive()) {
@@ -8175,8 +8773,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Rendered at the TOP of the threads column while replaying, torn down
     // with replay. Two readings of ONE cursor: WHAT the agent did at this
     // step (the beat, from the selected thread) and WHAT it has called so
-    // far (the tally). WHAT it is doing right now is the loop row in the
-    // bar (renderReplayNow) — the frame states the moment, the stage the step.
+    // far (the tally). The moment itself is the strip's cursor — the frame
+    // states WHERE, the stage states WHAT.
 
     // The thread the stage reads: the selection, resolved against the WHOLE
     // capture (the cursored threads lose every loop still ahead).
@@ -8192,148 +8790,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const t = stageThread();
       const b = t ? beatAt(t, replay.cursor, pairOf) : null;
       return b ? b.pairId : '';
-    }
-
-    // A request forwarded with no response yet, at the live edge of the
-    // tape: the model IS working right now. Absolute clock, never a ticking
-    // counter (ui.md) — and a snapshot has no starts, so it says nothing.
-    function stageLiveStart() {
-      if (!openStarts.size) return 0;
-      // The edge of what has COMPLETED, not rpSpan's — an open start pushes
-      // rpSpan's right edge into the future, and the reader parked at the
-      // newest landed pair is exactly who should see "thinking now".
-      const span = replaySpan(pairs);
-      if (!span || replay.cursor < span.t1 - 0.5) return 0;
-      let ts = 0;
-      openStarts.forEach((st) => {
-        const t = (st && st.ts ? st.ts : 0) * 1000;
-        if (t && (!ts || t < ts)) ts = t;
-      });
-      return ts;
-    }
-
-    // What each state MEANS on the wire — the hover, so a one-word chip
-    // is never something the reader has to guess at.
-    const NOW_WHY = {
-      model: 'a request is in flight',
-      tools: 'the harness is running the calls this reply made',
-      agents: 'a subagent thread is working',
-      waiting: 'the reply called nothing \\u2014 the harness came back on its own',
-      human: 'the reply landed; the human has not spoken yet',
-      failed: 'the request went nowhere \\u2014 its retry is the next one',
-      idle: 'nothing on the wire',
-    };
-
-    // The loop row (#rp-now): Claude Code's machine as a FLOWCHART — human
-    // -> model -> calls? -> [tools | agents | waiting] -> model ... -> human
-    // — drawn ONCE at fixed pixel geometry in the frame, the cursor's state
-    // lit and the edge it came in by flowing (loopAt). Beside it the now
-    // facts: what is running, how long it has held where the extent is a
-    // wire fact, since when (absolute wall-clock). The box beats ONLY for a
-    // request in flight right now. Nothing MOVES when the state changes —
-    // only which parts are lit, and which edge flows.
-    const RL_BY = 22, RL_BH = 22;                        // the process boxes' band
-    const RL_MID = 33;                                   // their centre line
-    // left edge + width per box; the slot is wider (it labels three flavors)
-    const RL_BOX = { human: [2, 62], model: [110, 62], slot: [348, 84] };
-    const RL_DX = 250, RL_DW = 42, RL_DH = 14;           // the decision diamond
-    // A filled triangle at the end of a run (no shared <marker>: markers
-    // can't take the group's currentColor, and the lit edge changes hue).
-    function rlArrow(x1, y1, x2, y2) {
-      const dx = x2 - x1, dy = y2 - y1;
-      const L = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ux = dx / L, uy = dy / L;
-      const bx = x2 - ux * 7, by = y2 - uy * 7;
-      const px = -uy * 3.2, py = ux * 3.2;
-      return 'M' + x2.toFixed(1) + ',' + y2.toFixed(1) +
-        'L' + (bx + px).toFixed(1) + ',' + (by + py).toFixed(1) +
-        'L' + (bx - px).toFixed(1) + ',' + (by - py).toFixed(1) + 'Z';
-    }
-    // Every path is built in its ARROW's direction, so the lit edge's dash
-    // offset animates the way the transition actually runs.
-    function rlEdge(key, pts, lit, label, lx, ly) {
-      let d = '';
-      for (let i = 0; i < pts.length; i += 2) d += (i ? 'L' : 'M') + pts[i] + ',' + pts[i + 1];
-      const k = pts.length;
-      return '<g class="rl-edge' + (lit ? ' on' : '') + '" data-edge="' + key + '">' +
-        '<path class="rl-e" d="' + d + '"/>' +
-        '<path class="rl-ah" d="' + rlArrow(pts[k - 4], pts[k - 3], pts[k - 2], pts[k - 1]) + '"/>' +
-        (label ? '<text class="rl-el" x="' + lx + '" y="' + ly + '" text-anchor="middle">' + label + '</text>' : '') +
-        '</g>';
-    }
-    function rlBox(node, label, cls) {
-      const b = RL_BOX[node];
-      return '<g class="rl-node' + cls + '" data-node="' + node + '"' +
-        (node === 'slot' ? ' data-slot="' + label + '"' : '') + '>' +
-        '<rect class="rl-nb" x="' + b[0] + '" y="' + RL_BY + '" width="' + b[1] + '" height="' + RL_BH + '" rx="3"/>' +
-        '<text class="rl-nl" x="' + (b[0] + b[1] / 2) + '" y="' + (RL_MID + 4) + '" text-anchor="middle">' +
-        label + '</text></g>';
-    }
-    // The loop's DECISION: did the reply make tool calls (stop_reason
-    // tool_use / its tool_use blocks). A wire fact, so it is a diamond and
-    // never carries a "since" — it lights with whichever branch is lit.
-    function rlDiamond(cls) {
-      const d = 'M' + (RL_DX - RL_DW) + ',' + RL_MID + 'L' + RL_DX + ',' + (RL_MID - RL_DH) +
-        'L' + (RL_DX + RL_DW) + ',' + RL_MID + 'L' + RL_DX + ',' + (RL_MID + RL_DH) + 'Z';
-      return '<g class="rl-node' + cls + '" data-node="decision">' +
-        '<path class="rl-nb" d="' + d + '"/>' +
-        '<text class="rl-nl" x="' + RL_DX + '" y="' + (RL_MID + 4) + '" text-anchor="middle">calls?</text></g>';
-    }
-    // Forward across the row; the two returns arc on OPPOSITE sides (results
-    // over, answer under) so they never cross.
-    function rlSvg(q) {
-      const on = q.node, e = q.edge;
-      const dec = e === 'model>slot' || e === 'model>human';
-      return '<svg id="rp-loop" width="440" height="68" viewBox="0 0 440 68" aria-hidden="true">' +
-        rlEdge('human>model', [64, RL_MID, 110, RL_MID], e === 'human>model', 'prompt', 87, RL_MID - 5) +
-        rlEdge('model>decision', [172, RL_MID, 208, RL_MID], dec, '', 0, 0) +
-        rlEdge('decision>slot', [292, RL_MID, 348, RL_MID], e === 'model>slot', 'yes', 320, RL_MID - 5) +
-        rlEdge('slot>model', [390, RL_BY, 390, 10, 141, 10, 141, RL_BY], e === 'slot>model', 'results', 265, 7) +
-        rlEdge('decision>human', [RL_DX, RL_MID + RL_DH, RL_DX, 58, 33, 58, 33, RL_BY + RL_BH],
-          e === 'model>human', 'no \\u00b7 answer', 141, 55) +
-        rlBox('human', 'human', on === 'human' ? ' on hollow' : '') +
-        rlBox('model', 'model', (on === 'model' ? ' on' : '') + (q.live ? ' live' : '')) +
-        rlBox('slot', q.slot, on === 'slot' ? ' on' : q.also ? ' also' : '') +
-        rlDiamond(dec ? ' on hollow' : '') +
-        '</svg>';
-    }
-    // Rendered on every bar update (a playback tick, a landed pair): the
-    // markup is rewritten only when the picture changes, and a held
-    // duration that merely grew patches its own span — rebuilding under the
-    // reader's pointer would kill the hover and can eat a click.
-    let rpNowKey = null;
-    function renderReplayNow() {
-      if (!rpNow) return;
-      const t = stageThread();
-      const q = loopAt(laneData(), replay.cursor, t ? t.key : '', stageLiveStart());
-      const p = q.pairId ? pairOf(q.pairId) : null;
-      const seek = p && p.request ? pairEndMs(p) : 0;
-      const held = q.held != null && q.held > 0 ? '\\u00b7 ' + fmtSpan(q.held) : '';
-      const sig = [q.state, q.node, q.slot, q.edge, q.also, q.live, q.what, q.since, seek].join('|');
-      if (rpNowKey === sig) {
-        const h = rpNow.querySelector ? rpNow.querySelector('.rn-held') : null;
-        if (h && h.textContent !== held) h.textContent = held;
-        return;
-      }
-      rpNowKey = sig;
-      const tip = 'now \\u00b7 ' + q.state + '\\n' +
-        (q.live ? 'a request is in flight \\u2014 no response yet' : (NOW_WHY[q.state] || '')) +
-        (q.also ? '\\n' + q.agentsRunning + ' subagent' + (q.agentsRunning === 1 ? '' : 's') + ' running meanwhile' : '') +
-        (seek ? '\\n---\\n> click seeks to the step that opened it' : '');
-      rpNow.className = q.live ? 'live' : '';
-      rpNow.dataset.state = q.state;
-      if (seek) rpNow.dataset.rpseek = String(seek); else delete rpNow.dataset.rpseek;
-      rpNow.dataset.tip = tip;
-      // Line 1 names the state (in its own hue) and what is running under it;
-      // line 2 the absolute clock it began at. The state word is stated ONCE:
-      // q.what is empty for idle, so the row reads just "idle".
-      rpNow.innerHTML = '<span class="rp-glbl">now</span>' + rlSvg(q) +
-        '<span class="rn-facts"><span class="rn-l1">' +
-        '<span class="rn-state">' + escapeHtml(q.state) + '</span>' +
-        (q.what ? '<span class="rn-what">' + escapeHtml(q.what) + '</span>' : '') +
-        '<span class="rn-held">' + escapeHtml(held) + '</span></span>' +
-        (q.since > 0 ? '<span class="rn-since">since ' + fmtTime(new Date(q.since)) + '</span>' : '') +
-        '</span>';
     }
 
     // So far: which tools were called and how often as of the cursor, then
@@ -8471,11 +8927,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       history.replaceState(null, '', a ? base + '/@' + encodeURIComponent(a.id) : base);
     }
 
-    // The loop row seeks to the step that opened the state it shows.
-    if (rpNow) rpNow.addEventListener('click', () => {
-      const t = parseFloat(rpNow.dataset.rpseek || '');
-      if (isFinite(t)) { seekReplay(t); updateReplayHash(); }
-    });
     // The stage's seek — the beat's head, to that loop's chapter stop.
     // Delegated: #stage is rewritten on every cursor change.
     threadsEl.addEventListener('click', (e) => {
@@ -8500,7 +8951,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     rpExit.onclick = exitReplay;
     rpRestart.onclick = () => {
       if (!replay.active) enterReplay();
-      seekReplay(replaySpan(pairs).t0);
+      seekReplay(rpHome());
       updateReplayHash();
     };
     rpEnd.onclick = seekEnd;
@@ -8536,7 +8987,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (t != null) seekReplay(t);
     }
     rpTrack.addEventListener('pointerdown', (e) => {
-      if (!replay.active) enterReplay();
+      // Outside replay the bar is the MINIMAP: a click jumps the convo to
+      // the turn at that instant and nothing scrubs (rev 4 — the first cut
+      // entered replay on any touch, which made an overview click a mode
+      // switch). Replay entry stays on ⏵ / Space / the arrows.
+      if (!replay.active) {
+        const el = e.target && e.target.closest ? e.target.closest('[data-rpt]') : null;
+        // a turn block jumps to its PROMPT (data-rpj), not to where the
+        // prompt became visible — the convo lands on the turn's head
+        const t = el ? parseFloat(el.dataset.rpj || el.dataset.rpt) : timeFromPointer(e);
+        if (t != null && isFinite(t)) rpJumpConvoTo(t, !!(el && el.dataset.rpj));
+        return;
+      }
       try { rpTrack.setPointerCapture(e.pointerId); } catch {}
       // Shift+drag selects a slice; a plain drag scrubs the cursor.
       if (e.shiftKey) {
@@ -8572,6 +9034,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
     });
     rpTrack.addEventListener('pointerup', () => {
+      if (!replay.active) return; // the minimap click already happened on pointerdown
       if (rpSliceDrag) {
         rpSliceDrag = false;
         // A shift-CLICK (no drag) selects nothing — clear instead of

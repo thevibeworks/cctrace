@@ -682,9 +682,12 @@ hash-routed:
 - **The replay stage** (docs/design/replay-stage.md — the rules live
   there): the track is `#rp-lanes`, a clock row (`#rp-axis`, ticks from
   `axisTicks` in the page's local time, a major tick dropping a rule
-  through every lane) over five lanes x wall-clock (human points, model
-  spans, tools/waiting spans, agents stacked by row, harness cuts ✂ /
-  failed ✗), built from `sessionLanes` over the FULL threads (not the
+  through every lane) over five lanes x wall-clock (turn blocks — one
+  per working loop, the prompt's instant to its last reply, numbered at
+  any depth that fits, the tally on hover, lit under the conversation's
+  reading position, click = its prompt — model spans, tools/waiting
+  spans, agents stacked by row, harness cuts ✂ / failed ✗), built from
+  `sessionLanes` over the FULL threads (not the
   cursored ones) and positioned with the same `(t - t0)/dur` math the
   marks used; playhead, veil and slice span every lane. The rail's
   selected thread draws full and every other thread's items carry

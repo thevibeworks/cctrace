@@ -630,6 +630,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .rp-span.agent.more { opacity: 0.4; }
     .rp-span.open { background: none; border: 1px dashed var(--lane-model); color: var(--text-muted); }
     .rp-span.err { outline: 1px solid var(--red); outline-offset: -1px; }
+    /* the TURNS lane (rev 6): one block per working loop, the prompt's
+       instant (its accent left edge — what the human point was) to the
+       loop's last reply. The minimap's clickable unit: the number shows
+       at any depth the block can hold it, because the number IS the
+       point; the prompt's words wait for full depth. The block under the
+       conversation's reading position wears .cur — the sync, on the block. */
+    /* (.rp-turn, not .turn — the conversation's turns own that name) */
+    .rp-span.rp-turn {
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      box-shadow: inset 2px 0 0 var(--accent);
+      color: var(--text-muted); cursor: pointer;
+    }
+    .rp-span.rp-turn:hover { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--text); }
+    .rp-span.rp-turn.cur {
+      background: color-mix(in srgb, var(--accent) 36%, transparent); color: var(--text);
+      outline: 1px solid var(--accent); outline-offset: -1px;
+    }
+    /* a loop the harness started (a nudge, a loaded tool): a turn on the
+       rail, but not the human's — its edge is faint */
+    .rp-span.rp-turn.inj { box-shadow: inset 2px 0 0 var(--text-faint); opacity: 0.7; }
+    #rp-lanes .rp-span.rp-turn.w24 .rp-lbl.i { display: inline; }
+    #rp-lanes[data-depth="full"] .rp-span.rp-turn.w24 .rp-lbl.i { display: none; }
     .rp-point {
       position: absolute; top: 1px; bottom: 1px; width: 2px;
       transform: translateX(-1px);
@@ -5678,6 +5700,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const frac = Math.min(1, Math.max(0, scaleX(sc, ts) / sc.px));
       rpRead.style.left = (frac * 100).toFixed(3) + '%';
       rpRead.style.display = 'block';
+      // The turn block under the reading position lights — the sync made
+      // visible on the block itself. A class flip under the reader's own
+      // scroll: no motion.
+      if (rpBody.querySelectorAll) {
+        for (const b of rpBody.querySelectorAll('.rp-span.rp-turn')) {
+          const on = ts >= parseFloat(b.dataset.t0) - 0.5 && ts <= parseFloat(b.dataset.t1) + 0.5;
+          b.classList.toggle('cur', on);
+        }
+      }
     }
     function rpQueueSyncRead() {
       // A hidden tab never fires rAF — sync now so the marker is right the
@@ -5691,11 +5722,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // A click on the bar outside replay jumps the CONVERSATION to the last
     // turn at or before that instant — the outline's own jump, keyed by
     // time. The bar is the minimap; replay entry stays on ⏵ / the keyboard.
-    function rpJumpConvoTo(t) {
+    // head: land on the FIRST turn at that instant, not the last — a turn
+    // block's prompt shares its timestamp with the harness turns the same
+    // request carried (the hook output, the reminders), and the reader who
+    // clicked the block wants the prompt, not the last banner before the
+    // reply.
+    function rpJumpConvoTo(t, head) {
       if (!convoEl.querySelectorAll) return;
       let target = null;
       for (const el of convoEl.querySelectorAll('.turn[data-ts]')) {
-        if (parseFloat(el.dataset.ts) <= t + 0.5) target = el; else break;
+        const ts = parseFloat(el.dataset.ts);
+        if (head) { if (ts >= t - 0.5) { target = el; break; } continue; }
+        if (ts <= t + 0.5) target = el; else break;
       }
       if (!target) return;
       if (target.getBoundingClientRect && convoEl.getBoundingClientRect) {
@@ -8461,15 +8499,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
       }
 
-      // human: a POINT at the start of the request that carried the prompt
-      let human = '';
-      for (const x of L.human) {
-        if (hidden(x.t, x.t)) continue;
-        const tip = 'human \\u00b7 turn ' + ord(x.ord) + '\\n' + clock(x.t) +
-          (x.label ? '\\n' + x.label : '') +
-          '\\n---\\n> click jumps there \\u2014 the conversation, or the cursor while replaying';
-        human += '<span class="rp-point' + oth(x.threadKey) + '" data-rpt="' + seekOf(x.pairId, x.t) + '" style="left:' + pct(x.t) + '%"' +
-          ' data-tip="' + escapeHtml(tip) + '"><span class="rp-lbl">' + escapeHtml(x.label || '') + '</span></span>';
+      // turns: one BLOCK per working loop, from the instant the prompt hit
+      // the wire (the block's accent edge — what the human lane's point
+      // was) to the loop's last reply. The minimap's clickable unit (rev
+      // 6): the number shows whenever the block can hold it, the prompt's
+      // words at full depth, the tally on hover. data-rpj is the jump
+      // target outside replay (the prompt's own instant, so the convo
+      // lands on the turn's head); data-rpt stays the seek while
+      // replaying (where the prompt became visible).
+      let turns = '';
+      for (const x of L.turns) {
+        if (hidden(x.t0, x.t1)) continue;
+        const n = ord(x.ord);
+        const tally = [
+          x.steps + ' step' + (x.steps === 1 ? '' : 's'),
+          x.calls ? x.calls + ' call' + (x.calls === 1 ? '' : 's') : '',
+          x.agents ? x.agents + ' agent' + (x.agents === 1 ? '' : 's') : '',
+        ].filter(Boolean).join(' \\u00b7 ');
+        const marks = [
+          x.cuts ? '\\u2702 ' + x.cuts + ' compaction' + (x.cuts === 1 ? '' : 's') : '',
+          x.failed ? '\\u2717 ' + x.failed + ' failed request' + (x.failed === 1 ? '' : 's') : '',
+        ].filter(Boolean).join(' \\u00b7 ');
+        const tip = 'turn ' + n + ' \\u00b7 ' + tally +
+          (x.injected ? '\\nstarted by the harness \\u00b7 ' + x.injected : '') +
+          '\\n' + clock(x.t0) + ' \\u00b7 ' + fmtSpan(x.t1 - x.t0) +
+          (x.label ? '\\n' + x.label : '') + (marks ? '\\n' + marks : '') +
+          '\\n---\\n> click jumps to this turn \\u2014 the conversation, or the cursor while replaying';
+        const x0 = px(x.t0), x1 = px(x.t1);
+        const wide = frameW > 0 && (x1 - x0) / 100 * sc.px >= 24;
+        turns += '<span class="rp-span rp-turn' + (x.injected ? ' inj' : '') + oth(x.threadKey) + (wide ? ' w24' : '') +
+          '" data-rpt="' + seekOf(x.pairId, x.t0) + '" data-rpj="' + x.t0 + '" data-t0="' + x.t0 + '" data-t1="' + x.t1 + '"' +
+          ' style="left:' + x0.toFixed(3) + '%;width:' + Math.max(0, x1 - x0).toFixed(3) + '%"' +
+          ' data-tip="' + escapeHtml(tip) + '">' +
+          '<span class="rp-lbl i">' + n + '</span>' +
+          '<span class="rp-lbl n">' + n + (x.label ? ' \\u00b7 ' + escapeHtml(x.label) : '') + '</span></span>';
       }
 
       // model: the pair itself, [request start, response end]
@@ -8555,9 +8618,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // lanes collapse to the clock row, which stays the reopen target.
       let gut = '<span class="rp-glbl rp-g0"><button class="rp-clps" data-tip="' +
         escapeHtml('fold the trajectory\\nThe lanes collapse to the clock row \\u2014 a thin ruler is still an overview.\\n---\\n> click toggles \\u00b7 replay always unfolds it') +
-        '">' + (rpCollapsed ? '\\u25b8' : '\\u25be') + '</button>clock</span><span class="rp-glbl">human</span>' +
+        '">' + (rpCollapsed ? '\\u25b8' : '\\u25be') + '</button>clock</span><span class="rp-glbl">turns</span>' +
         '<span class="rp-glbl">model</span><span class="rp-glbl">tools</span>';
-      let body = lane('human', human) + lane('model', model) + lane('tools', tools);
+      let body = lane('turns', turns) + lane('model', model) + lane('tools', tools);
       const nrows = Math.max(1, arows.length);
       for (let i = 0; i < nrows; i++) {
         gut += '<span class="rp-glbl">' +
@@ -8930,8 +8993,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // switch). Replay entry stays on ⏵ / Space / the arrows.
       if (!replay.active) {
         const el = e.target && e.target.closest ? e.target.closest('[data-rpt]') : null;
-        const t = el ? parseFloat(el.dataset.rpt) : timeFromPointer(e);
-        if (t != null && isFinite(t)) rpJumpConvoTo(t);
+        // a turn block jumps to its PROMPT (data-rpj), not to where the
+        // prompt became visible — the convo lands on the turn's head
+        const t = el ? parseFloat(el.dataset.rpj || el.dataset.rpt) : timeFromPointer(e);
+        if (t != null && isFinite(t)) rpJumpConvoTo(t, !!(el && el.dataset.rpj));
         return;
       }
       try { rpTrack.setPointerCapture(e.pointerId); } catch {}

@@ -39,6 +39,12 @@ enter/⏮/Home park on the thread's own edges, ←/→ step its own pairs,
 and waiting gaps fold like idle. "Revision 5: replay holds the
 reader's thread" below.
 
+Revision 6 (2026-09-01, same branch): the human lane's points become
+TURN BLOCKS — one clickable block per working loop, numbered, the tally
+on hover, lit under the conversation's reading position. Eric: "each
+turn could be a clickable small block, for easier checking of the turn
+details". "Revision 6: turns as blocks" below.
+
 Session replay (docs/design/session-replay.md, P1+P2 shipped) grows from
 "a timeline and the session text as of the cursor" into a STAGE: the trace
 as lanes over time, what the agent is doing at the cursor, and the beat —
@@ -374,6 +380,43 @@ Same session, the waiting fold: see "The strip's axis" — waiting gaps
 left the busy union, so a 45-minute harness wait compresses instead of
 holding half the strip.
 
+## Revision 6: turns as blocks
+
+Rev 4 made the bar the minimap, but its unit of navigation was a 2px
+point per prompt on the human lane: hard to hit, unnumbered below full
+depth, and it said nothing about the turn it started. Eric's ask, on the
+real trace: "each turn could be a clickable small block, for easier
+checking of the turn details". So the human lane becomes the TURNS lane:
+
+- **One block per working loop** (`sessionLanes().turns`): from the
+  instant the prompt hit the wire (the loop's first request start — the
+  block's accent left edge, exactly where the point was) to the loop's
+  last reply's end. The loop is the rail's own unit, so the block's
+  number is the rail's `turn NN`. A harness-started loop (a nudge, a
+  loaded tool) is still a turn — the rail numbers it — flagged
+  `injected`: a faint edge, and the tip says who started it. Subagent
+  loops ride the agents lane, as before.
+- **The number shows at any depth the block can hold it** (`.w24`),
+  because the number IS the point; the prompt's first words wait for
+  full depth. Reading depth stays a function of zoom.
+- **The tip is the turn's tally**: steps, calls, agents spawned, then
+  the clock and the loop's duration, the prompt, and its marks (✂
+  compactions carried by its steps, ✗ failed requests that fell inside
+  it — a failure produces no turn, so it is placed by time). All from
+  the lanes already built; nothing new is inferred.
+- **Click**: outside replay the conversation jumps to the turn's HEAD
+  (`data-rpj`, the prompt's own instant — the seek time, the end of the
+  carrying request, would land on the first reply); replaying, the
+  cursor seeks where the prompt became visible, as every span does.
+- **Sync, on the block**: the block under the conversation's reading
+  position wears `.cur` — set by the same scroll handler that moves the
+  reading marker, so it moves only under the reader's own scroll and
+  never while replaying. A class flip, no motion.
+
+The human POINTS stay in the data (`lanes.human`): the thread extent and
+`soFar` read them, and the block's left edge is the same instant. Only
+the drawing changed.
+
 ## The screen
 
 Session view. The bar is on top always (rev 3); `body.replaying` adds
@@ -382,7 +425,7 @@ the transport, the veil and the playhead. No new tab.
     +- head ---------------------------------------------------------- [F] -+
     | TRAJECTORY (#rp-lanes: frame element, never scrolls away)               |
     |  clock   | 21:44     ▿  22:00        22:15        22:30        22:45   |
-    |  human   |  #        ┆  #                        #                     |
+    |  turns   |[01 ······]┆[02 ······················][03 ······]         |
     |  model   |   ##  ## #┆####      ######   ## ###  ▒▒  ▒▒▒               |
     |  tools   |     ==  ==┆     ==         ==    ====  ▒▒▒                  |
     |  agents  |           [----- explore -----]   [-- review --]            |
@@ -403,8 +446,9 @@ the transport, the veil and the playhead. No new tab.
 
 - Lanes x wall-clock, plus a CLOCK row on top (`axisTicks`): tick labels
   in the page's local time, 10px, faint, hairlines down through the
-  lanes at major ticks only. Five lanes: human (points), model (spans),
-  tools (spans; a waiting gap draws in the same lane, dimmed), agents
+  lanes at major ticks only. Five lanes: turns (blocks — one per working
+  loop, the prompt's instant to its last reply, numbered; rev 6), model
+  (spans), tools (spans; a waiting gap draws in the same lane, dimmed), agents
   (stacked spans), harness (cuts ✂ and failed ✗ marks). Lane labels in a
   56px gutter, lowercase, 10px.
 - **Thread focus.** The rail's selected thread draws in full: its human
@@ -427,9 +471,11 @@ the transport, the veil and the playhead. No new tab.
 - Same `left%` math everywhere; the slice band spans all lanes.
   While replaying: shift+drag selects a slice, drag scrubs, click seeks
   to that pair's end (the boundary where it became visible — the same
-  event `replayEvents` walks; a human point seeks to the end of the
-  request that carried it). Outside replay: click jumps the
-  CONVERSATION to the turn at that instant (rev 4), drag does nothing.
+  event `replayEvents` walks; a turn block seeks to the end of the
+  request that carried its prompt). Outside replay: click jumps the
+  CONVERSATION to the turn at that instant (rev 4) — a turn block to its
+  own prompt (`data-rpj`, the prompt's instant, so the convo lands on the
+  turn's head) — and drag does nothing.
 - Wheel zooms around the cursor, 1x fit to 32x, the context overview's
   helpers (one brush implementation). The strip scrolls horizontally
   inside its frame and follows the playhead only when it LEAVES the

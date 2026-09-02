@@ -279,6 +279,17 @@ describe("sessionLanes / soFar / beatAt / chaptersOf", () => {
     expect(lanes.human.length).toBe(2);
   });
 
+  test("turns are blocks: the prompt's instant to the loop's last reply, with the tally", () => {
+    expect(lanes.turns.map((x: any) => [x.ord, x.t0, x.t1, x.steps, x.calls, x.failed, x.cuts, x.agents, x.label, x.pairId])).toEqual([
+      // loop 1 spans A's start to B's end; the 529 fell inside it
+      [0, 1_000_000, 1_011_000, 2, 1, 1, 0, 0, "ask", "A"],
+      // loop 2: the harness nudge is a member, not a head — one turn, two steps
+      [1, 1_100_000, 1_105_500, 2, 0, 0, 0, 0, "next", "C"],
+    ]);
+    expect(lanes.turns[0].injected).toBe("");
+    expect(lanes.turns[0].pairIds).toEqual(["A", "B"]);
+  });
+
   test("soFar tallies steps, calls by name, children, failures and cuts", () => {
     expect(soFar(lanes, 999_000)).toEqual({ steps: 0, tools: {}, agents: 0, failed: 0, cuts: 0 });
     expect(soFar(lanes, 1_004_000)).toEqual({ steps: 1, tools: { Bash: 1 }, agents: 0, failed: 0, cuts: 0 });

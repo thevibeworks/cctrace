@@ -921,12 +921,16 @@ describe("the trajectory strip (#rp-lanes)", () => {
     const body = page.els["rp-lanes-body"].innerHTML as string;
     // The gutter names every lane — a lane whose meaning is unstated is
     // decoration (and the geometry is fixed, so none of them can vanish).
-    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(gut).toContain(">" + l + "<");
-    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
-    // ONE point: the human's own prompt. A subagent's head is the parent
-    // model's dispatch text, not a person's — it rides the agents lane
-    // (sessionLanes skips heads of threads with agentOf).
-    expect((body.match(/class="rp-point"/g) || []).length).toBe(1);
+    for (const l of ["turns", "model", "tools", "agents", "harness"]) expect(gut).toContain(">" + l + "<");
+    for (const l of ["turns", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
+    // ONE turn block: the human's own working loop, numbered, jumping to
+    // its prompt. A subagent's head is the parent model's dispatch text,
+    // not a person's — it rides the agents lane (sessionLanes skips
+    // threads with agentOf). No bare points remain.
+    expect((body.match(/rp-span rp-turn/g) || []).length).toBe(1);
+    expect(body).toContain('class="rp-lbl i">01<');
+    expect(body).toContain("data-rpj=");
+    expect(body).not.toContain("rp-point");
     expect((body.match(/rp-span model/g) || []).length).toBe(4); // p1 p2 p5 + the child's own
     // the Bash gap is a tools span carrying its initials AND its name
     expect(body).toContain("rp-span tools");
@@ -953,7 +957,7 @@ describe("the trajectory strip (#rp-lanes)", () => {
     page.goto("#/session");
     expect(page.body.classList.contains("replaying")).toBe(false);
     const body = page.els["rp-lanes-body"].innerHTML as string;
-    for (const l of ["human", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
+    for (const l of ["turns", "model", "tools", "agents", "harness"]) expect(body).toContain('data-lane="' + l + '"');
     // the clock cell carries the fold chevron, unfolded by default
     expect(page.els["rp-gut"].innerHTML).toContain('class="rp-clps"');
     expect(page.els["rp-gut"].innerHTML).toContain("▾");

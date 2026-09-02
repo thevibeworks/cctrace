@@ -139,6 +139,12 @@ to protect that feeling.
   context overview is the context view's: lanes x wall-clock, the playhead
   and the slice spanning every lane, never scrolled away. Reading depth is
   a function of zoom (map / read / full on `data-depth`), not a toggle.
+  The strip's clickable UNIT is the turn: one block per working loop on
+  the top lane, numbered at any depth the block can hold the number
+  (the number is the point; the words wait for full depth), the tally on
+  hover, and the block under the conversation's reading position lit —
+  a 2px point per prompt was a target nobody could hit and a fact nobody
+  could read.
   While replaying the page has TWO motion owners, both deliberate: the
   playhead, and the loop row's lit edge — the flowchart of Claude Code's
   loop under the strip draws the transition in progress as a flowing

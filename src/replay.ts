@@ -190,7 +190,9 @@ export function stepOutcome(turn: any, isFinal: boolean, pair: any): any {
  * The trace as LANES over wall-clock — the trajectory strip's whole data
  * model. `threads` are buildSession threads (the caller decides which: pass
  * the utility threads in and they get lanes too), `pairOf(id)` resolves a
- * pair. Returns { t0, t1, human, model, tools, waiting, agents, cuts, failed }
+ * pair. Returns { t0, t1, human, turns, model, tools, waiting, agents, cuts, failed }
+ * — `turns` is each working loop as ONE block (the prompt's instant to the
+ * loop's last reply) with its tally: steps, calls, agents, cuts, failed.
  * with every lane sorted by time; t0/t1 are 0 when nothing resolved.
  *
  * Every span is a wire timestamp: model = [pair start, pair end], tools /
@@ -203,7 +205,7 @@ export function stepOutcome(turn: any, isFinal: boolean, pair: any): any {
  * produced no turn to attribute).
  */
 export function sessionLanes(threads: any[], pairOf: any): any {
-  const out: any = { t0: 0, t1: 0, human: [], model: [], tools: [], waiting: [], agents: [], cuts: [], failed: [] };
+  const out: any = { t0: 0, t1: 0, human: [], turns: [], model: [], tools: [], waiting: [], agents: [], cuts: [], failed: [] };
   let lo = Infinity;
   let hi = -Infinity;
   const mark = (a: number, b: number) => {
@@ -225,6 +227,11 @@ export function sessionLanes(threads: any[], pairOf: any): any {
     for (let li = 0; li < loops.length; li++) {
       const L = loops[li];
       let headPair: any = null;
+      // the loop as a TURN block: its last reply's end, its tally
+      let loopEnd = -Infinity;
+      let steps = 0;
+      let calls = 0;
+      const loopPairs: string[] = [];
       for (const v of L.members) {
         const turn = vis[v];
         if (!turn || turn.role !== "assistant" || !turn.pairId) continue;
@@ -239,6 +246,10 @@ export function sessionLanes(threads: any[], pairOf: any): any {
           err: oc.err, stop: oc.stop, next: oc.next,
         });
         mark(t0, t1);
+        if (t1 > loopEnd) loopEnd = t1;
+        steps++;
+        calls += oc.calls.length;
+        loopPairs.push(p.id);
         // The gap after this reply, exactly as threadTimeSplit counted it.
         // names carries EVERY call in wire order (three Bash calls are three
         // entries) — one gap covers them all, so count is names.length and
@@ -264,6 +275,19 @@ export function sessionLanes(threads: any[], pairOf: any): any {
         out.human.push({
           t: pairStartMs(headPair), threadKey: t.key, ord: li,
           label: label(turnSnippet((vis[L.head] || {}).blocks || [])), pairId: headPair.id,
+        });
+      }
+      // The TURN: the working loop as one block, from the instant the
+      // prompt hit the wire (its first request's start) to its last
+      // reply's end — the strip's clickable unit. A harness-started loop
+      // is still a turn (the rail numbers it), flagged `injected` so the
+      // block can say who started it. Subagents ride the agents lane.
+      if (L.head != null && headPair && !t.agentOf && loopEnd > -Infinity) {
+        out.turns.push({
+          t0: pairStartMs(headPair), t1: loopEnd, threadKey: t.key, ord: li,
+          label: label(turnSnippet((vis[L.head] || {}).blocks || [])),
+          injected: L.headInjected || "", pairId: headPair.id, pairIds: loopPairs,
+          steps, calls, agents: 0, cuts: 0, failed: 0,
         });
       }
     }
@@ -332,6 +356,17 @@ export function sessionLanes(threads: any[], pairOf: any): any {
   out.tools.sort((a: any, b: any) => a.t0 - b.t0);
   out.waiting.sort((a: any, b: any) => a.t0 - b.t0);
   out.human.sort((a: any, b: any) => a.t - b.t);
+  // The turn's marks: children spawned by its steps (spawn edge verified
+  // by tool_use id upstream), compactions carried by its steps, failed
+  // requests that fell inside it (a failure produces no turn, so it is
+  // placed by time — the retry is the next step of the same loop).
+  for (const tb of out.turns) {
+    const own = new Set(tb.pairIds);
+    for (const a of out.agents) if (a.parentKey === tb.threadKey && own.has(a.parentPairId)) tb.agents++;
+    for (const c of out.cuts) if (c.threadKey === tb.threadKey && own.has(c.pairId)) tb.cuts++;
+    for (const f of out.failed) if (f.threadKey === tb.threadKey && f.t >= tb.t0 && f.t <= tb.t1) tb.failed++;
+  }
+  out.turns.sort((a: any, b: any) => a.t0 - b.t0);
   out.cuts.sort((a: any, b: any) => a.t - b.t);
   out.failed.sort((a: any, b: any) => a.t - b.t);
   out.t0 = lo === Infinity ? 0 : lo;

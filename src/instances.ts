@@ -327,6 +327,56 @@ export async function probeInstance(info: InstanceInfo): Promise<ProbeVerdict> {
   }
 }
 
+export interface StopReply {
+  ok: boolean;
+  status?: number;
+  /** The other side's message — its 403/501 reason, or why we never got one. */
+  detail?: string;
+}
+
+/**
+ * Ask the run that owns `port` to stop itself (the dashboard's stop button,
+ * relayed by whichever server the page is loaded from — see server.ts).
+ *
+ * Addressed exactly like a liveness probe, and for the same reason: a pid
+ * from a shared registry is meaningless here (other namespace, recycled
+ * number), while the port + the run's unique id name one specific run. The
+ * id travels in the body and the receiver compares it against its own, so a
+ * stale row that now points at a recycled port cannot kill the newcomer.
+ *
+ * node:http, not fetch: a traced session has HTTP(S)_PROXY set and this must
+ * hit localhost directly.
+ */
+export function requestStop(port: number, id: string, force = false, timeout = 3000): Promise<StopReply> {
+  return new Promise((resolve) => {
+    let done = false;
+    const settle = (v: StopReply) => { if (!done) { done = true; resolve(v); } };
+    const payload = JSON.stringify({ id, force });
+    const req = http.request(
+      {
+        host: "127.0.0.1", port, path: "/api/shutdown", method: "POST", timeout,
+        headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (c: string) => { if (body.length < 4096) body += c; });
+        res.on("end", () => {
+          let detail = "";
+          try { detail = (JSON.parse(body) as { error?: string }).error || ""; } catch { detail = body.slice(0, 200); }
+          settle({ ok: res.statusCode === 200, status: res.statusCode, detail: detail || undefined });
+        });
+      },
+    );
+    req.on("timeout", () => { settle({ ok: false, detail: "no answer from that port" }); req.destroy(); });
+    // A run that dies before writing the response is a SUCCESSFUL stop from
+    // where we stand, but we can't tell that from a refused connection here
+    // — the caller re-lists and the row is simply gone.
+    req.on("error", (err) => settle({ ok: false, detail: err.message }));
+    req.end(payload);
+  });
+}
+
 export interface ListOptions {
   /** Liveness check for stale registry entries. */
   probe?: Probe;

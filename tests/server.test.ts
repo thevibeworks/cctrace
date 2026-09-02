@@ -3,6 +3,7 @@ import { createServer } from "../src/server";
 import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { startArchive, cancelArchive, currentArchiveJob, resetArchiveJob } from "../src/maintenance";
 import type { TracePair } from "../src/types";
 
 // The live server's ingestion surface. Regression territory (containers
@@ -465,5 +466,154 @@ describe("dashboard", () => {
     } finally {
       s4.stop();
     }
+  });
+});
+
+// The dashboard as an operator surface (0.48): stopping a run, and running
+// the store's archive job. Both are relays — the page talks to ONE origin
+// (the server that served it) and that server addresses the target the same
+// way liveness is probed: by port, proven by the run's unique id.
+describe("remote stop", () => {
+  test("/api/shutdown needs this run's id and a wired exit path", async () => {
+    // The shared server of this file wires no onShutdown: id first, then
+    // capability — a wrong id must not even learn whether stop exists.
+    const wrong = await fetch(`${base}/api/shutdown`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "not-this-run" }),
+    });
+    expect(wrong.status).toBe(403);
+    const right = await fetch(`${base}/api/shutdown`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: INSTANCE_ID }),
+    });
+    expect(right.status).toBe(501);
+    expect((await right.json() as any).error).toContain("no remote stop");
+  });
+
+  test("a wired run stops itself, gracefully or forced", async () => {
+    const calls: boolean[] = [];
+    const s = createServer({
+      port: 0, logDir: ".cctrace-test-none", noHistory: true, instanceId: "stop-me",
+      stopKind: "run", onShutdown: ({ force }) => calls.push(force),
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${s.port}/api/shutdown`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "stop-me" }),
+      });
+      expect(res.status).toBe(200);
+      const body = await res.json() as any;
+      expect(body).toMatchObject({ ok: true, stopping: true, kind: "run", force: false });
+      // Answer first, exit after: the callback fires off the response path.
+      expect(calls).toEqual([]);
+      await fetch(`http://127.0.0.1:${s.port}/api/shutdown`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: "stop-me", force: true }),
+      });
+      await Bun.sleep(200);
+      expect(calls).toEqual([false, true]);
+    } finally {
+      s.stop();
+    }
+  });
+
+  test("/api/instances/stop relays to the named run's own port", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-stop-"));
+    mkdirSync(join(dataDir, "instances"), { recursive: true });
+    let stopped = 0;
+    // The target: a real server on a real port, registered live.
+    const target = createServer({
+      port: 0, logDir: ".cctrace-test-none", noHistory: true, instanceId: "target-run",
+      stopKind: "run", onShutdown: () => { stopped++; },
+    });
+    writeFileSync(join(dataDir, "instances", "target-run.json"), JSON.stringify({
+      id: "target-run", pid: 1, port: target.port, project: "p", projectPath: "/x/p",
+      logFile: join(dataDir, "trace-t.jsonl"), mode: "mitm",
+      startedAt: new Date().toISOString(),
+    }));
+    // The relay: a different server, the one the dashboard was loaded from.
+    const relay = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir, instanceId: "relay" });
+    const post = (body: unknown) => fetch(`http://127.0.0.1:${relay.port}/api/instances/stop`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    try {
+      expect((await post({})).status).toBe(400);              // no id
+      expect((await post({ id: "ghost" })).status).toBe(404); // not a live instance
+      const ok = await post({ id: "target-run" });
+      expect(ok.status).toBe(200);
+      expect(await ok.json()).toMatchObject({ ok: true, stopping: true, port: target.port });
+      await Bun.sleep(200);
+      expect(stopped).toBe(1);
+    } finally {
+      relay.stop();
+      target.stop();
+    }
+  });
+});
+
+describe("store housekeeping", () => {
+  test("/api/store reports the archive plan; the job runs a child and re-measures", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-store-"));
+    const proj = join(dataDir, "traces", "-x-proj");
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, "project.json"), JSON.stringify({ path: "/x/proj" }));
+    writeFileSync(join(proj, "trace-a.jsonl"), JSON.stringify(pair("sp1")) + "\n");
+    writeFileSync(join(proj, "trace-b.jsonl.zst"), "already at rest");
+    const s = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    const sbase = `http://127.0.0.1:${s.port}`;
+    try {
+      const pic = await (await fetch(`${sbase}/api/store`)).json() as any;
+      expect(pic.projects).toBe(1);
+      expect(pic.traces).toBe(2);
+      expect(pic.plain).toBe(1);                  // only the plain .jsonl
+      expect(pic.plainBytes).toBeGreaterThan(0);
+      expect(pic.dirs[0].project).toBe("/x/proj");
+      expect(pic.job).toBe(null);
+
+      // The real job spawns `cctrace compress --all --yes`; here a stand-in
+      // proves the plumbing: start -> running -> child output -> re-measure.
+      resetArchiveJob();
+      const started = await startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo archiving trace-a; sleep 0.2"] });
+      expect(started.started).toBe(true);
+      expect((await startArchive(dataDir)).started).toBe(false); // one job at a time
+      const running = await (await fetch(`${sbase}/api/store`)).json() as any;
+      expect(running.job.state).toBe("running");
+      await Bun.sleep(900);
+      const done = await (await fetch(`${sbase}/api/store`)).json() as any;
+      expect(done.job.state).toBe("done");
+      expect(done.job.lines).toContain("archiving trace-a");
+      expect(done.job.after).toBeTruthy();
+      resetArchiveJob();
+    } finally {
+      s.stop();
+    }
+  });
+
+  test("/api/store/archive refuses a second job and cancels the running one", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-store2-"));
+    mkdirSync(join(dataDir, "traces"), { recursive: true });
+    const s = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      resetArchiveJob();
+      await startArchive(dataDir, { argv: ["/bin/sh", "-c", "sleep 5"] });
+      const second = await fetch(`http://127.0.0.1:${s.port}/api/store/archive`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      expect(second.status).toBe(409);
+      expect(await second.json()).toMatchObject({ ok: false, running: true });
+      const cancel = await fetch(`http://127.0.0.1:${s.port}/api/store/archive`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: '{"cancel":true}',
+      });
+      expect(cancel.status).toBe(200);
+      await Bun.sleep(300);
+      expect(currentArchiveJob()?.state).toBe("cancelled");
+      resetArchiveJob();
+    } finally {
+      s.stop();
+    }
+  });
+
+  test("a server without a data dir has no store", async () => {
+    expect((await fetch(`${base}/api/store`)).status).toBe(501);
   });
 });

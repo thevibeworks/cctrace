@@ -155,6 +155,10 @@ export interface PageMeta {
   /** "view" when the page serves a saved trace (cctrace view) — the UI
    * reads as a document (no live/offline framing, opens at the top). */
   mode?: string;
+  /** The page holds the newest slice of a budgeted read, not the whole
+   * trace — the header must say so (a silent 78% drop once shipped).
+   * Shape mirrors ViewResult.truncated in src/view.ts. */
+  truncated?: { droppedLines: number; droppedBytes: number; keptBytes: number; olderFiles?: number };
   /** The session's generated name (`cctrace title`), when one exists. */
   sessionTitle?: string;
   /** cctrace version that produced this page/snapshot. */
@@ -320,6 +324,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       .status.connected::before { animation: none; }
       * { scroll-behavior: auto !important; }
     }
+    /* the page holds a budgeted tail of the trace, and says so */
+    .trunc { font-size: 12px; color: var(--amber); flex-shrink: 0; white-space: nowrap; }
+    .trunc:empty { display: none; }
+    .trunc a { color: inherit; text-decoration: underline dotted; }
     .count { color: var(--text-muted); margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .header-actions { display: flex; align-items: center; gap: 2px; }
     .icon-btn {
@@ -2146,6 +2154,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     <span class="count" id="stats"></span>
     <span class="inst" id="inst"></span>
     <span class="status disconnected" id="status">offline</span>
+    <span class="trunc" id="trunc"></span>
     <span class="ver" id="ver"></span>
     <span class="header-actions">
       <a class="icon-btn" id="dash-link" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page.">${DASH_ICON}</a>
@@ -2893,6 +2902,32 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'v' + escapeHtml(META.latestVersion) + ' available</a>';
       }
       document.getElementById('ver').innerHTML = html;
+    })();
+
+    // The truncation chip: this page is the newest slice of a BUDGETED
+    // read, and the header says so — a silent drop is data loss to the
+    // reader. On a /view/<run-id> route the chip is the escape hatch
+    // (?full=1); elsewhere it states the fact and names the CLI's --full.
+    (function renderTrunc() {
+      const t = META.truncated;
+      const el = document.getElementById('trunc');
+      if (!t || !el) return;
+      const total = t.keptBytes + t.droppedBytes;
+      const label = 'newest ' + fmtBytes(t.keptBytes) + ' of ' + fmtBytes(total);
+      // location.pathname is absent on a file:// snapshot's stub-ish
+      // environments; the chip must state the fact everywhere.
+      const path = (typeof location !== 'undefined' && location.pathname) || '';
+      const onViewRoute = path.indexOf('/view/') === 0;
+      const tip = 'partial view\\n' +
+        'This page holds the newest ' + fmtBytes(t.keptBytes) + ' of a ' + fmtBytes(total) + ' trace \\u2014 ' +
+        t.droppedLines.toLocaleString() + ' older line' + (t.droppedLines === 1 ? '' : 's') + ' are not on it' +
+        (t.olderFiles ? ' (+' + t.olderFiles + ' older trace file' + (t.olderFiles > 1 ? 's' : '') + ' unscanned)' : '') + '.\\n' +
+        '---\\n' +
+        (onViewRoute ? '> click loads everything \\u2014 a very large page may hang the tab\\n' : '') +
+        '> the cctrace view command takes --full in the terminal';
+      el.innerHTML = onViewRoute
+        ? '<a href="' + escapeHtml(path) + '?full=1" data-tip="' + escapeHtml(tip) + '">' + label + '</a>'
+        : '<span data-tip="' + escapeHtml(tip) + '">' + label + '</span>';
     })();
 
     // ---- Instance switcher: other live cctrace runs on this machine ----

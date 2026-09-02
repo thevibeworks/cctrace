@@ -13,7 +13,7 @@ import { loadPriorPairs, loadTraceFiles } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { getDashboardHtml } from "./dashboard";
-import { resolveView, findTraceCarrier, traceSizes } from "./view";
+import { resolveView, findTraceCarrier, traceSizes, VIEW_BYTES } from "./view";
 import { titleLookup } from "./title";
 import { projectTraceDir } from "./store";
 import { statSync, existsSync } from "fs";
@@ -467,13 +467,22 @@ export function createServer(config: ServerConfig) {
           const storeDir = storeDirFor(config.dataDir, run);
           const viewDirs = [dirname(carrier.path)];
           if (storeDir && existsSync(storeDir) && resolve(storeDir) !== resolve(viewDirs[0]!)) viewDirs.push(storeDir);
+          // A rendered document, not a streaming read: every kept byte lands
+          // ~1:1 in the page, so the budget is VIEW_BYTES, never TAIL_BYTES
+          // (a 708 MB session once produced a 257 MB page that no tab
+          // survives — and silently dropped 78% of the session on top).
+          // ?full=1 loads everything, ?bytes=N (MB) picks a budget.
+          const mb = Number.parseInt(url.searchParams.get("bytes") || "", 10);
+          const tailBytes = url.searchParams.get("full") === "1" ? Infinity
+            : Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024
+            : VIEW_BYTES;
           let result;
           try {
-            result = run.sessionId ? await resolveView(run.sessionId, viewDirs) : null;
+            result = run.sessionId ? await resolveView(run.sessionId, viewDirs, { tailBytes }) : null;
           } catch {
             result = null;
           }
-          if (!result) result = await resolveView(carrier.path, viewDirs);
+          if (!result) result = await resolveView(carrier.path, viewDirs, { tailBytes });
           const { traceBytes, traceDiskBytes } = traceSizes(result);
           const html = renderSnapshot(result.pairs, {
             version: config.meta?.version,
@@ -486,8 +495,16 @@ export function createServer(config: ServerConfig) {
             traceRelPath: carrier.path,
             traceBytes,
             traceDiskBytes,
+            truncated: result.truncated,
             sessionTitle: config.dataDir ? titleLookup(config.dataDir)(run) || undefined : undefined,
           });
+          // The page compresses ~10x+ (repeated request bodies); the browser
+          // still parses the full document, which is what VIEW_BYTES bounds.
+          if ((req.headers.get("accept-encoding") || "").includes("gzip")) {
+            return new Response(Bun.gzipSync(html), {
+              headers: { "Content-Type": "text/html", "Content-Encoding": "gzip" },
+            });
+          }
           return new Response(html, { headers: { "Content-Type": "text/html" } });
         } catch (e) {
           return new Response(`could not render run: ${e instanceof Error ? e.message : e}`, { status: 500 });

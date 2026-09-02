@@ -3,7 +3,21 @@
 One self-contained page serves the live view, `cctrace view` rebuilds, and
 offline snapshots -- same UI, three ways in.
 
-- **Inline row summaries** -- every request row reads left-to-right:
+- **A destination rail** -- the left edge carries the mark, the run card
+  (client, trace, session id, and whether this page is live), the four
+  destinations with their counts (Requests, Sessions, Context, Runs), and
+  the page's own chrome in its foot: the instance switcher, the version,
+  and the mask / theme / source icons. The header above the work then
+  names the destination you are in and spends its width on that
+  destination's numbers. Under 760px the rail becomes a labelled bottom
+  bar. The whole page wears the Claude Design System, measured off
+  claude.ai and adopted whole -- the reading face for prose, mono kept for
+  the wire, clay for identity, blue for anything interactive.
+- **Inline row summaries** -- every request row opens with its PEN (the
+  row's own stroke on a shared 30s scale: the faint head is the wait for
+  the first token, the solid tail the streaming that followed, inked in
+  the category's color), then method, status, category, url. After that it
+  reads left-to-right:
   model, requested reasoning effort (`effort high` / `xhigh` / `adaptive`
   / a token budget -- every wire shape the four clients send, tooltip
   names the field), thinking tokens, in/out tokens, a `≡` prompt-cache
@@ -18,6 +32,10 @@ offline snapshots -- same UI, three ways in.
   (measured live at the proxy pump; SSE events carry no timestamps, so a
   saved trace can't reconstruct it) and tok/s computed over the
   post-first-token stream -- slow-start vs slow-stream is one glance.
+- **Named waits** -- when more than two minutes pass between two requests
+  the list draws a hatched band saying how long ("1h 28m with nothing on
+  the wire"). A list that silently closes the gap makes an hour of nothing
+  look like the next line.
 - **Category filter chips** with live counts -- only the categories the
   trace actually has (a Codex run shows no Count Tokens chip). Click to
   filter; combine with text search.
@@ -43,8 +61,8 @@ offline snapshots -- same UI, three ways in.
   cost, exact model ids, and effort levels live in hovers. Image
   attachments render as real thumbnails (click for full size) -- the bytes
   were already in the trace; remote image URLs are named, never fetched.
-  A masked screen-share mode (header eye toggle) blurs session ids and
-  account values.
+  A masked screen-share mode (the eye toggle in the rail's foot) blurs
+  session ids and account values.
 - **Context view** -- the agent's context window over time, in a shell
   that reads like Chrome DevTools' Performance panel. An interactive
   OVERVIEW sits on top and never scrolls away: one stacked column per
@@ -164,7 +182,7 @@ offline snapshots -- same UI, three ways in.
   "us"`, 1.1x). Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
   gets lost: ports allocate predictably (8722, 8723, ...), `cctrace ps`
-  lists every live instance with its URL and session, and the web UI header
+  lists every live instance with its URL and session, and the rail's foot
   grows a switcher to jump between them.
 - **Session continuity** -- `cctrace -- --continue` (or `--resume`) picks up
   where a previous traced run left off: every Claude Code request carries its
@@ -177,6 +195,7 @@ offline snapshots -- same UI, three ways in.
   the same UI with no server. Open it a year from now, it still works.
 - **Stays fresh** -- a daily background check against npm (never blocks
   startup, fail-soft) offers new releases with an `upgrade now? [y/N]`
-  prompt on interactive runs; declining snoozes that version. The header
-  shows the running version, and an amber notice when a newer one exists.
+  prompt on interactive runs; declining snoozes that version. The rail's
+  foot shows the running version, and a clay notice when a newer one
+  exists.
   Opt out with `--no-update-check` or `CCTRACE_NO_UPDATE_CHECK=1`.

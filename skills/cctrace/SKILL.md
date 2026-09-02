@@ -85,9 +85,19 @@ Prints as `Live UI: http://localhost:<port>/trace` (8722 by default — TRAC on 
 instances land on 9318, 9319, ...). `GET /s/<sid8>` (0.40+) is the short
 session jump — a redirect to `/trace#/session/<sid8>` that lands on that
 session's conversation scrolled to the newest turn (`/s` alone: the newest
-session) — the link a statusline can afford to print. Hash-routed views:
+session) — the link a statusline can afford to print.
 
-- **Requests** (`#`, `#/p/<id>`): one row per request. Content chips in
+The frame is a destination RAIL on the left — the mark, the run card
+(client · trace · session id · live/snapshot), the destinations with their
+counts, and the page chrome (instance switcher, version, mask/theme) in
+its foot — and the work column on the right, whose header names the
+destination and carries its numbers. Hash-routed views:
+
+- **Requests** (`#`, `#/p/<id>`): one row per request, opening with the
+  PEN — the row's own stroke on a shared 30s scale, faint head = time to
+  first token, solid tail = the streaming after it, inked by category —
+  and a hatched band between rows more than two minutes apart naming the
+  wait ("1h 28m with nothing on the wire"). Content chips in
   reading order — model · effort (high/xhigh/adaptive/token budget, all
   clients' wire shapes) · think · in/out tokens · ≡ cache verdict (green
   hit with ↓read ↑write + hit %, amber cold write or miss; tooltip shows
@@ -120,8 +130,18 @@ session) — the link a statusline can afford to print. Hash-routed views:
   `GET /view/<run-id>` — a snapshot the serving instance renders on
   demand from that run's trace (JSON: `/api/instances` live, `/api/runs`
   finished).
-  The header shows the trace's running totals (requests · in/out tokens ·
-  est cost, breakdown on hover), and clicking the trace title copies its
+  The dashboard also OPERATES: each live row has a **stop** button
+  (two-step confirm) and the **store** section shows what the traces cost
+  on disk with an **archive now** button. Server side:
+  `POST /api/instances/stop {id[,force]}` relays to that run's own port
+  (a capture run ends like Ctrl-C — the client exits, cctrace prints its
+  receipt and seals the trace; a viewer just closes), and
+  `POST /api/store/archive` spawns `cctrace compress --all --yes` as a
+  child, streaming its output into `GET /api/store` (which also reports
+  the plan: plain traces, bytes, legacy .gz, interrupted seals).
+  `POST /api/store/archive {"cancel":true}` stops it.
+  The work header shows the trace's running totals (requests · in/out
+  tokens · est cost, breakdown on hover), and clicking the rail's trace title copies its
   path (absolute into the store, or project-relative for a legacy
   ./.cctrace trace) — ready for `cctrace view`.
 - **Sessions** (`#/session[/<sid8-or-key>[/<key>]]`): reconstructed
@@ -333,7 +353,7 @@ present (wrangler swaps HTTP stacks); costs only that host's audit line.
 registers itself (heartbeat + port-probe verified, works across containers
 sharing a data dir), and the default port walk 8722..8821 is swept for
 instances the registry lost, so the listing reflects what actually serves.
-The UI header shows a "⇄ N more" switcher when siblings exist.
+The UI rail's foot shows a "⇄ N more" switcher when siblings exist.
 `cctrace history` answers "what did I trace recently?" — the same registry's
 tombstones as a global timeline; open any row with `cctrace view <SESSION>`.
 

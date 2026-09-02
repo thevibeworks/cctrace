@@ -140,12 +140,23 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   from cache and what was billed fresh. Down the rail that column is the
   agent's context trajectory -- it climbs, a compaction drops it, the next
   step runs cold, then warms again.
+- **Reads like Claude.** The UI wears the Claude Design System -- measured
+  off claude.ai and adopted whole, not approximated: warm paper and
+  near-black grounds, hairlines at 10% ink, the reading face for prose
+  with mono kept for the wire, clay for identity and blue for anything
+  interactive. A destination rail on the left carries the run's identity
+  and where you can go; the request list is a recording, every row drawn
+  with its own pen stroke and every wait over two minutes named.
 - **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
   it anytime, `--html` renders an offline snapshot you can send around.
 - **One dashboard for everything.** `/dashboard` on any instance shows every
   live run and every finished trace across all your projects -- grouped by
   project or client, with size/tokens/cost per run -- and any row opens as
-  a rendered session view in one click.
+  a rendered session view in one click. It also acts: **stop** ends a live
+  run from the page (through its normal close-out, so the trace is still
+  sealed), and the **store** section shows what your traces cost on disk
+  with one button to archive whatever is still plain -- `cctrace compress
+  --all --yes`, run for you, output and all.
 - **Zero config.** Auto-generates its CA, auto-detects your install, full
   first-party capture by default.
 - **Scoped by design.** External hosts your agent's subprocesses contact

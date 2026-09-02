@@ -1,0 +1,20 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="cctrace">
+  <title>cctrace — the recorder</title>
+  <!-- the chart patch: minor rule every 32, major frame -->
+  <g stroke="currentColor" fill="none" opacity="0.28" stroke-width="6">
+    <path d="M96 128h320M96 192h320M96 256h320M96 320h320M96 384h320"/>
+    <path d="M160 96v320M224 96v320M288 96v320M352 96v320"/>
+  </g>
+  <g stroke="currentColor" fill="none" stroke-width="10">
+    <rect x="96" y="96" width="320" height="320"/>
+  </g>
+  <!-- the pen trace: the recording itself -->
+  <g stroke="currentColor" fill="none" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M96 336 L160 336 L192 208 L224 208 L256 288 L320 288 L352 176 L416 176"/>
+  </g>
+  <!-- the carriage: where the pen is now -->
+  <g stroke="currentColor" fill="currentColor">
+    <path d="M288 64 L288 448" stroke-width="8" opacity="0.55" fill="none"/>
+    <circle cx="288" cy="288" r="26"/>
+  </g>
+</svg>

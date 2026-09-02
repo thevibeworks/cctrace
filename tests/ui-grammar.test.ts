@@ -434,6 +434,63 @@ describe("generated markup grammar", () => {
   });
 });
 
+// 0.48 moved the destinations out of the toolbar onto a rail and gave the
+// work column a header that names where you are. The rail is navigation:
+// if the active mark or the title stops following the route, the page
+// stops answering "where am I" — the one question chrome exists for.
+describe("the destination rail", () => {
+  test("the active destination and the page title follow the route", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    expect(page.els["page-title"].textContent).toBe("Requests");
+    expect(page.els["tab-requests"].classList.contains("active")).toBe(true);
+    page.goto("#/session");
+    expect(page.els["page-title"].textContent).toBe("Sessions");
+    expect(page.els["tab-session"].classList.contains("active")).toBe(true);
+    expect(page.els["tab-requests"].classList.contains("active")).toBe(false);
+    page.goto("#/context");
+    expect(page.els["page-title"].textContent).toBe("Context");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("each destination counts what it holds, in its own unit", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    expect(page.els["dest-n-req"].textContent).toBe("2");
+    // both pairs carry the same wire session id: one session, not two
+    expect(page.els["dest-n-sess"].textContent).toBe("1");
+  });
+});
+
+// The row is a recording before it is a record: the pen states duration on
+// a shared scale, and a wait the list would otherwise close silently gets
+// its own band. An hour of nothing must never read as the next line.
+describe("the recorded request row", () => {
+  function rowsHtml(page: ReturnType<typeof bootSnapshotPage>): string {
+    return page.fragments.filter((f) => f.id === "pairs").map((f) => f.html).join("\n");
+  }
+
+  test("every row opens with its pen, inked by category", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    const html = rowsHtml(page);
+    expect(html).toContain('class="pen"');
+    expect(html).toContain("of 30s full scale");
+  });
+
+  test("a quiet stretch over the fold threshold becomes a named band", () => {
+    const a = msgPair("p1");
+    const b = msgPair("p2");
+    // b starts 25 minutes after a (timestamps are seconds on the wire)
+    (b.request as unknown as { timestamp: number }).timestamp =
+      (a.request as unknown as { timestamp: number }).timestamp + 25 * 60;
+    const page = bootSnapshotPage(renderSnapshot([a, b]));
+    expect(rowsHtml(page)).toContain("with nothing on the wire");
+  });
+
+  test("consecutive requests draw no band", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
+    expect(rowsHtml(page)).not.toContain("with nothing on the wire");
+  });
+});
+
 describe("header trace totals", () => {
   test("the stats rollup sums requests, tokens, and est cost with a breakdown tip", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));

@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cctrace design A — the recorder</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!--
+  THESIS       A trace is a recording, so the page is the chart it was written
+               on: one continuous roll of wall-clock, ruled, with the pens that
+               drew it. It refuses the panel-of-cards dashboard and the
+               DevTools network clone, which are the two pages this category
+               always ships.
+  OWN-WORLD    Chart stock and printed salmon rule in light, enamel panel and
+               dim phosphor rule in dark; four fiber pens carrying the wire
+               facts; one ink-blue accent; no radius above 2px, no shadow on
+               the chart. Strip the words out and it is still a recorder.
+  STORY        The reader sees a machine that has been writing all along,
+               trusts the numbers because the rule measures them, and drags
+               the carriage to the minute that cost money.
+  FIRST VIEWPORT  Identity strip, toolbar, then the roll: lanes across
+               wall-clock with the carriage standing where the pointer is and
+               the rows it explains directly beneath.
+  FORM         candidate #1 "the recorder", pool 7, roll 8e4546b4
+-->
+<div class="demo">
+  <div class="demobar">
+    <strong>direction A · the recorder</strong>
+    <span class="t">screen</span>
+    <span class="group" id="screens">
+      <button class="btn" data-screen="brand">brand</button>
+      <button class="btn" data-screen="requests">requests</button>
+      <button class="btn" data-screen="session" aria-pressed="true">session</button>
+      <button class="btn" data-screen="context">context</button>
+      <button class="btn" data-screen="dashboard">dashboard</button>
+    </span>
+    <span class="t">width</span>
+    <span class="group" id="widths">
+      <button class="btn" data-w="390">390</button>
+      <button class="btn" data-w="768">768</button>
+      <button class="btn" data-w="full" aria-pressed="true">1440</button>
+    </span>
+    <span class="group"><button class="btn" id="theme">light</button></span>
+    <span class="t" style="margin-left:auto">sample data · keys: j/k rows · / find · esc closes</span>
+  </div>
+  <div class="frame">
+    <div class="viewport" id="vp">
+
+      <!-- ============================= brand ============================= -->
+      <section class="screen" data-screen="brand">
+        <div class="brandsheet">
+          <div>
+            <div class="lockup">
+              <svg viewBox="0 0 512 512" aria-label="cctrace mark"><g stroke="currentColor" fill="none" opacity="0.28" stroke-width="6"><path d="M96 128h320M96 192h320M96 256h320M96 320h320M96 384h320"/><path d="M160 96v320M224 96v320M288 96v320M352 96v320"/></g><rect x="96" y="96" width="320" height="320" stroke="currentColor" fill="none" stroke-width="10"/><path d="M96 336 L160 336 L192 208 L224 208 L256 288 L320 288 L352 176 L416 176" stroke="currentColor" fill="none" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/><path d="M288 64 L288 448" stroke="var(--accent)" stroke-width="8" fill="none"/><circle cx="288" cy="288" r="26" fill="var(--accent)"/></svg>
+              <div>
+                <div class="wm">cctrace</div>
+                <div class="note">the wire, recorded</div>
+              </div>
+            </div>
+            <p class="note" style="margin-top:12px">The mark is the product's own output: a ruled field, a pen trace, and the
+              carriage standing at the moment you are reading. It keeps the current mark's terminal dot; it drops the cc monogram,
+              which said nothing a wordmark does not already say. Below about 20px the grid closes up, so the small sizes get their own
+              cut: the frame, one step of the trace, and the carriage.</p>
+          </div>
+
+          <div>
+            <div class="h">the mark at working sizes — 16 / 24 / 48 px</div>
+            <div class="sizes" id="sizes"></div>
+          </div>
+
+          <div>
+            <div class="h">palette — ground, ink, rule, one accent</div>
+            <div class="swatches" id="swPalette"></div>
+          </div>
+
+          <div>
+            <div class="h">the pens — data colors, identical in both themes</div>
+            <div class="swatches" id="swPens"></div>
+          </div>
+
+          <div>
+            <div class="h">type — six sizes, three weights, one family</div>
+            <div style="display:grid;gap:6px">
+              <div style="font-size:var(--text-display);font-weight:700">186k <span style="font-size:var(--text-xs);font-weight:400;color:var(--fg-2)">24px display — one number per view, spent once</span></div>
+              <div style="font-size:var(--text-lg);font-weight:700">cctrace <span style="font-size:var(--text-xs);font-weight:400;color:var(--fg-2)">15px wordmark and panel heads</span></div>
+              <div style="font-size:var(--text-base)">assistant reply text and prompts — 13px</div>
+              <div style="font-size:var(--text-sm)">POST 200 /v1/messages — 12px rows</div>
+              <div style="font-size:var(--text-xs);color:var(--fg-2)">↑661.7KB ↓3.6KB · 2.21s — 11px chips and columns</div>
+              <div style="font-size:var(--text-micro);color:var(--fg-3);font-family:var(--font-panel)">model / tools / waiting — 10px engraved panel labels (the only non-mono face)</div>
+            </div>
+          </div>
+
+          <div>
+            <div class="h">client marks — one glyph per CLI, everywhere</div>
+            <div class="sizes" id="glyphs"></div>
+          </div>
+
+          <div>
+            <div class="h">states — shown, not asserted</div>
+            <div class="states">
+              <div class="staterow">
+                <button class="btn">default</button>
+                <button class="btn" style="border-color:var(--line-strong);color:var(--fg)">hover</button>
+                <button class="btn" style="outline:2px solid var(--focus);outline-offset:1px">focus</button>
+                <button class="btn" disabled title="purge needs a live server — a snapshot has no trace to rewrite">purge</button>
+                <button class="btn" aria-pressed="true">pressed</button>
+                <span class="status" data-err style="color:var(--danger)">429</span>
+                <span class="status">200</span>
+              </div>
+              <div class="staterow">
+                <span class="lamp" data-tone="live"></span> live · heartbeat 30s
+                <span style="padding-left:12px"><span class="lamp" style="background:var(--fg-3)"></span> snapshot · no server</span>
+                <span style="padding-left:12px"><span class="lamp" style="background:var(--fg-3)"></span> stopped 14:22</span>
+              </div>
+              <div class="staterow">reading the tail of a 512MB trace:
+                <span class="skel" data-w="l"></span><span class="skel" data-w="m"></span><span class="skel" data-w="s"></span></div>
+              <div class="empty">no requests match <b style="color:var(--fg)">status:5xx</b> in this run — the filter is on. clear it, or widen the window.</div>
+              <div class="staterow">select to purge:
+                <span class="check" data-on></span><span class="check"></span><span class="check"></span>
+                <button class="btn" data-danger="true">purge 3 pairs…</button>
+                <span style="color:var(--fg-3)">rewrites the trace file on disk; the confirm says so</span></div>
+              <div class="staterow">screen sharing:
+                <span class="masked">a71f9c30</span>
+                <span style="color:var(--fg-3)">identity values blur; hover reveals one deliberately</span></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="h">motion budget</div>
+            <p class="note">Two owners, both deliberate: the carriage under the pointer, and the live lamp's 2.4s beat while a request
+              is actually in flight. Nothing else tweens, counts or ticks. Everything drops under prefers-reduced-motion.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== requests =========================== -->
+      <section class="screen" data-screen="requests">
+        <div class="app">
+          <div class="panel" id="panelA"></div>
+          <div class="toolbar">
+            <span class="group">
+              <button class="btn" aria-pressed="true">requests</button>
+              <button class="btn">sessions</button>
+              <button class="btn">context</button>
+            </span>
+            <input class="find" id="findA" placeholder="filter by url, method, status…  ( / )">
+            <span class="group"><button class="btn" data-panes id="panesA">detail</button><button class="btn" data-optional>prev runs</button><button class="btn" data-optional>select</button></span>
+            <span class="group"><button class="btn" aria-pressed="true">tail</button><button class="btn" data-optional>clear</button></span>
+            <span class="group"><button class="btn">replay</button><button class="btn">actions</button></span>
+          </div>
+          <div class="work" data-layout="list-detail">
+            <div class="sheet" id="sheetA">
+              <div class="cats" id="catsA"></div>
+              <div class="rows" id="rowsA"></div>
+              <button class="pill" id="pillA">3 new below — jump to latest</button>
+            </div>
+            <div class="rail">
+              <div class="detail" id="detailA"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ session ============================ -->
+      <section class="screen" data-screen="session" data-on>
+        <div class="app" data-strip>
+          <div class="panel" id="panelB"></div>
+          <div class="toolbar">
+            <span class="group">
+              <button class="btn">requests</button>
+              <button class="btn" aria-pressed="true">sessions</button>
+              <button class="btn">context</button>
+            </span>
+            <input class="find" placeholder="find in session…  ( / )">
+            <span class="group"><button class="btn" aria-pressed="true">replay</button><button class="btn">actions</button></span>
+          </div>
+          <div class="strip" id="strip">
+            <div class="axis" id="axis"></div>
+            <div class="lanes" id="lanes"></div>
+            <div class="veil" id="veil"></div>
+            <div class="carriage" id="carriage"><span class="read" id="carriageRead">08:52:14</span></div>
+          </div>
+          <div class="work">
+            <div class="rail" id="railB"></div>
+            <div class="sheet"><div class="convo" id="convo"></div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ context ============================ -->
+      <section class="screen" data-screen="context">
+        <div class="app">
+          <div class="panel" id="panelC"></div>
+          <div class="toolbar">
+            <span class="group">
+              <button class="btn">requests</button>
+              <button class="btn">sessions</button>
+              <button class="btn" aria-pressed="true">context</button>
+            </span>
+            <span class="group"><button class="btn" aria-pressed="true">window</button><button class="btn">stream 212</button><button class="btn">events 18</button></span>
+            <span class="group"><button class="btn">map</button><button class="btn">read</button><button class="btn" aria-pressed="true">full</button></span>
+            <span class="group" style="margin-left:auto"><button class="btn">actions</button></span>
+          </div>
+          <div class="work">
+            <div class="rail">
+              <div class="ledger" id="ledger"></div>
+            </div>
+            <div class="sheet">
+              <div class="deck" id="deck">
+                <div class="icicle" id="icicle"></div>
+                <div class="inspector" id="inspector">
+                  <div class="facets" id="facets">
+                    <button class="facet" aria-selected="true" data-facet="content">content</button>
+                    <button class="facet" data-facet="origin">origin</button>
+                    <button class="facet" data-facet="wire">wire</button>
+                  </div>
+                  <div class="ipanel" id="ipanel"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========================== dashboard =========================== -->
+      <section class="screen" data-screen="dashboard">
+        <div class="app">
+          <div class="panel" id="panelD"></div>
+          <div class="toolbar">
+            <span class="group"><button class="btn" aria-pressed="true">all runs</button><button class="btn">live</button></span>
+            <input class="find" placeholder="filter runs…">
+            <span class="group"><span style="color:var(--fg-3);font-size:var(--text-xs);padding:0 4px">group</span><button class="btn" aria-pressed="true">project</button><button class="btn">client</button><button class="btn">day</button></span>
+          </div>
+          <div class="work" data-single>
+            <div class="sheet"><div class="runs" id="runs"></div></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+
+<script>
+/* Sample data — wire-SHAPED, values invented. No real session content. */
+const ICONS = {
+  claude: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
+  codex: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
+  grok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
+  kimi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
+  opencode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M14 18h5"/></svg>'
+};
+const MARK = '<svg viewBox="0 0 512 512"><g stroke="currentColor" fill="none" opacity="0.28" stroke-width="10"><path d="M96 192h320M96 320h320"/><path d="M224 96v320M352 96v320"/></g><rect x="96" y="96" width="320" height="320" stroke="currentColor" fill="none" stroke-width="14"/><path d="M96 336 L160 336 L192 208 L224 208 L256 288 L320 288 L352 176 L416 176" stroke="currentColor" fill="none" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/><path d="M288 64 L288 448" stroke="var(--accent)" stroke-width="10" fill="none"/><circle cx="288" cy="288" r="30" fill="var(--accent)"/></svg>';
+const MARK_SMALL = '<svg viewBox="0 0 512 512"><rect x="72" y="72" width="368" height="368" stroke="currentColor" fill="none" stroke-width="30"/>' +
+  '<path d="M72 344 L184 344 L256 184 L440 184" stroke="currentColor" fill="none" stroke-width="46" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '<circle cx="256" cy="256" r="46" fill="var(--accent)"/></svg>';
+
+const REQ = [
+  // method, status, category, url, chips, sizes, ttft, duration, clock, seconds-of-duration
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · think 37 · in 2 · out 332 · ≡ ↓250k 99% ↑2.8k · $0.151','↑661.7KB ↓3.6KB','2.21s','4.36s','08:41:35',4.36],
+  ['GET','200','mcp','/mcp-registry/v0/servers','','↓205.9KB','','1.36s','08:41:37',1.36],
+  ['POST','200','messages','/v1/messages','fable-5 · effort xhigh · in 2 · out 103 · ≡ ↓15.9k 29% ↑38.4k (38.4k 1h) · $0.079','↑149.8KB ↓2.9KB','3.51s','4.54s','08:41:37',4.54],
+  ['POST','200','telemetry','/api/event_logging/v2/batch','142 events','↑327.3KB ↓41B','','1.81s','08:41:41',1.81],
+  ['POST','200','messages','/v1/messages','sonnet-5 · in 90 · out 9 · ≡ ↓62.3k 100% · $0.013 · stop_sequence','↑178.1KB ↓563B','1.47s','1.47s','08:41:41',1.47],
+  ['CONNECT','200','external','bridge.claudeusercontent.com/','tunnel ↑70.0KB ↓1.9MB','','','23.1s','08:41:44',23.1],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · in 853 · out 14 · ≡ ↓182k 100% · $0.096','↑495.6KB ↓1.6KB','2.46s','2.83s','08:41:44',2.83],
+  ['POST','202','telemetry','http-intake.logs.datadoghq.com/api/v2/logs','','↑33.7KB ↓2B','','1.74s','08:41:45',1.74],
+  ['GET','200','oauth','/api/oauth/usage','5h window · 41% used','↓812B','','0.42s','08:41:47',0.42],
+  ['POST','200','count','/v1/messages/count_tokens','opus-5 · 186,204 tokens','↑494.2KB ↓38B','','0.91s','08:41:48',0.91],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · in 1.8k · out 20 · ≡ ↓253k 99% · $0.136','↑666.6KB ↓1.7KB','1.35s','1.85s','08:41:49',1.85],
+  ['POST','429','messages','/v1/messages','rate limited · retry after 8s','↑666.6KB ↓214B','','0.28s','08:41:52',0.28],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · think 292 · in 2 · out 636 · ≡ ↓184k 99% ↑1.4k · $0.117','↑501.3KB ↓5.4KB','1.92s','8.60s','08:42:01',8.60],
+  ['GET','200','external','api.github.com/repos','tunnel ↑2.5KB ↓6.8KB','','','0.71s','08:42:04',0.71],
+  ['POST','200','messages','/v1/messages','fable-5 · effort xhigh · in 4 · out 812 · ≡ ↓191k 99% · $0.121','↑512.4KB ↓7.1KB','2.04s','6.71s','08:46:16',6.71],
+  ['POST','200','messages','/v1/messages','sonnet-5 · subagent · in 12 · out 288 · ≡ ↓62k 100% · $0.021','↑181.9KB ↓2.2KB','0.88s','1.94s','08:46:19',1.94],
+  ['GET','200','mcp','/mcp-registry/v0/servers','','↓205.9KB','','1.12s','08:46:21',1.12],
+  ['POST','200','count','/v1/messages/count_tokens','fable-5 · 191,880 tokens','↑509.8KB ↓38B','','0.77s','08:46:22',0.77],
+  ['POST','200','telemetry','/api/event_logging/v2/batch','88 events','↑208.1KB ↓41B','','1.42s','08:46:24',1.42],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · think 118 · out 240 · ≡ ↓254k 99% · $0.144','↑669.2KB ↓2.9KB','2.31s','5.02s','08:46:29',5.02],
+  ['CONNECT','200','external','registry.npmjs.org/','tunnel ↑1.1KB ↓402KB','','','4.10s','08:46:34',4.10],
+  ['POST','200','messages','/v1/messages','sonnet-5 · subagent · in 8 · out 96 · ≡ ↓63k 100% · $0.011','↑184.0KB ↓1.1KB','0.71s','1.28s','08:46:36',1.28],
+  ['POST','200','telemetry','http-intake.logs.datadoghq.com/api/v2/logs','','↑21.4KB ↓2B','','1.63s','08:46:38',1.63],
+  ['GET','200','oauth','/api/oauth/credits','balance unchanged','↓604B','','0.38s','08:46:39',0.38],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · in 2 · out 1.4k · ≡ ↓256k 99% · $0.192','↑672.8KB ↓11.4KB','2.88s','12.40s','10:15:08',12.40],
+  ['POST','200','messages','/v1/messages','fable-5 · effort xhigh · in 2 · out 64 · ≡ ↓193k 99% · $0.068','↑515.1KB ↓1.4KB','1.19s','1.61s','10:15:21',1.61],
+  ['POST','200','messages','/v1/messages','opus-5 · effort xhigh · think 402 · out 918 · ≡ ↓257k 99% ↑2.1k · $0.208','↑675.3KB ↓8.2KB','3.42s','9.15s','10:15:31',9.15]
+];
+const SECS = c => { const [h, m, x] = c.split(':').map(Number); return h * 3600 + m * 60 + x; };
+const CATS = [['all','',412],['messages','messages',196],['count','count',12],['oauth','oauth',8],['mcp','mcp',22],['telemetry','telemetry',131],['external','external',39],['other','',4]];
+const LANES = [
+  ['model',   [[2,7],[12,9],[24,6],[33,11],[47,8],[58,4],[64,9],[77,6],[86,10]]],
+  ['tools',   [[9,3],[21,3],[30,3],[44,3],[55,3],[62,2],[73,4],[83,3],[96,2]]],
+  ['waiting', [[38,8],[68,5],[90,5]]],
+  ['agents',  [[16,22],[52,18],[80,14]]]
+];
+const TURNS = [[0,11,'01'],[11,13,'02'],[24,9,'03'],[33,14,'04'],[47,11,'05'],[58,10,'06'],[68,14,'07'],[82,18,'08']];
+const CONVO = [
+  ['user','08:45:24','turn 04','make the strip fold long idle gaps — a lunch break should not own half the frame'],
+  ['assistant','08:45:31','fable-5','I will read the replay stage spec first, then change the axis to the selected thread’s own time.'],
+  ['tools', [['Read','src/replay.ts, docs/design/replay-stage.md','1.2s'],['Bash','rg "axisTicks" -n src/','0.4s'],['Task','subagent: verify the fold on a 9h trace','2m 14s','notable']]],
+  ['assistant','08:49:42','fable-5','Idle over five minutes now folds to a 28px hatched break. On the 9h trace the working hours fill the strip and the break reads as one mark, labelled with its length.']
+];
+const LEDGER = [
+  ['system prompt','≈4.7k','3%','var(--cost-read)'],
+  ['tool schemas','≈15.5k','10%','var(--cost-write)'],
+  ['user messages','≈5.8k','4%','var(--cost-input)'],
+  ['injected context','≈26.0k','17%','var(--cost-output)'],
+  ['assistant replies','≈25.6k','17%','var(--pen-model)'],
+  ['tool results','≈73.0k','48%','var(--pen-tools)']
+];
+const RUNS = [
+  ['claude','cctrace','make the strip fold long idle gaps','a71f9c30','512.6MB','412 req','≈186k','14:22'],
+  ['claude','cctrace','ship the cost view behind the context tab','3ed43391','88.1MB','96 req','≈41k','11:05'],
+  ['codex','workbench','port the tokenizer bench to the new runner','c0d3x001','24.3MB','58 req','≈12k','09:41'],
+  ['kimi','csxsj','修复编辑器的光标跳动','k3sess77','9.8MB','31 req','≈7k','08:12'],
+  ['opencode','playground','try zen routing against the local model','ses_9f21','4.1MB','22 req','≈3k','yesterday'],
+  ['grok','rescue','diagnose the stuck deploy','g4rescue','2.2MB','11 req','≈1k','yesterday']
+];
+
+const $ = (s, r) => (r || document).querySelector(s);
+const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h != null) n.innerHTML = h; return n; };
+
+/* ---- the identity strip, on every screen ---- */
+function panel(live) {
+  return '<a class="brand" href="#">' + MARK + '<span class="wordmark">cctrace</span></a>' +
+    '<span class="sep">·</span>' +
+    '<span class="idline">' + ICONS.claude.replace('<svg', '<svg style="width:13px;height:13px"') +
+    ' <b>claude</b> · cctrace<span class="tracename"> · <b>trace-2026-08-28T06-07-12</b></span> · <span class="sid" data-mask>a71f9c30</span></span>' +
+    '<span class="readouts">' +
+    '<span data-tip="Requests captured in this run.\nSample data.">412 req</span>' +
+    '<span>in <b>31.2m</b></span><span>out <b>96k</b></span>' +
+    '<span data-tip="Estimated from the models.dev catalog\nfor this run’s pairs only.">est <b>$18.40</b></span>' +
+    '<span>512.6MB</span>' +
+    (live ? '<span class="lamp" data-tone="live"></span><span>live</span>' : '<span class="lamp"></span><span>view</span>') +
+    '</span>';
+}
+['panelA','panelB','panelC'].forEach((id, i) => { const n = document.getElementById(id); if (n) n.innerHTML = panel(i < 2); });
+/* the dashboard is every run in the data directory, so it states THAT */
+document.getElementById('panelD').innerHTML =
+  '<a class="brand" href="#">' + MARK + '<span class="wordmark">cctrace</span></a><span class="sep">·</span>' +
+  '<span class="idline">all runs · <b>4 projects</b> · <b>5 clients</b> · one data directory</span>' +
+  '<span class="readouts"><span>48 runs</span><span>2 live</span><span>4.3GB on disk</span>' +
+  '<span data-tip="Sum of the per-run estimates.\nSample data.">est <b>$212.60</b></span></span>';
+
+/* ---- requests ---- */
+const catsA = $('#catsA');
+CATS.forEach(([label, cat, n], i) => {
+  const b = el('button', 'cat', (cat ? '<span class="dot" data-cat="' + cat + '"></span>' : '') + label + ' <span style="color:var(--fg-3)">' + n + '</span>');
+  b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+  b.dataset.cat = cat;
+  b.onclick = () => {
+    catsA.querySelectorAll('.cat').forEach(x => x.setAttribute('aria-pressed', 'false'));
+    b.setAttribute('aria-pressed', 'true');
+    rowsA.querySelectorAll('.row').forEach(r => { r.style.display = (!cat || r.dataset.cat === cat) ? '' : 'none'; });
+  };
+  catsA.appendChild(b);
+});
+const rowsA = $('#rowsA');
+rowsA.setAttribute('role', 'listbox');
+rowsA.setAttribute('aria-label', 'captured request pairs, newest at the bottom');
+const MAXDUR = Math.max(...REQ.map(r => r[9]));
+REQ.forEach(([m, st, cat, url, chips, size, ttft, dur, clock, secs], i) => {
+  // the paper advances with the clock: the blank between two rows IS the wait
+  if (i > 0) {
+    const gap = SECS(clock) - SECS(REQ[i - 1][8]) - REQ[i - 1][9];
+    if (gap > 2) {
+      const f = el('div', 'feed');
+      if (gap >= 300) {
+        f.dataset.fold = '';
+        const mins = Math.round(gap / 60);
+        f.innerHTML = '<span class="lab">' + (mins >= 60 ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm') + ' with nothing on the wire</span>';
+        f.dataset.tip = 'idle ' + (mins >= 60 ? Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm' : mins + 'm') + '\n---\nThe paper keeps running while the agent waits.\nOver five minutes it folds, and says how long.';
+      } else {
+        f.style.height = Math.min(30, Math.round(gap * 2.2)) + 'px';
+        f.dataset.tip = Math.round(gap) + 's between requests\n---\nblank paper, drawn to scale';
+      }
+      rowsA.appendChild(f);
+    }
+  }
+  const r = el('div', 'row');
+  r.dataset.cat = cat; r.tabIndex = 0; r.setAttribute('role', 'option'); r.setAttribute('aria-selected', 'false');
+  const w = Math.max(3, Math.round((secs / MAXDUR) * 100));
+  const tw = ttft ? Math.round((parseFloat(ttft) / secs) * w) : 0;
+  r.innerHTML = '<span class="pen" data-cat="' + cat + '" aria-hidden="true">' +
+      (tw ? '<i data-part="wait" style="left:0;width:' + tw + '%"></i>' : '') +
+      '<i style="left:' + tw + '%;width:' + (w - tw) + '%"></i></span>' +
+    '<span class="method">' + m + '</span>' +
+    '<span class="status"' + (st[0] !== '2' ? ' data-err' : '') + '>' + st + '</span>' +
+    '<span class="badge" data-cat="' + cat + '">' + cat + '</span>' +
+    '<span class="url">' + url + '</span>' +
+    '<span class="chips">' + chips + '</span>' +
+    '<span class="cols"><b>' + size + '</b>' + (ttft ? '<span>' + ttft + '</span>' : '') + '<b>' + dur + '</b><span>' + clock + '</span></span>';
+  r.dataset.tip = m + ' ' + url + '\n---\n' + (chips || 'no content chips') + '\n' + (size || 'tunnelled') + ' · ' + dur +
+    '\nthe stroke: ' + (ttft ? ttft + ' waiting, then ' + dur : dur) + '\n> click to open the pair, or press j/k';
+  r.onclick = () => select(i);
+  r.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(i); } };
+  rowsA.appendChild(r);
+});
+let sel = 0;
+function select(i) {
+  const rows = [...rowsA.querySelectorAll('.row')];
+  if (i < 0 || i >= rows.length) return;
+  rows.forEach(r => r.setAttribute('aria-selected', 'false'));
+  rows[i].setAttribute('aria-selected', 'true');
+  rows[i].focus({ preventScroll: true });
+  rows[i].scrollIntoView({ block: 'nearest' });
+  sel = i;
+  const d = REQ[i];
+  $('#detailA').innerHTML =
+    '<div class="head"><h2>' + d[0] + ' ' + d[3] + '</h2><span class="badge" data-cat="' + d[2] + '">' + d[2] + '</span></div>' +
+    '<dl class="kv">' +
+    '<dt>status</dt><dd>' + d[1] + (d[1][0] !== '2' ? ' — retried after 8s' : '') + '</dd>' +
+    '<dt>wall clock</dt><dd>' + d[8] + ' · ' + d[7] + '</dd>' +
+    '<dt>first token</dt><dd>' + (d[6] || 'n/a — not a stream') + '</dd>' +
+    '<dt>bytes</dt><dd>' + d[5] + '</dd>' +
+    '<dt>content</dt><dd>' + (d[4] || 'no model call') + '</dd>' +
+    '</dl>' +
+    '<details class="fold"><summary>request body · 494.2KB</summary><div class="body">{ "model": "claude-opus-5", "max_tokens": 32000, "stream": true,\n  "system": [ 2 blocks ], "messages": [ 118 ], "tools": [ 23 ] }</div></details>' +
+    '<details class="fold" open><summary>response · sse · 41 events</summary><div class="body">message_start · content_block_start\ncontent_block_delta ×36 · message_delta\nusage: input 2, output 332, cache_read 250,113, cache_write 2,841</div></details>' +
+    '<details class="fold" data-notable><summary>subagent spawn · Task(verify the fold on a 9h trace)</summary><div class="body">child session c0ffee12 · 14 pairs · returned 2m 14s later</div></details>';
+}
+select(0);
+$('#panesA').onclick = e => {
+  const work = e.currentTarget.closest('.app').querySelector('.work');
+  const on = work.dataset.pane === 'rail';
+  if (on) delete work.dataset.pane; else work.dataset.pane = 'rail';
+  e.currentTarget.setAttribute('aria-pressed', String(!on));
+  e.currentTarget.textContent = on ? 'detail' : 'list';
+};
+$('#pillA').onclick = e => { e.currentTarget.style.display = 'none'; $('#sheetA').scrollTo({ top: 99999, behavior: 'smooth' }); };
+
+/* ---- session: lanes, turn blocks, the carriage ---- */
+const axis = $('#axis');
+['08:45', '08:50', '08:55', '09:00', '09:05', '09:10', '09:15'].forEach(t => axis.appendChild(el('span', null, t)));
+const lanes = $('#lanes');
+const turnLane = el('div', 'lane', '<span class="name">turns</span>');
+const turnTrack = el('div', 'track');
+TURNS.forEach(([x, w, n]) => {
+  const b = el('div', 'turnblk', n);
+  b.style.left = x + '%'; b.style.width = w + '%';
+  b.dataset.tip = 'turn ' + n + '\n---\n4 tool calls · 2 subagents\n≈' + (12 + +n * 3) + 'k tokens · $' + (0.4 + +n / 9).toFixed(2) + '\n> click to read this turn';
+  b.onclick = () => { turnTrack.querySelectorAll('.turnblk').forEach(t => t.dataset.here = 'false'); b.dataset.here = 'true'; };
+  turnTrack.appendChild(b);
+});
+turnTrack.querySelector('.turnblk').dataset.here = 'true';
+turnLane.appendChild(turnTrack); lanes.appendChild(turnLane);
+LANES.forEach(([name, spans]) => {
+  const l = el('div', 'lane', '<span class="name">' + name + '</span>');
+  const tr = el('div', 'track');
+  spans.forEach(([x, w]) => {
+    const s = el('div', 'span'); s.dataset.pen = name;
+    s.style.left = x + '%'; s.style.width = w + '%';
+    tr.appendChild(s);
+  });
+  if (name === 'waiting') { const brk = el('div', 'brk'); brk.style.left = '70%'; brk.dataset.tip = 'idle 1h 29m — folded\n---\nThe axis is this thread’s own time.\nA lunch break is not half the strip.'; tr.appendChild(brk); }
+  l.appendChild(tr); lanes.appendChild(l);
+});
+const strip = $('#strip'), carriage = $('#carriage'), veil = $('#veil'), read = $('#carriageRead');
+let pinned = 62;
+function placeCarriage(pct) {
+  carriage.style.left = pct + '%';
+  veil.style.left = pct + '%'; veil.style.right = '0';
+  const t = new Date(Date.UTC(2026, 7, 28, 8, 45, 0) + (pct / 100) * 35 * 60 * 1000);
+  read.textContent = t.toISOString().slice(11, 19);
+}
+placeCarriage(pinned);
+strip.addEventListener('pointermove', e => {
+  const r = strip.getBoundingClientRect();
+  placeCarriage(Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100)));
+});
+strip.addEventListener('pointerleave', () => placeCarriage(pinned));
+strip.addEventListener('click', e => {
+  const r = strip.getBoundingClientRect();
+  pinned = Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100));
+  placeCarriage(pinned);
+});
+
+const railB = $('#railB');
+railB.innerHTML = '<div class="thread" aria-selected="true"><div class="t1"><b>chat</b> <span style="color:var(--fg-3)">119 turns</span></div><div class="t2">fable-5 · 55m 18s · $11.01</div></div>' +
+  '<div class="thread"><div class="t1"><b>subagent</b> <span style="color:var(--fg-3)">14 turns</span></div><div class="t2">sonnet-5 · 2m 14s · $0.31</div></div>';
+railB.querySelectorAll('.thread').forEach((t, i) => { t.tabIndex = 0; t.setAttribute('role', 'option'); });
+railB.setAttribute('role', 'listbox');
+[['01', 'let us keep improving the replay feature'], ['02', 'Bash(read the handoff)'], ['03', 'Read(src/replay.ts)'], ['04', 'make the strip fold long idle gaps'], ['05', 'Task(verify the fold on a 9h trace)'], ['06', 'the axis holds the selected thread'], ['07', 'Bash(bun test)'], ['08', 'ship it']].forEach(([n, t]) => {
+  const r = el('div', 'turnrow', '<span class="n">' + n + '</span><span class="txt">' + t + '</span>');
+  r.tabIndex = 0; r.setAttribute('role', 'option'); r.setAttribute('aria-selected', 'false');
+  r.dataset.tip = 'turn ' + n + '\n---\n' + t + '\n≈' + (8 + +n * 4) + 'k tokens · 2.4s to first token';
+  railB.appendChild(r);
+});
+const convo = $('#convo');
+CONVO.forEach(part => {
+  if (part[0] === 'tools') {
+    const box = el('div', 'turn');
+    part[1].forEach(([nm, arg, dur, notable]) => {
+      const t = el('div', 'tool', '<span class="nm">' + nm + '</span><span style="color:var(--fg-2);overflow:hidden;text-overflow:ellipsis">' + arg + '</span><span style="margin-left:auto;color:var(--fg-3)">' + dur + '</span>');
+      if (notable) t.dataset.notable = 'true';
+      t.dataset.tip = nm + '(' + arg + ')\n---\nfolded to one line: a Read dump never earns default expansion';
+      box.appendChild(t);
+    });
+    convo.appendChild(box);
+    return;
+  }
+  const [role, clock, who, text] = part;
+  const t = el('div', 'turn');
+  t.dataset.role = role;
+  t.innerHTML = '<div class="rolebar"><span>' + (role === 'user' ? 'you' : who) + '</span><span>' + (role === 'user' ? who : '') + '</span><span style="margin-left:auto">' + clock + '</span></div><div class="msg">' + text + '</div>';
+  convo.appendChild(t);
+});
+
+/* ---- context: the ledger, the icicle, one inspector ---- */
+$('#ledger').innerHTML =
+  '<div><div class="bal">186k</div><div class="sub">prompt tokens · turn 04 · step 58 · fable-5</div></div>' +
+  '<div class="meter">' + LEDGER.map(l => '<i style="background:' + l[3] + ';width:' + l[2] + '"></i>').join('') + '</div>' +
+  '<div class="sub" style="color:var(--fg-2);font-size:var(--text-xs)">18% of context used <span style="color:var(--fg-3)">of 1.00m</span><br>≈151k estimated · chars/4 reads 19% under</div>' +
+  '<div><div class="h">composition <span style="float:right;color:var(--fg-3);font-weight:400">click a line to zoom</span></div><div class="lines">' +
+  LEDGER.map(l => '<div class="lline"><span class="swatch" style="background:' + l[3] + '"></span><span>' + l[0] + '</span><b>' + l[1] + '</b><span class="pct">' + l[2] + '</span></div>').join('') +
+  '</div></div>' +
+  '<div><div class="h">this step</div><div style="font-size:var(--text-xs);color:var(--fg-2)">≈$0.271 this step · 100% from cache<br>10:15:21 · output 129 · turn 04 · step 58</div></div>';
+const IC = [
+  [['tool results 48%', 48], ['injected 17%', 17], ['assistant 17%', 17], ['schemas 10%', 10], ['user 4%', 4], ['sys 3%', 3]],
+  [['Read ×25 ≈139k', 39], ['Bash ×18 ≈21k', 9], ['SessionStart ≈26k', 17], ['replies ≈25.6k', 17], ['mcp ≈15.5k', 10], ['≈5.8k', 4], ['', 3]],
+  [['src/ui.ts ≈41k', 12], ['src/replay.ts ≈18k', 6], ['docs/… ≈22k', 7], ['bun test ≈8k', 5], ['…', 70]]
+];
+const icicle = $('#icicle');
+IC.forEach(row => {
+  const r = el('div', 'ic-row');
+  row.forEach(([label, w]) => {
+    const c = el('button', 'ic', label);
+    c.type = 'button';
+    c.style.flex = w;
+    c.dataset.tip = (label || 'the rest') + '\n---\nclick to open the inspector for this node';
+    c.onclick = () => { icicle.querySelectorAll('.ic').forEach(x => x.setAttribute('aria-pressed', 'false')); c.setAttribute('aria-pressed', 'true'); openInspector(label || 'the rest'); };
+    r.appendChild(c);
+  });
+  icicle.appendChild(r);
+});
+/* the heaviest items under the pick — the list the graph demoted, capped at 8 */
+const PANE = [
+  ['src/ui.ts', 'Read · 09:12:04 · step 41', '≈41k', '22%'],
+  ['docs/design/replay-stage.md', 'Read · 08:59:12 · step 18', '≈22k', '12%'],
+  ['src/replay.ts', 'Read · 09:08:51 · step 37', '≈18k', '10%'],
+  ['bun test (876 pass)', 'Bash · 09:14:02 · step 44', '≈8k', '4%'],
+  ['rg "axisTicks" -n src/', 'Bash · 08:47:41 · step 12', '≈2k', '1%']
+];
+const pane = el('div', 'pane', '<div class="h">heaviest under Read ×25 <span style="float:right;color:var(--fg-3);font-weight:400">of 25</span></div>' +
+  PANE.map(([what, where, tok, pct]) => '<div class="prow"><span class="swatch" style="background:var(--pen-tools)"></span>' +
+    '<span class="who">' + what + '</span><span style="color:var(--fg-3)">' + where + '</span><b>' + tok + ' <span style="color:var(--fg-3)">' + pct + '</span></b></div>').join(''));
+icicle.appendChild(pane);
+const FACETS = {
+  content: '<div style="font-size:var(--text-xs);color:var(--fg-2);white-space:pre-wrap">25 Read results, newest first\n\n src/ui.ts        ≈41k   09:12:04\n src/replay.ts    ≈18k   09:08:51\n docs/replay…md   ≈22k   08:59:12\n … 22 more</div>',
+  origin: '<div style="font-size:var(--text-xs);color:var(--fg-2);white-space:pre-wrap">first carried into the window by\n <b style="color:var(--accent)">step 12</b> · 08:47:19 · turn 03\n\ncarried by 46 later requests,\nuntil the compaction boundary at step 58.\n\n> click the step to pin it</div>',
+  wire: '<div style="font-size:var(--text-xs);color:var(--fg-2);white-space:pre-wrap">messages[41].content[0].text\n\ncache_control: ephemeral (1h)\nbilled: cache_read 139,204\nrate: $0.30 / mtok → $0.042</div>'
+};
+function openInspector(name) {
+  $('#deck').removeAttribute('data-closed');
+  $('#ipanel').innerHTML = '<div class="ihead"><span class="swatch" style="background:var(--pen-tools)"></span><b>' + name + '</b><button class="btn x" id="closeInspector">×</button></div>' + FACETS[curFacet];
+  $('#closeInspector').onclick = () => $('#deck').setAttribute('data-closed', '');
+}
+let curFacet = 'content';
+$('#facets').addEventListener('click', e => {
+  const b = e.target.closest('.facet'); if (!b) return;
+  $('#facets').querySelectorAll('.facet').forEach(f => f.setAttribute('aria-selected', 'false'));
+  b.setAttribute('aria-selected', 'true'); curFacet = b.dataset.facet;
+  openInspector($('#ipanel').querySelector('b') ? $('#ipanel').querySelector('b').textContent : 'tool results 48%');
+});
+openInspector('Read ×25 ≈139k');
+
+/* ---- dashboard ---- */
+/* a row that can open something IS a link; a row that cannot says why, dimmed */
+$('#runs').innerHTML = RUNS.map(([client, project, prompt, sid, size, req, tok, when], i) =>
+  '<a class="run" href="#/view/' + sid + '"><span class="dot" data-cat="' + (i < 2 ? 'messages' : 'telemetry') + '"></span>' +
+  '<span class="who">' + ICONS[client] + ' ' + client + ' · ' + project + '</span>' +
+  '<span class="what">' + prompt + ' <span style="color:var(--fg-3)" data-mask>' + sid + '</span></span>' +
+  '<span class="nums"><span>' + size + '</span><span>' + req + '</span><span>' + tok + '</span><span>' + when + '</span></span></a>').join('') +
+  '<span class="run" data-missing aria-disabled="true"><span class="dot" data-cat="telemetry"></span>' +
+  '<span class="who">' + ICONS.codex + ' codex · rescue</span>' +
+  '<span class="what">rerun the failing migration <span style="color:var(--fg-3)">c0d3x009</span></span>' +
+  '<span class="nums"><span>trace not on this machine</span><span>08:04</span></span></span>';
+
+/* ---- brand sheet ---- */
+$('#sizes').innerHTML = [16, 24, 48].map(s => '<span style="display:grid;justify-items:center;gap:4px;color:var(--fg-3);font-size:var(--text-micro)">' +
+  '<span style="width:' + s + 'px;height:' + s + 'px;display:block">' + (s <= 20 ? MARK_SMALL : MARK) + '</span>' + s + 'px</span>').join('');
+$('#glyphs').innerHTML = Object.entries(ICONS).map(([k, v]) =>
+  '<span style="display:grid;justify-items:center;gap:4px;color:var(--fg-2)"><span style="width:20px;height:20px;display:block">' + v + '</span><span style="font-size:var(--text-micro)">' + k + '</span></span>').join('');
+const PAL = [['--bg', 'ground · enamel / chart stock'], ['--surface', 'the chart field'], ['--fg', 'ink · graphite'], ['--fg-2', 'half press'], ['--line', 'minor rule'], ['--line-strong', 'major rule'], ['--accent', 'pen 2 · the one accent'], ['--danger', 'fault lamp']];
+$('#swPalette').innerHTML = PAL.map(([v, n]) => '<div class="sw"><i style="background:var(' + v + ')"></i><span>' + v + '<br>' + n + '</span></div>').join('');
+const PENS = [['--pen-model', 'model'], ['--pen-tools', 'tools'], ['--pen-waiting', 'waiting'], ['--pen-agents', 'subagents'], ['--cost-read', 'cache read'], ['--cost-write', 'cache write'], ['--cost-input', 'input'], ['--cost-output', 'output']];
+$('#swPens').innerHTML = PENS.map(([v, n]) => '<div class="sw"><i style="background:var(' + v + ')"></i><span>' + v + '<br>' + n + '</span></div>').join('');
+
+/* ---- one tooltip for the page ---- */
+const tip = $('#tip');
+let tipT = 0;
+document.addEventListener('pointerover', e => {
+  const t = e.target.closest('[data-tip]');
+  clearTimeout(tipT);
+  if (!t) { tip.removeAttribute('data-on'); return; }
+  tipT = setTimeout(() => {
+    const lines = t.dataset.tip.split('\n');
+    tip.innerHTML = lines.map((l, i) => l === '---' ? '<hr style="border:0;border-top:1px solid var(--line);margin:4px 0">'
+      : (i === 0 ? '<b>' + l + '</b>' : (l.startsWith('> ') ? '<span style="color:var(--fg-3)">' + l.slice(2) + '</span>' : l))).join('<br>');
+    const r = t.getBoundingClientRect();
+    tip.style.left = Math.min(window.innerWidth - 340, r.left) + 'px';
+    tip.style.top = (r.bottom + 6) + 'px';
+    tip.setAttribute('data-on', '');
+  }, 120);
+});
+
+/* ---- demo chrome ---- */
+$('#screens').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('#screens').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  document.querySelectorAll('.screen').forEach(s => s.toggleAttribute('data-on', s.dataset.screen === b.dataset.screen));
+});
+$('#widths').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  $('#widths').querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', 'false'));
+  b.setAttribute('aria-pressed', 'true');
+  const vp = $('#vp');
+  if (b.dataset.w === 'full') vp.removeAttribute('data-w'); else vp.dataset.w = b.dataset.w;
+});
+$('#theme').onclick = e => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+  e.currentTarget.textContent = dark ? 'dark' : 'light';
+};
+
+/* the review page frames these demos: honour its query */
+(function () {
+  const q = new URLSearchParams(location.search);
+  if (q.get('chrome') === 'off') document.querySelector('.demobar').style.display = 'none';
+  if (q.get('theme') === 'light') { document.documentElement.dataset.theme = 'light'; const t = $('#theme'); if (t) t.textContent = 'dark'; }
+  const w = q.get('width');
+  if (w && w !== 'full') { $('#vp').dataset.w = w; }
+  const s = q.get('screen');
+  if (s) { const b = document.querySelector('#screens [data-screen="' + s + '"]'); if (b) b.click(); }
+  if (q.get('bare') === '1') {
+    const vp = $('#vp');
+    vp.style.border = '0'; vp.style.boxShadow = 'none'; vp.style.height = '100vh';
+    document.querySelector('.frame').style.padding = '0';
+  }
+})();
+
+document.addEventListener('keydown', e => {
+  const typing = /^(INPUT|TEXTAREA)$/.test(e.target.tagName);
+  if (typing) { if (e.key === 'Escape') { e.target.blur(); } return; }
+  if (e.key === 'j') select(sel + 1);
+  if (e.key === 'k') select(sel - 1);
+  if (e.key === '/') { e.preventDefault(); $('#findA').focus(); }
+  if (e.key === 'Escape') $('#deck').setAttribute('data-closed', '');
+});
+</script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 import { extractCallInfo, extractUsageInfo } from "./summarize";
-import { pairCost, modelPricing } from "./pricing";
+import { pairCost, pairRates } from "./pricing";
 import { wireDialect, openaiCompleted } from "./dialects/openai";
 
 // The cost layer (docs/design/cost.md): where a session's money went, and
@@ -33,9 +33,10 @@ export function stepCost(pair: any): any {
   if (pair._sc !== undefined) return pair._sc;
   const ci = pair._ci || (pair._ci = extractCallInfo(pair));
   const c = pairCost(ci);
-  const out = c
+  const out: any = c
     ? { total: c.total, input: c.input, output: c.output, cacheRead: c.cacheRead, cacheWrite: c.cacheWrite, model: ci.model || "" }
     : null;
+  if (out && c.mods) out.mods = c.mods; // the wire's pricing modifiers, for the tooltip
   pair._sc = out;
   return out;
 }
@@ -131,7 +132,9 @@ export function costEvents(threadPairs: any[], events?: any[]): any[] {
     };
     const tokens = (ci.input || 0) + (ci.cacheWrite || 0);
     const weak = (ci.cacheRead || 0) === 0 || (typeof ci.cachePct === "number" && ci.cachePct < 90);
-    const pr = stepCost(p) ? modelPricing(ci.model) : null;
+    // the same rates stepCost billed this request at — fast mode and
+    // us-inference included, so a bump under fast mode is priced fast
+    const pr = stepCost(p) ? pairRates(ci) : null;
     // "Warm" has to have been possible: a thread whose earlier requests
     // never touched the prompt cache has no prefix this one could have
     // re-read, so paying input rate is the price, not a bump. `banked`

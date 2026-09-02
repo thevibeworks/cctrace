@@ -102,7 +102,17 @@ warm" and the hover spells the assumption out.
 Inherited from ui.md and docs/design/context-view.md, applied here:
 
 - Every dollar is an ESTIMATE from catalog rates (models.dev first, the
-  embedded Claude table offline) and renders with a `≈` prefix.
+  embedded Claude table offline) and renders with a `≈` prefix. The rates
+  a pair is billed at come from ONE place, `pairRates` in src/pricing.ts:
+  the model's price, then the modifiers the wire states for that request
+  — fast mode when the response's `usage.speed` is `"fast"` (Opus 5 /
+  Opus 4.8: every rate doubles, cache multipliers on top), US-only
+  inference when the request carries `inference_geo: "us"` (1.1x on every
+  class). A modified pair names its modifiers in the cost tooltip
+  ("estimated (fast mode): …"). The bump arithmetic prices against the
+  same rates, so a bump under fast mode is a fast-mode bump. Cache reads
+  are 0.1x input except Fable 5.1 / Mythos 5.1 (0.025x); long context on
+  Claude 4.6+ is standard-rate, so no tier is ever applied.
 - Every CAUSE is a wire fact: a gap against a TTL, a status code, a
   same-step timeline event. No cause is inferred from prose or shape.
 - Unknown pricing renders NOTHING — no track, no block, no $0.

@@ -5,11 +5,16 @@
 // module state; cross-calls only to other inlined functions by name).
 //
 // Prices are USD per million tokens, embedded so snapshots work offline.
-// Sources: platform.claude.com pricing (2026-06), cross-checked against
-// ccusage's LiteLLM/models.dev data (reference/ccusage). Cache rates follow
-// Anthropic's universal multipliers: read = 0.1x input, write = 1.25x (5m TTL)
-// or 2x (1h TTL). Long-context tiers and intro discounts are ignored — every
-// figure shown in the UI is an estimate, not a bill.
+// Sources: platform.claude.com/docs/en/about-claude/pricing (2026-09-01),
+// cross-checked against models.dev (the live catalog, src/pricing-catalog.ts).
+// Cache rates follow Anthropic's multipliers: read = 0.1x input — 0.025x on
+// Claude Fable 5.1 / Mythos 5.1 — write = 1.25x (5m TTL) or 2x (1h TTL).
+// Long context is standard-rate on Claude 4.6+ (a 900k request bills like a
+// 9k one), so no tier applies. Two modifiers ARE read off the wire (pairRates):
+// fast mode — the response's usage.speed says "fast" — doubles every rate on
+// Opus 5 / Opus 4.8; US-only inference (request inference_geo: "us") is 1.1x
+// on every token class. Every figure shown in the UI is an estimate, not a
+// bill.
 
 /**
  * Per-MTok pricing for a model id, or null when unrecognized. Consults the
@@ -60,9 +65,16 @@ export function modelPricing(model: unknown, catalog?: any): any {
     .replace(/^claude-/, "")
     .replace(/^(\d(?:-\d)?)-(opus|sonnet|haiku)/, "$2-$1"); // claude-3-opus -> opus-3
   let io: number[] | null = null;
-  if (/fable|mythos/.test(m)) io = [10, 50];
+  // Cache reads are 0.1x input everywhere except Fable 5.1 / Mythos 5.1
+  // (0.025x — $0.25 on $10 input; Fable 5 / Mythos 5 stay at $1).
+  let readX = 0.1;
+  if (/fable|mythos/.test(m)) {
+    io = [10, 50];
+    if (/(fable|mythos)-5-1(?!\d)/.test(m)) readX = 0.025;
+  }
   else if (/^opus-(3|4|4-0|4-1)$/.test(m)) io = [15, 75]; // opus 3 / 4.0 / 4.1
   else if (/opus/.test(m)) io = [5, 25]; // opus 4.5+
+  else if (/^sonnet-5(?!\d)/.test(m)) io = [2, 10]; // sonnet 5: the launch price is the standard price
   else if (/sonnet/.test(m)) io = [3, 15];
   else if (/haiku-3-5/.test(m)) io = [0.8, 4];
   else if (/haiku-3/.test(m)) io = [0.25, 1.25];
@@ -71,9 +83,42 @@ export function modelPricing(model: unknown, catalog?: any): any {
   return {
     input: io[0],
     output: io[1],
-    cacheRead: io[0] * 0.1,
+    cacheRead: io[0] * readX,
     cacheWrite5m: io[0] * 1.25,
     cacheWrite1h: io[0] * 2,
+  };
+}
+
+/**
+ * The rates ONE pair is billed at: modelPricing for its model, then the
+ * modifiers the wire states for that request — read here, in one place,
+ * so pairCost and the cost-bump arithmetic price the same request the
+ * same way:
+ *   - fast mode: the response's `usage.speed` is "fast" (Opus 5 / Opus 4.8
+ *     research preview; a request that asked and was downgraded reports
+ *     "standard" and is not a modifier) — $10/$50, i.e. 2x the base rates,
+ *     and the cache multipliers stack on top, so every rate doubles;
+ *   - US-only inference: the request's `inference_geo` is "us" — 1.1x on
+ *     every token class (Claude 4.6+; earlier models reject the parameter,
+ *     so a captured pair carrying it is a 4.6+ pair).
+ * `mods` names the modifiers applied, for the cost tooltip. Null when the
+ * model has no price.
+ */
+export function pairRates(m: any): any {
+  const p = modelPricing(m && m.model);
+  if (!p) return null;
+  let f = 1;
+  const mods: string[] = [];
+  if (m && m.fast) { f *= 2; mods.push("fast mode"); }
+  if (m && m.geoUs) { f *= 1.1; mods.push("us inference"); }
+  if (f === 1) return p;
+  return {
+    input: p.input * f,
+    output: p.output * f,
+    cacheRead: p.cacheRead * f,
+    cacheWrite5m: p.cacheWrite5m * f,
+    cacheWrite1h: p.cacheWrite1h * f,
+    mods,
   };
 }
 
@@ -102,11 +147,26 @@ export function modelWindow(model: unknown, catalog?: any): number {
       if (e && typeof e.context === "number" && e.context > 0) return e.context;
     }
   }
-  // Embedded fallback: the classic Claude families ship 200k standard.
-  // Fable/Mythos deliberately absent — their windows are larger and not
-  // publicly fixed; an unknown window renders no %, never a wrong one.
-  if (/claude-(opus|sonnet|haiku)|^(opus|sonnet|haiku)/.test(m)) return 200000;
-  return 0;
+  // Embedded fallback, the docs' rule (2026-09): Claude 4.6 and later ship
+  // the full 1M window at standard rates — Opus 4.6/4.7/4.8/5, Sonnet
+  // 4.6/5, Fable and Mythos. Earlier tiers are 200k (Opus 4.5 and before,
+  // Sonnet 4.5 and before, every Haiku); the caller's context-1m header
+  // override covers Sonnet 4.5's beta. An unversioned family name is not
+  // guessed at — 0 renders no %, never a wrong one.
+  m = m
+    .replace(/^anthropic\./, "")
+    .replace(/\[.*\]$/, "")
+    .replace(/@\d{8}$/, "")
+    .replace(/-\d{8}$/, "")
+    .replace(/^claude-/, "")
+    .replace(/^(\d(?:-\d)?)-(opus|sonnet|haiku)/, "$2-$1");
+  if (/^(fable|mythos)/.test(m)) return 1000000;
+  const v = m.match(/^(opus|sonnet|haiku)-(\d+)(?:-(\d+))?/);
+  if (!v) return 0;
+  if (v[1] === "haiku") return 200000;
+  const major = +v[2];
+  const minor = v[3] != null ? +v[3] : 0;
+  return major >= 5 || (major === 4 && minor >= 6) ? 1000000 : 200000;
 }
 
 /**
@@ -117,7 +177,7 @@ export function modelWindow(model: unknown, catalog?: any): number {
  */
 export function pairCost(m: any): any {
   if (!m) return null;
-  const p = modelPricing(m.model);
+  const p = pairRates(m);
   if (!p) return null;
   const w5 = m.cacheWrite5m || 0;
   const w1 = m.cacheWrite1h || 0;
@@ -127,7 +187,9 @@ export function pairCost(m: any): any {
   const output = ((m.output || 0) * p.output) / M;
   const cacheRead = ((m.cacheRead || 0) * p.cacheRead) / M;
   const cacheWrite = ((w5 + rest) * p.cacheWrite5m + w1 * p.cacheWrite1h) / M;
-  return { total: input + output + cacheRead + cacheWrite, input, output, cacheRead, cacheWrite };
+  const out: any = { total: input + output + cacheRead + cacheWrite, input, output, cacheRead, cacheWrite };
+  if (p.mods && p.mods.length) out.mods = p.mods;
+  return out;
 }
 
 /** "$0.0123" — cost label with precision scaled to magnitude. */
@@ -145,8 +207,9 @@ export function fmtCost(n: unknown): string {
 export function costTitle(c: any): string {
   if (!c) return "";
   const bit = (label: string, v: number) => (v > 0 ? label + " " + fmtCost(v) : "");
+  const mods = c.mods && c.mods.length ? " (" + c.mods.join(", ") + ")" : "";
   return (
-    "estimated: " +
+    "estimated" + mods + ": " +
     [bit("input", c.input), bit("output", c.output), bit("cache read", c.cacheRead), bit("cache write", c.cacheWrite)]
       .filter(Boolean)
       .join(" + ")

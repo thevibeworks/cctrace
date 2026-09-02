@@ -57,7 +57,7 @@ import {
   diffHunk,
   richToolBody,
 } from "./session";
-import { modelPricing, modelWindow, pairCost, fmtCost, costTitle } from "./pricing";
+import { modelPricing, modelWindow, pairRates, pairCost, fmtCost, costTitle } from "./pricing";
 import { stepCost, threadCostSplit, costEvents, usagePolls } from "./cost";
 import {
   CTX_CATS,
@@ -2406,6 +2406,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // Pricing + cost estimation, injected from src/pricing.ts.
     ${modelPricing.toString()}
+    ${pairRates.toString()}
     ${modelWindow.toString()}
     ${pairCost.toString()}
     ${fmtCost.toString()}
@@ -2887,11 +2888,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 COST is a reading of the Context view \\u2014 a per-step cost track (74% of a real $81 thread was cache reads), amber $ BUMPS with their wire cause (retry / expired / prefix changed) priced against a warm cache, where-the-money-went, and the account quota the client polled\\n' +
-        '\\u00b7 the trajectory bar is ALWAYS on top of the session view now \\u2014 the whole session\\u2019s shape before any replay, collapsible to its clock row, synced with the conversation: a faint marker tracks your scroll, a click jumps the convo to that moment\\n' +
-        '\\u00b7 the strip rules the selected thread\\u2019s OWN time \\u2014 idle gaps fold to \\u29f8\\u29f8 breaks, so a 1h34m session fills the frame instead of a corner of a 10h axis; wall-clock ticks, the future veiled, other threads ghosted\\n' +
-        '\\u00b7 replay TAILS a live run \\u2014 park at the edge (\\u23ed) and the cursor, the loop row and the conversation follow every pair that lands\\n' +
-        '\\u00b7 [ ] walk the working loops, F presents, Esc peels; the Context view is a DevTools shell \\u2014 one overview driving the window / stream / events decks\\n' +
+        '\\u00b7 the Context view has ONE inspector \\u2014 a right panel a pick opens (an icicle node, a stream record, an event row), a vertical rail of facets the wire can answer: content, a tool\\u2019s schema and weight, the ORIGIN (which step carried it in, how many requests re-sent it since), the wire request; \\u00d7 or Esc closes it\\n' +
+        '\\u00b7 the trajectory bar is the session\\u2019s minimap, always on top \\u2014 one clickable block per TURN (its tally on hover, the one you are reading lit), the selected thread\\u2019s own time with idle folded to \\u29f8\\u29f8 breaks, synced with the conversation both ways; the loop-row diagram is gone\\n' +
+        '\\u00b7 replay holds your thread \\u2014 enters and restarts on its own edges, the arrows step its own turns, waiting folds like idle, and a live run still tails\\n' +
+        '\\u00b7 pricing follows the 2026-09 docs \\u2014 Fable 5.1 / Mythos 5.1 cache reads at 0.025x, Sonnet 5 at $2/$10, 1M windows on Claude 4.6+, and two modifiers read off the wire: fast mode (usage.speed) doubles every rate, US-only inference is 1.1x \\u2014 named in the cost tooltip\\n' +
+        '\\u00b7 cctrace insights folds every run sharing the data dir into windowed aggregates (runs / tokens / \\u2248$ by day, project, client; --scan for the cache split and quota off the wire) \\u2014 the cctrace-insights skill reads it; /view/<run-id> budgets long sessions and says what it left out\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

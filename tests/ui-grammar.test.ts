@@ -1490,9 +1490,10 @@ describe("the trajectory gutter on the session rail", () => {
     const page = bootSnapshotPage(renderSnapshot(TRAJ));
     page.goto("#/session");
     const rail = page.els["threads"].innerHTML;
-    // models.dev knows opus's window, so the % is against the window
+    // opus 4.6's window is known (1M — the offline fallback follows the
+    // docs' 4.6+ rule), so the % is against the window
     expect(rail).toContain("context 60.5k");
-    expect(rail).toMatch(/context [\d.]+k · \d+% of a \d+k window/);
+    expect(rail).toMatch(/context [\d.]+k · \d+% of a [\d.]+[km] window/);
   });
 });
 

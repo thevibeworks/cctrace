@@ -69,12 +69,15 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   request -> agent work -> final response; a 213-message trace reads as
   3 turns), tool rows naming the files they touched, subagent branches,
   `/model` epochs, compaction boundaries, superseded exchanges -- and
-  **replay**: step or play back any captured session, deep-link any
-  moment -- on a stage: lanes over time (prompts, requests, tools,
-  subagents, cuts) under a clock axis with idle gaps folded, a live
-  flowchart of the agent's loop lit at the cursor (what is running, since
-  when), and the beat of what it did at this step. On a live run replay TAILS: the cursor follows the newest
-  landed pair and the conversation follows the cursor.
+  a **trajectory bar** always on top: lanes over time (one clickable
+  block per turn, requests, tools, subagents, cuts) under a clock axis
+  with idle gaps folded, synced with the conversation both ways -- a
+  marker tracks where you are reading, a block click jumps to that
+  turn, and its hover is the turn's tally. **Replay** steps or plays
+  back any captured session on the same bar, deep-links any moment, and
+  shows the beat of what the agent did at each step. On a live run
+  replay TAILS: the cursor follows the newest landed pair and the
+  conversation follows the cursor.
 - **Context insights, DevTools-shaped.** A Context view shows the agent's
   window over time. An interactive **overview** owns the top and never
   scrolls away: one stacked column per wire request, colored by the six
@@ -92,8 +95,11 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
     category -> group -> item, with tool results grouped by the tool that
     made them, schemas by MCP server, injections by producer.
     `Bash x189, 38% of the window` is the widest block on the row, not a
-    number you had to go find; click it to zoom, click a leaf to read the
-    exact bytes, and every row says which turn first carried it in.
+    number you had to go find; click it to zoom, click a leaf to open it
+    in the **inspector** -- one right panel every deck shares, with a
+    vertical rail of facets the wire can answer: the content, a tool's
+    schema and its weight, the origin (which step carried it in and how
+    many requests have re-sent it since), and the wire request itself.
   - **stream** -- the agent's path as one linear list of records: system
     prompt, your turns, the context the harness injected (inline, at the
     moment it entered), the model's thinking, each tool call fused with
@@ -114,7 +120,21 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   cache would have saved. Beside it, the account's quota as the client
   polled it: 5h / 7d / model-scoped, percent, when it resets, and how far
   it moved across this trace. Every dollar is an estimate from catalog
-  rates; every cause is a wire fact.
+  rates; every cause is a wire fact. Rates follow the 2026-09 pricing
+  page (Fable 5.1's 0.025x cache reads, Sonnet 5's $2/$10, 1M windows
+  on Claude 4.6+), and the two modifiers the wire states -- fast mode
+  (`usage.speed: "fast"`) and US-only inference -- price the request
+  they belong to, named in the tooltip.
+- **Insights across runs.** `cctrace insights` folds every run sharing
+  the data dir into windowed aggregates -- runs, pairs, tokens and
+  estimated cost by day, project and client, the heaviest runs with
+  their titles -- in milliseconds from the registry's exit stats, and
+  `--scan` streams the traces themselves for what only the wire knows:
+  the cache read / write / uncached split in dollars, per-model and
+  per-session weight, the quota percentages the client polled. The
+  `cctrace-insights` skill turns that into answers ("how is my caching
+  doing this week", "which session is the heavy one") with the coverage
+  gaps stated.
 - **The trajectory, in the timeline.** Every step on the sessions rail
   carries a track: how full the window was, split into the prefix read
   from cache and what was billed fresh. Down the rail that column is the

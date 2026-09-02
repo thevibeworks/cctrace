@@ -118,6 +118,27 @@ describe("extractMessageInfo", () => {
     expect(m.error).toBeNull();
   });
 
+  test("pricing modifiers: usage.speed and inference_geo are read off the wire", () => {
+    const base = streamingPair();
+    const m0 = extractMessageInfo(base);
+    expect(m0.fast).toBe(false);
+    expect(m0.geoUs).toBe(false);
+    const pair = {
+      ...base,
+      request: { ...base.request, body: { ...(base.request.body as any), inference_geo: "us" } },
+      response: {
+        timestamp: 0, status: 200, headers: {},
+        body: { model: "claude-opus-5", stop_reason: "end_turn", usage: { input_tokens: 5, output_tokens: 7, speed: "fast" } },
+      },
+    };
+    const m = extractMessageInfo(pair);
+    expect(m.fast).toBe(true);
+    expect(m.geoUs).toBe(true);
+    // asked for fast, served standard (Opus 4.6's silent downgrade): not fast
+    (pair.response.body as any).usage.speed = "standard";
+    expect(extractMessageInfo(pair).fast).toBe(false);
+  });
+
   test("non-streaming JSON body", () => {
     const pair = streamingPair({
       response: {

@@ -69,8 +69,17 @@ offline snapshots -- same UI, three ways in.
     width is tokens and rows are levels, decomposing it into category ->
     group -> item, with tool results grouped by the tool that made them,
     schemas by MCP server, injections by producer. Click a node to zoom,
-    a leaf to open its exact bytes below; row 1 is the margin's own six
-    categories, so the graph reads as that bar growing downward. Every
+    a leaf to open it in the INSPECTOR beside the graph; row 1 is the
+    margin's own six categories, so the graph reads as that bar growing
+    downward. The inspector is one right panel every deck shares: a
+    pick (an icicle node, a stream record, an event row) opens it, x or
+    Esc closes it and the deck takes the width back, and a vertical rail
+    of facets lists only what the wire can answer for that pick --
+    content (the block rendered, the picked fold open), schema (a tool's
+    declaration in the carrying request, its weight and rank), origin
+    (the step it entered with and the carry: how many requests re-sent
+    it since, ≈tokens x N), wire (the carrying request in brief, both
+    links out). Every
     row names where it came from ("since turn 04 . step 2") and clicking
     that pins the step that first carried it in.
   - **stream** -- the agent's path as one linear stream of records:
@@ -79,8 +88,9 @@ offline snapshots -- same UI, three ways in.
     thinking, each tool call fused with its result, the reply --
     kind-badged, in spine order, every record linked to its wire pair and
     addressed turn NN . step N exactly as the Sessions outline addresses
-    it. A record list beside an inspector that reuses the detail panel's
-    own block renderers. Three detail levels, filtering only, never
+    it. One column of records; a picked one opens in the shared inspector
+    (its content with the detail panel's own block renderers, the tool's
+    schema, its origin and carry, the wire request). Three detail levels, filtering only, never
     summarizing (the bar says how many rows it hid): MAP is the skeleton
     (system, the human, the tool calls), READ drops the token budget
     banners and bare thinking, FULL is everything. A kind filter isolates
@@ -120,29 +130,38 @@ offline snapshots -- same UI, three ways in.
   (`#/session/<key>/@<pair-id>`) deep-links that exact moment. Works on
   every trace ever captured -- live, snapshot, or `cctrace view` rebuild --
   because the wire is already a timeline.
-- **The replay stage** -- entering replay turns the scrubber into a
-  trajectory: five lanes over wall-clock (the human's prompts, the model's
-  requests, tools running between them, subagents as stacked spans, the
-  harness lane with compaction cuts and failed requests). Wheel to zoom
-  around the cursor; the strip says more as you zoom in. Click a span to
-  jump there, shift+drag to select a slice. The axis is the selected
-  session's own time; idle gaps over five minutes fold to a hatched break
-  (`//` 1h 29m), so a lunch break is not half the strip. Under the strip,
-  the LOOP ROW: a live flowchart of the agent's loop -- human -> model ->
-  calls? -> tools / agents / waiting -> back to model, or no -> answer ->
-  human -- with the state at the cursor lit, the transition it came in by
-  flowing, what is running and since when. The left pane
-  carries the BEAT: what the agent did at this step (tool calls fused with
+- **The trajectory bar** -- always on top of the Sessions view, the
+  session's overview: five lanes over wall-clock (one clickable block per
+  TURN, from the prompt's instant to the loop's last reply, numbered at
+  any zoom that fits; the model's requests; tools running between them;
+  subagents as stacked spans; the harness lane with compaction cuts and
+  failed requests) under a clock ruler. The axis is the selected
+  session's own time; idle gaps over two minutes fold to a hatched break
+  (`//` 1h 29m), so a lunch break is not half the strip. It syncs with
+  the conversation both ways: a faint marker tracks the turn you are
+  reading and lights its block, a click on a block jumps the
+  conversation to that turn's head, and the block's hover is the turn's
+  tally (steps, calls, agents, duration, compactions, failed requests). A
+  chevron folds the lanes to the clock row. Wheel to zoom around the
+  cursor; the strip says more as you zoom in.
+- **Replay** -- on the same bar: the playhead, the future veiled, other
+  sessions ghosted, shift+drag to select a slice. The left pane carries
+  the BEAT: what the agent did at this step (tool calls fused with
   results, spawns, the reply, the stated reasoning, the window delta) and
   the call tally so far. Every mark is a wire fact; nothing is inferred.
-  On a live run the model chip beats the moment a request is forwarded
-  ("thinking since 14:32:07") because the proxy announces requests as they
-  go out, and replay tails: the cursor follows every pair that lands. `F`
-  clears the chrome for presenting; Esc peels present -> replay -> view.
+  Replay enters on the selected session's own edges, the arrows step its
+  own turns, and on a live run it tails: the cursor follows every pair
+  that lands. `F` clears the chrome for presenting; Esc peels present ->
+  replay -> view.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
-  read/write TTLs priced separately), with per-turn and per-thread totals
-  in the Sessions view. Estimates, not bills.
+  read/write TTLs priced separately; Fable 5.1 / Mythos 5.1 read the
+  cache at 0.025x, Sonnet 5 is $2/$10, long context on Claude 4.6+ is
+  standard-rate), with per-turn and per-thread totals in the Sessions
+  view. Two modifiers are read off the wire and named in the cost
+  tooltip: fast mode when the response's `usage.speed` is "fast" (Opus 5
+  / 4.8, every rate doubled) and US-only inference (`inference_geo:
+  "us"`, 1.1x). Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
   gets lost: ports allocate predictably (8722, 8723, ...), `cctrace ps`
   lists every live instance with its URL and session, and the web UI header

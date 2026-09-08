@@ -2,6 +2,8 @@ import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
 import { wireTables } from "./clients";
 import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
+import { UI_ICONS } from "./vendor/ui-icons";
+import { CHROME_CSS, NAV_SCRIPT, PREFS_SCRIPT } from "./chrome";
 import {
   parseSse,
   fmtCompact,
@@ -131,17 +133,9 @@ const FAVICON_HREF = "data:image/svg+xml," + encodeURIComponent(
 );
 const GITHUB_ICON = `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>`;
 
-// Dashboard entry: a 2x2 grid — "all the runs", not just this page's.
-const DASH_ICON = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="1.5" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="1.5" width="5.2" height="5.2" rx="1"/><rect x="1.5" y="9.3" width="5.2" height="5.2" rx="1"/><rect x="9.3" y="9.3" width="5.2" height="5.2" rx="1"/></svg>`;
+const DASH_ICON = UI_ICONS.layoutGrid;
+const DEST_ICONS = { requests: UI_ICONS.listFilter, session: UI_ICONS.messagesSquare, context: UI_ICONS.chartNoAxesColumn };
 
-// Destination glyphs for the rail: one 16px line mark each, so the
-// navigation still names where it goes when the labels drop at narrow
-// widths. Same weight as DASH_ICON above (which is the Runs destination).
-const DEST_ICONS = {
-  requests: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h7"/></svg>`,
-  session: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>`,
-  context: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2.5 12.5v-4M6 12.5v-9M9.5 12.5v-6M13 12.5v-2"/></svg>`,
-};
 
 /** Run identity shown in the page header. All fields optional: `cctrace view`
  * rebuilds from a saved trace where the original cwd is unknown. */
@@ -171,6 +165,11 @@ export interface PageMeta {
    * trace — the header must say so (a silent 78% drop once shipped).
    * Shape mirrors ViewResult.truncated in src/view.ts. */
   truncated?: { droppedLines: number; droppedBytes: number; keptBytes: number; olderFiles?: number };
+  /** The page holds the WHOLE session with its request bodies folded to
+   * stubs (src/fold.ts) — nothing was dropped, so the chip reports what
+   * was put away rather than what is missing. Mutually exclusive with
+   * `truncated`. Shape mirrors ViewResult.folded in src/view.ts. */
+  folded?: { superseded: number; budgeted: number; foldedBytes: number; keptBytes: number; olderFiles?: number };
   /** The session's generated name (`cctrace title`), when one exists. */
   sessionTitle?: string;
   /** cctrace version that produced this page/snapshot. */
@@ -189,158 +188,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CCTrace</title>
   <link rel="icon" href="${FAVICON_HREF}">
-  <script>(function(){var t=localStorage.getItem('cctrace-theme');if(t&&t!=='system')document.documentElement.setAttribute('data-theme',t)})()</script>
+  <script>${PREFS_SCRIPT}</script>
   <style>
-    /* ---- The material: the Claude Design System, adopted ----
-       cctrace traces Claude Code, so it reads as part of the same product.
-       Nothing here is invented: every value was MEASURED off claude.ai on
-       2026-09-02 (769 --cds-* custom properties resolved in the live page,
-       both themes) — palette, geometry, type ramp. The names below are
-       cctrace's own; the CDS token behind each value is on the line.
-       What CDS leaves undecided is decided here and marked "ours": row
-       density inside the system's range, and the data colors a wire tracer
-       needs. Provenance and the rules: docs/design/ui.md. */
-    :root {
-      color-scheme: dark;
-      --bg: #0b0b0b;                        /* --cds-page-bg   */
-      --bg-surface: #151515;                /* --cds-surface-1 */
-      --surface-2: #1a1a19;                 /* --cds-surface-2 */
-      --overlay: #20201f;                   /* --cds-surface-3 */
-      --text: #f0efec;                      /* --cds-text-primary   */
-      --text-muted: #c3c2b7;                /* --cds-text-secondary */
-      --text-faint: rgba(240,239,236,0.62);
-      --border: rgba(255,255,255,0.10);     /* --cds-border        */
-      --border-strong: rgba(255,255,255,0.20); /* --cds-border-strong */
-      /* Clay is IDENTITY and the one primary action on a screen; blue is
-         "this is interactive / this is selected". CDS keeps them apart and
-         so do we — a page that paints its buttons orange is not this
-         system. */
-      --clay: #d97757;                      /* --cds-clay       */
-      --clay-strong: #c6613f;               /* --cds-fill-brand */
-      --clay-text: #d97757;                 /* clay as TEXT: its own step (light darkens it) */
-      --accent: #6da7ec;                    /* --cds-text-accent   dark */
-      --accent-hover: #86b6ef;
-      --accent-soft: #032042;               /* --cds-bg-accent     dark */
-      --accent-line: #184f95;               /* --cds-border-accent */
-      --accent-fg: #0b0b0b;
-      --text-method: #6da7ec;
-      /* State: CDS ships these as fills, so text gets its own step. */
-      --green: #4cc46a; --green-soft: #11260f;   /* --cds-bg-success dark */
-      --red: #ec7e7e;   --red-soft: #3c0e0e;     /* --cds-text-danger / --cds-bg-danger dark */
-      --red-line: #8e2626;                       /* --cds-border-danger */
-      --amber: #cba43c; --amber-soft: #311a00;   /* --cds-bg-warning dark */
-      --purple: #a78bea;
-      --btn-bg: #1a1a19; --hover: #20201f;
-      /* Where wall-clock went: model / tools / waiting / subagents. One
-         wire fact, one hue, wherever it is drawn — the context overview's
-         time track and the trajectory bar's lanes. Deliberately
-         theme-independent (these are data colors, not chrome) and taken
-         from the six hues CDS already ships for git status, so a cctrace
-         lane and a Claude Code diff badge are the same six inks. */
-      --lane-model: #4a8fdb; --lane-tools: #1baf7a; --lane-waiting: #c39b2b;
-      --lane-agents: #8e6bd9; --lane-extra: #c5621b; --lane-idle: #737373;
-      --lane-ink: #0b0b0b;   /* text ON a lane span: the hues never flip, so neither does the ink */
-      /* Where the money went: the four billed components, cheap to
-         expensive. One sequential ramp off the brand ink — never six
-         categorical hues, so the cost track cannot read as a second
-         composition track. */
-      --cost-read: color-mix(in srgb, #d97757 30%, #0b0b0b);
-      --cost-write: color-mix(in srgb, #d97757 50%, #0b0b0b);
-      --cost-input: color-mix(in srgb, #d97757 72%, #0b0b0b);
-      --cost-output: #d97757;
-      /* Faces. anthropic-sans / anthropic-mono are licensed and not ours to
-         ship, so the stack is CDS's own declared fallback chain. Mono
-         appears only where wire characters matter: urls, ids, numbers,
-         payloads. */
-      --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-      /* Type: the CDS ramp, six sizes, weights 400/500/600 (measured: CDS
-         controls are 400, not 600). */
-      --text-xs: 11px;      /* --cds-font-size-caption--xs */
-      --text-sm: 12px;      /* --cds-font-size-caption     */
-      --text-code: 13px;    /* --cds-font-size-code        */
-      --text-body: 14px;    /* --cds-font-size-body        */
-      --text-heading: 15px; /* --cds-font-size-heading     */
-      --text-title: 22px;   /* --cds-font-size-title       */
-      /* Geometry, measured: a CDS button is 32px tall with an 8px radius;
-         the checkbox radius is 5px; panels 12px. */
-      --radius: 8px; --radius-sm: 5px; --radius-lg: 12px; --radius-full: 999px;
-      --control-h: 32px;
-      --row-h: 26px;        /* ours: density inside the system's range — an
-                               operator surface reads 38 rows per 1000px */
-      --shadow-1: 0 1px 2px 0 rgba(0,0,0,0.40), 0 2px 8px 0 rgba(0,0,0,0.30);
-      --shadow-2: 0 2px 6px 0 rgba(0,0,0,0.45), 0 8px 20px 0 rgba(0,0,0,0.35);
-      --dur-micro: 100ms; --dur-base: 180ms;
-      --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-      --nav: 208px;
-    }
-    @media (prefers-color-scheme: light) {
-      :root:not([data-theme="dark"]) {
-        color-scheme: light;
-        --bg: #fcfcfb; --bg-surface: #f9f9f7; --surface-2: #fff; --overlay: #fff;
-        --text: #0b0b0b; --text-muted: #52514e; --text-faint: rgba(11,11,11,0.58);
-        --border: rgba(11,11,11,0.10); --border-strong: rgba(11,11,11,0.20);
-        --accent: #184f95; --accent-hover: #2a78d6; --accent-soft: #cde2fb;
-        --accent-line: #86b6ef; --accent-fg: #fcfcfb; --text-method: #184f95;
-        --clay-text: color-mix(in srgb, #c6613f 80%, #0b0b0b);
-        /* CDS ships success and warning as FILL hues. As text they need
-           their own step, and the floor that binds is the text ON its own
-           soft ground (a 200 tag, a warn chip), not on paper: green at 78%
-           reads 3.95:1 on --green-soft and gold at 100% reads 4.08:1 on
-           --amber-soft. Measured with kit/render-check.mjs. */
-        --green: color-mix(in srgb, #1e9e3c 65%, #0b0b0b); --green-soft: #caeac7;
-        --red: #8e2626; --red-soft: #fad6d6; --red-line: #f09595;
-        --amber: color-mix(in srgb, #98801f 70%, #0b0b0b); --amber-soft: #f9dca4;
-        --purple: color-mix(in srgb, #8e6bd9 72%, #0b0b0b);
-        --btn-bg: #fff; --hover: #f9f9f7;
-        --cost-read: color-mix(in srgb, #d97757 28%, #fcfcfb);
-        --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
-        --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
-        --cost-output: #c6613f;
-        --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
-        --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
-      }
-    }
-    [data-theme="light"] {
-      color-scheme: light;
-      --bg: #fcfcfb; --bg-surface: #f9f9f7; --surface-2: #fff; --overlay: #fff;
-      --text: #0b0b0b; --text-muted: #52514e; --text-faint: rgba(11,11,11,0.58);
-      --border: rgba(11,11,11,0.10); --border-strong: rgba(11,11,11,0.20);
-      --accent: #184f95; --accent-hover: #2a78d6; --accent-soft: #cde2fb;
-      --accent-line: #86b6ef; --accent-fg: #fcfcfb; --text-method: #184f95;
-      --clay-text: color-mix(in srgb, #c6613f 80%, #0b0b0b);
-      --green: color-mix(in srgb, #1e9e3c 65%, #0b0b0b); --green-soft: #caeac7;
-      --red: #8e2626; --red-soft: #fad6d6; --red-line: #f09595;
-      --amber: color-mix(in srgb, #98801f 70%, #0b0b0b); --amber-soft: #f9dca4;
-      --purple: color-mix(in srgb, #8e6bd9 72%, #0b0b0b);
-      --btn-bg: #fff; --hover: #f9f9f7;
-      --cost-read: color-mix(in srgb, #d97757 28%, #fcfcfb);
-      --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
-      --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
-      --cost-output: #c6613f;
-      --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
-      --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    /* Chrome-quality details: quiet scrollbars, accent selection, visible
-       keyboard focus. The UI should feel like a well-kept terminal. */
-    :root { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
-    ::-webkit-scrollbar { width: 10px; height: 10px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb {
-      background: var(--border); border-radius: var(--radius-sm);
-      border: 2px solid transparent; background-clip: padding-box;
-    }
-    ::-webkit-scrollbar-thumb:hover { background-color: var(--text-faint); }
-    ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
-    :focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+    ${CHROME_CSS}
     body {
       font-family: var(--font-body);
       font-size: var(--text-body);
       line-height: 1.5;
       background: var(--bg-surface);
       color: var(--text);
-      height: 100vh;
+      height: 100vh; height: 100dvh;
       overflow: hidden;
     }
     /* Wire surfaces are mono; everything else is the reading face. A url,
@@ -355,101 +212,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-family: var(--font-mono);
       font-variant-numeric: tabular-nums;
     }
-    /* ---- The shell: rail | work ---- */
-    #shell { display: flex; height: 100%; min-height: 0; }
-    #work {
-      flex: 1; min-width: 0; display: flex; flex-direction: column;
-      background: var(--bg); min-height: 0;
-    }
-    /* ---- The destination rail ---- */
-    #nav {
-      flex: 0 0 var(--nav); width: var(--nav);
-      display: flex; flex-direction: column; gap: 14px;
-      padding: 12px; min-height: 0;
-      border-right: 1px solid var(--border);
-      background: var(--bg-surface);
-    }
-    #nav .brand {
-      display: flex; align-items: center; gap: 8px;
-      padding: 4px; color: var(--text); text-decoration: none;
-    }
-    #nav .brand b { font-size: var(--text-heading); font-weight: 600; letter-spacing: -0.01em; }
-    .logo { width: 22px; height: 22px; color: var(--clay); flex-shrink: 0; }
-    /* The run card: what am I looking at. Client, trace, session id, and
-       whether this page is live — the identity that used to sit in a strip
-       above the content. */
-    .runcard {
-      border: 1px solid var(--border); border-radius: var(--radius);
-      background: var(--surface-2); padding: 7px 9px;
-      display: grid; gap: 3px; min-width: 0;
-    }
-    .ctx { display: grid; gap: 3px; min-width: 0; font-size: var(--text-sm); color: var(--text-muted); }
-    .ctx-sep { display: none; }
-    .ctx-proj { color: var(--text); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The trace title copies its path (into the store, or project-relative
-       for a legacy trace) — the string you paste into "cctrace view" or
-       hand to an agent. */
-    .ctx-proj.ctx-copy { cursor: pointer; }
-    .ctx-proj.ctx-copy:hover { color: var(--accent); }
-    .ctx-proj.copied { color: var(--green); }
-    .ctx-title { color: var(--text-muted); font-size: var(--text-xs); font-style: italic; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .ctx-client {
-      display: inline-flex; align-items: center; gap: 5px;
-      font-size: var(--text-sm); color: var(--text-muted); min-width: 0;
-    }
-    .ctx-client svg { width: 13px; height: 13px; flex-shrink: 0; }
-    .ctx-sess {
-      font: inherit; font-family: var(--font-mono); font-size: var(--text-xs);
-      color: var(--text-faint); cursor: pointer; justify-self: start;
-      background: none; border: none; padding: 0; text-align: left;
-    }
-    .ctx-sess:hover { color: var(--accent); }
-    .ctx-sess.copied { color: var(--green); }
-    /* Destinations: one row each, the count on the right. */
-    .dests { display: grid; gap: 2px; align-content: start; }
-    .dest {
-      display: flex; align-items: center; gap: 8px;
-      height: var(--control-h); padding: 0 8px;
-      border: 0; border-radius: var(--radius); background: transparent;
-      color: var(--text-muted); font: inherit; font-size: var(--text-body);
-      text-align: left; text-decoration: none; cursor: pointer;
-      transition: background var(--dur-micro) var(--ease-out), color var(--dur-micro) var(--ease-out);
-    }
-    .dest:hover { background: var(--surface-2); color: var(--text); }
-    .dest.active {
-      background: var(--surface-2); color: var(--text); font-weight: 500;
-      box-shadow: inset 0 0 0 1px var(--border);
-    }
-    .dest .gl { display: flex; width: 16px; height: 16px; color: var(--text-faint); flex-shrink: 0; }
-    .dest .gl svg { width: 16px; height: 16px; }
-    .dest.active .gl { color: var(--accent); }
-    .dest .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .dest .n { margin-left: auto; font-size: var(--text-sm); color: var(--text-faint); }
-    .dest .n:empty { display: none; }
-    .navfoot {
-      margin-top: auto; display: grid; gap: 6px;
-      border-top: 1px solid var(--border); padding-top: 10px;
-    }
-    .nav-icons { display: flex; align-items: center; gap: 2px; }
-    /* The rail holds its labels as long as it can: four glyphs beside four
-       numbers is a rebus, not navigation. Under 1000px it narrows, under
-       760px it becomes a labelled bottom bar with 44px targets. */
-    @media (max-width: 1000px) { :root { --nav: 168px; } }
-    @media (max-width: 760px) {
-      #shell { flex-direction: column-reverse; }
-      #nav {
-        flex: none; width: 100%; flex-direction: row; align-items: center;
-        gap: 10px; padding: 6px 10px; overflow-x: auto;
-        border-right: none; border-top: 1px solid var(--border);
-      }
-      #nav .brand b, .runcard, .navfoot .ver { display: none; }
-      .dests { grid-auto-flow: column; grid-auto-columns: max-content; }
-      .dest { height: 44px; }
-      .navfoot { margin-top: 0; margin-left: auto; border-top: none; padding-top: 0; }
-      /* a bar you touch: every target in it clears 44px */
-      #nav .brand, .nav-icons .icon-btn { width: 44px; height: 44px; justify-content: center; }
-      .inst-menu { bottom: calc(100% + 8px); left: auto; right: 0; }
-    }
     /* ---- The work surface's own header: this destination, its numbers ---- */
     header {
       padding: 10px 16px;
@@ -460,7 +222,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       flex-shrink: 0;
     }
     h1 {
-      font-size: var(--text-heading); font-weight: 600; letter-spacing: -0.01em;
+      font-size: var(--text-heading); font-weight: 600; letter-spacing: 0;
       color: var(--text); white-space: nowrap;
     }
     /* Version badge: with the rail's footer chrome — what produced the page
@@ -688,7 +450,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       border-radius: var(--radius-full);
       font-size: 10px;
       text-transform: uppercase;
-      letter-spacing: 0.03em;
+      letter-spacing: 0;
       color: var(--text-muted);
       border: 1px dashed var(--text-faint);
       flex-shrink: 0;
@@ -715,7 +477,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     body.view-session #session-view { display: flex; }
     #session-main { display: flex; flex: 1; min-height: 0; position: relative; }
     /* wider since rows carry ToolName(args) + file paths now */
-    #threads { flex: 0 0 400px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
+    #threads { flex: 0 0 340px; min-width: 0; overflow-y: auto; padding: 8px; border-right: 1px solid var(--border); }
     /* right padding clears the floating nav-rail (right:18 + 26px button) so
        conversation text never sits under it */
     #convo { flex: 1; min-width: 0; overflow-y: auto; padding: 12px 48px 12px 16px; }
@@ -1012,42 +774,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* presentation (F): the chrome steps out, the panes take the viewport.
        Type scale unchanged — a presentation is the same page, undressed. */
     body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail, body.present #nav { display: none; }
-    /* boot placeholder: a verb while the wire loads (ccx tradition) */
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
-    .bw-star { color: var(--accent); display: inline-block; animation: bwPulse 1.6s ease-in-out infinite; }
-    @keyframes bwPulse { 50% { opacity: 0.25; } }
-    /* the pulse: a terminal-like status line for LIVE eyes (live + tail
-       pages, session view) — what the agent last did, how long ago, and
-       the one cache deadline that matters (the newest request's) */
     #pulse {
-      position: absolute; left: 0; right: 0; bottom: 0; z-index: 4;
-      display: none; align-items: center; gap: 10px; padding: 8px 16px;
-      font-size: 12px; color: var(--text);
-      background: linear-gradient(90deg,
-        color-mix(in srgb, var(--accent) 8%, var(--bg-surface)) 0%,
-        color-mix(in srgb, var(--bg-surface) 94%, transparent) 45%);
-      backdrop-filter: blur(4px); border-top: 1px solid var(--border);
+      display: none; align-items: center; gap: 10px; padding: 6px 16px;
+      flex: none; min-height: 32px; font-size: 11px; color: var(--text-muted);
+      background: var(--bg-surface); border-top: 1px solid var(--border);
       white-space: nowrap; overflow: hidden;
     }
     body.view-session.pulse-on #pulse { display: flex; }
-    /* fresh = the star spins and breathes (the agent is between requests);
-       idle = it settles. The verb leads while fresh — the eyes' answer to
-       "is it doing something". */
-    #pulse .p-star { color: var(--accent); display: inline-block; animation: pspin 3.2s linear infinite, bwPulse 1.6s ease-in-out infinite; }
-    #pulse.idle .p-star { animation: none; opacity: 0.45; }
-    @keyframes pspin { to { transform: rotate(360deg); } }
-    #pulse .p-verb { color: var(--accent); flex: none; }
-    #pulse.idle .p-verb { display: none; }
+    #pulse .p-label, #pulse .p-t { color: var(--text-faint); flex: none; }
     #pulse .p-act { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    #pulse.idle .p-act { color: var(--text-muted); }
-    #pulse .p-t { color: var(--text-faint); font-variant-numeric: tabular-nums; flex: none; }
     #pulse .p-exp { color: var(--amber); flex: none; }
-    .p-fade { animation: pfade 160ms ease-out; }
-    @keyframes pfade { from { opacity: 0; } }
-    /* the pulse floats over the panes' bottom edge — give both scroll ends
-       clearance so the session's last line reads above it, not beneath it */
-    body.view-session.pulse-on #convo { padding-bottom: 64px; }
-    body.view-session.pulse-on #threads { padding-bottom: 64px; }
+    #pulse .p-t { font-variant-numeric: tabular-nums; margin-left: auto; }
+    .tj-pagination { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: end; gap: 8px; padding: 8px 0; background: var(--bg); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+    .tj-pagination > span:first-child { margin-right: auto; }
+    .tj-pagination button:disabled { opacity: 0.4; cursor: default; }
+    .pair { content-visibility: auto; contain-intrinsic-size: auto 27px; }
     /* find jump: one amber breath on the landed node, then gone */
     .find-flash { animation: findflash 1.2s ease-out; }
     @keyframes findflash { 0% { outline: 2px solid var(--amber); outline-offset: 3px; } 100% { outline: 2px solid transparent; outline-offset: 3px; } }
@@ -1314,7 +1056,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .turn-role {
       display: flex; align-items: center; gap: 8px;
       padding: 5px 12px; font-size: 10px;
-      text-transform: uppercase; letter-spacing: 0.05em;
+      text-transform: uppercase; letter-spacing: 0;
       color: var(--text-muted);
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border);
@@ -1451,6 +1193,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .msg-more:hover { background: var(--hover); }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
+    .block-note a.unfold { cursor: pointer; }
     /* wire image attachments: thumbnail by default, click for full size —
        the bytes were already in the trace, rendering them adds nothing */
     .msg-imgwrap { padding: 6px 12px; }
@@ -1587,7 +1330,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .klabel {
       color: color-mix(in srgb, var(--accent) 55%, var(--text-faint));
       font-size: 9px; margin-right: 4px;
-      text-transform: uppercase; letter-spacing: 0.5px;
+      text-transform: uppercase; letter-spacing: 0;
     }
     .thread-meta {
       padding: 6px 10px; font-size: 11px; color: var(--text-muted);
@@ -1674,7 +1417,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tcompact .rgut { margin: -3px 0; }
     .tcompact:hover { background: var(--hover); }
     .tcompact-label {
-      text-transform: uppercase; font-size: 9px; letter-spacing: 0.5px;
+      text-transform: uppercase; font-size: 9px; letter-spacing: 0;
     }
     .tcompact-note { margin-left: auto; color: var(--text-faint); }
     /* sessions-layer glyphs: stroke-only, inherit the row's color */
@@ -1758,7 +1501,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        as the convo's continuation-summary tag) — recap, tool loads,
        automated notifications: system scope, never the human speaking. */
     .sys-tag {
-      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0;
       color: var(--text-muted); border: 1px solid var(--border);
       border-radius: var(--radius-sm); padding: 0 4px; margin-right: 6px; flex: none;
     }
@@ -1877,7 +1620,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cmark a:hover { text-decoration: underline; }
     /* the continuation summary is not a normal prompt — tag it */
     .sum-tag {
-      font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0;
       color: var(--text-muted); border: 1px solid var(--border);
       border-radius: var(--radius-sm); padding: 0 4px; margin-left: 8px; flex: none;
     }
@@ -1940,11 +1683,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     /* the list is the deck's main column; its rows bleed to the canvas
        edge (the turn dividers are sticky inside the deck's own scroll) */
     .tj-list { margin: 0 -16px; padding: 4px 0 24px; }
-    .tj-turn { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
+    .tj-turn { font-size: 10px; letter-spacing: 0; text-transform: uppercase; color: var(--text-faint); padding: 8px 16px 3px; position: sticky; top: 0; background: var(--bg); z-index: 1; }
     .tj-row { display: flex; align-items: center; gap: 8px; padding: 3px 16px; text-decoration: none; color: var(--text); border-left: 2px solid transparent; font-size: 12px; }
     .tj-row:hover { background: var(--hover); }
     .tj-row.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left-color: var(--accent); }
-    .tj-badge { flex: 0 0 auto; font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: var(--tjc, var(--text-faint)); width: 52px; text-align: right; }
+    .tj-badge { flex: 0 0 auto; font-size: 9px; font-weight: 700; letter-spacing: 0; color: var(--tjc, var(--text-faint)); width: 52px; text-align: right; }
     .tj-row.tj-think .tj-badge, .tj-row.tj-think .tj-label { color: var(--text-faint); }
     .tj-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tj-label.tj-mono { color: var(--tjc); flex: 0 0 auto; max-width: 32ch; }
@@ -2091,7 +1834,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        because the margin is one continuous sheet, not stacked reports */
     .cx-mlabel {
       display: flex; align-items: baseline; gap: 8px;
-      font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0;
       color: var(--text-faint); padding: 0 0 5px;
     }
     .cx-mlabel-r { margin-left: auto; text-transform: none; letter-spacing: 0; }
@@ -2132,7 +1875,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       display: flex; flex-direction: column; justify-content: flex-start; overflow: hidden;
       font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums; line-height: 1.35;
     }
-    .cx-ov-gn { text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.7; }
+    .cx-ov-gn { text-transform: uppercase; letter-spacing: 0; opacity: 0.7; }
     .cx-ov-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
     .cx-ov-tracks { position: relative; touch-action: none; user-select: none; }
     .cx-chart { display: flex; align-items: flex-end; height: var(--cx-ov-h); padding-top: 13px; }
@@ -2245,7 +1988,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-ev.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
     .cx-ev-kind {
       flex: 0 0 58px; text-align: center; font-size: 9px; text-transform: uppercase;
-      letter-spacing: 0.03em; color: var(--text-muted);
+      letter-spacing: 0; color: var(--text-muted);
       border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 4px;
     }
     .cx-ev-glyph { flex: 0 0 12px; text-align: center; color: var(--text-faint); }
@@ -2348,32 +2091,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .cx-th-n { flex: 0 0 42px; text-align: right; color: var(--text); }
     .cx-th-pct { flex: 0 0 28px; text-align: right; color: var(--text-faint); }
     .cx-th-cut { flex: 0 0 22px; text-align: right; color: var(--purple); font-size: 9px; }
-    /* Narrow tier: the margin unsticks and becomes the sheet's top block,
-       and the two-column decks stack. 960px is the page's established
-       breakpoint (threads rail, detail). */
-    @media (max-width: 960px) {
-      .cx-cols { display: block; overflow-y: auto; }
-      .cx-margin {
-        flex: none; overflow: visible;
-        padding: 12px 16px 14px; margin-bottom: 14px;
-        border-right: none; border-bottom: 1px solid var(--border);
-        /* a band of columns, not one stretched sheet: a ledger row spread
-           across 1400px puts 800px of nothing between label and amount.
-           Multicol, not grid — grid rows take the tallest block's height
-           and leave dead cells; columns just pack. */
-        columns: 300px; column-gap: 28px;
-      }
-      .cx-canvas { overflow: visible; }
-      #cx-bal { display: block; }
-      .cx-mblock { break-inside: avoid; padding-bottom: 14px; }
-      .cx-mblock + .cx-mblock,
-      #cx-bal + .cx-mblock { padding-top: 0; margin-top: 0; border-top: none; }
-      /* the deck row stacks: the deck, then the inspector under it */
-      .cx-deck { flex-direction: column; }
-      .cx-deck-main { overflow: visible; }
-      .tj-list { max-height: 58vh; overflow-y: auto; }
-      .cx-insp { flex: none; max-width: none; min-width: 0; margin-left: 0; border-left: none; border-top: 1px solid var(--border); max-height: 45vh; }
-    }
     /* the rail's trajectory gutter: per-step context occupancy, split into
        the cached prefix and what was billed fresh (session view) */
     .tctx {
@@ -2386,6 +2103,171 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tctx-c { background: color-mix(in srgb, var(--green) 70%, transparent); }
     .tctx-f { background: color-mix(in srgb, var(--amber) 80%, transparent); }
     .tctx-x { background: color-mix(in srgb, var(--red) 70%, transparent); }
+    #session-heading { display: flex; align-items: center; gap: 8px; padding: 5px 16px; min-width: 0; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
+    #thread-jump { min-width: 0; max-width: 460px; flex: 1; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--text-sm); text-overflow: ellipsis; }
+    #thread-parent { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text-muted); font-size: var(--text-sm); text-decoration: none; }
+    #thread-parent:hover { color: var(--accent); }
+    .threads-collapsed #threads, body.session-focus #threads { display: none; }
+    body.session-focus #nav, body.session-focus #nav-toggle { display: none; }
+    #threads-dismiss { display: none; }
+    .thread-head .tkind { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; }
+    .thread-label { min-width: 0; flex: 1; font-size: var(--text-sm); }
+    .tkids .tkids { padding-left: 10px; }
+    .sess { border-left: 0; border-right: 0; border-radius: 0; }
+    .sess > summary { flex-wrap: wrap; gap: 6px; }
+    .sess-attrs { flex-shrink: 1; }
+    #act-wrap { margin-left: auto; }
+    .act-menu { max-width: min(380px, calc(100vw - 24px)); max-height: calc(100dvh - 80px); overflow-y: auto; box-shadow: var(--shadow-2); }
+    .act-menu a, .act-menu button { min-height: 30px; white-space: normal; }
+    .act-menu button:disabled { color: var(--text-faint); cursor: default; }
+    .act-menu button[data-purgecat] { color: var(--red); }
+    .act-menu .am-hint { display: block; padding-left: 0; }
+    .toolbar .icon-btn { width: 28px; padding: 0; justify-content: center; }
+    .toolbar input { min-width: 0; }
+    @media (max-width: 760px) {
+      header { gap: 8px; padding: 6px 12px; flex-wrap: wrap; }
+      header .count { flex: 1; min-width: 0; font-size: 11px; }
+      header .trunc { order: 4; }
+      .toolbar { padding: 6px 12px; gap: 6px; flex-wrap: wrap; }
+      #tb-list { flex-wrap: wrap; }
+      #filter { flex-basis: 100%; width: 100%; }
+      #tb-page { border-left: 0; padding-left: 0; }
+      #tb-trace { padding-left: 6px; }
+      .toolbar .icon-btn { width: 44px; }
+      #session-heading { padding: 4px 12px; gap: 6px; }
+      #thread-jump { height: 44px; flex: 1; width: 0; }
+      #thread-parent { width: 44px; height: 44px; justify-content: center; }
+      #thread-parent .parent-label { display: none; }
+      #threads { display: none; position: absolute; z-index: 12; left: 0; top: 0; bottom: 0; width: min(360px, calc(100% - 44px)); background: var(--bg); box-shadow: var(--shadow-2); }
+      body.threads-mobile-open #threads { display: block; }
+      body.threads-mobile-open #threads-dismiss { display: block; position: absolute; inset: 0; z-index: 11; border: 0; background: color-mix(in srgb, var(--bg) 65%, transparent); }
+      #convo { padding: 10px 44px 12px 12px; }
+      #rail-session { right: 4px; }
+      .turn-role { flex-wrap: wrap; }
+      .turn-usage { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    }
+    #focus-toggle { display: none; }
+    body.view-session #focus-toggle { display: inline-flex; }
+    body.view-context #toolbar { display: none; }
+    #context-view { container-type: inline-size; min-width: 0; }
+    .cx-head { padding: 7px 16px; gap: 10px; }
+    #cx-thread-jump { min-width: 0; flex: 0 1 420px; height: 28px; padding: 0 8px; font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .cx-head .tmodel { margin-left: 0; }
+    .cx-goto { display: inline-flex; align-items: center; gap: 5px; }
+    .cx-selection { display: flex; flex: none; align-items: center; gap: 10px; min-width: 0; padding: 5px 16px; border-bottom: 1px solid var(--border); background: var(--bg-surface); font-size: var(--text-sm); }
+    .cx-step-picker { display: flex; align-items: center; gap: 6px; flex: none; }
+    .cx-step-picker label { display: flex; align-items: center; gap: 6px; }
+    #cx-step-number { width: 64px; height: 28px; padding: 0 4px 0 8px; font: inherit; font-variant-numeric: tabular-nums; background: var(--surface-2); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+    .cx-selected-at { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .cx-pin-state { margin-left: auto; color: var(--text-muted); font-size: var(--text-xs); }
+    .cx-overview-hidden #cx-ov { display: none; }
+    .cx-summary-hidden .cx-margin { display: none; }
+    .cx-summary-dismiss { display: none; }
+    .cx-cols { position: relative; min-width: 0; }
+    .cx-margin { flex-basis: 264px; padding: 12px 16px 24px; }
+    .cx-canvas { padding: 0 16px; }
+    .cx-bal-n { font-size: var(--text-title); }
+    .cx-bal-n .cx-bal-u { margin-left: 5px; }
+    .cx-bal-d, .cx-recon, .cx-mlabel { font-size: var(--text-xs); }
+    .cx-modes { gap: 16px; padding: 0; min-height: 40px; }
+    .cx-mode { min-height: 40px; padding: 0 2px; border: 0; border-radius: 0; color: var(--text-muted); font-size: var(--text-sm); }
+    .cx-mode.active { background: none; color: var(--text); box-shadow: inset 0 -2px var(--accent); }
+    .cx-controls { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 5px 0; border-bottom: 1px solid var(--border); flex: none; }
+    .cx-controls .tj-toolbar { gap: 8px; width: 100%; }
+    .tj-search { margin-left: auto; width: 190px; min-width: 0; height: 28px; }
+    .cx-fchip, .tj-lvl, .tj-kind { min-height: 26px; font-size: var(--text-xs); }
+    .cx-deck-hint { padding: 7px 0 0; font-size: var(--text-xs); }
+    .cx-frow { height: 25px; }
+    .cx-fn { font-size: var(--text-xs); gap: 6px; }
+    .cx-fn-n, .cx-fn-t { font-size: 10px; }
+    .cx-insp { flex: 0 0 42%; min-width: 340px; margin-left: 14px; }
+    .cx-insp-h { flex-wrap: wrap; gap: 6px; padding: 0 0 8px 12px; }
+    .cx-insp-t { flex: 1; min-width: 100px; font-size: var(--text-sm); }
+    .cx-insp-tok { flex-basis: calc(100% - 50px); margin-left: 14px; order: 3; font-size: var(--text-xs); }
+    .cx-insp-x { margin-left: auto; order: 2; }
+    .cx-insp-rail { flex-basis: 72px; }
+    .cx-facet { font-size: var(--text-xs); padding: 6px 8px; }
+    .cx-insp-body { padding: 10px 12px 24px; font-size: var(--text-sm); }
+    .cx-insp-body .msg-text { font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+    .cx-node-list { margin-top: 18px; }
+    .cx-node-list-head { display: flex; justify-content: space-between; padding: 7px 0; color: var(--text-faint); font-size: var(--text-xs); border-bottom: 1px solid var(--border); }
+    .cx-node-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 0; color: var(--text); font: inherit; font-size: var(--text-sm); text-align: left; background: transparent; border: 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .cx-node-row:hover { background: var(--hover); }
+    .cx-node-label { flex: 0 1 46ch; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .cx-node-count { color: var(--text-faint); font-size: var(--text-xs); }
+    .cx-node-amount { flex: 0 0 54px; text-align: right; font-variant-numeric: tabular-nums; }
+    .cx-node-row > .ui-icon { width: 13px; margin-left: auto; color: var(--text-faint); }
+    .cx-summary-head { display: none; }
+    .cx-crow .cx-track { display: none; }
+    .cx-crow-label { min-width: 105px; }
+    .cx-unavailable { padding: 20px 0; font-size: var(--text-sm); color: var(--text-muted); }
+    .cx-unavailable > span { display: flex; align-items: center; gap: 8px; color: var(--text); }
+    .cx-unavailable p { margin: 8px 0 14px; max-width: 46ch; }
+    .cx-unavailable a { display: inline-flex; gap: 6px; align-items: center; margin-right: 16px; color: var(--accent); text-decoration: none; }
+    .cx-ev { min-height: 32px; }
+    .tj-row { min-height: 28px; }
+    @container (max-width: 1000px) {
+      .cx-cols { display: flex; overflow: hidden; }
+      .cx-margin { display: none; position: absolute; inset: 0 auto 0 0; width: min(340px, calc(100% - 32px)); margin: 0; columns: auto; overflow-y: auto; z-index: 12; background: var(--bg); box-shadow: var(--shadow-2); border-right: 1px solid var(--border); border-bottom: 0; }
+      .cx-summary-mobile-open .cx-margin { display: block; }
+      .cx-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 8px; color: var(--text-muted); font-size: var(--text-sm); }
+      .cx-summary-head .icon-btn { height: 36px; }
+      .cx-summary-mobile-open .cx-summary-dismiss { display: block; position: absolute; inset: 0; z-index: 11; border: 0; background: color-mix(in srgb, var(--bg) 60%, transparent); }
+      .cx-canvas { overflow: hidden; }
+      .cx-deck { flex-direction: row; min-height: 0; }
+      .cx-deck-main { overflow-y: auto; }
+      .cx-insp { position: absolute; inset: 0 0 0 auto; width: min(560px, 100%); min-width: 0; max-width: none; max-height: none; margin: 0; padding: 12px; border: 0; border-left: 1px solid var(--border); background: var(--bg); z-index: 10; box-shadow: var(--shadow-2); }
+      .cx-insp-cols { flex-direction: column; }
+      .cx-insp-rail { flex: none; flex-direction: row; gap: 4px; padding: 4px 0; border-right: 0; border-bottom: 1px solid var(--border); }
+      .cx-facet { padding: 8px 12px; border-left: 0; }
+      .cx-facet.active { box-shadow: inset 0 -2px var(--accent); }
+      .cx-insp-body { overflow-y: auto; }
+      .cx-mblock + .cx-mblock, #cx-bal + .cx-mblock { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border); }
+    }
+    @container (max-width: 600px) {
+      .cx-head { padding: 6px 12px; flex-wrap: wrap; }
+      #cx-thread-jump { flex: 1; height: 36px; }
+      .cx-head .tmodel, .cx-head .sess-sid { display: none; }
+      .cx-selection { padding: 4px 8px; gap: 2px; flex-wrap: wrap; }
+      .cx-selection .icon-btn { width: 36px; min-width: 36px; height: 40px; }
+      .cx-step-picker { gap: 2px; font-size: var(--text-xs); }
+      #cx-step-number { width: 52px; height: 32px; }
+      .cx-selected-at { display: none; }
+      .cx-pin-state { display: none; }
+      #cx-overview-toggle { margin-left: auto; }
+      .cx-ov { --cx-ov-h: 76px; --cx-ov-th: 18px; --cx-ov-ch: 18px; padding: 0 12px 6px; }
+      .cx-ov-bar > span:first-child { flex-basis: 100%; }
+      .cx-ov-tools { margin-left: 0; }
+      .cx-canvas { padding: 0 12px; }
+      .cx-mode { min-height: 44px; }
+      .cx-controls .tj-toolbar { gap: 6px; }
+      .tj-kinds { flex-wrap: wrap; }
+      .tj-search { width: 100%; height: 36px; }
+      .cx-fchip, .tj-lvl, .tj-kind { min-height: 32px; }
+      .cx-node-count { display: none; }
+      .cx-node-label { flex: 1; }
+      .cx-node-row { min-height: 44px; }
+      .cx-ev { flex-wrap: wrap; gap: 6px; padding: 8px 0; }
+      .cx-ev-label { flex-basis: calc(100% - 80px); }
+      .cx-ev-gap { display: none; }
+      .cx-ev-at { margin-left: auto; }
+      .cx-ev-time { display: none; }
+      .cx-insp-t { min-width: 0; }
+      .cx-insp-body { padding-left: 0; padding-right: 0; }
+    }
+    .fold > summary { flex-wrap: wrap; min-width: 0; }
+    .fold-agent > summary .fold-hint { flex-basis: 160px; }
+    .fold-link { display: inline-flex; align-items: center; gap: 4px; }
+    .msg-img { max-width: min(320px, 100%); }
+    @media (max-width: 760px) {
+      .fold-agent > summary .fold-hint { flex-basis: calc(100% - 110px); }
+      .fold-agent > summary .fold-stat { margin-left: 0; flex: 1 0 170px; min-width: 170px; white-space: normal; }
+      .fold-agent > summary .fold-link { margin-left: auto; min-height: 32px; }
+      .fold > summary .fold-copy { visibility: visible; }
+      .act-menu { top: 46px; min-width: min(280px, calc(100vw - 24px)); }
+      .act-menu a, .act-menu button { min-height: 44px; }
+      body.threads-mobile-open.session-focus #threads { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -2402,10 +2284,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <span class="status disconnected" id="status">offline</span>
     </div>
     <div class="dests">
-      <button class="dest active" id="tab-requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
-      <button class="dest" id="tab-session"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
-      <button class="dest" id="tab-context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it"><span class="gl">${DEST_ICONS.context}</span><span class="lb">Context</span><span class="n" id="dest-n-ctx"></span></button>
-      <a class="dest" id="dash-link" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page."><span class="gl">${DASH_ICON}</span><span class="lb">Runs</span></a>
+      <button class="dest active" id="tab-requests" title="Requests" aria-label="Requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
+      <button class="dest" id="tab-session" title="Sessions" aria-label="Sessions"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
+      <button class="dest" id="tab-context" aria-label="Context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it"><span class="gl">${DEST_ICONS.context}</span><span class="lb">Context</span><span class="n" id="dest-n-ctx"></span></button>
+      <a class="dest" id="dash-link" aria-label="Runs" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page."><span class="gl">${DASH_ICON}</span><span class="lb">Runs</span></a>
     </div>
     <div class="navfoot">
       <span class="inst" id="inst"></span>
@@ -2413,15 +2295,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         <span class="ver" id="ver"></span>
         <button class="icon-btn" id="mask-toggle" title="mask identity"></button>
         <button class="icon-btn" id="theme-toggle" title="theme"></button>
-        <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" title="GitHub">${GITHUB_ICON}</a>
+        <a class="icon-btn" href="https://github.com/thevibeworks/cctrace" target="_blank" rel="noopener" aria-label="GitHub" title="GitHub">${GITHUB_ICON}</a>
       </span>
     </div>
   </nav>
   <div id="work">
   <header>
+    <button class="icon-btn" id="nav-toggle" aria-label="Collapse navigation" aria-controls="nav" aria-expanded="true" title="Collapse navigation">${UI_ICONS.panelLeftClose}</button>
     <h1 id="page-title">Requests</h1>
     <span class="count" id="stats"></span>
     <span class="trunc" id="trunc"></span>
+    <span id="act-wrap"><button class="icon-btn" id="actions-toggle" aria-label="Trace actions" aria-expanded="false" aria-controls="act-menu" title="Trace actions">${UI_ICONS.ellipsis}</button><div class="act-menu" id="act-menu" aria-label="Trace actions"></div></span>
   </header>
   <!-- Toolbar grammar: scope narrows left to right — the list group
        (query + list-scoped toggles), then page behavior, then the trace
@@ -2430,7 +2314,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        are not here: they live on the rail. -->
   <div class="toolbar" id="toolbar">
     <span class="tb-group" id="tb-list">
-      <input type="text" id="filter" placeholder="filter by url, method, status…  ( / )">
+      <input type="text" id="filter" aria-label="Filter requests" placeholder="Filter requests" title="Filter by URL, method, or status (/)">
       <button id="prior-toggle" class="active" title="previous runs&#10;Requests merged from earlier runs of this session — same wire session id, older trace files.&#10;---&#10;> click shows/hides them in the list">prev runs</button>
       <button id="select-toggle" title="select to purge&#10;Pick requests to delete from the trace file — a privacy tool, removal is permanent.&#10;---&#10;> rows grow a check gutter · Esc leaves selection">select</button>
       <span id="sel-actions">
@@ -2441,7 +2325,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       </span>
     </span>
     <span class="tb-group" id="tb-find">
-      <input type="text" id="sfind" placeholder="find in session…  ( / )" title="find in session&#10;Case-insensitive search over the conversation, folded tool bodies included.&#10;---&#10;> Enter next hit · shift+Enter previous&#10;> hits inside closed folds open on jump · Esc clears">
+      <input type="text" id="sfind" aria-label="Find in session" placeholder="Find in session" title="Find in session (/)&#10;Enter: next hit; Shift+Enter: previous; Esc: clear">
       <span id="sfind-count"></span>
     </span>
     <span class="tb-group" id="tb-page">
@@ -2449,13 +2333,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button id="clear" title="clear the page&#10;Empties the request list on this page only — the trace file is untouched.">clear</button>
     </span>
     <span class="tb-group" id="tb-trace">
-      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the loop row — where in the agent's loop the cursor sits — under it, the beat at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">⏵ replay</button>
-      <span id="act-wrap"><button id="actions-toggle" title="trace actions&#10;Downloads (snapshot .html, wire spec .json/.md, per-session dumps .jsonl/.md) and housekeeping (purge categories, compact) for this trace.&#10;---&#10;> merge &amp; compress sweep the whole log dir — terminal only">⌘ actions</button><div class="act-menu" id="act-menu"></div></span>
+      <button id="replay-toggle" title="replay&#10;Step back through the session as it happened: the trajectory strip — lanes over wall-clock — above, the loop row — where in the agent's loop the cursor sits — under it, the beat at the top of the outline.&#10;---&#10;> ←/→ step turns · shift+←/→ step requests · [ / ] jump chapters&#10;> Space plays · drag scrubs · shift+drag selects a slice&#10;> wheel zooms the strip · click a span jumps there&#10;> F presentation · Esc peels present, then replay">${UI_ICONS.play}<span>replay</span></button>
+      <button class="icon-btn" id="focus-toggle" aria-label="Focus session" aria-pressed="false" title="Focus session">${UI_ICONS.maximize}</button>
     </span>
   </div>
   <div class="cats" id="cats"></div>
   <div id="split">
-    <main id="pairs"><div class="boot-wait"><span class="bw-star">✻</span> <span id="boot-verb">Tracing</span>…</div></main>
+    <main id="pairs"><div class="boot-wait" role="status">Loading trace...</div></main>
     <aside id="detail"></aside>
     <div class="nav-rail" id="rail-detail"></div>
   </div>
@@ -2477,9 +2361,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         </div>
       </div>
       <div class="rp-transport">
-        <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home">⏮</button>
-        <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x">▶</button>
-        <button class="rp-btn" id="rp-end" title="jump to the end of the tape&#10;On a live run that is the live edge — replay tails from there.&#10;> key: End">⏭</button>
+        <button class="rp-btn" id="rp-restart" title="jump to start&#10;> key: Home" aria-label="Jump to start">${UI_ICONS.skipBack}</button>
+        <button class="rp-btn" id="rp-play" title="play / pause&#10;Idle gaps compress to ≤2s.&#10;> key: Space · speeds 1/2/8/60x" aria-label="Play or pause">${UI_ICONS.play}</button>
+        <button class="rp-btn" id="rp-end" title="jump to the end of the tape&#10;On a live run that is the live edge — replay tails from there.&#10;> key: End" aria-label="Jump to end">${UI_ICONS.skipForward}</button>
         <span class="rp-speeds">
           <button class="rp-speed active" data-speed="1">1x</button>
           <button class="rp-speed" data-speed="2">2x</button>
@@ -2492,8 +2376,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         <button class="rp-btn" id="rp-exit"></button>
       </div>
     </div>
+    <div id="session-heading">
+      <button class="icon-btn" id="threads-toggle" aria-label="Collapse session navigation" aria-controls="threads" aria-expanded="true" title="Collapse session navigation">${UI_ICONS.listTree}</button>
+      <a id="thread-parent" hidden></a>
+      <select id="thread-jump" aria-label="Jump to thread"></select>
+    </div>
     <div id="session-main">
-      <aside id="threads"></aside>
+      <button id="threads-dismiss" aria-label="Close session navigation" tabindex="-1"></button>
+      <aside id="threads" aria-label="Session navigation"></aside>
       <main id="convo"></main>
       <div class="nav-rail" id="rail-session"></div>
     </div>
@@ -2506,6 +2396,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
   <script>${markedSrc}</script>
   <script>
+    const UI_ICONS = ${JSON.stringify(UI_ICONS)};
+    ${NAV_SCRIPT};
     const pairs = [];
     // Snapshot pages embed their pairs in <head>; live pages stream over WS.
     const IS_SNAPSHOT = Array.isArray(window.__PAIRS__);
@@ -2540,27 +2432,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return true;
     }
 
-    // Loading verbs (the ccx tradition): pure decoration while the wire
-    // loads — wire-flavored next to cooking and nonsense, gerunds only.
-    const VERBS = ['Tracing', 'Intercepting', 'Decrypting', 'Teeing',
-      'Attributing', 'Reassembling', 'Unspooling', 'Redacting', 'Replaying',
-      'Tokenizing', 'Pondering', 'Mulling', 'Triangulating', 'Percolating',
-      'Sauteing', 'Kneading', 'Proofing', 'Zesting',
-      'Reticulating', 'Discombobulating', 'Moseying'];
-    (function rotateBootVerb() {
-      const t = setInterval(() => {
-        const el = document.getElementById('boot-verb');
-        if (!el) { clearInterval(t); return; } // first render replaced the placeholder
-        el.textContent = VERBS[Math.floor(Math.random() * VERBS.length)];
-      }, 1400);
-    })();
+    // Loading state reports only the data operation in progress.
     let autoScroll = true;
     let filter = '';
     let activeCat = 'all';
     let showPrior = true;      // include prior-run pairs in the Requests list
     let selMode = false;       // select-to-purge mode (Requests view)
     const selIds = new Set();  // selected pair ids
-    let view = 'requests';      // 'requests' | 'session' | 'context'
+    let view = /^#\\/(context|trajectory)(?:\\/|$)/.test(location.hash) ? 'context'
+      : /^#\\/session(?:\\/|$)/.test(location.hash) ? 'session' : 'requests';
+    let requestsDirty = true;
     let detailId = null;        // request id open in the detail panel
     let sessionSelKey = null;   // selected thread in the session + context views
     let ctxGran = localStorage.getItem('cctrace-ctx-gran') === 'turn' ? 'turn' : 'step';
@@ -2596,6 +2477,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let ctxLastFl = null;       // the icicle layout drawn last (the pick resolves against it)
     let ctxEvRolled = [];       // the events deck's rolled rows as drawn last
     let ctxInspLastKey = '';    // what the inspector showed last (a changed pick drops its scroll)
+    let ctxSummaryCollapsed = localStorage.getItem('cctrace-ctx-summary') === 'closed';
+    let ctxOverviewCollapsed = localStorage.getItem('cctrace-ctx-overview') === 'closed';
     const liveSids = new Set(); // session ids seen so far (live-follow guard)
     // Requests FORWARDED with no response yet, keyed by the id the eventual
     // pair carries (the server's start events). Live state only: a
@@ -2765,6 +2648,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const statsEl = document.getElementById('stats');
     const pairsEl = document.getElementById('pairs');
     const detailEl = document.getElementById('detail');
+    // The run id in the URL when this page came from /view/<run-id> — what
+    // a folded body's "load the original" fetch is addressed to. Empty on a
+    // live page or a file:// snapshot, where there is nothing to fetch from.
+    const VIEW_RUN = (function () {
+      const path = (typeof location !== 'undefined' && location.pathname) || '';
+      if (path.indexOf('/view/') !== 0) return '';
+      const rest = path.slice(6);
+      const cut = rest.indexOf('/');
+      return decodeURIComponent(cut === -1 ? rest : rest.slice(0, cut));
+    })();
     const threadsEl = document.getElementById('threads');
     const convoEl = document.getElementById('convo');
     const tailPill = document.getElementById('tail-pill');
@@ -2801,6 +2694,54 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const tabContext = document.getElementById('tab-context');
     const contextEl = document.getElementById('context-view');
 
+    const threadsToggle = document.getElementById('threads-toggle');
+    const threadJump = document.getElementById('thread-jump');
+    const threadParent = document.getElementById('thread-parent');
+    const focusToggle = document.getElementById('focus-toggle');
+    const narrowNavigation = () => !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
+    try { document.body.classList.toggle('threads-collapsed', localStorage.getItem('cctrace-threads-collapsed') === '1'); } catch (_) {}
+    function paintThreadsToggle() {
+      const open = !document.body.classList.contains('session-focus') && (narrowNavigation()
+        ? document.body.classList.contains('threads-mobile-open')
+        : !document.body.classList.contains('threads-collapsed'));
+      const label = (open ? 'Collapse' : 'Expand') + ' session navigation';
+      threadsToggle.setAttribute('aria-expanded', String(open));
+      threadsToggle.setAttribute('aria-label', label);
+      threadsToggle.title = label;
+      threadsToggle.dataset.tip = label;
+    }
+    function closeThreadDrawer() {
+      document.body.classList.remove('threads-mobile-open');
+      paintThreadsToggle();
+    }
+    function setSessionFocus(on) {
+      document.body.classList.toggle('session-focus', on);
+      focusToggle.setAttribute('aria-pressed', String(on));
+      focusToggle.setAttribute('aria-label', on ? 'Exit session focus' : 'Focus session');
+      focusToggle.title = on ? 'Exit session focus (Esc)' : 'Focus session';
+      focusToggle.dataset.tip = focusToggle.title;
+      focusToggle.innerHTML = on ? UI_ICONS.minimize : UI_ICONS.maximize;
+      closeThreadDrawer();
+    }
+    focusToggle.onclick = () => setSessionFocus(!document.body.classList.contains('session-focus'));
+    threadsToggle.onclick = () => {
+      const wasFocused = document.body.classList.contains('session-focus');
+      if (wasFocused) setSessionFocus(false);
+      if (narrowNavigation()) document.body.classList.toggle('threads-mobile-open');
+      else {
+        const collapsed = document.body.classList.toggle('threads-collapsed', !wasFocused && !document.body.classList.contains('threads-collapsed'));
+        try { localStorage.setItem('cctrace-threads-collapsed', collapsed ? '1' : '0'); } catch (_) {}
+      }
+      paintThreadsToggle();
+    };
+    document.getElementById('threads-dismiss').onclick = closeThreadDrawer;
+    threadsEl.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('a.thread-head, a.tbranch')) closeThreadDrawer();
+    });
+    threadJump.onchange = () => { closeThreadDrawer(); location.hash = threadHash(threadJump.value); };
+    if (window.matchMedia) window.matchMedia('(max-width: 760px)').addEventListener('change', closeThreadDrawer);
+    paintThreadsToggle();
+
     // Dashboard link: only meaningful when a server answers /dashboard —
     // a snapshot opened from disk (file://) has no routes to link to.
     if (location.protocol === 'http:' || location.protocol === 'https:') {
@@ -2808,16 +2749,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     // Theme toggle: system -> light -> dark -> system
-    const THEME_ICONS = {
-      system: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="9" rx="1"/><line x1="8" y1="12" x2="8" y2="14.5"/><line x1="4.5" y1="14.5" x2="11.5" y2="14.5"/></svg>',
-      light: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><line x1="8" y1="1.5" x2="8" y2="3"/><line x1="8" y1="13" x2="8" y2="14.5"/><line x1="1.5" y1="8" x2="3" y2="8"/><line x1="13" y1="8" x2="14.5" y2="8"/><line x1="3.4" y1="3.4" x2="4.5" y2="4.5"/><line x1="11.5" y1="11.5" x2="12.6" y2="12.6"/><line x1="3.4" y1="12.6" x2="4.5" y2="11.5"/><line x1="11.5" y1="4.5" x2="12.6" y2="3.4"/></svg>',
-      dark: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 9.5A5.5 5.5 0 0 1 6.5 2.8 5 5 0 1 0 13.2 9.5z"/></svg>'
-    };
+    const THEME_ICONS = { system: UI_ICONS.monitor, light: UI_ICONS.sun, dark: UI_ICONS.moon };
     function getThemePref() { return localStorage.getItem('cctrace-theme') || 'system'; }
     function applyTheme(pref) {
       if (pref === 'system') document.documentElement.removeAttribute('data-theme');
       else document.documentElement.setAttribute('data-theme', pref);
       themeToggle.innerHTML = THEME_ICONS[pref];
+      themeToggle.setAttribute('aria-label', 'Theme: ' + pref);
       themeToggle.title = 'theme: ' + pref + '\\n> click cycles system \\u2192 light \\u2192 dark';
     }
     themeToggle.onclick = function() {
@@ -2834,10 +2772,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // thing, src/redact.ts): blur [data-mask] values (session id, project,
     // credits); hover any one to reveal it deliberately.
     const maskToggle = document.getElementById('mask-toggle');
-    const MASK_ICONS = {
-      off: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8s2.5-4.5 7-4.5S15 8 15 8s-2.5 4.5-7 4.5S1 8 1 8z"/><circle cx="8" cy="8" r="2"/></svg>',
-      on: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2l12 12M6.3 6.3A2 2 0 008 10a2 2 0 001.7-1M4.2 4.4C2.3 5.6 1 8 1 8s2.5 4.5 7 4.5c1.2 0 2.2-.2 3.1-.6M7 3.5A7.5 7.5 0 018 3.5c4.5 0 7 4.5 7 4.5s-.6 1.1-1.8 2.3"/></svg>',
-    };
+    const MASK_ICONS = { off: UI_ICONS.eye, on: UI_ICONS.eyeOff };
     // What masks is a SET the user owns (right-click the eye): session id
     // is excluded by default — it's a local uuid, not a credential, and a
     // blurred header chip reads worse than it protects. The eye stays the
@@ -2859,6 +2794,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.body.classList.toggle('masked', on);
       for (const mk of MASK_KEYS) document.body.classList.toggle('mask-' + mk.k, on && keys.indexOf(mk.k) !== -1);
       maskToggle.innerHTML = on ? MASK_ICONS.on : MASK_ICONS.off;
+      maskToggle.setAttribute('aria-label', on ? 'Unmask identity' : 'Mask identity');
+      maskToggle.setAttribute('aria-pressed', String(on));
       maskToggle.title = on
         ? 'identity masked\\nHover any blurred value to reveal it deliberately.\\n---\\n> click to unmask \\u00b7 right-click to choose what blurs'
         : 'mask identity\\nBlur identity values for screen sharing \\u2014 project & trace title, usage & credits by default.\\n---\\n> click to mask \\u00b7 right-click to choose what blurs';
@@ -2982,10 +2919,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       actionsToggle.onclick = function(e) {
         e.stopPropagation();
         if (!actMenu.classList.contains('open')) renderActMenu();
-        actMenu.classList.toggle('open');
+        const open = actMenu.classList.toggle('open');
+        actionsToggle.setAttribute('aria-expanded', String(open));
       };
       actMenu.onclick = function(e) { e.stopPropagation(); };
-      document.addEventListener('click', function() { actMenu.classList.remove('open'); });
+      document.addEventListener('click', closeActions);
+    }
+    function closeActions() {
+      actMenu.classList.remove('open');
+      actionsToggle.setAttribute('aria-expanded', 'false');
     }
 
     // ---- Header context: traced client + project + current session id ----
@@ -3159,11 +3101,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 the page wears the Claude Design System \\u2014 measured off claude.ai, adopted whole: warm paper and near-black grounds, hairlines at 10% ink, the reading face for prose with mono kept for the wire, clay for identity and the one primary action, blue for everything interactive\\n' +
-        '\\u00b7 a destination rail replaces the tabs \\u2014 the mark, the run card (client, trace, session, live), Requests / Sessions / Context / Runs with their counts, and the page chrome in its foot; the header above the work now names where you are and spends its width on that destination\\u2019s numbers\\n' +
-        '\\u00b7 the request list is a recording \\u2014 rules instead of cards at 26px, every row opening with its own PEN stroke (faint head = time to first token, solid tail = the streaming after it, inked by category, 30s full scale), and a hatched band naming every wait over two minutes\\n' +
-        '\\u00b7 the dashboard OPERATES \\u2014 a two-step stop on every live row (a capture run ends the way Ctrl-C ends it: flush, receipt, seal) and a store section with the archive plan and one archive now button\\n' +
-        '\\u00b7 the Context view has ONE inspector \\u2014 a right panel a pick opens (an icicle node, a stream record, an event row), a vertical rail of facets the wire can answer: content, a tool\\u2019s schema and weight, the ORIGIN (which step carried it in, how many requests re-sent it since), the wire request; \\u00d7 or Esc closes it\\n' +
+        '\\u00b7 a view page holds the WHOLE session \\u2014 it FOLDS instead of truncating: every pair reaches the page, and request bodies a later request re-sent (or past the 32 MB body budget) become stubs that link the keeper; on a served page \\u201cload the original\\u201d fetches the wire bytes back. A 1.5 GB session is a 26 MB page with all of its requests\\n' +
+        '\\u00b7 the rail collapses to an icon strip and the session outline collapses on its own; focus hides both, Esc restores them, and the preferences survive reloads. Nested sub-agents render recursively and the thread picker lists every thread\\n' +
+        '\\u00b7 official agent marks and Lucide interface icons \\u2014 embedded, so snapshots stay self-contained; the dashboard wears the trace view\\u2019s frame with Runs and Storage as destinations and a run search\\n' +
+        '\\u00b7 large sessions open faster \\u2014 hidden views render when shown, Context sub-tabs repaint only the deck (stream switching 144 ms \\u2192 30 ms on the largest trace), the record stream paginates, and the fake live-status verbs are gone\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -3183,12 +3124,38 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     (function renderTrunc() {
       const t = META.truncated;
       const el = document.getElementById('trunc');
-      if (!t || !el) return;
+      if (!el) return;
+      // location.pathname is absent on a file:// snapshot's stub-ish
+      // environments; both chips must state the fact everywhere.
+      const here = (typeof location !== 'undefined' && location.pathname) || '';
+      if (META.folded) {
+        // The folded page holds EVERY pair — what it put away is request
+        // bodies a later request re-sent, plus whatever ran past the body
+        // budget. Nothing is missing from the recording, so this chip is
+        // not a warning; it is the reading of how the page was built.
+        const f = META.folded;
+        const bits = [];
+        if (f.superseded) bits.push(f.superseded + ' superseded');
+        if (f.budgeted) bits.push(f.budgeted + ' over budget');
+        const tip = 'folded view\\n' +
+          'Every pair of this session is on the page. ' + (f.superseded + f.budgeted) +
+          ' request bodies are stubs \\u2014 ' + fmtBytes(f.foldedBytes) + ' of conversation a later ' +
+          'request re-sent anyway' + (f.budgeted ? ', plus the oldest bodies past the page\\u2019s budget' : '') + '.\\n' +
+          'Replies, timings, tokens and cost are untouched; a stub links to the request that kept the history' +
+          (f.olderFiles ? '.\\n' + f.olderFiles + ' older trace file' + (f.olderFiles > 1 ? 's were' : ' was') + ' not scanned' : '') + '.\\n' +
+          '---\\n' +
+          (here.indexOf('/view/') === 0 ? '> click embeds every byte unfolded \\u2014 a very large page may hang the tab\\n' : '') +
+          '> the cctrace view command takes --full in the terminal';
+        const label = 'folded \\u00b7 ' + bits.join(' + ');
+        el.innerHTML = here.indexOf('/view/') === 0
+          ? '<a class="ok" href="' + escapeHtml(here) + '?full=1" data-tip="' + escapeHtml(tip) + '">' + label + '</a>'
+          : '<span class="ok" data-tip="' + escapeHtml(tip) + '">' + label + '</span>';
+        return;
+      }
+      if (!t) return;
       const total = t.keptBytes + t.droppedBytes;
       const label = 'newest ' + fmtBytes(t.keptBytes) + ' of ' + fmtBytes(total);
-      // location.pathname is absent on a file:// snapshot's stub-ish
-      // environments; the chip must state the fact everywhere.
-      const path = (typeof location !== 'undefined' && location.pathname) || '';
+      const path = here;
       const onViewRoute = path.indexOf('/view/') === 0;
       const tip = 'partial view\\n' +
         'This page holds the newest ' + fmtBytes(t.keptBytes) + ' of a ' + fmtBytes(total) + ' trace \\u2014 ' +
@@ -3225,7 +3192,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<span class="inst-port">:' + Number(i.port) + '</span></a>';
       }
       instEl.innerHTML =
-        '<button class="inst-btn" title="other live cctrace runs on this machine\\n> click to list & switch">\\u21c4 ' + others.length + ' more</button>' +
+        '<button class="inst-btn" aria-label="Switch instance" title="other live cctrace runs on this machine\\n> click to list & switch">\\u21c4 ' + others.length + ' more</button>' +
         '<div class="inst-menu' + (open ? ' open' : '') + '">' + rows +
         '<a class="inst-row inst-dash" href="/dashboard" title="every live + recent run sharing this data dir \\u2014 served by any instance"><span>\\u2302 dashboard</span><span class="inst-port">all runs</span></a></div>';
       const btn = instEl.querySelector('.inst-btn');
@@ -3343,7 +3310,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           renderCats();
           renderCtx();
           renderPulse();
-          if (passesFilters(msg.pair)) {
+          if (view !== 'requests') requestsDirty = true;
+          if (view === 'requests' && passesFilters(msg.pair)) {
             const st = (msg.pair.request.timestamp || 0) * 1000;
             if (lastRowEnd && st > lastRowEnd) appendGap(st - lastRowEnd, lastRowEnd, st);
             lastRowEnd = st + (msg.pair.duration || 0);
@@ -3718,6 +3686,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       renderCtx();
       renderStats();
       priorToggle.classList.toggle('avail', pairs.some(p => p.prior));
+      requestsDirty = true;
+      if (view !== 'requests') return;
+      requestsDirty = false;
       pairsEl.innerHTML = '';
       if (pairs.length === 0) {
         pairsEl.innerHTML = '<div class="empty">Waiting for requests...' +
@@ -3825,10 +3796,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // (ui.md motion budget; animation is reserved for in-view jumps).
       if (v === 'session' && view !== 'session') pendingSessionFocus = true;
       view = v;
+      if (v === 'requests' && requestsDirty) render();
       if (v !== 'requests' && selMode) setSelMode(false);
       // Presentation belongs to the sessions view: leaving it must not
       // strand a reader on a page with no header and no toolbar.
-      if (v !== 'session') document.body.classList.remove('present');
+      if (v !== 'session') { document.body.classList.remove('present'); setSessionFocus(false); }
       document.body.classList.toggle('view-session', v === 'session');
       document.body.classList.toggle('view-context', v === 'context');
       tabRequests.classList.toggle('active', v === 'requests');
@@ -3843,7 +3815,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (h1) h1.textContent = v === 'session' ? 'Sessions' : v === 'context' ? 'Context' : 'Requests';
     }
     tabRequests.onclick = () => { location.hash = ''; };
-    tabSession.onclick = () => { location.hash = '#/session'; };
+    tabSession.onclick = () => { location.hash = threadHash(sessionSelKey); };
     // The context tab keeps the sessions view's selection — same thread,
     // different lens.
     tabContext.onclick = () => { location.hash = ctxHash(sessionSelKey, ctxMode); };
@@ -3940,6 +3912,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (actMenu.classList.contains('open')) { closeActions(); actionsToggle.focus(); e.preventDefault(); return; }
+        if (document.body.classList.contains('threads-mobile-open')) { closeThreadDrawer(); threadsToggle.focus(); e.preventDefault(); return; }
+        if (document.body.classList.contains('session-focus')) { setSessionFocus(false); focusToggle.focus(); e.preventDefault(); return; }
+        if (contextEl.classList.contains('cx-summary-mobile-open')) { contextEl.classList.remove('cx-summary-mobile-open'); paintCtxSummary(); e.preventDefault(); return; }
+      }
+      if (e.target && e.target.tagName === 'SELECT') return;
+      if (e.target && /^(BUTTON|A|SUMMARY)$/.test(e.target.tagName) && (e.key === ' ' || e.key === 'Enter')) return;
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) {
         if (e.key === 'Escape') e.target.blur();
         return;
@@ -3964,7 +3944,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (!t) return;
           setCtxMode(CTX_MODES[+e.key - 1]);
           history.replaceState(null, '', ctxHash(t.key, ctxMode));
-          renderContextView(t);
+          renderContextView(t, { deckOnly: true });
           return;
         }
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -4085,16 +4065,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // prev/next user prompt, system prompt. One rail overlays the session
     // convo, one the request detail panel; same targets, same keys.
     const RAIL_BUTTONS = [
-      { act: 'top', label: '\\u2912', title: 'Jump to top (g)' },
-      { act: 'sys', label: '\\u00a7', title: 'System prompt (s)' },
+      { act: 'top', label: UI_ICONS.chevronsUp, title: 'Jump to top (g)' },
+      { act: 'sys', label: UI_ICONS.fileText, title: 'System prompt (s)' },
       { gap: true },
-      { act: 'tprev', label: '\\u2191', title: 'Previous turn (k)' },
-      { act: 'tnext', label: '\\u2193', title: 'Next turn (j)' },
+      { act: 'tprev', label: UI_ICONS.arrowUp, title: 'Previous turn (k)' },
+      { act: 'tnext', label: UI_ICONS.arrowDown, title: 'Next turn (j)' },
       { gap: true },
-      { act: 'uprev', label: 'u\\u2191', title: 'Previous user prompt (p)' },
-      { act: 'unext', label: 'u\\u2193', title: 'Next user prompt (u)' },
+      { act: 'uprev', label: UI_ICONS.cornerLeftUp, title: 'Previous user prompt (p)' },
+      { act: 'unext', label: UI_ICONS.cornerLeftDown, title: 'Next user prompt (u)' },
       { gap: true },
-      { act: 'bottom', label: '\\u2913', title: 'Jump to bottom (G)' },
+      { act: 'bottom', label: UI_ICONS.chevronsDown, title: 'Jump to bottom (G)' },
     ];
 
     function railJump(container, act) {
@@ -4126,7 +4106,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       for (const b of RAIL_BUTTONS) {
         html += b.gap
           ? '<span class="rail-gap"></span>'
-          : '<button data-act="' + b.act + '" title="' + b.title + '">' + b.label + '</button>';
+          : '<button data-act="' + b.act + '" aria-label="' + b.title + '" title="' + b.title + '">' + b.label + '</button>';
       }
       railEl.innerHTML = html;
       railEl.querySelectorAll('button').forEach(btn => {
@@ -4442,12 +4422,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const req = pair.request.body || {};
       let html = '';
       if (req._cctrace_stub) {
-        // cctrace compact folded this superseded request body; the thread's
-        // kept (longest) request holds the full history. The response below
-        // is untouched — compact never folds responses.
-        html += '<div class="block-note">request body compacted \\u2014 ' +
-          (req.historyLen || 0) + ' history turns, ' + fmtBytes(req.droppedBytes || 0) + ' dropped' +
+        // This request body is a STUB. Either the render fold put it away
+        // (src/fold.ts: a later request re-sent this history, or the page's
+        // body budget ran out) or cctrace compact folded it on disk. The
+        // response below is untouched — neither folds responses.
+        const why = req.kind === 'budgeted' ? 'folded to fit the page'
+          : req.kind === 'meta' ? 'folded to a byte count'
+          : 'superseded \\u2014 a later request re-sent this history';
+        html += '<div class="block-note">request body ' + why + ' \\u00b7 ' +
+          (req.historyLen || 0) + ' history turns, ' + fmtBytes(req.droppedBytes || 0) + ' not on the page' +
           (req.keptPairId ? ' \\u00b7 <a href="#/p/' + encodeURIComponent(req.keptPairId) + '">full history</a>' : '') +
+          (VIEW_RUN ? ' \\u00b7 <a class="unfold" data-unfold="' + escapeHtml(pair.id) + '">load the original</a>' : '') +
           '</div>';
       }
       if (wireDialect(pair) === 'openai') {
@@ -4699,6 +4684,34 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (det && det.dataset && det.dataset.raw && det.open) fillRaw(det);
     }, true);
 
+    // Unfold one stub: the fold left this body OFF the page, it never
+    // destroyed it, so the wire bytes are a fetch away on a /view/<run-id>
+    // route (server.ts streams the trace for that one pair). Only this
+    // pair's body is replaced — the session view keeps reading the folded
+    // page, which is what makes the whole session cheap to hold.
+    detailEl.addEventListener('click', async (e) => {
+      const a = e.target && e.target.closest && e.target.closest('a.unfold');
+      if (!a || !VIEW_RUN) return;
+      e.preventDefault();
+      const id = a.getAttribute('data-unfold');
+      if (!id || a.dataset.busy) return;
+      a.dataset.busy = '1';
+      a.textContent = 'loading\\u2026';
+      try {
+        const res = await fetch('/view/' + encodeURIComponent(VIEW_RUN) + '/pair/' + encodeURIComponent(id));
+        if (!res.ok) throw new Error(String(res.status));
+        const full = await res.json();
+        const p = pairs.find(x => x.id === id);
+        if (!p || !full || !full.request) throw new Error('no body');
+        p.request.body = full.request.body;
+        delete p._ci; delete p._sc;   // per-pair memos read the body
+        openDetail(id);
+      } catch (err) {
+        delete a.dataset.busy;
+        a.textContent = 'could not load \\u2014 retry';
+      }
+    });
+
     // ---- Session view: wire threads (left) + reconstructed conversation ----
 
     // With replay active the session is rebuilt from the wire as of the
@@ -4762,8 +4775,57 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return sel || newestMainThread(threads);
     }
 
+    function threadOptions(threads) {
+      const groups = new Map();
+      for (const t of threads) {
+        const sid = t.sessionId || '';
+        if (!groups.has(sid)) groups.set(sid, []);
+        groups.get(sid).push(t);
+      }
+      let html = '';
+      for (const [sid, list] of groups) {
+        const emitted = new Set();
+        const option = (t, depth) => {
+          if (emitted.has(t.key)) return '';
+          emitted.add(t.key);
+          const chats = list.filter(x => x.kind === 'chat').length;
+          const label = t.kind === 'chat' ? 'Main session' + (chats > 1 ? ' - ' + (t.label || shortModel(t.model)) : '') : (t.label || t.kind);
+          let out = '<option value="' + escapeHtml(t.key) + '">' +
+            escapeHtml('> '.repeat(Math.min(depth, 6)) + label) + '</option>';
+          for (const child of list) if (child.agentOf && child.agentOf.thread === t.key) out += option(child, depth + 1);
+          return out;
+        };
+        html += '<optgroup label="' + escapeHtml(sid ? 'Session ' + sid.slice(0, 8) : 'Threads') + '">';
+        for (const t of list) if (!t.agentOf || !list.some(p => p.key === t.agentOf.thread)) html += option(t, 0);
+        for (const t of list) html += option(t, 0);
+        html += '</optgroup>';
+      }
+      return html;
+    }
+    function renderThreadNavigation(threads, selected) {
+      const byKey = new Map(threads.map(t => [t.key, t]));
+      const html = threadOptions(threads);
+      if (threadJump.innerHTML !== html) threadJump.innerHTML = html;
+      threadJump.disabled = !threads.length;
+      threadJump.value = selected ? selected.key : '';
+      threadJump.title = selected ? (selected.label || selected.kind) : 'Jump to thread';
+      const parent = selected && selected.agentOf && byKey.get(selected.agentOf.thread);
+      threadParent.hidden = !parent;
+      if (parent) {
+        threadParent.href = threadHash(parent.key);
+        threadParent.dataset.key = parent.key;
+        threadParent.dataset.tuid = selected.agentOf.toolUseId || '';
+        threadParent.innerHTML = UI_ICONS.arrowLeft + '<span class="parent-label">Parent</span>';
+        threadParent.title = 'Back to ' + (parent.kind === 'chat' ? 'main session' : parent.label || parent.kind) + ' at the dispatch';
+        threadParent.setAttribute('aria-label', threadParent.title);
+        threadParent.onclick = (e) => { closeThreadDrawer(); return window.jumpToParent(e, threadParent); };
+      }
+    }
+
     function showSession(key, sub) {
       const threads = getThreads();
+      const navigationThreads = replay.active ? fullThreads() : threads;
+      renderThreadNavigation(navigationThreads, resolveThreadSel(navigationThreads, key || (replay.active ? sessionSelKey : null), sub));
       if (!threads.length) {
         // The stage still stands while replaying: at a cursor before the
         // first response it says so, instead of blanking the column.
@@ -4799,6 +4861,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         }
       }
+      if (sessionSelKey !== sel.key) closeThreadDrawer();
       sessionSelKey = sel.key;
       agentThreadIndex = {};
       agentThreadStats = {};
@@ -4925,14 +4988,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
       document.addEventListener('scroll', hideTip, true);
       document.addEventListener('mouseleave', hideTip);
+      document.addEventListener('click', hideTip, true);
     }
 
     // Quiet stroke glyphs for the sessions layer (currentColor, no fills):
     // a prompt-in-a-frame for the session, a branch for a model run.
-    const ICON_SESSION = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2"/><path d="M4.3 6.2l2.3 1.8-2.3 1.8M8.6 10h3"/></svg>';
+    const ICON_SESSION = UI_ICONS.messagesSquare;
     // branch-off-a-rail shape: matches the session rail's own vocabulary
     // (one line, one arm, one node) — used on subagent spawn folds.
-    const ICON_EPOCH = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 2v12M4.5 6.5c0 3 2.6 3.3 5.1 3.5"/><circle cx="11.6" cy="10.2" r="1.8"/></svg>';
+    const ICON_EPOCH = UI_ICONS.gitBranch;
     // Notable-event glyphs for conversation folds: a bolt for skills, a
     // plug for MCP; subagent spawns reuse the branch (they ARE a thread).
     const ICON_SKILL = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H7l-1 5.5L11.5 7H8z"/></svg>';
@@ -4946,7 +5010,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return key.slice(0, Math.min(8, cut)) + key.slice(cut);
     }
     function threadHash(key) {
-      return '#/session/' + encodeURIComponent(shortKeyStr(key));
+      return '#/session' + (key ? '/' + encodeURIComponent(shortKeyStr(key)) : '');
     }
 
     // A thread's turn count in working-loop units (user request → agent
@@ -5524,7 +5588,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function threadCard(t, selected, nested) {
       return '<div class="thread' + (selected ? ' selected' : '') + '">' +
         '<a class="thread-head" href="' + threadHash(t.key) + '" data-tip="' + escapeHtml(threadTitle(t)) + '">' +
-          '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
+          '<span class="tkind tkind-' + t.kind + '" title="' + escapeHtml(t.kind) + '">' + (t.kind === 'agent' ? UI_ICONS.gitBranch : t.kind === 'chat' ? UI_ICONS.messagesSquare : UI_ICONS.fileText) + '</span>' +
           '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
           modelChip(t) +
         '</a>' +
@@ -5659,17 +5723,26 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           t.agentOf.thread !== t.key && byKey[t.agentOf.thread];
         const kids = {};
         for (const t of list) if (isChild(t)) (kids[t.agentOf.thread] = kids[t.agentOf.thread] || []).push(t);
+        const emitted = new Set();
+        if (face) emitted.add(face.key);
+        const tree = (t, nested) => {
+          if (emitted.has(t.key)) return '';
+          emitted.add(t.key);
+          return card(t, nested) + kidBlock(t.key);
+        };
         const kidBlock = (key) => {
           const ch = (kids[key] || []).sort(byStart);
           if (!ch.length) return '';
           let inner = '';
-          for (const t of ch) inner += card(t, true);
+          for (const t of ch) inner += tree(t, true);
           return '<div class="tkids">' + inner + '</div>';
         };
         const tops = list.filter(t => t.kind !== 'utility' && !isChild(t)).sort(byStart);
         const utils = list.filter(t => t.kind === 'utility').sort(byStart);
         let out = face ? kidBlock(face.key) : '';
-        for (const t of tops) out += card(t) + kidBlock(t.key);
+        for (const t of tops) out += tree(t, false);
+        // Malformed parent links and cycles must not hide reachable threads.
+        for (const t of list) if (t.kind !== 'utility') out += tree(t, false);
         if (utils.length) {
           let inner = '';
           for (const t of utils) inner += card(t);
@@ -5767,6 +5840,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // deep in the pane (it consults offset parents this layout doesn't
     // guarantee), which broke jumps beyond the first epoch.
     function jumpToTurn(key, vis) {
+      closeThreadDrawer();
       if (sessionSelKey !== key) {
         history.replaceState(null, '', threadHash(key));
         showSession(key);
@@ -6401,7 +6475,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const events = bumps.length
           ? tl.events.concat(bumps).sort((a, b) => (a.t || 0) - (b.t || 0))
           : tl.events;
-        hit = { key, tl, addr, cost, bumps, events };
+        hit = { key, tl, addr, cost, bumps, events, split: threadTimeSplit(t, pairOf) };
         ctxTlCache.delete(t.key);
         ctxTlCache.set(t.key, hit);
         while (ctxTlCache.size > CTX_TL_KEEP) ctxTlCache.delete(ctxTlCache.keys().next().value);
@@ -6506,7 +6580,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (s.mark === 'compact') bits.push('\\u2702 compaction \\u2014 the history above was folded');
       else if (s.mark === 'rewrite') bits.push('\\u2702 full rewrite \\u2014 history replaced by a continuation summary');
       else if (s.mark === 'rewind') bits.push('\\u2702 rewind \\u2014 history stepped back to an earlier point');
-      return bits.join('\\n') + '\\n---\\n> hover previews \\u00b7 click pins \\u00b7 drag selects a range';
+      return bits.join('\\n') + '\\n---\\n> click pins \\u00b7 drag selects a range';
     }
 
     function showContext(key, sub) {
@@ -6537,6 +6611,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let tjCurThread = null;
     let tjRecs = [];          // the current thread's full records (each carries _i)
     let tjResults = {};       // tool_use id -> result, for the inspector
+    let tjPage = 0;
+    let tjPageKey = '';
+    const TJ_PAGE_SIZE = 200;
     const TJ_KIND_COLOR = { system: '#8957e5', user: '#3fb950', context: '#db61a2', assistant: '#4184e4', tool: '#39c5cf' };
     const TJ_KINDS = ['all', 'user', 'context', 'assistant', 'tool'];
 
@@ -6632,13 +6709,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (tjFilter !== 'all') shown = shown.filter(r => r.kind === tjFilter);
       const q = tjQuery.trim().toLowerCase();
       if (q) shown = shown.filter(r => (r.label + ' ' + (r.detail || '')).toLowerCase().indexOf(q) !== -1);
+      const pageKey = [tjCurThread && tjCurThread.key, tjLevel, tjFilter, q, bounds && bounds.lo, bounds && bounds.hi].join('|');
+      if (pageKey !== tjPageKey) { tjPageKey = pageKey; tjPage = 0; }
+      const pageCount = Math.max(1, Math.ceil(shown.length / TJ_PAGE_SIZE));
+      tjPage = Math.min(tjPage, pageCount - 1);
+      const pageStart = tjPage * TJ_PAGE_SIZE;
       // A pick outside the slice would leave the inspector showing a
       // record the list does not have — drop it. An in-slice pick is the
       // reader's and survives.
       if (bounds && tjSel != null && (tjSel < bounds.lo || tjSel > bounds.hi)) tjSel = null;
       let rows = '';
       let lastOrd = -2;
-      for (const r of shown) {
+      for (const r of shown.slice(pageStart, pageStart + TJ_PAGE_SIZE)) {
         if (r.ord !== lastOrd && r.ord != null) {
           rows += '<div class="tj-turn">turn ' + (r.ord + 1 < 10 ? '0' + (r.ord + 1) : r.ord + 1) + '</div>';
           lastOrd = r.ord;
@@ -6654,7 +6736,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '</a>';
       }
       if (!shown.length) rows = '<div class="cx-note">no records match this ' + (bounds ? 'range/filter' : 'filter') + '</div>';
-      return '<div class="tj-list" id="tj-list">' + rows + '</div>';
+      const pager = pageCount > 1 ? '<div class="tj-pagination">' +
+        '<span>' + (pageStart + 1) + '-' + Math.min(pageStart + TJ_PAGE_SIZE, shown.length) + ' of ' + shown.length + ' records</span>' +
+        '<button class="icon-btn" data-tjpage="' + (tjPage - 1) + '" aria-label="Previous records" title="Previous records"' + (tjPage === 0 ? ' disabled' : '') + '>' + UI_ICONS.arrowLeft + '</button>' +
+        '<span>Page ' + (tjPage + 1) + ' of ' + pageCount + '</span>' +
+        '<button class="icon-btn" data-tjpage="' + (tjPage + 1) + '" aria-label="Next records" title="Next records"' + (tjPage + 1 === pageCount ? ' disabled' : '') + '>' + UI_ICONS.arrowRight + '</button></div>' : '';
+      return '<div class="tj-list" id="tj-list">' + rows + '</div>' + pager;
     }
 
     // The stream's own wiring. A row click is a PICK: it opens the record
@@ -6662,6 +6749,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // the level/kind/search controls repaint just the deck, so the
     // overview above never flickers.
     function wireCtxStream(root, repaint) {
+      root.querySelectorAll('[data-tjpage]').forEach(b => b.addEventListener('click', () => {
+        tjPage = Math.max(0, +b.dataset.tjpage);
+        repaint();
+        const main = document.getElementById('cx-deck-main');
+        if (main) main.scrollTop = 0;
+      }));
       root.querySelectorAll('.tj-row').forEach(a => {
         a.addEventListener('click', (e) => {
           e.preventDefault();
@@ -6731,7 +6824,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     // The head: what is picked, in the vocabulary of the deck it came from.
     function ctxInspHead(pick) {
-      const x = '<button class="cx-insp-x" data-cxinsp="close" title="close the inspector \\u00b7 esc">\\u00d7</button>';
+      const x = '<button class="icon-btn cx-insp-x" data-cxinsp="close" aria-label="Close inspector" title="Close inspector (Esc)">' + UI_ICONS.x + '</button>';
       if (pick.kind === 'node') {
         const h = pick.hit;
         return '<span class="cx-dot" style="--cx:' + (h.color || 'var(--text-faint)') + '"></span>' +
@@ -6767,7 +6860,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!pick || !ctxInspOpen) return '';
       let rail = '';
       for (const f of facets) {
-        rail += '<button class="cx-facet' + (f === facet ? ' active' : '') + '" data-cxfacet="' + f + '" title="' + escapeHtml(CX_FACET_TIP[f]) + '">' + f + '</button>';
+        rail += '<button class="cx-facet' + (f === facet ? ' active' : '') + '" aria-pressed="' + (f === facet) + '" data-cxfacet="' + f + '" title="' + escapeHtml(CX_FACET_TIP[f]) + '">' + f + '</button>';
       }
       let body = '';
       try {
@@ -6826,6 +6919,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         root.querySelectorAll('.cx-ev.sel').forEach(x => x.classList.remove('sel'));
         row.classList.add('sel');
         ctxRepaintInsp();
+      }));
+      root.querySelectorAll('[data-cxev]').forEach(row => row.addEventListener('keydown', (e) => {
+        if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault(); e.stopPropagation(); row.click();
       }));
     }
 
@@ -7139,7 +7236,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // the honest form of showing both numbers.
     function ctxReconLine(s) {
       if (!s) return '';
-      if (s.stub) return 'request body folded by cctrace <b>compact</b> \\u2014 composition gone, usage kept';
+      if (s.stub) return 'Request body folded; reported usage retained.';
       if (s.actualIn == null) {
         return s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
           : 'no usage reported \\u2014 the bar is the estimate alone';
@@ -7186,7 +7283,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
       // ---- the ledger: six lines, each one a zoom into the graph ----
       if (s.sums && s.est) {
-        h += '<div class="cx-mblock"><div class="cx-mlabel">composition<span class="cx-mlabel-r">click a line to zoom the graph</span></div>';
+        h += '<div class="cx-mblock"><div class="cx-mlabel">composition<span class="cx-mlabel-r">estimated tokens</span></div>';
         for (const c of CTX_CATS) {
           const v = s.sums[c.id];
           const pct = (v / s.est) * 100;
@@ -7329,7 +7426,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // The row is a PICK: it opens the event in the inspector (the
         // injected text, a compaction's before/after, a bump's cause).
         const picked = ctxEvSel && ctxEvSel.key === run.key && ctxEvSel.pairId === ev.pairId;
-        rows += '<div class="cx-ev' + (picked ? ' sel' : '') + '" data-cxev="' + n + '">' +
+        rows += '<div class="cx-ev' + (picked ? ' sel' : '') + '" role="button" tabindex="0" data-cxev="' + n + '">' +
           '<span class="cx-ev-glyph">' + glyph + '</span>' +
           '<span class="cx-ev-kind">' + (ev.kind === 'compact' && ev.mode === 'rewind' ? 'rewind' : ev.kind) + '</span>' +
           '<span class="cx-ev-label" data-tip="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>' +
@@ -7412,12 +7509,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // in place without going back through the whole view render.
     let ctxLast = { step: null, addr: null };
     function renderCtxGraph(s, addr) {
+      ctxLastFl = null;
       ctxGraphAt = s ? s.pairId : null;
       ctxLast = { step: s, addr };
       if (!s) return '<div class="cx-note">nothing to open yet</div>';
       if (s.stub) {
-        return '<div class="cx-note">this step\\u2019s request body was folded by cctrace compact \\u2014 its composition is gone (the kept request of the epoch holds the full history)' +
-          (s.actualIn != null ? ' \\u00b7 actual prompt ' + fmtCompact(s.actualIn) : '') + '</div>';
+        const p = pairOf(s.pairId);
+        const kept = p && p.request.body && p.request.body.keptPairId;
+        return '<div class="cx-unavailable"><span>' + UI_ICONS.fileText + ' Request body folded</span>' +
+          '<p>Composition is unavailable for this request. Reported tokens, timing, and cost are retained.</p>' +
+          '<a href="#/p/' + encodeURIComponent(s.pairId) + '">Inspect request ' + UI_ICONS.arrowRight + '</a>' +
+          (kept ? '<a href="#/p/' + encodeURIComponent(kept) + '">Retained history ' + UI_ICONS.arrowRight + '</a>' : '') + '</div>';
       }
       const g = ctxGraphOf(s.pairId);
       if (!g || !g.est) return '<div class="cx-note">request not loaded</div>';
@@ -7478,6 +7580,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         flame += '<div class="cx-frow" style="z-index:' + (9 - r) + '">' + cells + '</div>';
       }
       h += '<div class="cx-flame">' + flame + '</div>';
+      const ranked = (fl.focus.kids || []).slice().sort((a, b) => ctxSort === 'order' ? 0 : b.tokens - a.tokens);
+      if (ranked.length) {
+        h += '<div class="cx-node-list"><div class="cx-node-list-head"><span>Contents</span><span>Estimated tokens</span></div>';
+        for (const node of ranked.slice(0, 100)) {
+          h += '<button class="cx-node-row" data-cxnode="' + escapeHtml(node.key) + '" data-cxkids="' + ((node.kids || []).length ? '1' : '0') + '" title="' + escapeHtml(node.label) + '">' +
+            '<span class="cx-dot" style="--cx:' + (node.color || 'var(--text-faint)') + '"></span>' +
+            '<span class="cx-node-label">' + escapeHtml(node.label) + '</span>' +
+            '<span class="cx-node-count">' + (node.n > 1 ? node.n + ' items' : '') + '</span>' +
+            '<span class="cx-node-amount">\\u2248' + fmtCompact(node.tokens) + '</span>' + UI_ICONS.arrowRight + '</button>';
+        }
+        h += '</div>';
+      }
       // The picked node opens in the INSPECTOR beside the graph, not under
       // it — the layout is kept so the inspector can resolve the pick.
       ctxLastFl = fl;
@@ -7599,6 +7713,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const t = e.target && e.target.closest ? e.target.closest('[data-cxzoom],[data-cxnode]') : null;
       if (!t) return;
       e.preventDefault();
+      contextEl.classList.remove('cx-summary-mobile-open');
+      paintCtxSummary();
       if (t.dataset.cxzoom != null) {
         ctxFocusKey = t.dataset.cxzoom === 'root' ? '' : t.dataset.cxzoom;
       } else {
@@ -7733,7 +7849,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     let ctxThreadKey = null;
-    let ctxGraphTimer = 0;
     const CTX_ZOOM_MAX = 32;
     // The time track's hues: the same three the sessions thread header's
     // "time" chip already uses, so model/tools/waiting is one vocabulary —
@@ -7873,7 +7988,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (c) spend += c.total;
       }
       return n + ' of ' + steps.length + ' selected' + (span ? ' · ' + span : '') +
-        (spend > 0 ? ' · \\u2248' + fmtCost(spend) : '') + ' · esc clears';
+        (spend > 0 ? ' · \\u2248' + fmtCost(spend) : '');
     }
 
     function ctxTrackStyle() {
@@ -7979,8 +8094,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<div class="cx-brush" id="cx-brush">' + ctxBrushHtml(cols) + '</div>' +
         '</div>';
       const cap = steps.length + ' wire request' + (steps.length === 1 ? '' : 's') +
-        ' · ' + loops + ' working loop' + (loops === 1 ? '' : 's') +
-        ' · drag to select · wheel to zoom · click pins';
+        ' · ' + loops + ' working loop' + (loops === 1 ? '' : 's');
       const bar = '<div class="cx-ov-bar">' +
         '<span>' + escapeHtml(cap) + '</span>' +
         '<span class="cx-ov-sel" id="cx-ov-sel" data-tip="the brushed range \u2014 it scopes the stream and the events, never the balance\\n---\\n> drag inside it to move it \u00b7 drag an edge to resize \u00b7 esc clears">' +
@@ -7988,10 +8102,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<span class="cx-ov-tools">' +
           '<button class="cx-fchip' + (ctxGran === 'step' ? ' active' : '') + '" data-cxgran="step" title="one column per wire request">step</button>' +
           '<button class="cx-fchip' + (ctxGran === 'turn' ? ' active' : '') + '" data-cxgran="turn" title="one column per working loop — its deepest step is the face">turn</button>' +
-          '<button class="cx-fchip" data-cxzoomb="out" title="zoom out">−</button>' +
+          '<button class="icon-btn" data-cxzoomb="out" aria-label="Zoom out" title="Zoom out">' + UI_ICONS.zoomOut + '</button>' +
           '<span class="cx-ov-z" id="cx-ov-z">' + (ctxZoom > 1 ? ctxZoom.toFixed(1) + '×' : 'fit') + '</span>' +
-          '<button class="cx-fchip" data-cxzoomb="in" title="zoom in">+</button>' +
-          '<button class="cx-fchip" data-cxzoomb="fit" title="fit the whole thread, clear the range">reset</button>' +
+          '<button class="icon-btn" data-cxzoomb="in" aria-label="Zoom in" title="Zoom in">' + UI_ICONS.zoomIn + '</button>' +
+          '<button class="icon-btn" data-cxzoomb="fit" aria-label="Reset overview" title="Fit overview and clear range">' + UI_ICONS.scan + '</button>' +
         '</span></div>';
       return '<div class="cx-ov" id="cx-ov">' + bar +
         '<div class="cx-ov-body">' + gut + '<div class="cx-ov-scroll" id="cx-ov-scroll">' + tracks + '</div></div></div>';
@@ -8114,11 +8228,68 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return ids;
     }
 
-    function renderContextView(t) {
+    function renderCtxSelection(steps, focus, addr) {
+      const i = steps.indexOf(focus);
+      const name = (ctxSummaryCollapsed ? 'Expand' : 'Collapse') + ' context summary';
+      return '<div class="cx-selection">' +
+        '<button class="icon-btn" id="cx-summary-toggle" data-cxsummary="toggle" aria-controls="cx-margin" aria-label="' + name + '" title="' + name + '">' + UI_ICONS.panelLeftClose + '</button>' +
+        '<div class="cx-step-picker"><button class="icon-btn" data-cxstep="prev" aria-label="Previous request" title="Previous request"' + (i <= 0 ? ' disabled' : '') + '>' + UI_ICONS.arrowLeft + '</button>' +
+        '<label>Request <input type="number" id="cx-step-number" min="1" max="' + steps.length + '" value="' + (i + 1) + '" aria-label="Request number"></label><span>of ' + steps.length + '</span>' +
+        '<button class="icon-btn" data-cxstep="next" aria-label="Next request" title="Next request"' + (i >= steps.length - 1 ? ' disabled' : '') + '>' + UI_ICONS.arrowRight + '</button></div>' +
+        '<span class="cx-selected-at">' + escapeHtml(ctxOrdLbl(addr, focus.pairId) || '') + (focus.t ? ' · ' + fmtTime(new Date(focus.t * 1000)) : '') + '</span>' +
+        '<span class="cx-pin-state">' + (ctxPinned ? 'Pinned' : 'Latest response') + '</span>' +
+        '<button class="icon-btn" data-cxstep="latest" aria-label="Follow latest request" aria-pressed="' + !ctxPinned + '" title="Follow latest request">' + UI_ICONS.skipForward + '</button>' +
+        '<button class="icon-btn" id="cx-overview-toggle" aria-controls="cx-ov" aria-expanded="' + !ctxOverviewCollapsed + '" aria-label="' + (ctxOverviewCollapsed ? 'Expand' : 'Collapse') + ' overview" title="' + (ctxOverviewCollapsed ? 'Expand' : 'Collapse') + ' overview">' + (ctxOverviewCollapsed ? UI_ICONS.panelTopOpen : UI_ICONS.panelTopClose) + '</button></div>';
+    }
+    function paintCtxSummary() {
+      const b = document.getElementById('cx-summary-toggle');
+      if (!b) return;
+      const narrow = contextEl.clientWidth > 0 && contextEl.clientWidth <= 1000;
+      const open = narrow ? contextEl.classList.contains('cx-summary-mobile-open') : !ctxSummaryCollapsed;
+      const label = (open ? 'Collapse' : 'Expand') + ' context summary';
+      b.setAttribute('aria-expanded', String(open)); b.setAttribute('aria-label', label); b.title = label; b.dataset.tip = label;
+      b.innerHTML = open ? UI_ICONS.panelLeftClose : UI_ICONS.panelLeftOpen;
+    }
+    window.addEventListener('resize', paintCtxSummary);
+    function wireCtxSelection(t, steps) {
+      const number = document.getElementById('cx-step-number');
+      number.onchange = () => {
+        const n = Number(number.value);
+        if (!Number.isInteger(n) || n < 1 || n > steps.length) { number.value = steps.indexOf(ctxFocusStep(steps)) + 1; return; }
+        ctxPinned = steps[n - 1].pairId;
+        renderContextView(t);
+      };
+      contextEl.querySelectorAll('[data-cxstep]').forEach(b => b.addEventListener('click', () => {
+        const i = steps.indexOf(ctxFocusStep(steps));
+        ctxPinned = b.dataset.cxstep === 'latest' ? null : steps[Math.max(0, Math.min(steps.length - 1, i + (b.dataset.cxstep === 'next' ? 1 : -1)))].pairId;
+        renderContextView(t);
+      }));
+      const narrow = () => contextEl.clientWidth > 0 && contextEl.clientWidth <= 1000;
+      contextEl.querySelectorAll('[data-cxsummary]').forEach(b => b.addEventListener('click', () => {
+        if (narrow()) contextEl.classList.toggle('cx-summary-mobile-open', b.dataset.cxsummary !== 'close' && !contextEl.classList.contains('cx-summary-mobile-open'));
+        else { ctxSummaryCollapsed = !ctxSummaryCollapsed; localStorage.setItem('cctrace-ctx-summary', ctxSummaryCollapsed ? 'closed' : 'open'); }
+        contextEl.classList.toggle('cx-summary-hidden', ctxSummaryCollapsed);
+        paintCtxSummary();
+      }));
+      paintCtxSummary();
+      document.getElementById('cx-overview-toggle').onclick = () => {
+        ctxOverviewCollapsed = !ctxOverviewCollapsed;
+        localStorage.setItem('cctrace-ctx-overview', ctxOverviewCollapsed ? 'closed' : 'open');
+        renderContextView(t);
+      };
+    }
+
+    function renderContextView(t, opts) {
+      const deckOnly = !!(opts && opts.deckOnly && ctxThreadKey === t.key && contextEl.querySelector('#cx-canvas'));
       // Switching threads drops the pin, the brush and the zoom — they name
       // pairs and positions of the OLD thread. The deck, the granularity
       // and the lenses are preferences and stay.
-      if (ctxThreadKey !== t.key) { ctxThreadKey = t.key; ctxPinned = null; ctxRange = null; ctxZoom = 1; }
+      if (ctxThreadKey !== t.key) {
+        ctxThreadKey = t.key; ctxPinned = null; ctxRange = null; ctxZoom = 1;
+        ctxFocusKey = ''; ctxSelKey = ''; ctxEvSel = null;
+        if (contextEl.clientWidth > 0 && contextEl.clientWidth <= 1000) ctxInspOpen = false;
+        contextEl.classList.remove('cx-summary-mobile-open');
+      }
       const d = ctxData(t);
       const tl = d.tl;
       const addr = d.addr;
@@ -8145,7 +8316,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (win && anchor > win) win = 0;
       ctxWin = win;
 
-      const split = threadTimeSplit(t, pairOf);
+      const split = d.split;
       const cols = ctxColumns(steps, addr);
       const maxT = Math.max(1, tl.maxTotal);
       const inIds = ctxRangeIds(steps);
@@ -8156,12 +8327,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
       // ---- head ----
       const head = '<div class="cx-head">' +
-        '<span class="tkind tkind-' + t.kind + '">' + t.kind + '</span>' +
-        '<span class="thread-label">' + escapeHtml(t.label) + '</span>' +
+        '<select id="cx-thread-jump" aria-label="Context thread">' + threadOptions(getThreads()) + '</select>' +
         modelChip(t) +
         (t.sessionId ? '<span class="sess-sid" data-mask="sid">' + escapeHtml(t.sessionId.slice(0, 8)) + '</span>' : '') +
-        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="open this thread in the sessions view">sessions →</a>' +
-        '</div>';
+        '<a class="cx-goto" href="' + threadHash(t.key) + '" title="Open this thread in Sessions">Session ' + UI_ICONS.arrowRight + '</a>' +
+        '</div>' + renderCtxSelection(steps, focus, addr);
 
       // ---- the deck bar + the picked deck ----
       const leveled = tjBuild(t);
@@ -8169,14 +8339,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const compEvs = evAll.filter(ev => ev.kind === 'compact');
       let reclaimed = 0;
       for (const ev of compEvs) if (ev.tokens < 0) reclaimed += -ev.tokens;
-      const modeBtn = (m, n, tip) => '<button class="cx-mode' + (ctxMode === m ? ' active' : '') + '" data-cxmode="' + m + '" title="' + escapeHtml(tip) + '">' + m +
+      const modeBtn = (m, n, tip) => '<button class="cx-mode' + (ctxMode === m ? ' active' : '') + '" role="tab" aria-selected="' + (ctxMode === m) + '" data-cxmode="' + m + '" title="' + escapeHtml(tip) + '">' + m +
         (n != null ? '<span class="cx-mode-n">' + n + '</span>' : '') + '</button>';
       let right = '', hint = '', deck = '';
       if (ctxMode === 'stream') {
         right = renderStreamControls(leveled.hidden);
         const bounds = tjRangeBounds(inIds);
-        hint = 'every record the run produced, in spine order — the harness’s injections <b>inline</b>, at the moment they entered the window' +
-          (bounds ? ' · sliced to the brushed range (' + Math.max(0, bounds.hi - bounds.lo + 1) + ' of ' + tjRecs.length + ' records)' : '');
+        hint = bounds ? Math.max(0, bounds.hi - bounds.lo + 1) + ' of ' + tjRecs.length + ' records in selected range' : '';
         deck = renderCtxStream(leveled, bounds);
       } else if (ctxMode === 'events') {
         right = '<span class="tj-toolbar">' + ctxEventChips(evAll) + '</span>';
@@ -8188,23 +8357,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           compEvs.length ? compEvs.length + ' compaction' + (compEvs.length === 1 ? '' : 's') : '',
           reclaimed ? fmtCompact(reclaimed) + ' reclaimed' : '',
           bumpEvs.length ? bumpEvs.length + ' cost bump' + (bumpEvs.length === 1 ? '' : 's') + ' · ≈' + fmtCost(overWarm) + ' over warm' : '',
-        ].filter(Boolean).join(' · ') || 'when and why the window grew or was reclaimed';
+        ].filter(Boolean).join(' · ');
         deck = '<div id="cx-events">' + renderCtxEvents(evAll, addr) + '</div>';
       } else {
         right = '<span class="tj-toolbar">' +
           '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first — what is eating the window">by size</button>' +
           '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order — how the window was assembled">in order</button>' +
           '</span>';
-        hint = 'the pinned step’s window, decomposed from the captured request body — <b>exact, not reconstructed</b> · width is tokens, rows are levels · click to zoom, a leaf opens in the inspector';
+        hint = focus.stub ? '' : 'Composition estimated from the captured request';
         deck = '<div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div>';
       }
-      const bar = '<div class="cx-modes">' +
+      const bar = '<div class="cx-modes" role="tablist" aria-label="Context views">' +
         modeBtn('window', null, 'what the model is carrying at the pinned step, decomposed') +
         modeBtn('stream', tjRecs.length, 'every record the run produced, in order — injections inline') +
         modeBtn('events', evAll.length, 'what grew or reclaimed the window') +
-        '<span class="cx-mode-r">' + right + '</span></div>';
+        '</div><div class="cx-controls">' + right + '</div>';
 
-      const margin = '<aside class="cx-margin" id="cx-margin">' +
+      const margin = deckOnly ? '' : '<aside class="cx-margin" id="cx-margin">' +
+        '<div class="cx-summary-head"><span>Context summary</span><button class="icon-btn" data-cxsummary="close" aria-label="Close context summary" title="Close context summary">' + UI_ICONS.x + '</button></div>' +
         '<div id="cx-bal">' + renderCtxMargin(focus, addr) + '</div>' +
         renderCtxCostBlock(d.cost, d.bumps) +
         renderCtxTimeBlock(split) +
@@ -8217,7 +8387,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ctxAddr = addr;
       const insp = renderCtxInsp();
       const canvas = '<div class="cx-canvas mode-' + ctxMode + '" id="cx-canvas">' + bar +
-        '<div class="cx-deck-hint">' + hint + '</div>' +
+        (hint ? '<div class="cx-deck-hint">' + hint + '</div>' : '') +
         '<div class="cx-deck" id="cx-deck"><div class="cx-deck-main" id="cx-deck-main">' + deck + '</div>' +
         '<aside class="cx-insp" id="cx-insp"' + (insp ? '' : ' hidden') + '>' + insp + '</aside></div></div>';
 
@@ -8242,9 +8412,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // pair: keep it.
       if (ctxInspChanged) delete keepTops['cx-insp-body'];
 
-      contextEl.innerHTML = head +
+      contextEl.classList.toggle('cx-summary-hidden', ctxSummaryCollapsed);
+      contextEl.classList.toggle('cx-overview-hidden', ctxOverviewCollapsed);
+      if (deckOnly) document.getElementById('cx-canvas').outerHTML = canvas;
+      else contextEl.innerHTML = head +
         renderCtxOverview(steps, addr, cols, maxT, split, loopCountOf(t), bumpBy) +
-        '<div class="cx-cols">' + margin + canvas + '</div>';
+        '<div class="cx-cols"><button class="cx-summary-dismiss" data-cxsummary="close" aria-label="Close context summary" tabindex="-1"></button>' + margin + canvas + '</div>';
+
+      if (!deckOnly) {
+        const picker = document.getElementById('cx-thread-jump');
+        picker.value = t.key;
+        picker.onchange = () => { location.hash = ctxHash(picker.value, ctxMode); };
+        wireCtxSelection(t, steps);
+      }
 
       ctxRestoreTops(keepTops);
       const mainEl = document.getElementById('cx-deck-main');
@@ -8266,14 +8446,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // change ONE reading, and rebuilding the overview under the reader's
       // cursor to change a filter is the flicker this shell exists to
       // avoid.
-      function repaintDeck() { renderContextView(t); }
+      function repaintDeck() { renderContextView(t, { deckOnly: true }); }
 
       if (ctxMode === 'stream') wireCtxStream(contextEl, repaintDeck);
       wireCtxInsp(contextEl);
       contextEl.querySelectorAll('[data-cxmode]').forEach(b => b.addEventListener('click', () => {
         setCtxMode(b.dataset.cxmode);
         history.replaceState(null, '', ctxHash(t.key, ctxMode));
-        renderContextView(t);
+        repaintDeck();
       }));
       contextEl.querySelectorAll('[data-tjlvl]').forEach(b => b.addEventListener('click', () => {
         tjLevel = b.dataset.tjlvl; localStorage.setItem('cctrace-tj-level', tjLevel); repaintDeck();
@@ -8289,17 +8469,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }));
       // The margin's bumps line is a control: it opens the events deck
       // already filtered to the cost events it counted.
-      contextEl.querySelectorAll('[data-cxbumps]').forEach(b => b.addEventListener('click', () => {
+      if (!deckOnly) contextEl.querySelectorAll('[data-cxbumps]').forEach(b => b.addEventListener('click', () => {
         setCtxMode('events');
         ctxEvFilter = 'cost';
         history.replaceState(null, '', ctxHash(t.key, ctxMode));
         renderContextView(t);
       }));
-      contextEl.querySelectorAll('[data-cxgran]').forEach(b => b.addEventListener('click', () => {
+      if (!deckOnly) contextEl.querySelectorAll('[data-cxgran]').forEach(b => b.addEventListener('click', () => {
         ctxGran = b.dataset.cxgran; localStorage.setItem('cctrace-ctx-gran', ctxGran); renderContextView(t);
       }));
 
-      wireCtxOverview(t, steps, addr, cols);
+      if (!deckOnly) wireCtxOverview(t, steps, addr, cols);
     }
 
     // Wheel zoom around the cursor, shared by every horizontal overview
@@ -8335,31 +8515,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!tracks || !scroll) return;
       const N = cols.length;
 
-      // The detail strip follows the pointer instantly (a dozen rows); the
-      // GRAPH is a full decomposition of a possibly-400k-token body, so it
-      // lands on a short settle — scrubbing 100 columns must not rebuild
-      // 100 trees. Landing on the column you stopped at is what the eye
-      // wants anyway.
-      const stepById = {};
-      for (const s of steps) stepById[s.pairId] = s;
-      const preview = (s, now) => {
-        if (!s) return;
-        ctxRepaintMargin(s, addr);
-        clearTimeout(ctxGraphTimer);
-        const paint = () => {
-          const gr = document.getElementById('cx-graph');
-          if (gr) gr.innerHTML = renderCtxGraph(s, addr);
-        };
-        if (now) paint(); else ctxGraphTimer = setTimeout(paint, 90);
-      };
-      let hoverAt = null;
-      tracks.addEventListener('mouseover', (e) => {
-        const el = e.target && e.target.closest ? e.target.closest('[data-cxbar]') : null;
-        if (!el || el.dataset.cxbar === hoverAt) return;
-        hoverAt = el.dataset.cxbar;
-        preview(stepById[hoverAt]);
-      });
-      scroll.addEventListener('mouseleave', () => { hoverAt = null; preview(ctxFocusStep(steps), true); });
+      // Selection changes on click or brush completion; hover only shows a tooltip.
 
       const colAt = (clientX) => {
         const r = tracks.getBoundingClientRect();
@@ -8550,7 +8706,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function pausePlayback() {
       replay.playing = false;
       if (replay.timer) { clearTimeout(replay.timer); replay.timer = null; }
-      rpPlay.textContent = '\\u25b6';
+      rpPlay.innerHTML = UI_ICONS.play;
     }
 
     function startPlayback() {
@@ -8563,7 +8719,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         refreshReplay();
       }
       replay.playing = true;
-      rpPlay.textContent = '\\u23f8';
+      rpPlay.innerHTML = UI_ICONS.pause;
       scheduleTick();
     }
 
@@ -9533,53 +9689,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       render();
     };
 
-    // ---- The pulse: live eyes on the session ----
-    // A completed pair means the model just replied — the agent is now
-    // running tools or composing the next request. The strip shows the
-    // last reply's work (tool labels), its age (the one ticking surface
-    // the live page allows — terminal convention), and the newest
-    // request's cache deadline: absolute hold-until while it holds, an
-    // amber "expired" once passed. Only the newest deadline is shown —
-    // every later hit refreshes the TTL, so older deadlines mean nothing.
-    function fmtAgo(ms) {
-      const sec = Math.floor(ms / 1000);
-      if (sec < 60) return sec + 's ago';
-      const m = Math.floor(sec / 60);
-      if (m < 60) return m + 'm ' + (sec % 60) + 's ago';
-      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm ago';
-    }
+    // The live footer reports the last observed response, never inferred activity.
     function renderPulse() {
       if (IS_READING || !pulseEl) return;
       const p = lastModelPair;
       if (!p) {
-        pulseEl.innerHTML = '<span class="p-star">\u273b</span><span class="p-act">waiting for the wire\u2026</span>';
+        pulseEl.innerHTML = '<span class="p-label">No model responses received</span>';
         return;
       }
       const ci = p._ci || (p._ci = extractCallInfo(p));
       const end = pairEndMs(p);
-      const age = Math.max(0, Date.now() - end);
-      const fresh = age <= 30000;
-      pulseEl.classList.toggle('idle', !fresh);
       let act = '';
       try { act = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
-      if (!act) act = ci.stopReason === 'tool_use' ? 'mid-loop \u2014 more work coming' : 'replied';
+      if (!act) act = p.response && p.response.status < 400 ? 'response received' : 'request failed';
       const cc = summarizeCache(ci, p.request.body, end);
       let cache = '';
       if (cc && cc.expiresAt) {
         cache = Date.now() > cc.expiresAt
-          ? '<span class="p-exp" data-tip="prompt cache expired\\nthe cached prefix passed its TTL \\u2014 the next request re-writes it at write price (1.25x/2x input)\\n---\\n> every hit before expiry would have refreshed the clock">\\u2261 expired</span>'
-          : '<span class="p-t" data-tip="' + escapeHtml(cc.title) + '">\u2261 ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
+          ? '<span class="p-exp" title="Estimated cache TTL has elapsed">cache TTL elapsed</span>'
+          : '<span class="p-exp" data-tip="' + escapeHtml(cc.title) + '">cache until ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
       }
-      // While fresh, a rotating verb leads (clocked off wall time, no extra
-      // state); a changed action line gets one 160ms fade \u2014 the same motion
-      // budget live-arrived rows use, nothing loops.
-      const verb = fresh ? '<span class="p-verb">' + VERBS[Math.floor(Date.now() / 2000) % VERBS.length] + '\u2026</span>' : '';
-      const actHtml = escapeHtml(shortModel(ci.model || '') || '?') + ' \u00b7 ' + act;
-      const changed = pulseEl.dataset.act !== actHtml;
-      pulseEl.dataset.act = actHtml;
-      pulseEl.innerHTML = '<span class="p-star">\u273b</span>' + verb +
-        '<span class="p-act' + (changed ? ' p-fade' : '') + '">' + actHtml + '</span>' +
-        '<span class="p-t">' + fmtAgo(age) + '</span>' + cache;
+      const html = '<span class="p-label">Last response</span>' +
+        '<span class="p-act">' + escapeHtml(shortModel(ci.model || '') || '?') + ' · ' + act + '</span>' +
+        '<span class="p-t">' + fmtTime(new Date(end)) + '</span>' + cache;
+      if (pulseEl.dataset.content !== html) { pulseEl.dataset.content = html; pulseEl.innerHTML = html; }
     }
     let expFlipped = false;
     if (!IS_SNAPSHOT && !IS_VIEW) {

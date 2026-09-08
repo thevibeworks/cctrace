@@ -43,10 +43,15 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
     textContent: "",
     title: "",
     value: "",
+    hidden: false,
+    disabled: false,
+    focused: false,
+    attributes: {} as Record<string, string>,
     style: {} as Record<string, string>,
     dataset: {} as Record<string, string>,
     onclick: null as Listener | null,
     oninput: null as Listener | null,
+    onchange: null as Listener | null,
     listeners,
     scrollTop: 0,
     scrollHeight: 1000,
@@ -72,8 +77,11 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
     },
     setPointerCapture() {},
     getBoundingClientRect() { return { left: 0, width: 100, top: 0, height: 24 }; },
-    setAttribute() {},
-    removeAttribute() {},
+    setAttribute(name: string, value: string) { this.attributes[name] = value; },
+    getAttribute(name: string) { return this.attributes[name] ?? null; },
+    removeAttribute(name: string) { delete this.attributes[name]; },
+    focus() { this.focused = true; },
+    blur() { this.focused = false; },
     scrollIntoView() {},
     get innerHTML() { return inner; },
     set innerHTML(v: string) {
@@ -85,6 +93,7 @@ function makeEl(id: string, fragments: Fragment[], routeRef: { current: string }
 }
 
 export interface BootOpts {
+  hash?: string;
   /**
    * Answer the page's fetch calls (default: a promise that never settles,
    * so pollInstances stays parked). Resolve `/api/instances` here to render
@@ -122,7 +131,7 @@ export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
     addEventListener: (t: string, f: Listener) => { (docListeners[t] ||= []).push(f); },
     title: "",
   };
-  const locationStub = { hash: "", hostname: opts.hostname ?? "127.0.0.1" };
+  const locationStub = { hash: opts.hash ?? "", hostname: opts.hostname ?? "127.0.0.1" };
   const historyStub = { replaceState: () => {} };
   const windowStub: Record<string, unknown> = {
     addEventListener: (t: string, f: Listener) => { (winListeners[t] ||= []).push(f); },

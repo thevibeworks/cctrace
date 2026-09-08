@@ -13,7 +13,7 @@ import { parseWindow, runInWindow, foldRuns, createScanFold } from "./insights";
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
 import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
-import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError } from "./view";
+import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError, VIEW_BYTES, type ViewOpts } from "./view";
 import { planTitles, setTitle, cleanTitle, titleFor, titleLookup, mainSessionId, type TitleJob } from "./title";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
@@ -233,7 +233,7 @@ async function runView(args: string[]): Promise<boolean> {
         tail: { type: "boolean" },  // follow the trace file live (tail -f the .jsonl)
         live: { type: "boolean" },  // alias of --tail
         slice: { type: "string" },  // pair-id window: the @a..b of a slice deep link
-        full: { type: "boolean" },  // every pair, not just the newest 256 MB of lines
+        full: { type: "boolean" },  // every byte inline: no fold, no budget
         port: { type: "string" },
       },
       allowPositionals: true,
@@ -324,20 +324,23 @@ async function runView(args: string[]): Promise<boolean> {
   }
   try {
     refreshPricingCache(DATA_DIR).catch(() => {});
-    const tailBytes = parsed.values.full ? Infinity : undefined;
+    // A view is a rendered page, so it FOLDS by default (src/fold.ts):
+    // every pair of the session, with VIEW_BYTES of request bodies. --full
+    // is the escape hatch — every byte, unfolded, at the reader's risk.
+    const read: ViewOpts = parsed.values.full ? { tailBytes: Infinity } : { foldBytes: VIEW_BYTES };
     if (!parsed.values.html) {
       await serveView(target, dirs, {
         port: parsed.values.port ? parseInt(parsed.values.port as string, 10) : DEFAULT_PORT,
         noOpen: !!parsed.values["no-open"],
         slice: parsed.values.slice as string | undefined,
         tail: !!(parsed.values.tail || parsed.values.live),
-        tailBytes,
+        read,
       });
       return true;
     }
-    const result = await writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) }, { slice: parsed.values.slice as string | undefined, projectPath: viewProjectRoot(dirs), tailBytes });
+    const result = await writeView(target, logDir, { pricing: pricingCatalog(DATA_DIR) }, { slice: parsed.values.slice as string | undefined, projectPath: viewProjectRoot(dirs), read });
     log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}`, C.cyan);
-    if (result.truncated) log(truncationNotice(result), C.yellow);
+    if (result.truncated || result.folded) log(truncationNotice(result), result.folded ? C.dim : C.yellow);
     for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
     log(`HTML: ${result.htmlPath}`, C.green);
     const mb = statSync(result.htmlPath).size / (1024 * 1024);
@@ -447,9 +450,9 @@ async function runSpec(args: string[]) {
 // are seeded into the live web server instead of embedded in a file. The run
 // registers in the instance registry like any live capture (mode "view"), so
 // `cctrace ps` and the header switcher see it. Ctrl-C stops it.
-async function serveView(target: string, dirs: TraceDirs, opts: { port: number; noOpen: boolean; slice?: string; tail?: boolean; tailBytes?: number }) {
+async function serveView(target: string, dirs: TraceDirs, opts: { port: number; noOpen: boolean; slice?: string; tail?: boolean; read?: ViewOpts }) {
   const logDir = dirs.writeDir;
-  const result = await resolveView(target, dirs.readDirs, { tailBytes: opts.tailBytes });
+  const result = await resolveView(target, dirs.readDirs, opts.read ?? {});
   if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
   // --tail follows plain .jsonl files only: archives can't grow, and a
   // slice is a closed window — both quietly fall back to a static view.
@@ -460,7 +463,7 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
   if (opts.tail && !tailing) log("--tail: no plain .jsonl source to follow (archive or slice) — serving static view", C.yellow);
   log(`Rebuilt ${result.pairs.length} pairs from ${result.sources.join(", ")}` +
     (opts.slice ? ` (slice ${opts.slice})` : ""), C.cyan);
-  if (result.truncated) log(truncationNotice(result), C.yellow);
+  if (result.truncated || result.folded) log(truncationNotice(result), result.folded ? C.dim : C.yellow);
   for (const w of result.warnings) log(`warning: ${w}`, C.yellow);
 
   const traceName = (result.sources[0] || target).replace(/\.jsonl(\.zst|\.gz)?$/, "");
@@ -492,6 +495,7 @@ async function serveView(target: string, dirs: TraceDirs, opts: { port: number; 
       // The page repeats the terminal's truncation notice: a reader who got
       // the URL never saw the terminal.
       truncated: result.truncated,
+      folded: result.folded,
       sessionTitle: titleFor(dirname(viewTracePath), mainSessionId(result.pairs, wireTables()), viewTrace) || undefined,
     },
     dataDir: DATA_DIR,
@@ -1305,11 +1309,13 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           a local server; Ctrl-C stops). No target lists the
                           traces and lets you pick (Enter = newest). Target is
                           ${C.cyan}latest${C.reset}, a .jsonl[.zst|.gz] path, a session id, or a
-                          trace filename fragment. Traces stream in from the
-                          tail: the newest 256 MB of lines open, older ones
-                          are noted (${C.cyan}--full${C.reset} loads everything). ${C.cyan}--html${C.reset} writes
-                          a self-contained snapshot .html instead (shareable,
-                          but huge traces choke browsers).
+                          trace filename fragment. The page FOLDS: every pair
+                          of the session is on it, and request bodies a later
+                          request re-sent (or past the page's 32 MB body
+                          budget) become stubs the page can fetch back
+                          (${C.cyan}--full${C.reset} embeds every byte, unfolded). ${C.cyan}--html${C.reset} writes
+                          a self-contained snapshot .html instead (shareable;
+                          folded, so a multi-GB session is a ~30 MB file).
   ${C.cyan}clean${C.reset}                     Delete regenerable .html snapshots + empty traces.
   ${C.cyan}merge${C.reset} [--prune]           Consolidate each session's pairs into one deduped
                           session-<id>.jsonl; --prune drops merged sources.

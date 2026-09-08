@@ -77,17 +77,32 @@ export function histLenOf(pair: any): number {
   return Array.isArray(body?.messages) ? body.messages.length : 0;
 }
 
-/** Capped signature of a request's final history message — same final
- * message = pure retry; different = a divergent (rewound/edited) branch. */
+/** Capped signature of a request's final DURABLE history message — same
+ * final message = pure retry; different = a divergent (rewound/edited)
+ * branch.
+ *
+ * "Durable" excludes trailing `role: "system"` turns, and that exclusion is
+ * the whole point. Claude Code closes every packing with an ephemeral
+ * system notice carrying the live budget ("<total_tokens>14810257 tokens
+ * left</total_tokens>"), so the raw final message differs between two
+ * requests that share every real turn. Signing it made the rewind guard
+ * read 93% of a normal session as rewound branch tips: measured on a real
+ * 291 MB trace, compact stubbed 12 of 184 superseded bodies and saved
+ * 58.6 MB where the intent is ~95% (2026-09-02). The durable tip restores
+ * 182 of 184. A rewind still trips the guard — an erased exchange's last
+ * user/assistant turn is absent from the keeper too. */
 export function lastMsgSig(pair: any): string {
   const body = pair?.request?.body;
   const hist = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : [];
-  if (!hist.length) return "";
-  try {
-    return (JSON.stringify(hist[hist.length - 1]) || "").slice(0, 400);
-  } catch {
-    return "";
+  for (let i = hist.length - 1; i >= 0; i--) {
+    if (hist[i]?.role === "system") continue; // harness notice channel, not conversation
+    try {
+      return (JSON.stringify(hist[i]) || "").slice(0, 400);
+    } catch {
+      return "";
+    }
   }
+  return "";
 }
 
 /**
@@ -242,8 +257,14 @@ export function planDecisions(pairs: (TracePair | null)[], categorize: Categoriz
   return { stub, collapse };
 }
 
+/** Why a request body was folded to a stub. "superseded" = a later request
+ * re-sent the same history (compact's rewrite, and the render fold's rule
+ * 1); "budgeted" = the page it was rendering onto ran out of room for
+ * bodies (src/fold.ts, rule 2 — never written to disk). */
+export type StubKind = "superseded" | "budgeted";
+
 /** Fold a superseded messages request body to its reconstruction stub. */
-export function stubPair(p: TracePair, keptPairId: string): TracePair {
+export function stubPair(p: TracePair, keptPairId: string, kind: StubKind = "superseded"): TracePair {
   const body: any = p.request.body;
   const text =
     wireDialect(p) === "openai"
@@ -251,7 +272,7 @@ export function stubPair(p: TracePair, keptPairId: string): TracePair {
       : firstUserText(Array.isArray(body?.messages) && body.messages[0] ? body.messages[0].content : "");
   const stub: any = {
     _cctrace_stub: 1,
-    kind: "superseded",
+    kind,
     model: body?.model ?? null,
     historyLen: histLenOf(p),
     firstUserText: String(text || "").slice(0, STUB_TEXT_CHARS),

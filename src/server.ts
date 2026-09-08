@@ -9,7 +9,7 @@ import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
-import { loadPriorPairs, loadTraceFiles } from "./history";
+import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, requestStop, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } from "./maintenance";
@@ -29,6 +29,31 @@ export { renderSnapshot, verifySnapshot } from "./ui";
  * straight into the shared store). */
 const storeDirFor = (dataDir: string | undefined, i: InstanceInfo): string | undefined =>
   dataDir && i.projectPath ? projectTraceDir(dataDir, i.projectPath) : undefined;
+
+/**
+ * One pair, by id, out of a run's traces — what a folded page fetches to
+ * see the request bytes behind a stub. The carrier is tried first (it is
+ * almost always the answer), then every trace in the same dirs; a pair id
+ * is a verbatim substring of its own line, so only candidate lines parse.
+ * Streamed: this must not hold a multi-GB trace to hand back one pair.
+ */
+async function findPairInTraces(dirs: string[], carrier: string, pairId: string): Promise<TracePair | null> {
+  const needle = JSON.stringify(pairId); // "id":"<pairId>" — quoted, so no prefix collisions
+  const paths = [carrier, ...listTraceEntries(dirs).map((e) => e.path).filter((p) => resolve(p) !== resolve(carrier))];
+  for (const path of paths) {
+    try {
+      for await (const line of traceLines(path)) {
+        if (!line.includes(needle)) continue;
+        let pair: TracePair;
+        try { pair = JSON.parse(line); } catch { continue; }
+        if (pair?.id === pairId && pair.request) return pair;
+      }
+    } catch {
+      // unreadable trace — try the next one
+    }
+  }
+  return null;
+}
 
 interface ServerConfig {
   port: number;
@@ -525,9 +550,25 @@ export function createServer(config: ServerConfig) {
         // from the run's trace (by session id when known, merging every
         // trace of that session in its log dir — the same continuity the
         // CLI's `cctrace view <sid>` gets; by file otherwise).
-        const id = decodeURIComponent(url.pathname.slice("/view/".length));
+        const rest = decodeURIComponent(url.pathname.slice("/view/".length));
+        // /view/<run-id>/pair/<pair-id>: ONE pair, unfolded, straight off
+        // the trace. This is what makes the fold non-destructive — the page
+        // holds a stub, and the wire bytes behind it are one fetch away.
+        const cut = rest.indexOf("/pair/");
+        const id = cut === -1 ? rest : rest.slice(0, cut);
+        const wantPair = cut === -1 ? "" : rest.slice(cut + "/pair/".length);
         const run = config.dataDir ? listAllRuns(config.dataDir).find((r) => r.id === id) : undefined;
         if (!run?.logFile) return new Response("unknown run id", { status: 404 });
+        if (wantPair) {
+          const carrier = findTraceCarrier(run.logFile, run.sessionId, storeDirFor(config.dataDir, run));
+          if (!carrier) return Response.json({ error: "trace missing" }, { status: 404 });
+          const storeDir = storeDirFor(config.dataDir, run);
+          const dirs = [dirname(carrier.path)];
+          if (storeDir && existsSync(storeDir) && resolve(storeDir) !== resolve(dirs[0]!)) dirs.push(storeDir);
+          const found = await findPairInTraces(dirs, carrier.path, wantPair);
+          if (!found) return Response.json({ error: "pair not in this run's traces" }, { status: 404 });
+          return Response.json(found);
+        }
         try {
           // Session-id first (merges every trace of the session), but the
           // registry's sid can be REDACTED (masked uuid) or purged from the
@@ -551,21 +592,24 @@ export function createServer(config: ServerConfig) {
           const viewDirs = [dirname(carrier.path)];
           if (storeDir && existsSync(storeDir) && resolve(storeDir) !== resolve(viewDirs[0]!)) viewDirs.push(storeDir);
           // A rendered document, not a streaming read: every kept byte lands
-          // ~1:1 in the page, so the budget is VIEW_BYTES, never TAIL_BYTES
-          // (a 708 MB session once produced a 257 MB page that no tab
-          // survives — and silently dropped 78% of the session on top).
-          // ?full=1 loads everything, ?bytes=N (MB) picks a budget.
+          // ~1:1 in the page, so the page is FOLDED (src/fold.ts) — every
+          // pair of the session, with VIEW_BYTES of bodies. Budgeting lines
+          // instead used to drop the session down to its newest slice (a
+          // real 708 MB session opened as 22% of itself, issue #106).
+          // ?full=1 embeds every byte unfolded (the 257 MB page it made is
+          // why the fold exists), ?bytes=N (MB) picks a body budget.
           const mb = Number.parseInt(url.searchParams.get("bytes") || "", 10);
-          const tailBytes = url.searchParams.get("full") === "1" ? Infinity
-            : Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024
-            : VIEW_BYTES;
+          const full = url.searchParams.get("full") === "1";
+          const opts = full
+            ? { tailBytes: Infinity }
+            : { foldBytes: Number.isFinite(mb) && mb > 0 ? mb * 1024 * 1024 : VIEW_BYTES };
           let result;
           try {
-            result = run.sessionId ? await resolveView(run.sessionId, viewDirs, { tailBytes }) : null;
+            result = run.sessionId ? await resolveView(run.sessionId, viewDirs, opts) : null;
           } catch {
             result = null;
           }
-          if (!result) result = await resolveView(carrier.path, viewDirs, { tailBytes });
+          if (!result) result = await resolveView(carrier.path, viewDirs, opts);
           const { traceBytes, traceDiskBytes } = traceSizes(result);
           const html = renderSnapshot(result.pairs, {
             version: config.meta?.version,
@@ -579,6 +623,7 @@ export function createServer(config: ServerConfig) {
             traceBytes,
             traceDiskBytes,
             truncated: result.truncated,
+            folded: result.folded,
             sessionTitle: config.dataDir ? titleLookup(config.dataDir)(run) || undefined : undefined,
           });
           // The page compresses ~10x+ (repeated request bodies); the browser

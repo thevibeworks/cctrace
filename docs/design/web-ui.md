@@ -39,7 +39,13 @@ switcher drives; the work column's own header then names the destination
 opens its WebSocket origin-relative (never a baked port: behind
 container/host port forwards the bound port isn't the browser's port, and a
 baked URL once handed a view page another instance's live stream). The
-work header carries trace totals and the truncation chip; the rail's foot
+work header carries trace totals and the FOLD chip (`folded · N superseded
++ M over budget`, hover for what the fold put away — src/fold.ts; a
+truncated page shows the older truncation chip instead, the two never
+both). A stubbed request's detail says why it folded and offers `full
+history` (the keeper) and, on a `/view/<run-id>` page, `load the original`
+— one fetch of `/view/<run-id>/pair/<pair-id>` swaps the wire bytes back
+in; the rail's foot
 carries the instance switcher, the version and mask/theme/github
 (totals = requests · in/out tokens · est cost across the whole trace,
 live-updating, breakdown in the hover — per-pair call info memoized on the

@@ -303,4 +303,35 @@ describe("rewind guard (devlog 2026-07-17 decision 4)", () => {
     expect(stub.has(1)).toBe(true);
     expect(stub.has(2)).toBe(false);
   });
+
+  // The guard reads the last DURABLE turn, not the last line of the packing.
+  // Claude Code closes every request with an ephemeral system notice whose
+  // token budget moves each time; signing that made 93% of a normal session
+  // look rewound (measured 2026-09-02: 12 of 184 bodies stubbed, 58.6 MB of
+  // 291.5 MB, against 180 and 266.7 MB after the fix).
+  const sys = (n: number) => ({ role: "system", content: `<total_tokens>${n} tokens left</total_tokens>` });
+
+  test("an ephemeral system notice as the final turn does not read as a rewind", () => {
+    const pairs = [
+      mk("p1", 100, [u("q1"), a("r1"), u("q2"), sys(900)]),
+      mk("p2", 200, [u("q1"), a("r1"), u("q2"), sys(880), a("r2"), u("q3"), sys(860)]),
+      mk("p3", 300, [u("q1"), a("r1"), u("q2"), sys(840), a("r2"), u("q3"), sys(820), a("r3"), u("q4"), sys(800)]),
+    ];
+    const { stub } = planDecisions(pairs, cat);
+    expect(stub.has(0)).toBe(true);  // superseded: its durable tip (q2) is in the keeper
+    expect(stub.has(1)).toBe(true);
+    expect(stub.has(2)).toBe(false); // keeper
+  });
+
+  test("a rewind is still caught when the packing ends with a system notice", () => {
+    const pairs = [
+      mk("p1", 100, [u("q1"), a("r1"), u("erased"), sys(900)]),   // branch tip
+      mk("p2", 200, [u("q1"), a("r1"), u("survivor"), sys(880)]),
+      mk("p3", 300, [u("q1"), a("r1"), u("survivor"), sys(860), a("r2"), u("q3"), sys(840)]),
+    ];
+    const { stub } = planDecisions(pairs, cat);
+    expect(stub.has(0)).toBe(false); // the erased exchange's only copy stays full
+    expect(stub.has(1)).toBe(true);
+    expect(stub.has(2)).toBe(false);
+  });
 });

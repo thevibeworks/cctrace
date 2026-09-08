@@ -1,16 +1,18 @@
-// Per-client icon glyphs — ONE source for every surface that labels a CLI
-// (trace view header, dashboard rows, future pickers), so the mark a user
-// learns in one place is the mark they see everywhere. Geometric strokes,
-// currentColor, no fill: they inherit the text color of wherever they sit.
-// Sizing is the embedding page's job (a CSS rule on `svg` in context) —
-// the glyphs carry no class of their own.
-export const CLIENT_ICONS: Record<string, string> = {
-  claude: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 3v18M3 12h18M5.8 5.8l12.4 12.4M18.2 5.8L5.8 18.2"/></svg>',
-  codex: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.6l8.2 4.7v9.4L12 21.4l-8.2-4.7V7.3z"/></svg>',
-  grok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 21L17 3M17 21l-4.6-8.3"/></svg>',
-  kimi: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v18M6 12l9-9M6 12l9 9"/></svg>',
-  opencode: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6l6 6-6 6M14 18h5"/></svg>',
-};
+import { readFileSync } from "node:fs";
+import claudeAsset from "../assets/agents/claude.png" with { type: "file" };
+import codexAsset from "../assets/agents/codex.png" with { type: "file" };
+import grokAsset from "../assets/agents/grok.png" with { type: "file" };
+import kimiAsset from "../assets/agents/kimi.png" with { type: "file" };
+import opencodeAsset from "../assets/agents/opencode.png" with { type: "file" };
+
+// Official site assets, embedded so live pages and offline snapshots use
+// the same marks without making third-party requests. Sources: assets/agents/README.md.
+export const CLIENT_ICONS: Record<string, string> = Object.fromEntries(
+  Object.entries({ claude: claudeAsset, codex: codexAsset, grok: grokAsset, kimi: kimiAsset, opencode: opencodeAsset }).map(([name, asset]) => {
+    const data = readFileSync(asset).toString("base64");
+    return [name, `<svg viewBox="0 0 24 24" aria-hidden="true"><image width="24" height="24" href="data:image/png;base64,${data}"/></svg>`];
+  }),
+);
 
 // The PRODUCT mark, redrawn in CDS geometry (0.48): two round-capped clay
 // arcs — the cc — with the trace running out of them in ink to the clay

@@ -428,11 +428,12 @@ describe("dashboard", () => {
     }
   });
 
-  // The route renders a DOCUMENT: its budget is VIEW_BYTES, never the
-  // streaming reader's 256 MB — a 708 MB session once shipped a 257 MB page
-  // that no tab survives, silently missing 78% of the session. The page
-  // must carry the truncation fact; ?full=1 is the escape hatch.
-  test("/view/<run-id> budgets the page, states the drop, and ?full=1 loads it all", async () => {
+  // The route renders a DOCUMENT, and a document FOLDS (src/fold.ts): every
+  // pair of the session reaches the page, and the request bodies a later
+  // request re-sent become stubs. Budgeting LINES instead used to drop the
+  // session down to its newest slice — a 708 MB session opened as 22% of
+  // itself. The page must carry the fold fact; ?full=1 is the escape hatch.
+  test("/view/<run-id> folds the page, keeps every pair, and ?full=1 loads it all", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "cctrace-viewbudget-"));
     mkdirSync(join(dataDir, "instances"), { recursive: true });
     const trace = join(dataDir, "trace-big.jsonl");
@@ -455,14 +456,30 @@ describe("dashboard", () => {
       const cut = await fetch(`http://127.0.0.1:${s4.port}/view/rb?bytes=1`);
       expect(cut.status).toBe(200);
       const cutHtml = await cut.text();
-      expect(cutHtml).toContain("big29");           // the newest survives
-      expect(cutHtml).not.toContain("big00");       // the oldest was dropped
-      expect(cutHtml).toContain('"truncated":{"droppedLines"'); // ...and the page says so
+      // EVERY pair is on the page — the recording is complete
+      expect(cutHtml).toContain("big00");
+      expect(cutHtml).toContain("big29");
+      // ...but the bodies a later request re-sent are stubs, and the page says so
+      expect(cutHtml).toContain("_cctrace_stub");
+      expect(cutHtml).toContain('"folded":{"superseded"');
+      expect(cutHtml).not.toContain('"truncated":{"droppedLines"');
       const full = await fetch(`http://127.0.0.1:${s4.port}/view/rb?full=1`);
       expect(full.status).toBe(200);
       const fullHtml = await full.text();
       expect(fullHtml).toContain("big00");
       expect(fullHtml).not.toContain('"truncated":{"droppedLines"');
+      expect(fullHtml).not.toContain('"folded":{"superseded"');
+      // the fold is what keeps the page openable: 30 x 100 KB of body, gone
+      expect(cutHtml.length).toBeLessThan(fullHtml.length / 4);
+      // ...and nothing was destroyed: the wire bytes behind a stub are one
+      // fetch away, which is what makes folding safe to do by default
+      const one = await fetch(`http://127.0.0.1:${s4.port}/view/rb/pair/big00`);
+      expect(one.status).toBe(200);
+      const body = (await one.json()) as { id: string; request: { body: { messages: { content: string }[] } } };
+      expect(body.id).toBe("big00");
+      expect(body.request.body.messages[0]!.content.length).toBe(filler.length);
+      const missing = await fetch(`http://127.0.0.1:${s4.port}/view/rb/pair/nope`);
+      expect(missing.status).toBe(404);
     } finally {
       s4.stop();
     }

@@ -11,7 +11,8 @@ resolved in the live page, both themes) and adopted whole. Judgement is
 spent only on what CDS leaves undecided: row density inside its range, and
 the data colors a wire tracer needs. `docs/design/proposals/claude-cds/`
 carries the provenance and the audit; the token block at the top of
-`src/ui.ts` names the CDS token behind every value.
+`src/chrome.ts` names the CDS token behind every value and shares the material
+and navigation frame between the trace and dashboard pages.
 
 **The behaviour is an instrument.** Dense, quiet, fast, keyboard-first: a
 reader at 01:00 asking why the last turn cost $2.40. Where the system's
@@ -155,7 +156,8 @@ silently.
   computed at render time only.
 - Toolbar grammar: scope narrows left to right — list group
   (filter + prev runs + select) · page group (tail · clear) · trace group
-  (replay · ⌘ actions) holding the right edge in both views. Destinations
+  (replay · focus) holding the right edge in the session view. Trace actions
+  use the work header's overflow menu. Destinations
   are NOT in the toolbar: they live on the rail (below). Groups are
   spans (the session view hides groups, not ids), page/trace groups open
   with a hairline, labels are lowercase, and a pressed toggle wears a
@@ -241,6 +243,22 @@ silently.
   snapshot); a row that can't (trace missing) says why, dimmed. "Missing"
   is decided by findTraceCarrier, not a single stat: a compressed or
   session-merged trace still opens.
+
+- The destination rail collapses to an icon strip on desktop; the session
+  outline collapses independently. Both preferences survive reloads. Session
+  focus temporarily hides both without changing those preferences, and Esc
+  restores them. On mobile, destinations stay in a bottom bar and the outline
+  opens as a drawer that closes after a thread or turn jump.
+- Thread selection and the parent dispatch jump stay in the session frame
+  when the outline is hidden. Nested agents render recursively, and the
+  picker includes every thread. Trace actions live in the work header's
+  overflow menu; replay and focus stay beside session search.
+- Agent marks are embedded official-site assets, with provenance in
+  `assets/agents/README.md`. Interface controls use vendored Lucide icons.
+  Every icon-only command has an accessible name and tooltip.
+- The dashboard shares the trace frame and theme preference. Runs and
+  storage are separate destinations. Run search filters both live and recent
+  runs, and the grouping control remains with the search in the fixed toolbar.
 
 ## When adding UI
 

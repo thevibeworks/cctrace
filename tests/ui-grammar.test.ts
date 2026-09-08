@@ -93,6 +93,37 @@ function fragmentErrors(page: ReturnType<typeof bootSnapshotPage>): string[] {
 }
 
 describe("live page boot", () => {
+  test("a context deep link defers hidden request rows and builds them when opened", () => {
+    const page = bootPage(getLiveHtml({ mode: "view" }), { hash: "#/context" });
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: msgPair("p2") }) });
+    expect(page.fragments.filter(f => f.id === "pairs").length).toBe(0);
+    expect(page.els["context-view"].innerHTML).toContain("cx-ov");
+    page.goto("#/p/p2");
+    expect(page.fragments.filter(f => f.id === "pairs").length).toBeGreaterThan(0);
+    expect(page.els["detail"].innerHTML).toContain("p2");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("large streams render a bounded page and search beyond that page", () => {
+    const messages = Array.from({ length: 260 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      content: i === 258 ? "needle beyond the first page" : "Message " + i,
+    }));
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1", { reqBody: { messages } })]));
+    page.goto("#/context/=stream");
+    const html = page.els["context-view"].innerHTML;
+    expect((html.match(/class="tj-row /g) || []).length).toBe(200);
+    expect(html).toContain('aria-label="Next records"');
+    expect(html).toContain("Page 1 of 2");
+    const search = page.els["tj-search"];
+    search.value = "needle beyond";
+    for (const listener of [...(search.listeners.input || [])]) listener({});
+    expect(page.els["context-view"].innerHTML).toContain("needle beyond the first page");
+    expect((page.els["context-view"].innerHTML.match(/class="tj-row /g) || []).length).toBe(1);
+    expect(page.errors).toEqual([]);
+  });
   // 0.25.0 shipped IS_VIEW reading META.mode ABOVE `const META` — a temporal
   // dead zone that killed every live page at load. Snapshot boots never caught
   // it: IS_SNAPSHOT short-circuits the read. These boots execute the
@@ -172,13 +203,16 @@ describe("live page boot", () => {
     expect(page.els["status"].textContent).toBe("tail");
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
     expect(page.els["pulse"].innerHTML).toContain("opus-4-6"); // the newest model call
-    expect(page.els["pulse"].innerHTML).toContain("ago");
+    expect(page.els["pulse"].innerHTML).toContain("Last response");
+    expect(page.els["pulse"].innerHTML).not.toContain("p-verb");
   });
 
-  test("the boot placeholder ships a rotating verb; view pages never show the pulse", () => {
+  test("loading and live status have no invented activity; view pages hide the footer", () => {
     const html = getLiveHtml({});
-    expect(html).toContain('id="boot-verb"');
-    expect(html).toContain("Reticulating");
+    expect(html).toContain('role="status">Loading trace...');
+    expect(html).not.toContain("Reticulating");
+    expect(html).not.toContain("rotateBootVerb");
+    expect(html).not.toContain("mid-loop");
     const view = bootPage(getLiveHtml({ mode: "view" }));
     const ws = view.sockets[0]!;
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
@@ -323,6 +357,61 @@ describe("sessions sidebar: ordering + subagent nesting", () => {
     expect(agentAt).toBeGreaterThan(kidsAt);
   });
 
+  test("nested subagents remain reachable in both the outline and the thread picker", () => {
+    const nestedPrompt = "check the mobile navigation";
+    const child = msgPair("p4", {
+      reqBody: { messages: [
+        { role: "user", content: agentPrompt },
+        { role: "assistant", content: [{ type: "tool_use", id: "tu_nested", name: "Task", input: { subagent_type: "Explore", description: "mobile layout", prompt: nestedPrompt } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "tu_nested", content: "checked" }] },
+      ] },
+    });
+    const grandchild = msgPair("p5", { reqBody: { messages: [{ role: "user", content: nestedPrompt }] } });
+    const { page, html } = sidebar([dispatchPair, child, grandchild]);
+    expect((html.match(/class="tkids"/g) || []).length).toBe(2);
+    expect((html.match(/class="thread-head"/g) || []).length).toBe(2);
+    expect(html).toContain("mobile layout");
+    const picker = page.els["thread-jump"];
+    expect((picker.innerHTML.match(/<option /g) || []).length).toBe(3);
+    expect(picker.innerHTML).toContain("&gt; &gt; [Explore] mobile layout");
+    const key = [...picker.innerHTML.matchAll(/value="([^"]+)"/g)][2]![1]!;
+    page.goto("#/session/" + encodeURIComponent(key));
+    expect(page.els["thread-parent"].hidden).toBe(false);
+    expect(page.els["thread-parent"].dataset.tuid).toBe("tu_nested");
+    expect(page.els["convo"].innerHTML).toContain(nestedPrompt);
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
+
+  test("focus mode preserves the independent outline preference and Escape stays in the session", () => {
+    const { page } = sidebar(PAIRS);
+    page.els["threads-toggle"].onclick!({});
+    expect(page.body.classList.contains("threads-collapsed")).toBe(true);
+    page.els["focus-toggle"].onclick!({});
+    expect(page.body.classList.contains("session-focus")).toBe(true);
+    page.fireKey("Escape");
+    expect(page.body.classList.contains("session-focus")).toBe(false);
+    expect(page.body.classList.contains("threads-collapsed")).toBe(true);
+    expect(page.body.classList.contains("view-session")).toBe(true);
+    page.els["focus-toggle"].onclick!({});
+    page.goto("#/context");
+    expect(page.body.classList.contains("session-focus")).toBe(false);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the thread picker follows the actual selection when returning to the main route", () => {
+    const { page } = sidebar(PAIRS);
+    const picker = page.els["thread-jump"];
+    const keys = [...picker.innerHTML.matchAll(/value="([^"]+)"/g)].map(m => m[1]!);
+    const initial = picker.value;
+    const other = keys.find(k => k !== initial)!;
+    page.goto("#/session/" + encodeURIComponent(other));
+    expect(picker.value).toBe(other);
+    page.goto("#/session");
+    expect(picker.value).toBe(initial);
+    expect(page.errors).toEqual([]);
+  });
+
   test("sessions order newest activity first, deterministically", () => {
     const { html } = sidebar(PAIRS);
     const bAt = html.indexOf('data-sid="bbbb2222');
@@ -390,7 +479,7 @@ describe("rich tool bodies in the session view", () => {
     expect(html).toContain("['title', 'usage']; // default: sid stays readable");
   });
 
-  test("the actions menu lives in the toolbar, runs housekeeping, hides on snapshots", () => {
+  test("the actions menu runs housekeeping and hides on snapshots", () => {
     const live = bootPage(getLiveHtml({}));
     expect(live.els["actions-toggle"].style.display || "").not.toBe("none");
     const ws = live.sockets[0]!;
@@ -780,7 +869,7 @@ describe("model epochs rendering", () => {
     page.goto("#/session");
     const frag = page.fragments.filter((f) => f.id === "threads").pop();
     expect(frag!.html).toContain('<span class="klabel">session</span>');
-    expect(frag!.html).toContain('class="sico"');            // session glyph
+    expect(frag!.html).toContain('class="ui-icon"');         // shared Lucide session glyph
     expect(frag!.html).not.toContain('>model</span>');       // no "model" label — the id speaks
     expect(frag!.html).toContain('data-tip=');               // instant hover details
     expect(page.errors).toEqual([]);
@@ -888,8 +977,8 @@ describe("find in session (toolbar)", () => {
     expect(html).toContain('id="sfind"');
     expect(html).toContain('id="sfind-count"');
     expect(html).toContain("body.view-session #tb-find { display: flex; }");
-    // The pulse clearance: the last line reads above the strip, not beneath it.
-    expect(html).toContain("body.view-session.pulse-on #convo { padding-bottom: 64px; }");
+    // The observed-response footer participates in layout instead of covering content.
+    expect(html).toContain('class="p-label">Last response');
     // The page still boots clean with the new script block.
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     page.goto("#/session");
@@ -1555,6 +1644,26 @@ describe("the trajectory gutter on the session rail", () => {
 });
 
 describe("context view", () => {
+  test("pinning a folded request clears the previous composition and inspector", () => {
+    const folded = msgPair("p1", { reqBody: {
+      _cctrace_stub: true, kind: "superseded", firstUserText: "hi", historyLen: 1,
+      messages: undefined, keptPairId: "p2",
+    } });
+    const full = msgPair("p2");
+    const page = bootSnapshotPage(renderSnapshot([folded, full]));
+    page.goto("#/context");
+    expect(page.els["context-view"].innerHTML).toContain('class="cx-flame"');
+    const input = page.els["cx-step-number"];
+    input.value = "1";
+    input.onchange!({});
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain("Request body folded");
+    expect(cx).toContain('href="#/p/p2">Retained history');
+    expect(cx).toContain('id="cx-insp" hidden');
+    expect(cx).not.toContain('class="cx-flame"');
+    expect(cx).not.toContain('id="cx-insp-body"');
+    expect(page.errors).toEqual([]);
+  });
   const REMINDER = "<system-reminder>Recalled memory: the user prefers tabs.</system-reminder>";
   // A three-step thread: reminder + prompt, then a tool round-trip, then a
   // longer packing — enough surface for composition, events, and the graph.
@@ -1596,8 +1705,8 @@ describe("context view", () => {
     expect(cx).toContain('id="cx-tracks"');
     expect(cx).toContain('id="cx-brush"');
     expect(cx).toContain('id="cx-ov-scroll"');
-    expect(cx).toContain("drag to select");
-    expect(cx).toContain("wheel to zoom");
+    expect(cx).toContain('aria-label="Request number"');
+    expect(cx).toContain('aria-label="Context thread"');
     // the shell: a margin that reconciles beside a deck that scrolls
     expect(cx).toContain('class="cx-cols"');
     expect(cx).toContain('id="cx-margin"');
@@ -1684,7 +1793,7 @@ describe("context view", () => {
     expect(cx).toContain('class="cx-insp-h"');
     expect(cx).toContain('data-cxinsp="close"');
     expect(cx).toContain('class="cx-insp-rail"');
-    expect(cx).toContain('class="cx-facet active" data-cxfacet="content"');
+    expect(cx).toContain('class="cx-facet active" aria-pressed="true" data-cxfacet="content"');
     expect(cx).toContain('id="cx-insp-body"');
     // the under-graph pane is gone: the pick opens beside the graph
     expect(cx).not.toContain('id="cx-pane"');
@@ -1843,7 +1952,7 @@ describe("context view", () => {
     // Row 1 of the flame is the six in CTX_CATS order — scoped to the
     // flame, because the margin's ledger emits the same node keys (that
     // correspondence is the point, and it is asserted next).
-    const flame = cx.slice(cx.indexOf('class="cx-flame"'));
+    const flame = cx.slice(cx.indexOf('class="cx-flame"'), cx.indexOf('class="cx-node-list"'));
     const cats = [...flame.matchAll(/data-cxnode="c:(\w+)"/g)].map(m => m[1]);
     expect(cats).toEqual(["tools", "user", "assistant", "toolResult"]); // no system block in this fixture
     // the ledger states all six, always, in the same order — it is the

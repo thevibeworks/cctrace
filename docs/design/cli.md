@@ -32,19 +32,25 @@ cctrace view <file|session-id|fragment>   # reopen a trace in the web UI: serves
                                           # conversation opens at the top, no auto-tail
                                           # — the WS stays as the data channel only
                                           # (--port N; --serve = legacy alias)
-                                          # Traces STREAM in (readTracePairs in
+                                          # Traces STREAM in (traceLines in
                                           # src/history.ts: plain/.zst/.gz, line by
                                           # line, never the whole file as one string)
-                                          # and open from the TAIL: the newest 256 MB
-                                          # of decoded lines (TAIL_BYTES) are kept, a
-                                          # notice says how many older lines were left
-                                          # out; a session id budgets newest file
-                                          # first. It's a log — the latest is what you
-                                          # open for; a 2 GB trace opens in seconds
-cctrace view <target> --full              # every pair, no tail budget (a huge trace
-                                          # can then cost GBs of memory + browser)
-cctrace view <target> --html              # write a snapshot .html instead (shareable,
-                                          # but a big session renders 100s of MB)
+                                          # and the page FOLDS (src/fold.ts): every
+                                          # pair of the session reaches it; request
+                                          # bodies a later request re-sent fold to
+                                          # compact's stub (rule 1), then the oldest
+                                          # surviving bodies fold past a 32 MB body
+                                          # budget (rule 2, VIEW_BYTES). Nothing is
+                                          # dropped — a served page fetches a stub's
+                                          # bytes back from /view/<run-id>/pair/<id>.
+                                          # A session id folds newest file first (one
+                                          # budget; SCAN_BYTES = 8 GB decoded caps the
+                                          # scan, the notice names files left unread)
+cctrace view <target> --full              # every byte inline, unfolded (a 708 MB
+                                          # session is then a 257 MB page — the
+                                          # reason the fold exists)
+cctrace view <target> --html              # write a snapshot .html instead (shareable;
+                                          # folded, so a multi-GB session is ~30 MB)
 cctrace view <target> --slice a..b        # narrow to a slice window first (the @a..b
                                           # of a slice deep link) — with --html this
                                           # is the small shareable artifact

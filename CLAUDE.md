@@ -57,7 +57,15 @@ src/
 ├── instances.ts    # Live-instance registry (`cctrace ps`, /api/instances, header switcher)
 ├── version.ts      # CCTRACE_VERSION (+ commit hash: build --define, git fallback on source runs) + daily npm update check (cached in data dir, fail-soft)
 ├── view.ts         # `cctrace view`: rebuild a snapshot from a saved trace (file/session-id/fragment);
-│                   #   streams from the tail (--full = everything), reports what it left out
+│                   #   FOLDS by default (every pair, bodies to VIEW_BYTES — see fold.ts;
+│                   #   --full = every byte unfolded), reports what it put away
+├── fold.ts         # The render FOLD (issue #106): how a whole session fits on one
+│                   #   page. Streams a trace and cuts BODIES, never pairs — rule 1
+│                   #   supersede (a body a later request re-sent folds to compact's
+│                   #   stub, keeper linked), rule 2 budget (oldest surviving bodies
+│                   #   fold past the page's byte budget). Bodies compact already
+│                   #   folded on disk are left alone. Non-destructive: a served page
+│                   #   fetches a stub's bytes back from /view/<run-id>/pair/<id>
 ├── storage.ts      # `cctrace clean|merge|compress|purge`: log-dir housekeeping (plan + apply);
 │                   #   the zstd codec (streamed, L9 + 128MB window) + the exit-time
 │                   #   archive/stale-sweep helpers
@@ -76,9 +84,18 @@ src/
 │                   #   names, body shapes, SSE events — counts + provenance,
 │                   #   values redacted except negotiation headers/model ids;
 │                   #   diff = what changed on the wire between observations)
-├── icons.ts        # Per-client icon glyphs + the PRODUCT mark — ONE source
-│                   #   for every surface that labels a CLI or wears the
-│                   #   brand (trace view rail, dashboard header, favicon)
+├── icons.ts        # Per-client marks + the PRODUCT mark — ONE source for
+│                   #   every surface that labels a CLI or wears the brand
+│                   #   (trace view rail, dashboard rows, favicon). Client marks
+│                   #   are the official site assets (assets/agents/, provenance
+│                   #   in its README), embedded base64 so snapshots stay
+│                   #   self-contained and make no third-party requests
+├── chrome.ts       # The shared page frame: CHROME_CSS (the CDS token block +
+│                   #   the destination rail, collapsible to an icon strip on
+│                   #   desktop / a bottom bar under 760px), NAV_SCRIPT and
+│                   #   PREFS_SCRIPT (theme + collapse prefs) — the trace view
+│                   #   and the dashboard are the same material because they
+│                   #   share this one module
 ├── ui.ts           # The whole web UI: a destination RAIL (mark, run card,
 │                   #   Requests / Sessions / Context / Runs, page chrome)
 │                   #   beside the work column. The material is the Claude
@@ -144,7 +161,10 @@ src/
 │                   #   item, to a known window or the next ✂ boundary
 │                   #   (docs/design/context-view.md)
 ├── vendor/
-│   └── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
+│   ├── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
+│   ├── lucide/        # Vendored Lucide SVGs (ISC) — the interface icon set
+│   └── ui-icons.ts    # UI_ICONS: the Lucide subset the page uses, imported as text
+│                      #   and inlined into both pages (JSON-safe, like CLIENT_WIRE)
 ├── html.ts         # Static HTML generator (legacy node mode only)
 └── types.ts        # Shared types
 ```

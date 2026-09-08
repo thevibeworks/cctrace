@@ -99,7 +99,14 @@ export interface ReadTraceResult {
 export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Promise<ReadTraceResult> {
   const budget = opts.tailBytes ?? TAIL_BYTES;
   const needles = opts.needles;
-  const ring: string[] = [];
+  // Raw lines ride the ring unparsed so the head can fall off the budget
+  // without ever being parsed. A FILTERED read has already paid that parse
+  // to decide — it keeps the object instead of the line, which both halves
+  // the parsing and lowers the peak: the old ring re-parsed its survivors
+  // at the end, holding strings and pairs at once. At 332 KB a line that
+  // was most of a 2.4 GB read (issue #106).
+  const ring: (string | TracePair)[] = [];
+  const lens: number[] = [];
   let head = 0;
   let keptBytes = 0;
   let seenBytes = 0;
@@ -121,29 +128,36 @@ export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Pr
   for await (const line of traceLines(path)) {
     if (!line.trim()) continue;
     if (needles && !needles.some((n) => line.includes(n))) continue;
+    let keep: string | TracePair = line;
     if (opts.filter) {
-      // Filtered reads must parse to decide; the parsed object is dropped
-      // and the raw line kept, so the ring stays a ring of strings.
       const pair = parseUsable(line);
       if (!pair || !opts.filter(pair)) continue;
+      keep = pair; // parsed once, kept parsed
     }
     seenBytes += line.length + 1; // + its newline
-    ring.push(line);
+    ring.push(keep);
+    lens.push(line.length);
     keptBytes += line.length;
     while (keptBytes > budget && head < ring.length - 1) {
-      keptBytes -= ring[head]!.length;
+      keptBytes -= lens[head]!;
       ring[head] = "";
       head++;
       dropped++;
     }
-    if (head > 4096) { ring.splice(0, head); head = 0; }
+    if (head > 4096) { ring.splice(0, head); lens.splice(0, head); head = 0; }
   }
   const pairs: TracePair[] = [];
   const stats = opts.filter ? undefined : opts.stats; // filtered lines were already counted
   for (let i = head; i < ring.length; i++) {
+    const held = ring[i]!;
+    ring[i] = "";
+    if (typeof held !== "string") {
+      pairs.push(held);
+      continue;
+    }
     let pair: unknown;
     try {
-      pair = JSON.parse(ring[i]!);
+      pair = JSON.parse(held);
     } catch {
       if (stats) stats.torn++;
       continue;
@@ -153,7 +167,6 @@ export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Pr
       continue;
     }
     pairs.push(pair);
-    ring[i] = "";
   }
   return { pairs, dropped, keptBytes, seenBytes };
 }

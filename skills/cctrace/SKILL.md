@@ -273,10 +273,13 @@ cctrace view                              # list traces newest-first, pick one
 cctrace view latest                       # reopen the newest trace directly
 cctrace view <file|session-id|fragment>   # reopen a trace in the web UI (serves
                                           # it locally; Ctrl-C stops; --port N)
-cctrace view <target> --full              # every pair (default: the newest 256 MB of
-                                          # lines stream in from the tail + a notice)
+cctrace view <target> --full              # every byte unfolded (default: every pair,
+                                          # with re-sent request bodies folded to stubs
+                                          # + a notice; a served page fetches a stub's
+                                          # bytes back on "load the original")
 cctrace view <target> --html              # write a snapshot .html instead
-                                          # (shareable; huge traces choke browsers)
+                                          # (shareable; folded, so ~30 MB for a
+                                          # multi-GB session)
 cctrace view <target> --slice a..b        # narrow to a slice window (the @a..b of a
                                           # slice deep link); with --html = small artifact
 cctrace view <target> --tail              # follow a RUNNING capture's trace live from

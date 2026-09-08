@@ -1,4 +1,7 @@
 import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
+import { UI_ICONS } from "./vendor/ui-icons";
+import { CHROME_CSS, NAV_SCRIPT, PREFS_SCRIPT } from "./chrome";
+import { escHtml } from "./session";
 
 // The instances dashboard: every live run (heartbeat/probe-verified) and
 // the finished runs (registry tombstones), across all projects and
@@ -20,47 +23,16 @@ import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
 // derived and hostile: every row builds through textContent, no innerHTML —
 // the one exception is our own icon glyphs (src/icons.ts, trusted source).
 export function getDashboardHtml(meta: { version?: string } = {}): string {
-  const version = meta.version || "";
+  const version = escHtml(meta.version || "");
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CCTrace · dashboard</title>
+<script>${PREFS_SCRIPT}</script>
 <style>
-  /* The material is the Claude Design System, measured off claude.ai on
-     2026-09-02 — the same tokens the trace view carries (src/ui.ts), so
-     the two pages of this product read as one. */
-  :root {
-    color-scheme: dark;
-    --bg: #0b0b0b; --bg-surface: #151515; --surface-2: #1a1a19;
-    --text: #f0efec; --text-muted: #c3c2b7; --text-faint: rgba(240,239,236,0.62);
-    --border: rgba(255,255,255,0.10); --border-strong: rgba(255,255,255,0.20);
-    --clay: #d97757; --clay-strong: #c6613f; --clay-text: #d97757;
-    --accent: #6da7ec; --accent-soft: #032042; --accent-line: #184f95;
-    --green: #4cc46a; --amber: #cba43c; --red: #ec7e7e;
-    --hover: #20201f; --btn-bg: #1a1a19;
-    --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
-    --text-xs: 11px; --text-sm: 12px; --text-code: 13px; --text-body: 14px;
-    --text-heading: 15px; --text-title: 22px;
-    --radius: 8px; --radius-sm: 5px; --radius-lg: 12px; --radius-full: 999px;
-    --dur-micro: 100ms; --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  }
-  @media (prefers-color-scheme: light) {
-    :root {
-      color-scheme: light;
-      --bg: #fcfcfb; --bg-surface: #f9f9f7; --surface-2: #fff;
-      --text: #0b0b0b; --text-muted: #52514e; --text-faint: rgba(11,11,11,0.58);
-      --border: rgba(11,11,11,0.10); --border-strong: rgba(11,11,11,0.20);
-      --accent: #184f95; --accent-soft: #cde2fb; --accent-line: #86b6ef;
-      /* clay as TEXT on paper needs its own step: the brand ink itself
-         reads 3.1:1 (kit/render-check.mjs). Identity keeps --clay. */
-      --clay-text: color-mix(in srgb, #c6613f 80%, #0b0b0b);
-      --green: #17842f; --amber: #98801f; --red: #8e2626;
-      --hover: #f9f9f7; --btn-bg: #fff;
-    }
-  }
+  ${CHROME_CSS}
   * { box-sizing: border-box; margin: 0; padding: 0; }
   b, strong { font-weight: 600; }
   ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
@@ -68,18 +40,18 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   body {
     background: var(--bg); color: var(--text);
     font: var(--text-body)/1.5 var(--font-body);
-    padding: 28px 24px 40px; max-width: 1180px; margin: 0 auto;
+    height: 100vh; height: 100dvh; overflow: hidden;
   }
   /* Wire values are mono; labels and prose are not. */
   .sid, .when, .port, .stat, .gn, .totals, .ver, .cp, .joblog, .num,
   .srow .lead, .proj { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); flex: none; }
   .logo { width: 24px; height: 24px; color: var(--clay); flex: none; }
-  h1 { font-size: var(--text-heading); font-weight: 600; letter-spacing: -0.01em; }
+  h1 { font-size: var(--text-heading); font-weight: 600; letter-spacing: 0; }
   h1 span { color: var(--text-faint); font-weight: 400; }
-  .totals { color: var(--text-muted); font-size: var(--text-sm); margin-left: auto; }
+  .totals { color: var(--text-muted); font-size: var(--text-sm); }
   .ver { color: var(--text-faint); font-size: var(--text-xs); }
-  .sect { display: flex; align-items: center; gap: 12px; margin: 22px 0 8px; }
+  .sect { display: flex; align-items: center; gap: 12px; padding: 16px 16px 8px; }
   h2 {
     font-size: var(--text-sm); font-weight: 500; letter-spacing: 0;
     text-transform: none; color: var(--text-muted);
@@ -94,7 +66,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   }
   .grp button:hover { color: var(--text); border-color: var(--border-strong); }
   .grp button.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
-  .list { border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; background: var(--surface-2); }
+  .list { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--bg); }
   .ghead {
     padding: 6px 12px; font-size: var(--text-xs); letter-spacing: 0;
     color: var(--text-faint); background: var(--bg-surface);
@@ -104,7 +76,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   .ghead:first-child { border-top: none; }
   .ghead .gn { color: var(--text-faint); margin-left: auto; }
   .row {
-    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+    display: grid; grid-template-columns: 7px 86px minmax(100px, 160px) minmax(140px, 1fr) auto; align-items: center; gap: 10px; padding: 8px 16px;
     border-top: 1px solid var(--border); color: inherit; text-decoration: none;
     font-size: var(--text-sm);
     transition: background var(--dur-micro) var(--ease-out);
@@ -116,10 +88,10 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   .dot.past { background: var(--border-strong); }
   .client {
     display: inline-flex; align-items: center; gap: 5px;
-    padding: 0 7px; border-radius: var(--radius-full); font-size: var(--text-xs); flex: none;
-    color: var(--text-muted); border: 1px solid var(--border);
+    font-size: var(--text-xs); flex: none;
+    color: var(--text-muted); min-width: 0;
   }
-  .client svg { width: 11px; height: 11px; flex-shrink: 0; }
+  .client svg { width: 16px; height: 16px; flex-shrink: 0; }
   .proj { font-weight: 500; flex: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-code); }
   .prompt { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; min-width: 0; }
   .sid, .when, .port, .mode, .stat { color: var(--text-faint); flex: none; font-size: var(--text-xs); }
@@ -169,41 +141,153 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   .empty { padding: 12px; color: var(--text-faint); font-size: var(--text-sm); }
   .note { margin-top: 16px; color: var(--text-faint); font-size: var(--text-sm); }
   .note.stale { color: var(--amber); }
+  #dashboard-content { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; }
+  .dash-toolbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  .dash-search { display: flex; align-items: center; gap: 8px; min-width: 0; width: 320px; height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); color: var(--text-faint); }
+  .dash-search:focus-within { border-color: var(--accent-line); }
+  .dash-search input { width: 100%; min-width: 0; font: inherit; font-size: var(--text-sm); color: var(--text); border: 0; outline: 0; background: transparent; }
+  .dash-toolbar .grp { margin-left: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 2px; gap: 1px; background: var(--bg-surface); }
+  .grp button { border-color: transparent; background: transparent; height: 24px; border-radius: var(--radius-sm); }
+  .row-meta { display: flex; align-items: center; justify-content: end; gap: 10px; min-width: 0; }
+  .row .sid { grid-column: 4; font-size: var(--text-xs); }
+  .row .proj { max-width: 100%; min-width: 0; }
+  .row .prompt { min-width: 0; }
+  .row .stat { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 330px; }
+  .row .cp { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; }
+  .srow .stat { max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .note { margin: 12px 16px; }
+  .note:empty { display: none; }
+  .act { min-width: 50px; }
+  .row-meta .act { width: 96px; }
+  .ghead { padding-left: 16px; padding-right: 16px; }
+  @media (max-width: 1200px) {
+    .row { grid-template-columns: 7px 80px minmax(90px, 140px) minmax(0, 1fr); gap: 6px 10px; }
+    .row-meta { grid-column: 2 / -1; justify-content: start; }
+    .row-meta .when { margin-left: auto; }
+    .row .stat { max-width: none; }
+  }
   /* Touch tier: row actions reach the 44px floor on a thumb-sized screen. */
   @media (max-width: 760px) {
+    header { padding: 6px 12px; gap: 8px; }
+    .totals { font-size: var(--text-xs); }
+    .dash-toolbar { padding: 6px 12px; gap: 8px; flex-wrap: wrap; }
+    .dash-search { width: 100%; height: 44px; }
+    .dash-toolbar .grp { margin-left: 0; }
+    .grp button { height: 40px; min-width: 64px; }
+    .row { grid-template-columns: 7px 78px minmax(0, 1fr); padding: 8px 12px; }
+    .row .prompt { grid-column: 2 / -1; }
+    .row-meta { gap: 8px; flex-wrap: wrap; }
+    .row-meta .stat { flex-basis: 100%; white-space: normal; }
+    .row-meta .when { margin-left: 0; }
+    .row .sid { display: none; }
+    .srow { flex-wrap: wrap; }
+    .srow .fill { flex-basis: 60%; white-space: normal; }
+    .srow .stat { max-width: 100%; }
     .act { height: 44px; min-width: 44px; }
     .cp { min-width: 44px; height: 44px; }
   }
 </style>
 </head>
 <body>
+<div id="shell">
+<nav id="nav" aria-label="destinations">
+  <a class="brand" href="/dashboard" title="cctrace">${CCTRACE_MARK}<b>cctrace</b></a>
+  <div class="runcard"><span class="ctx-client">All projects</span><span class="ctx-title" id="scope-summary">Runs and recordings</span></div>
+  <div class="dests">
+    <a class="dest active" id="dash-runs" aria-label="Runs" href="#runs" aria-current="page" title="Runs"><span class="gl">${UI_ICONS.layoutGrid}</span><span class="lb">Runs</span><span class="n" id="dash-runs-count"></span></a>
+    <a class="dest" id="dash-store" aria-label="Storage" href="#store" title="Storage"><span class="gl">${UI_ICONS.archive}</span><span class="lb">Storage</span></a>
+    <a class="dest" aria-label="Current trace" href="/trace" title="Current trace"><span class="gl">${UI_ICONS.messagesSquare}</span><span class="lb">Current trace</span></a>
+  </div>
+  <div class="navfoot"><span class="nav-icons"><span class="ver">${version ? "v" + version : ""}</span><button class="icon-btn" id="theme-toggle" aria-label="Theme" title="Theme">${UI_ICONS.monitor}</button></span></div>
+</nav>
+<div id="work">
 <header>
-  ${CCTRACE_MARK}
-  <h1>cctrace <span>· dashboard</span></h1>
+  <button class="icon-btn" id="nav-toggle" aria-controls="nav" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation">${UI_ICONS.panelLeftClose}</button>
+  <h1 id="page-title">Runs</h1>
   <span class="totals" id="totals"></span>
-  <span class="ver">${version ? "v" + version : ""}</span>
+  <span class="header-actions"><button class="icon-btn" id="refresh" aria-label="Refresh dashboard" title="Refresh dashboard">${UI_ICONS.refreshCw}</button></span>
 </header>
-<div class="sect"><h2>live</h2></div>
-<div class="list" id="live"><div class="empty">loading…</div></div>
-<div class="sect"><h2>store</h2>
-  <span class="grp" id="storeact"></span>
-</div>
-<div class="list" id="store"><div class="empty">loading…</div></div>
-<div class="sect"><h2>runs</h2>
-  <span class="grp" id="grp">group
+<div class="dash-toolbar" id="runs-toolbar">
+  <label class="dash-search">${UI_ICONS.search}<input id="run-filter" type="search" aria-label="Filter runs" placeholder="Filter runs"></label>
+  <span class="grp" id="grp" role="group" aria-label="Group runs by">
     <button data-g="project">project</button>
     <button data-g="client">client</button>
     <button data-g="none">time</button>
   </span>
 </div>
+<main id="dashboard-content">
+<section id="runs-section" aria-label="Runs">
+<div class="sect"><h2>Live</h2></div>
+<div class="list" id="live"><div class="empty">loading…</div></div>
+<div class="sect"><h2>Recent runs</h2></div>
 <div class="list" id="past"><div class="empty">loading…</div></div>
-<div class="note" id="note">live rows open that instance · <b>stop</b> ends a run through its normal close-out (the trace is sealed) · past rows open a snapshot rendered from their trace · ⧉ copies the <b>cctrace view</b> command · refreshes every 15s</div>
+</section>
+<section id="store-section" aria-label="Storage" hidden>
+<div class="sect"><h2>Trace storage</h2>
+  <span class="grp" id="storeact"></span>
+</div>
+<div class="list" id="store"><div class="empty">loading…</div></div>
+</section>
+<div class="note" id="note" role="status"></div>
+</main>
+</div>
+</div>
 <script>
+  ${NAV_SCRIPT};
+  var UI = ${JSON.stringify(UI_ICONS)};
   var ICONS = ${JSON.stringify(CLIENT_ICONS)};
   var SHOW_STEP = 100;
   var showCap = SHOW_STEP;
   var groupBy = localStorage.getItem('cctrace-dash-group') || 'project';
+  if (['project', 'client', 'none'].indexOf(groupBy) < 0) groupBy = 'project';
   var lastPast = [];
+  var lastLive = [];
+  var query = '';
+
+  function matchesRun(i) {
+    return !query || [i.project, i.projectPath, i.client, i.title, i.firstPrompt, i.sessionId].join(' ').toLowerCase().indexOf(query) !== -1;
+  }
+  function paintTotals() {
+    document.getElementById('totals').textContent = lastLive.length + ' live · ' + lastPast.length + ' runs';
+    document.getElementById('dash-runs-count').textContent = lastPast.length;
+    document.getElementById('scope-summary').textContent = lastLive.length + ' live · ' + lastPast.length + ' recorded';
+  }
+  function dashboardRoute() {
+    var storage = location.hash === '#store';
+    document.getElementById('runs-section').hidden = storage;
+    document.getElementById('runs-toolbar').hidden = storage;
+    document.getElementById('store-section').hidden = !storage;
+    document.getElementById('page-title').textContent = storage ? 'Storage' : 'Runs';
+    for (var key of ['runs', 'store']) {
+      var a = document.getElementById('dash-' + key);
+      var active = (key === 'store') === storage;
+      a.classList.toggle('active', active);
+      if (active) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    }
+  }
+  window.addEventListener('hashchange', dashboardRoute);
+  dashboardRoute();
+  var themeButton = document.getElementById('theme-toggle');
+  function themePaint(pref) {
+    if (pref === 'light' || pref === 'dark') document.documentElement.setAttribute('data-theme', pref);
+    else document.documentElement.removeAttribute('data-theme');
+    themeButton.innerHTML = pref === 'light' ? UI.sun : pref === 'dark' ? UI.moon : UI.monitor;
+    themeButton.title = 'Theme: ' + pref;
+    themeButton.setAttribute('aria-label', themeButton.title);
+  }
+  themePaint(localStorage.getItem('cctrace-theme') || 'system');
+  themeButton.onclick = function () {
+    var order = ['system', 'light', 'dark'];
+    var next = order[(order.indexOf(localStorage.getItem('cctrace-theme') || 'system') + 1) % 3];
+    localStorage.setItem('cctrace-theme', next);
+    themePaint(next);
+  };
+  document.getElementById('run-filter').oninput = function (ev) {
+    query = ev.target.value.trim().toLowerCase();
+    showCap = SHOW_STEP;
+    renderLive(lastLive);
+    renderPast(lastPast);
+  };
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -248,9 +332,11 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     // The generated session title when one exists (cctrace title), else
     // the human's first prompt — the wire-derived identity.
     var who = el('span', 'prompt', i.title || i.firstPrompt || '');
-    if (i.title && i.firstPrompt) who.title = i.firstPrompt;
+    who.title = [i.title, i.firstPrompt].filter(Boolean).join(' · ');
     row.appendChild(who);
-    if (i.sessionId) row.appendChild(el('span', 'sid', String(i.sessionId).slice(0, 8)));
+    var meta = el('span', 'row-meta');
+    if (i.sessionId) meta.appendChild(el('span', 'sid', String(i.sessionId).slice(0, 8)));
+    row.appendChild(meta);
     return row;
   }
   // A run we asked to stop: id -> when. The row keeps saying so until the
@@ -315,34 +401,37 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   }
 
   function renderLive(list) {
+    lastLive = list;
+    paintTotals();
+    list = list.filter(matchesRun);
     var box = document.getElementById('live');
     box.textContent = '';
-    if (!list.length) { box.appendChild(el('div', 'empty', selfStopped ? 'no live instances — this server stopped too' : 'no live instances')); return; }
+    if (!list.length) { box.appendChild(el('div', 'empty', query ? 'No matching live runs' : selfStopped ? 'no live instances — this server stopped too' : 'no live instances')); return; }
     var seen = {};
     for (var k = 0; k < list.length; k++) {
       var i = list[k];
       seen[i.id] = 1;
       var row = baseRow(i, true);
+      var meta = row.querySelector('.row-meta');
       row.href = 'http://' + location.hostname + ':' + Number(i.port) + '/trace';
-      if (i.self) row.appendChild(el('span', 'self', 'this server'));
-      row.appendChild(el('span', 'mode', i.mode || ''));
-      row.appendChild(el('span', 'when', hm(i.startedAt)));
-      row.appendChild(el('span', 'port', ':' + i.port));
+      if (i.self) meta.appendChild(el('span', 'self', 'this server'));
+      meta.appendChild(el('span', 'mode', i.mode || ''));
+      meta.appendChild(el('span', 'when', hm(i.startedAt)));
+      meta.appendChild(el('span', 'port', ':' + i.port));
       var asked = i.id ? stopping[i.id] : 0;
-      if (asked) row.appendChild(el('span', 'pending', 'stopping…'));
-      if (i.id) row.appendChild(stopButton(i, asked && Date.now() - asked > FORCE_AFTER_MS));
+      if (asked) meta.appendChild(el('span', 'pending', 'stopping…'));
+      if (i.id) meta.appendChild(stopButton(i, asked && Date.now() - asked > FORCE_AFTER_MS));
       row.title = (i.projectPath || i.project || '') +
         (i.logFile ? '\\n' + i.logFile : '') +
         (i.pid ? '\\ncctrace pid ' + i.pid + (i.agentPid ? ' · agent pid ' + i.agentPid : '') : '');
       box.appendChild(row);
     }
     // A run that left the list has stopped — forget the pending mark.
-    for (var id in stopping) { if (!seen[id]) delete stopping[id]; }
-    var t = document.getElementById('totals');
-    t.textContent = list.length + ' live · ' + lastPast.length + ' runs';
+    for (var id in stopping) { if (!lastLive.some(function (i) { return i.id === id; })) delete stopping[id]; }
   }
   function pastRow(i) {
     var row = baseRow(i, false);
+    var meta = row.querySelector('.row-meta');
     if (i.traceExists === false) row.className += ' gone';
     // stat cluster: size · pairs (msgs) · tokens · cost — whatever the
     // tombstone knows; old tombstones just show less.
@@ -351,8 +440,17 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     if (i.pairs > 0) stats.push(i.pairs + ' pairs' + (i.messages > 0 ? ' (' + i.messages + ' msg)' : ''));
     if (i.tokensIn > 0 || i.tokensOut > 0) stats.push(tok(i.tokensIn) + ' in / ' + tok(i.tokensOut) + ' out');
     if (i.costUsd > 0.005) stats.push('$' + i.costUsd.toFixed(2));
-    if (stats.length) row.appendChild(el('span', 'stat', stats.join(' · ')));
-    row.appendChild(el('span', 'when', hm(i.endedAt)));
+    if (stats.length) {
+      var compact = [];
+      if (i.traceBytes > 0) compact.push(bytes(i.traceBytes));
+      if (i.pairs > 0) compact.push(i.pairs + ' pairs');
+      if (i.tokensIn > 0 || i.tokensOut > 0) compact.push(tok((i.tokensIn || 0) + (i.tokensOut || 0)) + ' tok');
+      if (i.costUsd > 0.005) compact.push('$' + i.costUsd.toFixed(2));
+      var stat = el('span', 'stat', compact.join(' · '));
+      stat.title = stats.join(' · ');
+      meta.appendChild(stat);
+    }
+    meta.appendChild(el('span', 'when', hm(i.endedAt)));
     var tracePath = i.traceCarrier || i.logFile;
     row.title = (i.projectPath || '') + (tracePath ? '\\n' + tracePath : '');
     if (i.traceExists !== false && i.id) {
@@ -360,19 +458,21 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
       row.target = '_blank';
       row.rel = 'noopener';
     } else {
-      row.appendChild(el('span', 'mode', 'trace missing'));
+      meta.appendChild(el('span', 'mode', 'trace missing'));
     }
     if (tracePath && i.traceExists !== false) {
-      var cp = el('button', 'cp', '⧉');
+      var cp = el('button', 'cp');
+      cp.innerHTML = UI.copy;
+      cp.setAttribute('aria-label', 'Copy view command');
       cp.title = 'copy: cctrace view ' + tracePath;
       cp.onclick = function (ev) {
         ev.preventDefault(); ev.stopPropagation();
         navigator.clipboard.writeText('cctrace view ' + tracePath).then(function () {
-          cp.textContent = '✓'; cp.className = 'cp copied';
-          setTimeout(function () { cp.textContent = '⧉'; cp.className = 'cp'; }, 1200);
-        });
+          cp.innerHTML = UI.check; cp.className = 'cp copied';
+          setTimeout(function () { cp.innerHTML = UI.copy; cp.className = 'cp'; }, 1200);
+        }).catch(function () { cp.title = 'Could not copy view command'; });
       };
-      row.appendChild(cp);
+      meta.appendChild(cp);
     }
     return row;
   }
@@ -387,19 +487,21 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   }
   function renderPast(all) {
     lastPast = all;
+    paintTotals();
     var box = document.getElementById('past');
     box.textContent = '';
     if (!all.length) { box.appendChild(el('div', 'empty', 'no finished runs in the registry (30-day window)')); return; }
     // newest first everywhere; grouping only changes the sections
-    var list = all.slice().sort(function (a, b) {
+    var list = all.filter(matchesRun).sort(function (a, b) {
       return String(b.endedAt || '').localeCompare(String(a.endedAt || ''));
     });
+    if (!list.length) { box.appendChild(el('div', 'empty', 'No matching runs')); return; }
     var shown = 0;
     if (groupBy === 'none') {
       for (var k = 0; k < list.length && shown < showCap; k++, shown++) box.appendChild(pastRow(list[k]));
     } else {
       // groups ordered by their newest run, newest-first within
-      var groups = [], byKey = {};
+      var groups = [], byKey = Object.create(null);
       for (var k2 = 0; k2 < list.length; k2++) {
         var key = groupKey(list[k2]);
         if (!byKey[key]) { byKey[key] = { label: groupLabel(list[k2]), items: [] }; groups.push(byKey[key]); }
@@ -419,9 +521,6 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
       more.onclick = function () { showCap += SHOW_STEP; renderPast(lastPast); };
       box.appendChild(more);
     }
-    var t = document.getElementById('totals');
-    var liveN = document.querySelectorAll('#live a.row').length;
-    t.textContent = liveN + ' live · ' + all.length + ' runs';
   }
   // ---- store: the housekeeping picture, and the job that changes it ----
   //
@@ -566,7 +665,11 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   var grp = document.getElementById('grp');
   function paintGrp() {
     var bs = grp.querySelectorAll('button');
-    for (var k = 0; k < bs.length; k++) bs[k].className = bs[k].dataset.g === groupBy ? 'active' : '';
+    for (var k = 0; k < bs.length; k++) {
+      var active = bs[k].dataset.g === groupBy;
+      bs[k].className = active ? 'active' : '';
+      bs[k].setAttribute('aria-pressed', String(active));
+    }
   }
   grp.onclick = function (ev) {
     var g = ev.target && ev.target.dataset && ev.target.dataset.g;
@@ -578,9 +681,16 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   };
   paintGrp();
   function refresh() {
-    fetch('/api/instances').then(function (r) { return r.json(); }).then(function (list) {
-      renderLive(list);
-      document.getElementById('note').className = 'note';
+    var button = document.getElementById('refresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    function read(url) { return fetch(url).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }); }
+    Promise.all([read('/api/instances'), read('/api/runs')]).then(function (data) {
+      renderLive(data[0]);
+      renderPast(data[1]);
+      var note = document.getElementById('note');
+      note.className = 'note';
+      note.textContent = '';
     }).catch(function () {
       // The server that served this page is gone — say so instead of
       // quietly showing a frozen picture (stopping THIS instance does it).
@@ -589,9 +699,9 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
         ? 'this server was stopped from here — open the dashboard from another live instance'
         : 'not reaching this dashboard server — showing the last picture it sent';
       n.className = 'note stale';
-    });
-    fetch('/api/runs').then(function (r) { return r.json(); }).then(renderPast).catch(function () {});
+    }).finally(function () { button.disabled = false; });
   }
+  document.getElementById('refresh').onclick = function () { refresh(); pollStore(); };
   refresh();
   pollStore();
   setInterval(refresh, 15000);

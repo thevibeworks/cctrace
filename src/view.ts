@@ -2,6 +2,8 @@ import { existsSync, statSync, writeFileSync, openSync, readSync, closeSync } fr
 import { join, basename, dirname, relative, resolve } from "path";
 import { renderSnapshot, verifySnapshot, type PageMeta } from "./ui";
 import { readTracePairs, traceLines, listTraceEntries, TAIL_BYTES, type TraceParseStats, type TraceDirArg, type ReadTraceResult } from "./history";
+import { createFold, type FoldResult } from "./fold";
+import { categorizeUrl } from "./categorize";
 import { titleFor, mainSessionId } from "./title";
 import { CCTRACE_VERSION } from "./version";
 import { sliceWindow, pairEndMs } from "./replay";
@@ -36,12 +38,28 @@ export interface ViewResult {
    * while streaming, budget or not) — the trace's real size, which an
    * archived source's file size understates 30-180x. */
   decodedBytes: number;
+  /** Set when the read FOLDED instead of truncating (src/fold.ts): every
+   * pair is here, some bodies are stubs. The counterpart of `truncated` —
+   * the two are mutually exclusive by construction. */
+  folded?: { superseded: number; budgeted: number; foldedBytes: number; keptBytes: number; olderFiles?: number };
 }
 
 export interface ViewOpts {
-  /** Newest decoded bytes to keep (default TAIL_BYTES); Infinity = --full. */
+  /** Newest decoded bytes to keep (default TAIL_BYTES); Infinity = --full.
+   * Ignored when foldBytes is set — a fold keeps every line. */
   tailBytes?: number;
+  /** Render-fold the read: keep every pair, hold this many bytes of bodies
+   * (src/fold.ts). What a page should ask for — see VIEW_BYTES. */
+  foldBytes?: number;
+  /** How much decoded trace a folded session merge will stream before it
+   * stops and says so. Default SCAN_BYTES. */
+  scanBytes?: number;
 }
+
+/** How much decoded trace a folded read streams before it stops. The fold
+ * costs ~0.4 GB/s (measured: 3.5 GB in 8.7s), so this is the ceiling on
+ * how long opening a session may take, not on how much of it is shown. */
+export const SCAN_BYTES = 8 * 1024 * 1024 * 1024;
 
 export class ViewError extends Error {}
 
@@ -243,10 +261,18 @@ export const VIEW_BYTES = 32 * 1024 * 1024;
 
 export async function resolveView(target: string, logDir: TraceDirArg, opts: ViewOpts = {}): Promise<ViewResult> {
   const tailBytes = opts.tailBytes ?? TAIL_BYTES;
-  // A whole-file read, budgeted: the newest `tailBytes` of decoded lines.
+  const foldBytes = opts.foldBytes;
+  // A whole-file read. Folded, that is every pair with its bodies cut to
+  // the page's budget; unfolded, the newest `tailBytes` of decoded lines.
   const readOne = async (path: string, stats: TraceParseStats) => {
-    const read = await readTracePairs(path, { tailBytes, stats });
-    return { pairs: read.pairs, truncated: truncationOf(read), decodedBytes: read.seenBytes };
+    if (foldBytes === undefined) {
+      const read = await readTracePairs(path, { tailBytes, stats });
+      return { pairs: read.pairs, truncated: truncationOf(read), decodedBytes: read.seenBytes };
+    }
+    const fold = createFold({ categorize: catFor(), wire: WIRE, bodyBytes: foldBytes, stats });
+    await fold.addFile(path);
+    const r = fold.finish();
+    return { pairs: r.pairs, folded: foldingOf(r), decodedBytes: r.seenBytes };
   };
   // 0. "latest" — the newest trace in the log dir, no name gymnastics.
   if (target === "latest") {
@@ -267,7 +293,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   }
   if (existsSync(target) && statSync(target).isFile()) {
     const stats: TraceParseStats = { torn: 0, invalid: 0 };
-    const { pairs, truncated, decodedBytes } = await readOne(target, stats);
+    const { pairs, truncated, folded, decodedBytes } = await readOne(target, stats);
     if (!pairs.length) throw new ViewError(`${target} has no trace pairs`);
     return {
       pairs,
@@ -277,6 +303,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       matchedBy: "file",
       warnings: damageWarnings(basename(target), stats),
       truncated,
+      folded,
       decodedBytes,
     };
   }
@@ -292,11 +319,16 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   //    substring of session-<id>.jsonl's own name, and matching that single
   //    file would silently drop every newer unmerged trace of the session.
   if (isSessionIdish(target)) {
+    const hasPrefix = (p: TracePair) => { const sid = extractSessionId(p, WIRE); return !!sid && sid.startsWith(target); };
+    if (foldBytes !== undefined) {
+      const r = await foldSession(target, traces, logDir, hasPrefix, foldBytes, opts.scanBytes ?? SCAN_BYTES);
+      if (r) return r;
+      // nothing carried this id — fall through to the filename fragment
+    }
     const merged: TracePair[] = [];
     const seen = new Set<string>();
     const sources = new Set<string>();
     const sourcePaths = new Set<string>();
-    const hasPrefix = (p: TracePair) => { const sid = extractSessionId(p, WIRE); return !!sid && sid.startsWith(target); };
     // One budget across the session's files, newest first: the newest
     // turns are what a view opens for, so the oldest files fall off.
     let remaining = tailBytes;
@@ -346,7 +378,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
   const byName = traces.filter((p) => basename(p).includes(target));
   if (byName.length === 1) {
     const stats: TraceParseStats = { torn: 0, invalid: 0 };
-    const { pairs, truncated, decodedBytes } = await readOne(byName[0]!, stats);
+    const { pairs, truncated, folded, decodedBytes } = await readOne(byName[0]!, stats);
     if (!pairs.length) throw new ViewError(`${basename(byName[0])} has no trace pairs`);
     return {
       pairs,
@@ -356,6 +388,7 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       matchedBy: "filename",
       warnings: damageWarnings(basename(byName[0]), stats),
       truncated,
+      folded,
       decodedBytes,
     };
   }
@@ -371,6 +404,63 @@ export async function resolveView(target: string, logDir: TraceDirArg, opts: Vie
       `  recent traces:\n` +
       traces.slice(-6).map((p) => `  ${basename(p)}`).join("\n"),
   );
+}
+
+const catFor = () => (url: string, client?: string) => categorizeUrl(url, client, WIRE);
+
+function foldingOf(r: FoldResult, olderFiles = 0): ViewResult["folded"] {
+  if (!r.superseded && !r.budgeted && !olderFiles) return undefined;
+  return { superseded: r.superseded, budgeted: r.budgeted, foldedBytes: r.foldedBytes, keptBytes: r.keptBytes, olderFiles: olderFiles || undefined };
+}
+
+/**
+ * A session merged across its trace files with ONE fold — every pair of
+ * every file, bodies budgeted newest-first. Files are streamed newest
+ * first for exactly that reason: when the budget runs out it is the OLDEST
+ * conversation that folds to stubs, and the session you opened for stays
+ * whole. Returns null when no trace carries the id.
+ */
+async function foldSession(
+  target: string,
+  traces: string[],
+  logDir: TraceDirArg,
+  filter: (p: TracePair) => boolean,
+  foldBytes: number,
+  scanBytes: number,
+): Promise<ViewResult | null> {
+  const fold = createFold({ categorize: catFor(), wire: WIRE, bodyBytes: foldBytes, needles: [target], filter });
+  const sources = new Set<string>();
+  const sourcePaths = new Set<string>();
+  let scanned = 0;
+  let olderFiles = 0;
+  for (const path of newestFirst(traces)) {
+    if (scanned >= scanBytes) {
+      // The scan ceiling is time, not room: everything older than what we
+      // already read stays unread, and the notice says how many files.
+      try { if (existsSync(path)) olderFiles++; } catch {}
+      continue;
+    }
+    let added: { lines: number; seenBytes: number };
+    try { added = await fold.addFile(path); } catch { continue; }
+    scanned += added.seenBytes;
+    if (!added.lines) continue;
+    sources.add(basename(path));
+    sourcePaths.add(resolve(path));
+  }
+  const r = fold.finish();
+  if (!r.pairs.length) return null;
+  r.pairs.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
+  const safe = target.replace(/[^0-9a-zA-Z-]/g, "").slice(0, 16);
+  return {
+    pairs: r.pairs,
+    htmlPath: join(primaryDir(logDir), `session-${safe}.html`),
+    sources: [...sources],
+    sourcePaths: [...sourcePaths],
+    matchedBy: "session",
+    warnings: [],
+    folded: foldingOf(r, olderFiles),
+    decodedBytes: r.seenBytes,
+  };
 }
 
 /** The two sizes a page shows: the trace (decoded bytes) and, when the
@@ -400,8 +490,17 @@ function newestFirst(paths: string[]): string[] {
 /** The one-line notice for a budgeted view: what was left out and how to
  * get it. Empty when nothing was. */
 export function truncationNotice(r: ViewResult): string {
-  if (!r.truncated) return "";
   const mb = (n: number) => `${Math.max(1, Math.round(n / (1024 * 1024)))} MB`;
+  if (r.folded) {
+    // A fold left nothing out: it says what it put away, not what it lost.
+    const f = r.folded;
+    const parts: string[] = [];
+    if (f.superseded) parts.push(`${f.superseded} superseded`);
+    if (f.budgeted) parts.push(`${f.budgeted} over budget`);
+    const older = f.olderFiles ? `; ${f.olderFiles} older trace file${f.olderFiles > 1 ? "s" : ""} not scanned` : "";
+    return `all ${r.pairs.length} pairs — ${parts.join(" + ")} request bodies folded to stubs, ${mb(f.foldedBytes)} off the page${older} — --full embeds every byte`;
+  }
+  if (!r.truncated) return "";
   const t = r.truncated;
   const older = t.olderFiles ? `; ${t.olderFiles} older trace file${t.olderFiles > 1 ? "s" : ""} not scanned` : "";
   return `showing the newest ${r.pairs.length} pairs (${mb(t.keptBytes)} of ${mb(t.keptBytes + t.droppedBytes)} decoded; ${t.droppedLines} older lines left out${older}) — --full loads everything`;
@@ -419,8 +518,8 @@ function damageWarnings(file: string, stats: TraceParseStats): string[] {
  * self-check (embedded payload no longer round-trips) is reported as a
  * warning, not a throw — a partially usable snapshot beats none.
  */
-export async function writeView(target: string, logDir: TraceDirArg, meta: PageMeta = {}, opts: { slice?: string; projectPath?: string; tailBytes?: number } = {}): Promise<ViewResult> {
-  const result = await resolveView(target, logDir, { tailBytes: opts.tailBytes });
+export async function writeView(target: string, logDir: TraceDirArg, meta: PageMeta = {}, opts: { slice?: string; projectPath?: string; read?: ViewOpts } = {}): Promise<ViewResult> {
+  const result = await resolveView(target, logDir, opts.read ?? {});
   if (opts.slice) result.pairs = applySlice(result.pairs, opts.slice);
   const traceFile = basename(result.sources[0] || target);
   // Same header identity a served view gets: the project the caller
@@ -435,6 +534,7 @@ export async function writeView(target: string, logDir: TraceDirArg, meta: PageM
     traceBytes,
     traceDiskBytes,
     truncated: result.truncated,
+    folded: result.folded,
     sessionTitle: titleFor(result.sourcePaths[0] ? dirname(result.sourcePaths[0]) : viewDir, mainSessionId(result.pairs), traceFile) || undefined,
     project: basename(projectRoot),
     projectPath: projectRoot,

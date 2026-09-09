@@ -196,7 +196,9 @@ export function createServer(config: ServerConfig) {
       const found = await findPairInTraces(config.readDirs ?? [config.logDir], config.logFile, id);
       if (found) return found;
     }
-    return held;
+    // A missing backing record is not a successful "original body" lookup.
+    // Keep in-memory-only viewers working when their bodies are still full.
+    return bodies && (held.request.body as any)?._cctrace_stub ? null : held;
   };
   // The full state a connecting page needs: the pairs, the trace size, and
   // the requests still in flight (so a page that connects MID-request knows

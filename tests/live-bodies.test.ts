@@ -105,6 +105,8 @@ test("live folding updates connected pages, survives reconnect, and exports full
       const init = await new Promise<any>((resolve) => { reconnect.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
       expect(init.pairs[0].request.body._cctrace_stub).toBe(1);
     } finally { reconnect.close(); }
+    rmSync(path);
+    expect((await fetch(`${base}/api/pair/synthetic-0`)).status).toBe(404);
   } finally { ws.close(); server.stop(); }
 });
 

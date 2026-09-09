@@ -4750,7 +4750,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!res.ok) throw new Error(String(res.status));
         const full = await res.json();
         const p = pairs.find(x => x.id === id);
-        if (!p || !full || !full.request) throw new Error('no body');
+        if (!p || !full || !full.request || (full.request.body && full.request.body._cctrace_stub)) throw new Error('original body unavailable');
         if (detailId !== id) return;
         detailOriginal = { ...full, _cat: p._cat };
         openDetail(id);

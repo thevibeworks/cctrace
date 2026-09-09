@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 
 import { basename, dirname, join, relative, resolve } from "path";
-import { mkdirSync, existsSync, unlinkSync, appendFileSync, writeFileSync, statSync, readFileSync, utimesSync } from "fs";
+import { mkdirSync, existsSync, unlinkSync, writeFileSync, statSync, readFileSync, utimesSync } from "fs";
 import { spawn, type ChildProcess } from "child_process";
 import { createServer, renderSnapshot, verifySnapshot } from "./server";
 import { createCapturer, traceIdentityEnv, bypassHostEnv, type CaptureMode, type Capturer } from "./capture";
 import { isNativeBinary, resolveClaudeBashWrapper } from "./detect";
 import { ensureCerts, migrateCaDir, buildInterceptSet } from "./certs";
-import { parseCliArgs, CliUsageError } from "./args";
+import { parseCliArgs, CliUsageError, captureTuning } from "./args";
 import { loadPriorPairs, loadTraceFiles, newestPriorSessionId, readTracePairs, traceLines } from "./history";
 import { parseWindow, runInWindow, foldRuns, createScanFold } from "./insights";
 import { createSpecAccumulator, diffSpecCatalogs, renderSpecDiff, renderSpecMarkdown } from "./spec";
@@ -33,7 +33,8 @@ import {
 } from "./storage";
 import { planCompact, applyCompact } from "./compact";
 import { CATEGORIES, categorizeUrl } from "./categorize";
-import { traceSummary, type TraceStats } from "./report";
+import { createTraceSummary, type TraceStats } from "./report";
+import { createTraceLog } from "./trace-log";
 import { setIdentityRedaction } from "./redact";
 import { parseArgs } from "util";
 import type { TracePair, TraceStart } from "./types";
@@ -1389,6 +1390,10 @@ ${C.yellow}OPTIONS:${C.reset}
                      you are traced, the live UI address, and how to bypass the
                      proxy for the one command that misbehaves behind one
   --messages-only    Only capture model API calls
+  --live-bodies MODE folded (default): request bodies on demand; full: keep all
+  --live-body-mb N   Retained live request-body budget in MB (default: 64)
+  --upstream-retry S MITM retry window for pre-connect model failures (default: 30s,
+                     0 disables; TLS/reset/timeout/HTTP responses never replay)
   --capture-external MITM every host (default: non-first-party hosts pass
                      through as opaque byte-counted tunnels). External
                      bodies over 64KB are summarized, not stored
@@ -1491,6 +1496,9 @@ async function buildPreload(): Promise<string> {
 interface RunOpts {
   port: number;
   liveMode: boolean;
+  liveBodies: "folded" | "full";
+  liveBodyBytes: number;
+  retryMs: number;
   /** Where this run writes: the project's store dir, or --dir. */
   logDir: string;
   /** Where continuity readers look: logDir, then a legacy ./.cctrace. */
@@ -1515,8 +1523,8 @@ interface LogSink {
   onStart: (start: TraceStart) => void;
   /** Write the categorized HTML report from everything collected. */
   writeHtml: () => Promise<string>;
-  /** This run's pairs (no prior-run merges) — feeds the exit summary. */
-  pairs: () => TracePair[];
+  summary: ReturnType<typeof createTraceSummary>;
+  readPair: (id: string) => Promise<TracePair | null>;
 }
 
 /** Run identity for the page header: the project is the cwd the client runs
@@ -1565,14 +1573,17 @@ function makeLogSink(
   log(`Log: ${logFile}`, C.blue);
 
   const collected: TracePair[] = [];
+  const traceLog = createTraceLog(logFile);
+  const summary = createTraceSummary({ wire: wireTables(), pricing: pricingCatalog(DATA_DIR) });
 
   return {
     onPair: (pair: TracePair) => {
       // Label who produced this traffic — the one choke point every pair
       // passes through, so the file and the live UI can't disagree.
       pair.client = CLIENT.name;
-      collected.push(pair);
-      appendFileSync(logFile, JSON.stringify(pair) + "\n");
+      traceLog.append(pair);
+      summary.add(pair);
+      if (!opts.liveMode) collected.push(pair);
       ingest?.(pair);
     },
     // The live "the model is thinking now" signal. Same client label as the
@@ -1610,7 +1621,8 @@ function makeLogSink(
       writeFileSync(htmlFile, snapHtml);
       return htmlFile;
     },
-    pairs: () => collected,
+    summary,
+    readPair: traceLog.read,
   };
 }
 
@@ -1940,7 +1952,7 @@ async function recoverSeals(mode: "detached" | "inline"): Promise<number> {
   return stale.length;
 }
 
-function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, getPairs?: () => TracePair[], onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void, runId?: string) {
+function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], capturer: Capturer, opts: RunOpts, logFile: string, identityEnv: Record<string, string>, onFinalize?: () => Promise<string>, onAgentPid?: (pid: number) => void, summary?: ReturnType<typeof createTraceSummary>, onTraceMoved?: (path: string) => void, onStats?: (stats: TraceStats) => void, runId?: string) {
   // The proxy must outlive any single failed connection: if this process dies,
   // Claude's HTTPS_PROXY dies with it and the live session is severed. Bun's
   // stream internals can throw from native callbacks (observed: process-fatal
@@ -1990,11 +2002,10 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
     // The close-out: what got traced (count, categories, wall-clock, disk),
     // whose session, how many tokens and dollars, what failed — the receipt
     // for the run, not just a pair count.
-    if (getPairs) {
+    if (summary) {
       let sizeBytes = 0;
       try { sizeBytes = statSync(logFile).size; } catch {}
-      const sum = traceSummary(getPairs(), {
-        wire: wireTables(), pricing: pricingCatalog(DATA_DIR),
+      const sum = summary.summary({
         sizeBytes, durationMs: Date.now() - startedAt,
       });
       log(sum.traced, C.green);
@@ -2008,11 +2019,8 @@ function spawnClaudeWithCapturer(claudePath: string, claudeArgs: string[], captu
       log(`Traced ${capturer.pairCount()} request/response pairs`, C.green);
     }
     capturer.stop();
-    // The session ids this run saw — the merge scope, cheap from the pairs
-    // already in memory.
-    const wire = wireTables();
-    const sids = new Set<string>();
-    for (const p of getPairs?.() ?? []) { const sid = extractSessionId(p, wire); if (sid) sids.add(sid); }
+    // The session ids this run saw, retained by the incremental summary.
+    const sids = summary?.sessionIds() ?? new Set<string>();
 
     // Fold + archive is bounded but not instant (a resumed session unions
     // its whole history, then re-compresses). The plain trace is already
@@ -2073,6 +2081,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   const { logFile, htmlFile } = logPaths(opts);
   let ingest: ((pair: TracePair) => void) | undefined;
   let ingestStart: ((start: TraceStart) => void) | undefined;
+  let readOwnPair: ((id: string) => Promise<TracePair | null>) | undefined;
   let liveInstance: InstanceHandle | null = null;
   // --continue/--resume: the resumed session id isn't on the wire until the
   // first request, but we can GUESS it now — an explicit `--resume <id>`
@@ -2116,6 +2125,9 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
       },
       logFile,
       noHistory: opts.fresh,
+      liveBodies: opts.liveBodies,
+      liveBodyBytes: opts.liveBodyBytes,
+      readPair: (id) => readOwnPair?.(id) ?? Promise.resolve(null),
       withFiles: opts.withFiles,
       speculate: speculateSid,
       meta: { ...pageMeta(CLIENT.name), traceFile: basename(logFile), traceRelPath: traceRelPath(process.cwd(), logFile) },
@@ -2173,6 +2185,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
   }
 
   const sink = makeLogSink(opts, logFile, htmlFile, ingest, ingestStart);
+  readOwnPair = sink.readPair;
   const targetHost = process.env.ANTHROPIC_BASE_URL
     ? new URL(process.env.ANTHROPIC_BASE_URL).host
     : "api.anthropic.com";
@@ -2206,6 +2219,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     targetHost,
     interceptHosts,
     captureExternal: !!values["capture-external"],
+    retryMs: opts.retryMs,
     onStatus: (msg) => log(msg, C.dim),
   });
 
@@ -2238,7 +2252,7 @@ async function runProxyCapture(mode: CaptureMode, claudePath: string, claudeArgs
     traceIdentityEnv(resolve(logFile), liveInstance?.snapshot() ?? null),
     opts.liveMode ? undefined : sink.writeHtml,
     (pid) => liveInstance?.update({ agentPid: pid }),
-    sink.pairs,
+    sink.summary,
     // The tombstone is the cross-project run catalog: point it at the merged
     // session file, not the trace the merge just absorbed.
     (path) => liveInstance?.update({ logFile: path }),
@@ -2440,6 +2454,7 @@ async function main() {
 
   const dirs = traceDirsFor(values.dir);
   const opts: RunOpts = {
+    ...captureTuning(values),
     port: values.port ? parseInt(values.port, 10) : DEFAULT_PORT,
     liveMode: !values.static,
     logDir: dirs.writeDir,

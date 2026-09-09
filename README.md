@@ -238,6 +238,13 @@ guarantees: [docs/traces.md](docs/traces.md).
 
 ## Common options
 
+Long sessions use full disk recording with live request bodies loaded on
+demand. `--live-bodies full` retains every body in the live view;
+`--live-body-mb 128` increases the default 64 MiB request-body budget.
+`--upstream-retry 0` disables the default bounded retries for confirmed
+pre-connect MITM model-call failures. Details and limits:
+[live resources and recovery](docs/live-resources.md).
+
 | Option | Description |
 |--------|-------------|
 | `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |

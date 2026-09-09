@@ -200,6 +200,7 @@ export function extractMessageInfo(pair: any): any {
 
 /** Usage/params for ANY model-call pair — dispatches on the wire dialect. */
 export function extractCallInfo(pair: any): any {
+  if (pair && pair._ci) return pair._ci;
   return wireDialect(pair) === "openai" ? extractOpenaiInfo(pair) : extractMessageInfo(pair);
 }
 

@@ -15,6 +15,9 @@ export const CLI_OPTIONS = {
   static: { type: "boolean", short: "s" },
   mode: { type: "string" }, // auto | mitm | base-url | node
   "messages-only": { type: "boolean" },
+  "live-bodies": { type: "string" }, // folded | full (disk capture stays full)
+  "live-body-mb": { type: "string" }, // retained request-body budget
+  "upstream-retry": { type: "string" }, // retry window in seconds, 0 disables
   "capture-external": { type: "boolean" },
   "intercept-host": { type: "string", multiple: true },
   "bypass-host": { type: "string", multiple: true },
@@ -39,6 +42,21 @@ export const CLI_OPTIONS = {
 
 /** A user-facing usage error: print the message and exit, no stack trace. */
 export class CliUsageError extends Error {}
+
+export function captureTuning(values: { "live-bodies"?: string; "live-body-mb"?: string; "upstream-retry"?: string }) {
+  const liveBodies = values["live-bodies"] ?? "folded";
+  if (liveBodies !== "folded" && liveBodies !== "full") throw new CliUsageError("--live-bodies must be folded or full");
+  const numeric = (key: "live-body-mb" | "upstream-retry", fallback: number, max: number) => {
+    const raw = values[key];
+    const n = raw === undefined ? fallback : /^\d+$/.test(raw) ? Number(raw) : NaN;
+    if (!Number.isSafeInteger(n) || n < (key === "live-body-mb" ? 1 : 0) || n > max) {
+      throw new CliUsageError(`--${key} must be an integer from ${key === "live-body-mb" ? 1 : 0} to ${max}`);
+    }
+    return n;
+  };
+  return { liveBodies, liveBodyBytes: numeric("live-body-mb", 64, 4096) * 1024 * 1024,
+    retryMs: numeric("upstream-retry", 30, 60) * 1000 };
+}
 
 /** Split argv at the first "--": cctrace's own args before, Claude's after. */
 export function splitArgv(argv: string[]): { own: string[]; claudeArgs: string[] } {

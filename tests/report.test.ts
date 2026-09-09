@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { traceSummary, fmtDur } from "../src/report";
+import { traceSummary, createTraceSummary, fmtDur } from "../src/report";
 import { wireTables } from "../src/clients";
 
 const SID = "dafcee7b-1111-2222-3333-444455556666";
@@ -55,6 +55,15 @@ describe("fmtDur", () => {
 });
 
 describe("traceSummary", () => {
+  test("incremental receipt survives callers releasing or replacing bodies", () => {
+    const pairs = [messagesPair(), telemetryPair("t"), messagesPair({ id: "failed", response: null })];
+    const opts = { wire: wireTables(), durationMs: 123000, sizeBytes: 1024 };
+    const expected = traceSummary(pairs, opts);
+    const acc = createTraceSummary({ wire: wireTables() });
+    for (const p of pairs) { acc.add(p); p.request.body = null; p.response = null; }
+    expect(acc.summary(opts)).toEqual(expected);
+    expect([...acc.sessionIds()]).toEqual([SID]);
+  });
   test("the receipt: counts, categories, size, session, tokens, cost", () => {
     const s = traceSummary(
       [messagesPair(), messagesPair({ id: "p2" }), telemetryPair("t1")],

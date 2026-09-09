@@ -469,8 +469,10 @@ describe("dashboard", () => {
       expect(fullHtml).toContain("big00");
       expect(fullHtml).not.toContain('"truncated":{"droppedLines"');
       expect(fullHtml).not.toContain('"folded":{"superseded"');
-      // the fold is what keeps the page openable: 30 x 100 KB of body, gone
-      expect(cutHtml.length).toBeLessThan(fullHtml.length / 4);
+      // Compare payloads, not the shared application shell (which grows as
+      // features ship independently of trace-body retention).
+      const embedded = (html: string) => html.match(/window\.__PAIRS__ = (.*?);<\/script>/s)![1]!.length;
+      expect(embedded(cutHtml)).toBeLessThan(embedded(fullHtml) / 4);
       // ...and nothing was destroyed: the wire bytes behind a stub are one
       // fetch away, which is what makes folding safe to do by default
       const one = await fetch(`http://127.0.0.1:${s4.port}/view/rb/pair/big00`);

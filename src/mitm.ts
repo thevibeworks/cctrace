@@ -6,6 +6,7 @@ import { isInterceptHost, hostInSet, generateHostCert } from "./certs";
 import { categorizeUrl, isModelCallPath } from "./categorize";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
+import { createUpstream, UpstreamError } from "./upstream";
 import type { TracePair, TraceStart } from "./types";
 
 export interface MitmConfig {
@@ -26,6 +27,7 @@ export interface MitmConfig {
   interceptHosts?: string[];
   /** MITM every host (the pre-0.16 behavior) — --capture-external. */
   captureExternal?: boolean;
+  retryMs?: number;
 }
 
 export interface MitmServer {
@@ -128,7 +130,8 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   const caCertPath = join(caDir, "ca-cert.pem");
   const logAll = config.logAll ?? true;
 
-  const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
+  const forward = createUpstream({ retryMs: config.retryMs });
+  const onPair = (pair: TracePair) => forward.record(() => config.onPair(redactPair(pair)));
 
   // Live state, not a pair: only a MESSAGES-category request is a "the model
   // is thinking" moment (a count_tokens probe, oauth or telemetry is not).
@@ -239,7 +242,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         // Raw bytes for the upstream, decoded copy for the trace — codex
         // zstd-compresses request JSON; a text round trip would corrupt it.
         fwdBody = new Uint8Array(await req.arrayBuffer());
-        reqBody = enrolled || fwdBody.length <= EXTERNAL_BODY_CAP
+        reqBody = !shouldLog ? null : enrolled || fwdBody.length <= EXTERNAL_BODY_CAP
           ? decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"])
           : externalBodyStub(fwdBody.length, reqHeaders["content-type"]);
       }
@@ -253,23 +256,27 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       let upstream: Response;
       if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
       try {
-        upstream = await fetch(targetUrl, {
+        upstream = await forward.fetch(targetUrl, {
           method: req.method,
           headers: fetchHeaders,
           body: fwdBody,
           redirect: "manual",
-        });
+          signal: req.signal,
+        }, categorizeUrl(targetUrl) === "messages");
       } catch (err) {
         if (shouldLog) {
           onPair({
             id: captureId,
             request: { timestamp: startTime / 1000, method: req.method, url: targetUrl, headers: reqHeaders, body: reqBody, ...reqBytes },
             response: null,
+            ...(err instanceof UpstreamError ? { error: err.detail } : {}),
             duration: Date.now() - startTime,
             loggedAt: new Date().toISOString(),
           });
         }
-        return new Response(`Proxy error: ${err}`, { status: 502 });
+        return new Response(err instanceof UpstreamError ? err.message : "cctrace: upstream transport failed", {
+          status: 502, headers: { "x-cctrace-error": "upstream-transport" },
+        });
       }
 
       const fwdHeaders = new Headers(upstream.headers);
@@ -294,7 +301,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
         return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: fwdHeaders });
       }
 
-      const { stream: clientStream, captured } = captureTee(upstream.body);
+      const { stream: clientStream, captured } = captureTee(upstream.body, enrolled ? {} : { maxBytes: EXTERNAL_BODY_CAP });
       const resStatus = upstream.status;
       const resHeaders: Record<string, string> = {};
       fwdHeaders.forEach((v, k) => { resHeaders[k] = v; });

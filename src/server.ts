@@ -16,6 +16,7 @@ import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } fr
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier, traceSizes, VIEW_BYTES } from "./view";
 import { titleLookup } from "./title";
+import { createLiveBodies } from "./live-bodies";
 import { projectTraceDir } from "./store";
 import { statSync, existsSync } from "fs";
 import { dirname, basename, resolve } from "path";
@@ -72,6 +73,10 @@ interface ServerConfig {
   withFiles?: string[];
   /** Pre-resolved pairs to seed the server with (`cctrace view --serve`). */
   initialPairs?: TracePair[];
+  liveBodies?: "folded" | "full";
+  liveBodyBytes?: number;
+  /** Read this run's full persisted pair without retaining its body. */
+  readPair?: (id: string) => Promise<TracePair | null>;
   /** Run identity (project name/path) shown in the page header. */
   meta?: PageMeta;
   /** Data dir holding the live-instance registry (enables /api/instances). */
@@ -113,62 +118,88 @@ interface ServerConfig {
   stopKind?: "run" | "view";
 }
 
-const clients = new Set<ServerWebSocket<unknown>>();
-const pairs: TracePair[] = [];
-const knownIds = new Set<string>();
-const seenSessions = new Set<string>();
-
-/**
- * Model calls forwarded but not yet answered — the page's "the model is
- * thinking now" state (docs/design/replay-stage.md). An entry leaves when the
- * pair with its id lands, or after START_TTL_MS: a killed request must not
- * pin the state forever, and an open start is a hint, never trace data.
- */
-const openStarts = new Map<string, TraceStart>();
-const startTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const START_TTL_MS = 10 * 60 * 1000;
-
-function dropStart(id: string) {
-  const t = startTimers.get(id);
-  if (t) {
-    clearTimeout(t);
-    startTimers.delete(id);
-  }
-  openStarts.delete(id);
-}
-
-function broadcast(data: unknown) {
-  const msg = JSON.stringify(data);
-  for (const ws of clients) {
-    ws.send(msg);
-  }
-}
-
-/** Insert history pairs (deduped by id), keep the array timestamp-sorted. */
-function mergePairs(incoming: TracePair[]): TracePair[] {
-  const fresh = incoming.filter((p) => p && p.id && !knownIds.has(p.id));
-  if (!fresh.length) return [];
-  for (const p of fresh) {
-    knownIds.add(p.id);
-    // The response exists now: this request is no longer in flight.
-    if (openStarts.size) dropStart(p.id);
-    pairs.push(p);
-  }
-  pairs.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
-  return fresh;
-}
-
-// The live server is a broadcast relay only — it holds pairs in memory and
-// pushes them to connected browsers. The CLI's log sink owns the .jsonl/.html
-// files, so we never double-write. The page itself lives in ui.ts. The sink
-// hands pairs over via the returned in-process `ingest` — never a loopback
-// HTTP hop, which is both a wasted round trip and an injection surface.
-//
-// Session continuity: when a live pair reveals a session_id we haven't seen,
-// prior traces in logDir are scanned for that session and merged in as
-// history (pair.prior = source file), so a --continue'd conversation keeps
-// its old turns' usage/duration/wire links instead of looking incomplete.
 export function createServer(config: ServerConfig) {
+  const clients = new Set<ServerWebSocket<unknown>>();
+  const pairs: TracePair[] = [];
+  const knownIds = new Set<string>();
+  const seenSessions = new Set<string>();
+  const bodies = config.liveBodies === "folded" ? createLiveBodies(config.liveBodyBytes ?? 64 * 1024 * 1024, WIRE) : null;
+
+  /**
+   * Model calls forwarded but not yet answered — the page's "the model is
+   * thinking now" state (docs/design/replay-stage.md). An entry leaves when the
+   * pair with its id lands, or after START_TTL_MS: a killed request must not
+   * pin the state forever, and an open start is a hint, never trace data.
+   */
+  const openStarts = new Map<string, TraceStart>();
+  const startTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const START_TTL_MS = 10 * 60 * 1000;
+
+  function dropStart(id: string) {
+    const t = startTimers.get(id);
+    if (t) {
+      clearTimeout(t);
+      startTimers.delete(id);
+    }
+    openStarts.delete(id);
+  }
+
+  function broadcast(data: unknown) {
+    if (!clients.size) return;
+    const msg = JSON.stringify(data);
+    for (const ws of clients) {
+      try {
+        // Do not let a stalled page accumulate another trace in socket buffers.
+        // It can reconnect to the current folded state when it catches up.
+        if (ws.getBufferedAmount() > 8 * 1024 * 1024) {
+          clients.delete(ws);
+          ws.close(1013, "Viewer fell behind; reconnect to reload");
+        } else ws.send(msg);
+      } catch { clients.delete(ws); }
+    }
+  }
+
+  /** Insert history pairs (deduped by id), keep the array timestamp-sorted. */
+  function mergePairs(incoming: TracePair[]): TracePair[] {
+    const fresh = incoming.filter((p) => p && p.id && !knownIds.has(p.id));
+    if (!fresh.length) return [];
+    for (const p of fresh) {
+      knownIds.add(p.id);
+      // The response exists now: this request is no longer in flight.
+      if (openStarts.size) dropStart(p.id);
+      pairs.push(p);
+      const changed = bodies?.add(p) ?? [];
+      if (changed.length) broadcast({ type: "fold", requests: changed.map((p) => ({ id: p.id, body: p.request.body, callInfo: (p as any)._ci })) });
+    }
+    if (fresh.length > 1 || (pairs.length > 1 && (fresh[0]!.request?.timestamp || 0) < (pairs[pairs.length - 2]!.request?.timestamp || 0))) {
+      pairs.sort((a, b) => (a.request?.timestamp || 0) - (b.request?.timestamp || 0));
+    }
+    return fresh;
+  }
+
+  // The live server is a broadcast relay only — it holds pairs in memory and
+  // pushes them to connected browsers. The CLI's log sink owns the .jsonl/.html
+  // files, so we never double-write. The page itself lives in ui.ts. The sink
+  // hands pairs over via the returned in-process `ingest` — never a loopback
+  // HTTP hop, which is both a wasted round trip and an injection surface.
+  //
+  // Session continuity: when a live pair reveals a session_id we haven't seen,
+  // prior traces in logDir are scanned for that session and merged in as
+  // history (pair.prior = source file), so a --continue'd conversation keeps
+  // its old turns' usage/duration/wire links instead of looking incomplete.
+  const originalPair = async (id: string): Promise<TracePair | null> => {
+    const held = pairs.find((p) => p.id === id);
+    if (!held) return null;
+    const own = await config.readPair?.(id);
+    if (own) return own;
+    if (config.logFile) {
+      const found = await findPairInTraces(config.readDirs ?? [config.logDir], config.logFile, id);
+      if (found) return found;
+    }
+    // A missing backing record is not a successful "original body" lookup.
+    // Keep in-memory-only viewers working when their bodies are still full.
+    return bodies && (held.request.body as any)?._cctrace_stub ? null : held;
+  };
   // The full state a connecting page needs: the pairs, the trace size, and
   // the requests still in flight (so a page that connects MID-request knows
   // the model is thinking, instead of waiting for a `start` it missed).
@@ -228,6 +259,7 @@ export function createServer(config: ServerConfig) {
       for (let i = pairs.length - 1; i >= 0; i--) {
         if ((pairs[i] as TracePair & { speculative?: boolean }).speculative) {
           knownIds.delete(pairs[i].id);
+          bodies?.forget(pairs[i].id);
           pairs.splice(i, 1);
           evicted++;
         }
@@ -307,6 +339,10 @@ export function createServer(config: ServerConfig) {
       if (url.pathname === "/api/pairs") {
         return Response.json(pairs);
       }
+      if (url.pathname.startsWith("/api/pair/")) {
+        const found = await originalPair(decodeURIComponent(url.pathname.slice("/api/pair/".length)));
+        return found ? Response.json(found) : Response.json({ error: "unknown pair id" }, { status: 404 });
+      }
       if (url.pathname === "/api/purge" && req.method === "POST") {
         // Select-to-purge from the web UI: remove named pairs from memory
         // AND the backing trace files (via config.onPurge), then tell every
@@ -326,6 +362,7 @@ export function createServer(config: ServerConfig) {
             if (idSet.has(p.id)) {
               removedPairs.push(p);
               knownIds.delete(p.id);
+              bodies?.forget(p.id);
               pairs.splice(i, 1);
             }
           }
@@ -373,7 +410,13 @@ export function createServer(config: ServerConfig) {
         // run's pairs. Same redaction guarantees as the CLI (values never
         // enter the artifact except negotiation headers + model ids).
         const acc = createSpecAccumulator({ generator: "cctrace live server" });
-        acc.add(pairs);
+        // A presentation stub must never become an observed wire schema.
+        if (bodies) {
+          for (const id of pairs.map((p) => p.id)) {
+            const original = await originalPair(id);
+            if (original) acc.add([original]);
+          }
+        } else acc.add(pairs);
         const catalog = acc.finish();
         const md = url.pathname.endsWith(".md");
         return new Response(md ? renderSpecMarkdown(catalog) : JSON.stringify(catalog, null, 2), {
@@ -403,11 +446,19 @@ export function createServer(config: ServerConfig) {
             },
           });
         }
-        const lines = sel.map((p) => {
-          const { prior, speculative, ...rest } = p as TracePair & { prior?: string; speculative?: boolean };
-          return JSON.stringify(rest);
+        let index = 0;
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            try {
+              if (index === sel.length) { controller.close(); return; }
+              const p = (await originalPair(sel[index++]!.id))!;
+              const { prior, speculative, _ci, ...rest } = p as TracePair & { speculative?: boolean; _ci?: unknown };
+              controller.enqueue(encoder.encode(JSON.stringify(rest) + "\n"));
+            } catch (err) { controller.error(err); }
+          },
         });
-        return new Response(lines.join("\n") + "\n", {
+        return new Response(stream, {
           headers: {
             "content-type": "application/x-ndjson; charset=utf-8",
             "content-disposition": `attachment; filename="session-${short}.jsonl"`,
@@ -656,7 +707,7 @@ export function createServer(config: ServerConfig) {
         // The page connects its WebSocket origin-relative, so no port is
         // baked in — behind container/host port forwards the bound port is
         // not the port the browser sees.
-        return new Response(getLiveHtml(config.meta), {
+        return new Response(getLiveHtml({ ...config.meta, liveBodies: config.liveBodies }), {
           headers: { "Content-Type": "text/html" },
         });
       }
@@ -709,7 +760,7 @@ export function createServer(config: ServerConfig) {
     port: server.port ?? config.port,
     ingest: onLivePair,
     ingestStart: onLiveStart,
-    stop: () => server.stop(true),
+    stop: () => { for (const timer of startTimers.values()) clearTimeout(timer); server.stop(true); },
   };
 }
 

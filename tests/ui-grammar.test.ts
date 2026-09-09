@@ -5,6 +5,8 @@ import { parseTraceText, type TraceParseStats } from "../src/history";
 import { bootSnapshotPage, bootPage } from "./dom-stub";
 import { pairEndMs } from "../src/replay";
 import type { TracePair } from "../src/types";
+import { createLiveBodies } from "../src/live-bodies";
+import { wireTables } from "../src/clients";
 
 // The snapshot page builds its DOM as innerHTML strings from captured wire
 // content — content we do not control. These tests render hostile captures
@@ -93,6 +95,36 @@ function fragmentErrors(page: ReturnType<typeof bootSnapshotPage>): string[] {
 }
 
 describe("live page boot", () => {
+  test("live folding releases old bodies and replay loads its historical anchor", async () => {
+    const first = msgPair("p1");
+    const second = msgPair("p2", { reqBody: { messages: [
+      { role: "user", content: "hi" }, { role: "assistant", content: "hello" },
+      { role: "user", content: "newer question" },
+    ] } });
+    const requested: string[] = [];
+    const page = bootPage(getLiveHtml({ liveBodies: "folded" }), { fetch: async (url) => {
+      if (url.startsWith("/api/pair/")) { requested.push(url); return { ok: true, json: async () => structuredClone(first) }; }
+      return new Promise(() => {});
+    } });
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [first] }) });
+    const bodies = createLiveBodies(Infinity, wireTables());
+    const a = structuredClone(first), b = structuredClone(second);
+    bodies.add(a);
+    const changed = bodies.add(b);
+    ws.onmessage!({ data: JSON.stringify({ type: "fold", requests: changed.map(p => ({ id: p.id, body: p.request.body, callInfo: (p as any)._ci })) }) });
+    ws.onmessage!({ data: JSON.stringify({ type: "pair", pair: b }) });
+    page.goto("#/p/p1");
+    expect(page.els.detail.innerHTML).toContain("load the original");
+    page.goto("#/session/aaaabbbb/@p1");
+    expect(page.els.convo.innerHTML).toContain("Loading this moment");
+    await Bun.sleep(20);
+    expect(requested).toEqual(["/api/pair/p1"]);
+    expect(page.els.convo.innerHTML).toContain("hello");
+    expect(page.els.convo.innerHTML).not.toContain("newer question");
+    expect(page.errors).toEqual([]);
+    expect(fragmentErrors(page)).toEqual([]);
+  });
   test("a context deep link defers hidden request rows and builds them when opened", () => {
     const page = bootPage(getLiveHtml({ mode: "view" }), { hash: "#/context" });
     const ws = page.sockets[0]!;

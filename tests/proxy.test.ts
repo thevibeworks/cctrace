@@ -18,6 +18,13 @@ afterEach(() => {
 });
 
 describe("proxy: JSON forwarding", () => {
+  test("recording failure does not change an empty successful response", async () => {
+    const upstream = track(Bun.serve({ port: 0, fetch: () => new Response(null, { status: 204 }) }));
+    const proxy = track(startProxy({ targetHost: `localhost:${upstream.port}`, targetScheme: "http",
+      onPair: () => { throw new Error("disk unavailable"); } }));
+    const result = await fetch(`http://localhost:${proxy.port}/v1/messages`, { method: "POST", body: "{}" });
+    expect(result.status).toBe(204);
+  });
   test("forwards request and captures pair", async () => {
     const upstream = track(Bun.serve({
       port: 0,
@@ -58,7 +65,8 @@ describe("proxy: JSON forwarding", () => {
     expect(pairs[0].response?.status).toBe(200);
     expect(pairs[0].response?.body).toBeTruthy();
     expect((pairs[0].response?.body as any).id).toBe("msg_test");
-    expect(pairs[0].duration).toBeGreaterThan(0);
+    // Date.now has millisecond resolution; a warmed loopback call can be 0ms.
+    expect(pairs[0].duration).toBeGreaterThanOrEqual(0);
   });
 
   test("redacts authorization header", async () => {
@@ -344,9 +352,14 @@ describe("proxy: error handling", () => {
     });
 
     expect(res.ok).toBe(false);
+    expect(res.headers.get("x-cctrace-error")).toBe("upstream-transport");
+    expect(await res.text()).toContain("cctrace: upstream connection");
 
     await Bun.sleep(50);
     expect(pairs.length).toBe(1);
+    expect(pairs[0]!.response).toBeNull();
+    expect(pairs[0]!.error?.kind).toBe("connect");
+    expect(pairs[0]!.error?.attempts).toBe(1);
   });
 
   test("non-message paths skipped when logAll=false", async () => {

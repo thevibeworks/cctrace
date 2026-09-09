@@ -50,6 +50,13 @@ export interface TraceStats {
 }
 
 export function traceSummary(pairs: TracePair[], opts: TraceSummaryOpts = {}): TraceSummary {
+  const acc = createTraceSummary(opts);
+  for (const pair of pairs) acc.add(pair);
+  return acc.summary(opts);
+}
+
+/** Exit statistics without retaining request or response bodies. */
+export function createTraceSummary(opts: TraceSummaryOpts = {}) {
   // pairCost resolves the catalog ambiently (the web page sets __PRICING__
   // from META); the CLI passes it here instead, once, before summing.
   if (opts.pricing) (globalThis as any).__PRICING__ = opts.pricing;
@@ -59,19 +66,21 @@ export function traceSummary(pairs: TracePair[], opts: TraceSummaryOpts = {}): T
   const modelOut = new Map<string, number>();
   let totalIn = 0, cacheRead = 0, out = 0, cost = 0;
   let failed = 0;
+  let count = 0;
   const failWhy = new Set<string>();
 
-  for (const p of pairs) {
+  const add = (p: TracePair) => {
+    count++;
     const cat = categorizeUrl((p as any).request?.url || "", (p as any).client, opts.wire);
     catCounts.set(cat, (catCounts.get(cat) || 0) + 1);
     const sid = extractSessionId(p, opts.wire);
     if (sid && !sids.includes(sid)) sids.push(sid);
     const status = (p as any).response?.status;
     if (typeof status === "number" && status >= 400) { failed++; failWhy.add(String(status)); }
-    if (cat !== "messages") continue;
+    if (cat !== "messages") return;
     const m = extractCallInfo(p);
-    if (!m) continue;
-    if (!(p as any).response) { failed++; failWhy.add("no response"); }
+    if (!m) return;
+    if (!(p as any).response) { failed++; failWhy.add(p.error?.code || "no response"); }
     else if (m.error && !(typeof status === "number" && status >= 400)) { failed++; failWhy.add(String(m.error)); }
     totalIn += (m.input || 0) + (m.cacheRead || 0) + (m.cacheWrite || 0);
     cacheRead += m.cacheRead || 0;
@@ -79,45 +88,50 @@ export function traceSummary(pairs: TracePair[], opts: TraceSummaryOpts = {}): T
     if (m.model) modelOut.set(m.model, (modelOut.get(m.model) || 0) + (m.output || 0));
     const c = pairCost(m);
     if (c) cost += c.total;
-  }
-
-  // Categories in the taxonomy's order, ids as labels — the same vocabulary
-  // as `cctrace purge --drop`.
-  const order = CATEGORIES.map((c) => c.id);
-  const cats = [...catCounts.entries()]
-    .sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99))
-    .map(([id, n]) => `${n} ${id}`)
-    .join(", ");
-  let traced = `Traced ${pairs.length} pair${pairs.length === 1 ? "" : "s"}`;
-  const dur = fmtDur(opts.durationMs || 0);
-  if (dur) traced += ` in ${dur}`;
-  if (cats && catCounts.size > 1) traced += ` — ${cats}`;
-  if (opts.sizeBytes && opts.sizeBytes > 0) traced += ` — ${human(opts.sizeBytes)}`;
-
-  const parts: string[] = [];
-  if (sids.length) parts.push(`Session${sids.length > 1 ? "s" : ""} ${sids.map((s) => s.slice(0, 8)).join(", ")}`);
-  if (modelOut.size) {
-    const face = [...modelOut.entries()].sort((a, b) => b[1] - a[1])[0][0];
-    parts.push(shortModel(face) + (modelOut.size > 1 ? ` +${modelOut.size - 1}` : ""));
-  }
-  if (totalIn > 0) {
-    const pct = Math.round((cacheRead / totalIn) * 100);
-    parts.push(`in ${fmtCompact(totalIn)} tok${pct > 0 ? ` (${pct}% cached)` : ""}`);
-  }
-  if (out > 0) parts.push(`out ${fmtCompact(out)}`);
-  if (cost > 0) parts.push(`est ${fmtCost(cost)}`);
-
-  const summary: TraceSummary = {
-    traced,
-    stats: {
-      pairs: pairs.length,
-      messages: catCounts.get("messages") || 0,
-      tokensIn: totalIn,
-      tokensOut: out,
-      costUsd: cost,
-    },
   };
-  if (parts.length) summary.session = parts[0] + (parts.length > 1 ? ` — ${parts.slice(1).join(" · ")}` : "");
-  if (failed > 0) summary.errors = `${failed} failed request${failed === 1 ? "" : "s"} (${[...failWhy].slice(0, 3).join(", ")})`;
-  return summary;
+
+  const summary = (measurements: Pick<TraceSummaryOpts, "sizeBytes" | "durationMs"> = {}): TraceSummary => {
+    const final = { ...opts, ...measurements };
+
+    // Categories in the taxonomy's order, ids as labels — the same vocabulary
+    // as `cctrace purge --drop`.
+    const order = CATEGORIES.map((c) => c.id);
+    const cats = [...catCounts.entries()]
+      .sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99))
+      .map(([id, n]) => `${n} ${id}`)
+      .join(", ");
+    let traced = `Traced ${count} pair${count === 1 ? "" : "s"}`;
+    const dur = fmtDur(final.durationMs || 0);
+    if (dur) traced += ` in ${dur}`;
+    if (cats && catCounts.size > 1) traced += ` — ${cats}`;
+    if (final.sizeBytes && final.sizeBytes > 0) traced += ` — ${human(final.sizeBytes)}`;
+
+    const parts: string[] = [];
+    if (sids.length) parts.push(`Session${sids.length > 1 ? "s" : ""} ${sids.map((s) => s.slice(0, 8)).join(", ")}`);
+    if (modelOut.size) {
+      const face = [...modelOut.entries()].sort((a, b) => b[1] - a[1])[0][0];
+      parts.push(shortModel(face) + (modelOut.size > 1 ? ` +${modelOut.size - 1}` : ""));
+    }
+    if (totalIn > 0) {
+      const pct = Math.round((cacheRead / totalIn) * 100);
+      parts.push(`in ${fmtCompact(totalIn)} tok${pct > 0 ? ` (${pct}% cached)` : ""}`);
+    }
+    if (out > 0) parts.push(`out ${fmtCompact(out)}`);
+    if (cost > 0) parts.push(`est ${fmtCost(cost)}`);
+
+    const summary: TraceSummary = {
+      traced,
+      stats: {
+        pairs: count,
+        messages: catCounts.get("messages") || 0,
+        tokensIn: totalIn,
+        tokensOut: out,
+        costUsd: cost,
+      },
+    };
+    if (parts.length) summary.session = parts[0] + (parts.length > 1 ? ` — ${parts.slice(1).join(" · ")}` : "");
+    if (failed > 0) summary.errors = `${failed} failed request${failed === 1 ? "" : "s"} (${[...failWhy].slice(0, 3).join(", ")})`;
+    return summary;
+  };
+  return { add, summary, sessionIds: () => new Set(sids) };
 }

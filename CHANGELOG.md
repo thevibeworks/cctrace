@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.50.0
 
 - Live proxy capture folds superseded request bodies in memory while retaining full redacted JSONL on disk. Exit statistics no longer retain the run's pairs. `--live-bodies full` restores full live retention; `--live-body-mb` controls the default 64 MiB retained request-body budget. Responses and metadata remain outside that budget.
 - Folded live requests can load their original bodies from disk. Replay loads its historical anchor on demand, session JSONL exports preserve original bodies, and wire-spec exports read recorded schemas. Session caches ignore unrelated tunnel/telemetry arrivals; the footer stops reparsing the same SSE response every second.

@@ -1,5 +1,14 @@
 import { describe, test, expect } from "bun:test";
-import { splitArgv, parseCliArgs, CliUsageError } from "../src/args";
+import { splitArgv, parseCliArgs, CliUsageError, captureTuning } from "../src/args";
+
+test("capture tuning has explicit full-detail and no-retry escape hatches", () => {
+  expect(captureTuning({})).toEqual({ liveBodies: "folded", liveBodyBytes: 64 * 1024 * 1024, retryMs: 30000 });
+  const { values } = parseCliArgs(["--live-bodies", "full", "--live-body-mb", "128", "--upstream-retry", "0"]);
+  expect(captureTuning(values)).toEqual({ liveBodies: "full", liveBodyBytes: 128 * 1024 * 1024, retryMs: 0 });
+  for (const value of ["-1", "NaN", "1.5", "61"]) expect(() => captureTuning({ "upstream-retry": value })).toThrow(CliUsageError);
+  expect(() => captureTuning({ "live-body-mb": "0" })).toThrow(CliUsageError);
+  expect(() => captureTuning({ "live-bodies": "all" })).toThrow(CliUsageError);
+});
 
 describe("splitArgv", () => {
   test("no separator: everything is cctrace's", () => {

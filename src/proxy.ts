@@ -1,6 +1,7 @@
 import { categorizeUrl } from "./categorize";
 import { redactPair } from "./redact";
 import { captureTee, decodeBodyForTrace } from "./stream";
+import { createUpstream, UpstreamError } from "./upstream";
 import type { TracePair, TraceStart } from "./types";
 
 export interface ProxyConfig {
@@ -15,6 +16,7 @@ export interface ProxyConfig {
    */
   onStart?: (start: TraceStart) => void;
   logAll?: boolean;
+  retryMs?: number;
 }
 
 export interface ProxyServer {
@@ -32,7 +34,8 @@ export function startProxy(config: ProxyConfig): ProxyServer {
   const pending = new Set<Promise<void>>();
 
   // Single redaction choke point — no pair reaches a sink unredacted.
-  const onPair = (pair: TracePair) => config.onPair(redactPair(pair));
+  const forward = createUpstream({ retryMs: config.retryMs });
+  const onPair = (pair: TracePair) => forward.record(() => config.onPair(redactPair(pair)));
 
   // Live state, not a pair: only a MESSAGES-category request is a "the model
   // is thinking" moment (a count_tokens probe is not). Same predicate the
@@ -76,7 +79,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
         // Raw bytes for the upstream, decoded copy for the trace — a text
         // round trip corrupts compressed request bodies (see mitm.ts).
         fwdBody = new Uint8Array(await req.arrayBuffer());
-        reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
+        if (shouldLog) reqBody = decodeBodyForTrace(fwdBody, reqHeaders["content-encoding"]);
       }
       const reqBytes = fwdBody && fwdBody.length ? { bodyBytes: fwdBody.length } : {};
 
@@ -86,12 +89,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       let upstreamRes: Response;
       if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
       try {
-        upstreamRes = await fetch(targetUrl, {
+        upstreamRes = await forward.fetch(targetUrl, {
           method: req.method,
           headers: fetchHeaders,
           body: fwdBody,
           redirect: "follow",
-        });
+          signal: req.signal,
+        }, categorizeUrl(targetUrl) === "messages");
       } catch (err) {
         if (shouldLog) {
           onPair({
@@ -105,11 +109,14 @@ export function startProxy(config: ProxyConfig): ProxyServer {
               ...reqBytes,
             },
             response: null,
+            ...(err instanceof UpstreamError ? { error: err.detail } : {}),
             duration: Date.now() - startTime,
             loggedAt: new Date().toISOString(),
           });
         }
-        return new Response(`Proxy error: ${err}`, { status: 502 });
+        return new Response(err instanceof UpstreamError ? err.message : "cctrace: upstream transport failed", {
+          status: 502, headers: { "x-cctrace-error": "upstream-transport" },
+        });
       }
 
       const fwdHeaders = new Headers(upstreamRes.headers);

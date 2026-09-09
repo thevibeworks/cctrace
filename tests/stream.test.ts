@@ -34,6 +34,14 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
 }
 
 describe("captureTee", () => {
+  test("capture cap discards buffered bytes while forwarding and counting the whole body", async () => {
+    const { stream, captured } = captureTee(sourceOf(["1234", "5678", "90"]), { maxBytes: 5 });
+    expect(await readAll(stream)).toBe("1234567890");
+    const cap = await captured;
+    expect(cap.bytes).toBe(10);
+    expect(cap.text).toBe("");
+    expect(cap.complete).toBe(true);
+  });
   test("client reads everything: identical bytes, complete capture", async () => {
     const { stream, captured } = captureTee(sourceOf(["event: a\n\n", "event: b\n\n"]));
     expect(await readAll(stream)).toBe("event: a\n\nevent: b\n\n");

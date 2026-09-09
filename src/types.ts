@@ -34,6 +34,19 @@ export interface TracePair {
   client?: string;
   /** Source file base name when merged in from a previous run's trace. */
   prior?: string;
+  /** The forwarding transport failed; no upstream HTTP response exists. */
+  error?: TransportFailure;
+}
+
+export interface TransportFailure {
+  kind: "connect" | "dns" | "tls" | "reset" | "timeout" | "aborted" | "unknown";
+  code: string;
+  /** Controlled diagnostic text, never an exception containing request secrets. */
+  message: string;
+  elapsedMs: number;
+  attempts: number;
+  /** Proxy origin without user info, path or query; otherwise "direct". */
+  via: string;
 }
 
 /**

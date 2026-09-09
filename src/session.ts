@@ -164,7 +164,7 @@ export function buildSession(pairs: any[], wire?: any): any {
     if (!p || !p.request) continue;
     const dialect = wireDialect(p);
     const req = p.request.body || {};
-    const stub = !!req._cctrace_stub && req.kind === "superseded";
+    const stub = !!req._cctrace_stub && (req.kind === "superseded" || req.kind === "budgeted") && req.historyLen > 0;
     let key = "";
     if (dialect === "anthropic") {
       if (!stub && (!Array.isArray(req.messages) || !req.messages.length)) continue;

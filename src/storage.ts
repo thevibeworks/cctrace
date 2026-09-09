@@ -444,6 +444,8 @@ export function applyMerge(plan: MergePlan, opts: { prune: boolean; onProgress?:
 const ZSTD_PARAMS = {
   [zlib.constants.ZSTD_c_compressionLevel]: 9,
   [zlib.constants.ZSTD_c_windowLog]: 27,
+  // Repeated screenshots can evict nearby matches from the level-9 tables.
+  [zlib.constants.ZSTD_c_enableLongDistanceMatching]: 1,
   [zlib.constants.ZSTD_c_checksumFlag]: 1, // 4 bytes/frame: on-disk corruption is detected by every reader
 };
 

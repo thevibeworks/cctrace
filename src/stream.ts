@@ -68,7 +68,7 @@ export function decodeBodyForTrace(bytes: Uint8Array, encoding?: string): unknow
   try { return JSON.parse(text); } catch { return text; }
 }
 
-export function captureTee(source: ReadableStream<Uint8Array>): {
+export function captureTee(source: ReadableStream<Uint8Array>, opts: { maxBytes?: number } = {}): {
   stream: ReadableStream<Uint8Array>;
   captured: Promise<CapturedBody>;
 } {
@@ -78,6 +78,8 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
   const captured = new Promise<CapturedBody>((res) => { settle = res; });
   let settled = false;
   let draining = false;
+  let bytes = 0;
+  let overCap = false;
 
   // First-byte / first-token timing. Chunks are scanned only until the first
   // token event is seen, with a small carry so a marker split across chunk
@@ -87,6 +89,11 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
   const scanDecoder = new TextDecoder(); // non-fatal: binary yields no marker
   let scanCarry = "";
   const sawChunk = (chunk: Uint8Array) => {
+    bytes += chunk.length;
+    if (bytes > (opts.maxBytes ?? Infinity)) {
+      overCap = true;
+      chunks.length = 0;
+    } else if (!overCap) chunks.push(chunk);
     if (firstByteAt === undefined) firstByteAt = Date.now();
     if (firstTokenAt !== undefined) return;
     const text = scanCarry + scanDecoder.decode(chunk, { stream: true });
@@ -111,7 +118,7 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
     } catch {
       text = `<binary body: ${merged.length} bytes>`;
     }
-    settle({ text, complete, bytes: merged.length, firstByteAt, firstTokenAt });
+    settle({ text, complete, bytes, firstByteAt, firstTokenAt });
   };
 
   // The client is gone — finish reading upstream for the capture alone.
@@ -123,7 +130,7 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
         for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
-          if (value) { chunks.push(value); sawChunk(value); }
+          if (value) sawChunk(value);
         }
         finish(true);
       } catch {
@@ -141,7 +148,6 @@ export function captureTee(source: ReadableStream<Uint8Array>): {
           try { controller.close(); } catch {}
           return;
         }
-        chunks.push(r.value);
         sawChunk(r.value);
         try {
           controller.enqueue(r.value);

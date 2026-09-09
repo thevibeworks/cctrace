@@ -161,6 +161,7 @@ export interface PageMeta {
   /** "view" when the page serves a saved trace (cctrace view) — the UI
    * reads as a document (no live/offline framing, opens at the top). */
   mode?: string;
+  liveBodies?: "folded" | "full";
   /** The page holds the newest slice of a budgeted read, not the whole
    * trace — the header must say so (a silent 78% drop once shipped).
    * Shape mirrors ViewResult.truncated in src/view.ts. */
@@ -2419,6 +2420,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // assume request.url exists; one bad pair must not blank the page.
     let droppedPairs = 0;
     let lastModelPair = null; // newest completed model call — the pulse's subject
+    let sessionRevision = 0;
+    let detailOriginal = null; // one explicitly loaded body, released on navigation
+    let replayOriginal = null; // one historical anchor loaded for replay
+    let replayLoad = null;
     let traceBytes = META.traceBytes || 0; // .jsonl size on disk (ws frames refresh it live)
     function ingestPair(p) {
       if (!p || !p.request || typeof p.request.url !== 'string') {
@@ -2427,6 +2432,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return false;
       }
       p._cat = categorize(p.request.url, p.client, CLIENT_WIRE);
+      if (p._cat === 'messages' || p._cat === 'tokens') sessionRevision++;
       pairs.push(p);
       if (p._cat === 'messages' && (!lastModelPair || pairEndMs(p) >= pairEndMs(lastModelPair))) lastModelPair = p;
       return true;
@@ -3128,6 +3134,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // location.pathname is absent on a file:// snapshot's stub-ish
       // environments; both chips must state the fact everywhere.
       const here = (typeof location !== 'undefined' && location.pathname) || '';
+      if (META.liveBodies === 'folded') {
+        el.innerHTML = '<span class="ok" title="Full request bodies stay on disk. Open a folded request and load the original to inspect it. Use --live-bodies full to retain every body in the live view.">bodies on demand</span>';
+        return;
+      }
       if (META.folded) {
         // The folded page holds EVERY pair — what it put away is request
         // bodies a later request re-sent, plus whatever ran past the body
@@ -3263,6 +3273,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (msg.type === 'init') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           pairs.length = 0;
+          sessionRevision++;
+          pairIdx = { n: -1, map: null };
+          detailOriginal = null;
+          replayOriginal = null;
+          if (replayLoad) replayLoad.controller.abort();
+          replayLoad = null;
+          lastModelPair = null;
           for (const p of msg.pairs) ingestPair(p);
           // Requests in flight when this page connected: the server hands
           // them over so a page that arrives MID-request knows the model is
@@ -3277,6 +3294,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           render();
           route();
           renderPulse();
+        } else if (msg.type === 'fold') {
+          for (const item of msg.requests || []) {
+            const p = pairOf(item.id);
+            if (!p) continue;
+            p.request.body = item.body;
+            if (item.callInfo) p._ci = item.callInfo;
+            delete p._sc;
+          }
+          sessionRevision++;
+          sessionCache = { key: '', threads: [] };
+          fullCache = { key: '', threads: [] };
+          laneCache = { key: '', lanes: null };
+          ctxTlCache.clear();
+          ctxStatCache.clear();
+          ctxGraphCache.clear();
+          if (detailId && !detailOriginal) openDetail(detailId);
         } else if (msg.type === 'start') {
           // A model call was forwarded and has no response yet. The strip
           // draws it as an open span to the newest known time; nothing
@@ -3369,6 +3402,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           // Pairs deleted via select-to-purge (this page or another one on
           // the same server): drop them everywhere and re-render.
           const gone = new Set(msg.ids || []);
+          sessionRevision++;
+          pairIdx = { n: -1, map: null };
+          if (detailOriginal && gone.has(detailOriginal.id)) detailOriginal = null;
+          if (replayOriginal && gone.has(replayOriginal.id)) replayOriginal = null;
+          if (replayLoad && gone.has(replayLoad.id)) { replayLoad.controller.abort(); replayLoad = null; }
           for (let i = pairs.length - 1; i >= 0; i--) if (gone.has(pairs[i].id)) pairs.splice(i, 1);
           for (const id of gone) selIds.delete(id);
           sessionCache = { key: '', threads: [] };
@@ -3826,6 +3864,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function openDetail(id) {
       const isNew = detailId !== id;
+      if (isNew) detailOriginal = null;
       detailId = id;
       document.body.classList.add('detail-open');
       try { detailEl.innerHTML = renderDetail(id); }
@@ -3838,6 +3877,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function closeDetail() {
       if (detailId === null) { markSelected(); return; }
       detailId = null;
+      detailOriginal = null;
       document.body.classList.remove('detail-open');
       detailEl.innerHTML = '';
       markSelected();
@@ -4117,7 +4157,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     initRail(document.getElementById('rail-detail'), () => detailEl);
 
     function renderDetail(id) {
-      const pair = pairs.find(p => p.id === id);
+      const pair = detailOriginal && detailOriginal.id === id ? detailOriginal : pairs.find(p => p.id === id);
       if (!pair) {
         return detailNavHtml(id) + '<div class="empty">Request "' + escapeHtml(id) + '" not found' +
           (pairs.length === 0 ? ' (no requests loaded yet)' : '') +
@@ -4432,7 +4472,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         html += '<div class="block-note">request body ' + why + ' \\u00b7 ' +
           (req.historyLen || 0) + ' history turns, ' + fmtBytes(req.droppedBytes || 0) + ' not on the page' +
           (req.keptPairId ? ' \\u00b7 <a href="#/p/' + encodeURIComponent(req.keptPairId) + '">full history</a>' : '') +
-          (VIEW_RUN ? ' \\u00b7 <a class="unfold" data-unfold="' + escapeHtml(pair.id) + '">load the original</a>' : '') +
+          (VIEW_RUN || !IS_SNAPSHOT ? ' \\u00b7 <a class="unfold" data-unfold="' + escapeHtml(pair.id) + '">load the original</a>' : '') +
           '</div>';
       }
       if (wireDialect(pair) === 'openai') {
@@ -4598,6 +4638,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (s.down > 0) general.push(['response body', fmtBytes(s.down) + ex]);
       }
       if (r && r.truncated) general.push(['truncated', 'upstream stream ended early']);
+      if (pair.error) {
+        general.push(['transport error', pair.error.message + ' (' + pair.error.code + ')']);
+        general.push(['route', pair.error.via]);
+        general.push(['attempts', String(pair.error.attempts)]);
+      }
       let html = '<div class="section"><h4>Headers</h4>';
       html += '<details class="fold box" open><summary><span class="fold-title">general</span></summary>' +
         '<div class="fold-body"><div class="hdr-table">' + hdrRows(general) + '</div></div></details>';
@@ -4626,6 +4671,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // everything else the bodies are the content, so open them.
       const rich = pair._cat === 'messages' || pair._cat === 'tokens' || pair._cat === 'usage';
       let html = '<div class="section"><h4>Body</h4>';
+      if (pair.request.body && pair.request.body._cctrace_stub && (VIEW_RUN || !IS_SNAPSHOT)) {
+        html += '<div class="block-note">Request body stored on disk. <a class="unfold" data-unfold="' + escapeHtml(pair.id) + '">load the original</a></div>';
+      }
       let any = false;
       if (pair.request.body != null) { html += rawFold('request body', 'req-body', !rich, 'raw'); any = true; }
       if (r) {
@@ -4657,7 +4705,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function fillRaw(det) {
       const body = det.querySelector(':scope > .fold-body');
       if (!body || body.dataset.filled) return;
-      const pair = pairs.find(p => p.id === detailId);
+      const pair = detailOriginal && detailOriginal.id === detailId ? detailOriginal : pairs.find(p => p.id === detailId);
       if (!pair) return;
       body.dataset.filled = '1';
       const kind = det.dataset.raw;
@@ -4691,20 +4739,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // page, which is what makes the whole session cheap to hold.
     detailEl.addEventListener('click', async (e) => {
       const a = e.target && e.target.closest && e.target.closest('a.unfold');
-      if (!a || !VIEW_RUN) return;
+      if (!a || (!VIEW_RUN && IS_SNAPSHOT)) return;
       e.preventDefault();
       const id = a.getAttribute('data-unfold');
       if (!id || a.dataset.busy) return;
       a.dataset.busy = '1';
       a.textContent = 'loading\\u2026';
       try {
-        const res = await fetch('/view/' + encodeURIComponent(VIEW_RUN) + '/pair/' + encodeURIComponent(id));
+        const res = await fetch(VIEW_RUN ? '/view/' + encodeURIComponent(VIEW_RUN) + '/pair/' + encodeURIComponent(id) : '/api/pair/' + encodeURIComponent(id));
         if (!res.ok) throw new Error(String(res.status));
         const full = await res.json();
         const p = pairs.find(x => x.id === id);
         if (!p || !full || !full.request) throw new Error('no body');
-        p.request.body = full.request.body;
-        delete p._ci; delete p._sc;   // per-pair memos read the body
+        if (detailId !== id) return;
+        detailOriginal = { ...full, _cat: p._cat };
         openDetail(id);
       } catch (err) {
         delete a.dataset.busy;
@@ -4722,11 +4770,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // between two boundaries sees the same wire, so scrubbing stays cheap.
       // A slice narrows the source to its window first — the session
       // rebuilds from exactly the pairs the slice (and its export) holds.
-      const base = replay.active ? slicePairs(pairs) : pairs;
+      const relevant = pairs.filter(p => p._cat === 'messages' || p._cat === 'tokens');
+      const base = replay.active ? slicePairs(relevant) : relevant;
       const a = replay.active ? ((anchorAt(replayEvents(base), replay.cursor) || { id: '^' }).id) : 'live';
-      const key = pairs.length + ':' + a + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
+      const key = sessionRevision + ':' + a + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
       if (sessionCache.key !== key) {
-        const src = replay.active ? visibleAt(base, replay.cursor) : pairs;
+        let src = replay.active ? visibleAt(base, replay.cursor) : base;
+        if (replay.active && replayOriginal) src = src.map(p => p.id === replayOriginal.id ? replayOriginal : p);
         sessionCache = { key, threads: buildSession(src, CLIENT_WIRE).threads };
       }
       return sessionCache.threads;
@@ -4823,6 +4873,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     function showSession(key, sub) {
+      if (replay.active && META.liveBodies === 'folded') {
+        const all = fullThreads();
+        const selected = resolveThreadSel(all, key || sessionSelKey, sub);
+        const ids = new Set(selected ? selected.pairIds : []);
+        const visible = visibleAt(slicePairs(pairs), replay.cursor).filter(p => ids.has(p.id));
+        const anchor = visible.length ? visible.reduce((a, b) => a.request.timestamp > b.request.timestamp ? a : b) : null;
+        if (replayLoad && (!anchor || replayLoad.id !== anchor.id)) { replayLoad.controller.abort(); replayLoad = null; }
+        if (anchor && anchor.request.body && anchor.request.body._cctrace_stub && (!replayOriginal || replayOriginal.id !== anchor.id)) {
+          renderThreadNavigation(all, selected);
+          if (!replayLoad) {
+            const load = { id: anchor.id, controller: new AbortController(), failed: false };
+            replayLoad = load;
+            replayOriginal = null;
+            fetch('/api/pair/' + encodeURIComponent(anchor.id), { signal: load.controller.signal })
+              .then(res => { if (!res.ok) throw new Error(String(res.status)); return res.json(); })
+              .then(full => {
+                if (replayLoad !== load || load.controller.signal.aborted || !replay.active) return;
+                if (!full.request || full.request.body._cctrace_stub) throw new Error('original unavailable');
+                replayOriginal = { ...full, _cat: anchor._cat };
+                sessionRevision++;
+                replayLoad = null;
+                refreshReplay({ follow: false });
+              }).catch(() => {
+                if (replayLoad !== load || load.controller.signal.aborted) return;
+                load.failed = true;
+                showSession(key, sub);
+              });
+          }
+          convoEl.innerHTML = '<div class="empty">' + (replayLoad && replayLoad.failed
+            ? 'Original request could not be loaded. <a href="#/p/' + encodeURIComponent(anchor.id) + '">Inspect request</a>.'
+            : 'Loading this moment from the trace…') + '</div>';
+          return;
+        }
+      }
       const threads = getThreads();
       const navigationThreads = replay.active ? fullThreads() : threads;
       renderThreadNavigation(navigationThreads, resolveThreadSel(navigationThreads, key || (replay.active ? sessionSelKey : null), sub));
@@ -8692,6 +8776,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function exitReplay() {
       pausePlayback();
       replay.active = false;
+      replayOriginal = null;
+      if (replayLoad) replayLoad.controller.abort();
+      replayLoad = null;
       replay.sliceA = null;
       replay.sliceB = null;
       replay.zoom = 1;
@@ -8826,7 +8913,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // chapters have to include the loops still AHEAD of the cursor.
     let fullCache = { key: '', threads: [] };
     function fullThreads() {
-      const key = pairs.length + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
+      const key = sessionRevision + (sliceActive() ? ':' + replay.sliceA + '-' + replay.sliceB : '');
       if (fullCache.key !== key) {
         fullCache = { key, threads: buildSession(slicePairs(pairs), CLIENT_WIRE).threads };
       }
@@ -9680,6 +9767,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     clearBtn.onclick = () => {
       pairs.length = 0;
+      sessionRevision++;
+      pairIdx = { n: -1, map: null };
+      detailOriginal = null;
+      lastModelPair = null;
       activeCat = 'all';
       sessionCache = { key: '', threads: [] };
       convoKey = null;
@@ -9690,6 +9781,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
 
     // The live footer reports the last observed response, never inferred activity.
+    let pulsePair = null;
+    let pulseAction = '';
     function renderPulse() {
       if (IS_READING || !pulseEl) return;
       const p = lastModelPair;
@@ -9699,8 +9792,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       const ci = p._ci || (p._ci = extractCallInfo(p));
       const end = pairEndMs(p);
-      let act = '';
-      try { act = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
+      if (pulsePair !== p) {
+        pulsePair = p;
+        pulseAction = '';
+        try { pulseAction = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
+      }
+      let act = pulseAction;
       if (!act) act = p.response && p.response.status < 400 ? 'response received' : 'request failed';
       const cc = summarizeCache(ci, p.request.body, end);
       let cache = '';

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Live proxy capture folds superseded request bodies in memory while retaining full redacted JSONL on disk. Exit statistics no longer retain the run's pairs. `--live-bodies full` restores full live retention; `--live-body-mb` controls the default 64 MiB retained request-body budget. Responses and metadata remain outside that budget.
+- Folded live requests can load their original bodies from disk. Replay loads its historical anchor on demand, session JSONL exports preserve original bodies, and wire-spec exports read recorded schemas. Session caches ignore unrelated tunnel/telemetry arrivals; the footer stops reparsing the same SSE response every second.
+- Upstream failures carry structured diagnostics and a cctrace-specific 502 message. MITM model calls retry connection-refused/DNS failures within a configurable window (`--upstream-retry`, default 30 seconds, 0 disables). Ambiguous reset/timeout/TLS failures, HTTP responses, and redirect-following base-URL calls are not replayed. Recording callback errors cannot fail successful forwarding.
+- External response capture enforces its 64 KiB cap while streaming, instead of buffering the entire body before discarding it. Live broadcasts skip serialization without viewers and disconnect stalled viewers before adding more queued messages.
+- New zstd archives enable long-distance matching for repeated screenshot/base64 payloads, retaining the existing decoder format, 128 MiB window and checksum. Existing archives are unchanged.
+
 ## 0.49.0
 
 - A view page holds the WHOLE session now. /view/<run-id>, cctrace view and --html used to budget the read to the newest 32 MB of lines and state the drop; a real 708 MB session opened as 22% of itself. The page now FOLDS instead (src/fold.ts, issue #106): every pair of the session reaches it, and the cut lands on request bodies, never pairs. Rule 1, superseded: a body a later request re-sent in full folds to compact's stub (model, session metadata, history length, first user text, a link to the request that kept the history), so the Sessions view still renders every turn. Rule 2, budgeted: what survives is spent newest-first against a 32 MB body budget, so the page has a ceiling no session can breach. Measured on real traces: a 1.5 GB decoded session renders as a 26 MB page in 5.5s with all 1260 pairs; the requests list, timings, tokens, costs and pen strokes are complete

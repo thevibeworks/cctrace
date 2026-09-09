@@ -21,6 +21,8 @@ export interface CaptureOptions {
   interceptHosts?: string[];
   /** MITM every host instead of tunneling non-listed ones. */
   captureExternal?: boolean;
+  /** Retry window for confirmed pre-send model-call failures; 0 disables. */
+  retryMs?: number;
   /** Progress messages (cert generation, proxy start) for the CLI to print. */
   onStatus?: (msg: string) => void;
 }
@@ -93,6 +95,7 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
       logAll: opts.logAll,
       interceptHosts: opts.interceptHosts,
       captureExternal: opts.captureExternal,
+      retryMs: opts.retryMs,
     });
     const proxyUrl = `http://127.0.0.1:${server.port}`;
     opts.onStatus?.(`MITM proxy listening on ${proxyUrl}`);
@@ -137,6 +140,7 @@ export async function createCapturer(mode: CaptureMode, opts: CaptureOptions): P
     onPair: opts.onPair,
     onStart: opts.onStart,
     logAll: opts.logAll,
+    retryMs: opts.retryMs,
   });
   const proxyUrl = `http://127.0.0.1:${server.port}`;
   return {

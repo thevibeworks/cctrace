@@ -1,6 +1,6 @@
 import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
-import { wireTables } from "./clients";
+import { clientLabel, wireTables } from "./clients";
 import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
 import { UI_ICONS } from "./vendor/ui-icons";
 import { CHROME_CSS, NAV_SCRIPT, PREFS_SCRIPT } from "./chrome";
@@ -227,30 +227,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        client's label; what this run IS (the session title, or the human's
        first prompt); then the wire meta in faint mono. It reads as a place
        and a subject, not as a path and two hashes.
-       DUPLICATE, on purpose: the same .runid-* rules are landing in
-       src/chrome.ts on the dashboard branch, which owns that file. These
-       are the class names it uses, so the merge deletes this block and
-       nothing here has to move. */
-    .runid-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .runid-mark { display: inline-flex; flex: none; color: var(--text-muted); }
-    .runid-mark svg { width: 14px; height: 14px; }
-    .runid-name {
-      flex: 0 1 auto; min-width: 0; color: var(--text); font-size: var(--text-body); font-weight: 500;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
+       The .runid-* rules live in src/chrome.ts (shared with the dashboard);
+       only the trace page's own additions are here. */
     .runid-name.ctx-copy { cursor: pointer; }
     .runid-name.ctx-copy:hover { color: var(--accent); }
     .runid-name.copied { color: var(--green); }
-    .runid-client { flex: none; color: var(--text-faint); font-size: var(--text-xs); }
-    .runid-line {
-      color: var(--text-muted); font-size: var(--text-sm);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .runid-meta {
-      display: flex; align-items: baseline; gap: 6px; min-width: 0;
-      color: var(--text-faint); font-family: var(--font-mono); font-size: var(--text-xs);
-      font-variant-numeric: tabular-nums;
-    }
     .rc-when { flex: none; }
     .rc-sep { color: var(--text-faint); }
     /* ---- The work surface's own header: this destination, its numbers ---- */
@@ -1189,6 +1170,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       position: sticky; right: 0; margin-left: auto; flex: none;
       padding-left: 12px; background: var(--bg);
     }
+    /* Stuck, the row scrolls under the pane's 48px right gutter (the
+       floating toolbar lives there): the jump wears that gutter as its own
+       padding so no chip text shows to its right. */
+    #convo.stuck > .chips { padding-right: 0; }
+    #convo.stuck > .chips > .turn-wire { padding-right: 48px; }
     @media (max-width: 760px) {
       #convo > .chips { margin: -10px -44px 8px -12px; padding: 6px 12px; }
     }
@@ -3320,17 +3306,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (el) el.textContent = n > 0 ? fmtCompact(n) : '';
     }
 
-    // The traced CLI's display NAME. The client wire tables carry a label
-    // ("Claude", "Kimi Code", "OpenCode"); until every table has one, the
-    // wire word capitalizes — the card must never read "claude" (item 9).
-    // Same signature as clientLabel in src/clients/index.ts, which is
-    // landing on another branch and replaces this copy on the merge.
-    function clientLabel(name, wire) {
-      const w = (wire && wire[name]) || {};
-      if (w.label) return w.label;
-      const s = String(name || '');
-      return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
-    }
+    // The traced CLI's display NAME, from the wire table's label (src/clients).
+    ${clientLabel.toString()}
     // The human's first real prompt on this run — the trace's identity when
     // no one has titled the session yet (the same value the registry
     // stamps, from the same function). Memoized; rescans until found.
@@ -5710,15 +5687,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     const ICON_SKILL = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H7l-1 5.5L11.5 7H8z"/></svg>';
     const ICON_MCP = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 01-9 0zM8 12v2.5"/></svg>';
     // Lucide "brain" — Claude Code's persistent memory (item 14). Inlined
-    // here rather than added to src/vendor/ui-icons.ts because that module
-    // is being edited elsewhere; it belongs there next.
-    const ICON_MEMORY = '<svg class="ui-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-      '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>' +
-      '<path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>' +
-      '<path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>' +
-      '<path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>' +
-      '<path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/>' +
-      '<path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>';
+    const ICON_MEMORY = UI_ICONS.brain;
     // What a memory operation says, wherever it is named: "Memory · write ·
     // fold-bytes-not-analysis.md" — the store, the verb, the note.
     function memoryLabel(mem) {

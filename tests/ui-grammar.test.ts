@@ -481,6 +481,44 @@ describe("sessions sidebar: ordering + subagent nesting", () => {
   });
 });
 
+// A long text reads IN PLACE: bounded height, its own scroll, its size
+// stated, one expand in the corner. The clamp + "show all · N chars" made
+// every long tool result a two-step read.
+describe("long texts read in place", () => {
+  const long = "line of output\n".repeat(400);
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "run it" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: long }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+  });
+
+  test("a long block is a scroll box with its size in the header, not a clamp", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="msg-box"');
+    expect(convo).toContain('class="msg-box-s"');
+    expect(convo).toContain("6.0k chars · 401 lines");
+    expect(convo).toContain('onclick="toggleBox(this)"');
+    expect(convo).not.toContain("msg-clamp");
+    expect(convo).not.toContain("show all");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the detail panel uses the same box", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/p/p1");
+    expect(page.els["detail"].innerHTML).toContain('class="msg-box"');
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("rich tool bodies in the session view", () => {
   test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
     const p = msgPair("p1", {

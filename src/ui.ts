@@ -1179,28 +1179,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .msg-md strong { font-weight: 600; color: var(--text); }
     .msg-md del { color: var(--text-muted); }
     .msg-md img { max-width: 100%; }
-    /* Long texts clamp with an explicit expander instead of an inner scrollbar,
-       so the mouse wheel never gets trapped inside a turn. */
-    .msg-clamp.clamped .msg-text {
-      max-height: 380px;
-      overflow: hidden;
-      -webkit-mask-image: linear-gradient(to bottom, #000 85%, transparent);
-      mask-image: linear-gradient(to bottom, #000 85%, transparent);
+    /* ---- Read in place (item 11) ----
+       A long text is bounded, not truncated: the block keeps ~60vh and
+       scrolls inside itself, its size stated in a thin header, one quiet
+       "expand" in the corner lifting the bound. The old clamp made every
+       long tool result a two-step read and hid how much was left behind a
+       gradient. Scroll chaining stays the browser default, so reaching the
+       inner end keeps the page moving — the wheel trap the clamp was
+       invented to avoid. */
+    .msg-box { border-top: 1px dashed var(--border); }
+    .msg-box:first-child { border-top: none; }
+    .msg-box-h {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 12px 0; font-size: 10px; color: var(--text-faint);
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
     }
-    .msg-more {
-      display: block;
-      width: 100%;
-      padding: 6px 12px;
-      background: none;
-      border: none;
-      border-top: 1px dashed var(--border);
-      color: var(--accent);
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 11px;
-      text-align: left;
+    .msg-box-x {
+      margin-left: auto; flex: none;
+      font: inherit; font-size: 10px; line-height: 1;
+      background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-faint); cursor: pointer; padding: 2px 7px;
     }
-    .msg-more:hover { background: var(--hover); }
+    .msg-box-x:hover { color: var(--text); border-color: var(--accent); }
+    .msg-box-s { max-height: 60vh; overflow-y: auto; }
+    .msg-box.open .msg-box-s { max-height: none; overflow: visible; }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
     .block-note a.unfold { cursor: pointer; }
     /* wire image attachments: thumbnail by default, click for full size —
@@ -4368,7 +4370,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return marked.parse(t);
     }
 
-    // Long texts render clamped with a "show all" expander; short ones inline.
+    // A long text READS IN PLACE (item 11): the block keeps a bounded height
+    // and scrolls inside itself, with its size stated in a thin header and
+    // one "expand" in the corner that lifts the bound. The old pattern —
+    // clamp to 380px, then a "show all · N chars" click — made every long
+    // tool result a two-step read, and a clamped block hid how much was
+    // left behind a gradient. Scroll CHAINING stays default: the page keeps
+    // scrolling once the inner box reaches its end, which is the wheel-trap
+    // the clamp was invented to avoid.
     // md renders assistant reply text as markdown (marked.js GFM).
     function textBlock(text, cls, md, copy) {
       const t = String(text == null ? '' : text);
@@ -4376,38 +4385,41 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const inner = '<div class="' + mcls + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
       // copy: a hover copy button for standalone user/assistant text (thinking
       // and tool_result text live inside folds that already carry copy). The
-      // button copies the block's full text even when it renders clamped.
+      // button copies the block's full text, bounded or expanded.
       const box = copy && t
         ? '<div class="pre-wrap"><button class="copy-btn" onclick="copyBlock(this)" title="Copy">' + COPY_SVG + '</button>' + inner + '</div>'
         : inner;
       if (t.length <= 2000) return box;
-      return '<div class="msg-clamp clamped">' + box +
-        '<button class="msg-more" onclick="toggleClamp(this)">show all \\u00b7 ' + fmtCompact(t.length) + ' chars</button></div>';
+      const lines = t.split('\\n').length;
+      return '<div class="msg-box">' +
+        '<div class="msg-box-h"><span class="msg-box-n">' + fmtCompact(t.length) + ' chars \\u00b7 ' +
+          fmtCompact(lines) + ' line' + (lines === 1 ? '' : 's') + '</span>' +
+        '<button class="msg-box-x" onclick="toggleBox(this)"' +
+          ' title="expand&#10;Drops this block\\u2019s height limit so it reads with the page instead of inside its own scroll.">expand</button></div>' +
+        '<div class="msg-box-s">' + box + '</div></div>';
     }
-    window.toggleClamp = function(btn) {
-      const clamped = btn.parentElement.classList.toggle('clamped');
-      if (clamped) {
-        btn.textContent = btn.dataset.label;
-        btn.parentElement.scrollIntoView({ block: 'nearest' });
-      } else {
-        btn.dataset.label = btn.textContent;
-        btn.textContent = 'collapse';
-      }
+    window.toggleBox = function(btn) {
+      const box = btn.closest ? btn.closest('.msg-box') : btn.parentElement.parentElement;
+      if (!box) return;
+      const open = box.classList.toggle('open');
+      btn.textContent = open ? 'collapse' : 'expand';
+      if (!open && box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
     };
 
     // The LAST turn is what the user came back to read — the final answer
-    // renders in full, no "show all" click. Earlier turns keep the clamp
-    // (they're context, and unclamping all of them makes the page a scroll
-    // marathon). Runs after a convo render; a live patch that rebuilds the
-    // tail node re-applies it via the clamp-state carry in applyConvoParts.
+    // renders in full, no click. Earlier turns keep the bounded box (they're
+    // context, and expanding all of them makes the page a scroll marathon).
+    // Runs after a convo render; a live patch that rebuilds the tail node
+    // re-applies it via the expand-state carry in applyConvoParts.
     function unclampLastTurn() {
       if (!convoEl.querySelectorAll) return; // headless test stub
       const turns = convoEl.querySelectorAll('.turn');
       if (!turns.length) return;
       const last = turns[turns.length - 1];
-      for (const mc of last.querySelectorAll('.msg-clamp.clamped')) {
-        const btn = mc.querySelector(':scope > .msg-more');
-        if (btn) window.toggleClamp(btn);
+      for (const mb of last.querySelectorAll('.msg-box')) {
+        if (mb.classList.contains('open')) continue;
+        const btn = mb.querySelector(':scope > .msg-box-h > .msg-box-x');
+        if (btn) window.toggleBox(btn);
       }
     }
 
@@ -6598,13 +6610,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const old = convoEl.children[i];
         const of_ = old.querySelectorAll('details'), nf = nu.querySelectorAll('details');
         for (let j = 0; j < of_.length && j < nf.length; j++) nf[j].open = of_[j].open;
-        // Clamp state rides along too: a final answer the user expanded (or
-        // unclampLastTurn did) must not snap shut when its node re-renders.
-        const oc = old.querySelectorAll('.msg-clamp'), nc = nu.querySelectorAll('.msg-clamp');
+        // Expand state rides along too: a final answer the user expanded (or
+        // unclampLastTurn did) must not snap back when its node re-renders.
+        const oc = old.querySelectorAll('.msg-box'), nc = nu.querySelectorAll('.msg-box');
         for (let j = 0; j < oc.length && j < nc.length; j++) {
-          if (!oc[j].classList.contains('clamped') && nc[j].classList.contains('clamped')) {
-            const btn = nc[j].querySelector(':scope > .msg-more');
-            if (btn) window.toggleClamp(btn);
+          if (oc[j].classList.contains('open') && !nc[j].classList.contains('open')) {
+            const btn = nc[j].querySelector(':scope > .msg-box-h > .msg-box-x');
+            if (btn) window.toggleBox(btn);
           }
         }
         convoEl.replaceChild(nu, old);

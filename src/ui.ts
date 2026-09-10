@@ -51,6 +51,7 @@ import {
   cwdFromText,
   harnessPrompt,
   harnessTurnKind,
+  firstPromptOfPair,
   harnessNoteKind,
   harnessNoteHead,
   harnessNotes,
@@ -221,6 +222,35 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-family: var(--font-mono);
       font-variant-numeric: tabular-nums;
     }
+    /* ---- The run card's identity grammar (item 2) ----
+       Three lines: the client's mark beside the PROJECT name with the
+       client's label; what this run IS (the session title, or the human's
+       first prompt); then the wire meta in faint mono. It reads as a place
+       and a subject, not as a path and two hashes. The CSS lives here for
+       now — the shared card class is landing in src/chrome.ts on another
+       branch, and this block collapses into it when it does. */
+    .rc-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .rc-mark { display: inline-flex; flex: none; color: var(--text-muted); }
+    .rc-mark svg { width: 14px; height: 14px; }
+    .rc-proj {
+      flex: 0 1 auto; min-width: 0; color: var(--text); font-size: var(--text-body); font-weight: 500;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .rc-proj.ctx-copy { cursor: pointer; }
+    .rc-proj.ctx-copy:hover { color: var(--accent); }
+    .rc-proj.copied { color: var(--green); }
+    .rc-client { flex: none; color: var(--text-faint); font-size: var(--text-xs); }
+    .rc-name {
+      color: var(--text-muted); font-size: var(--text-sm);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .rc-meta {
+      display: flex; align-items: baseline; gap: 6px; min-width: 0;
+      color: var(--text-faint); font-family: var(--font-mono); font-size: var(--text-xs);
+      font-variant-numeric: tabular-nums;
+    }
+    .rc-when { flex: none; }
+    .rc-sep { color: var(--text-faint); }
     /* ---- The work surface's own header: this destination, its numbers ---- */
     header {
       padding: 10px 16px;
@@ -2884,6 +2914,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
     ${harnessTurnKind.toString()}
+    ${firstPromptOfPair.toString()}
     ${harnessNoteKind.toString()}
     ${harnessNoteHead.toString()}
     ${harnessNotes.toString()}
@@ -3281,46 +3312,93 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (el) el.textContent = n > 0 ? fmtCompact(n) : '';
     }
 
+    // The traced CLI's display NAME. The client wire tables carry a label
+    // ("Claude", "Kimi Code", "OpenCode"); until every table has one, the
+    // wire word capitalizes — the card must never read "claude" (item 9).
+    function clientLabel(name) {
+      const w = CLIENT_WIRE[name] || {};
+      if (w.label) return w.label;
+      const s = String(name || '');
+      return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
+    }
+    // The human's first real prompt on this run — the trace's identity when
+    // no one has titled the session yet (the same value the registry
+    // stamps, from the same function). Memoized; rescans until found.
+    let runPromptText = '', runPromptScan = -1;
+    function runPrompt() {
+      if (runPromptText || runPromptScan === pairs.length) return runPromptText;
+      runPromptScan = pairs.length;
+      for (const p of pairs) {
+        if (p._cat !== 'messages') continue;
+        let s = '';
+        try { s = firstPromptOfPair(p); } catch (_) {}
+        if (s) { runPromptText = s; return s; }
+      }
+      return '';
+    }
+    function runStartedAt() {
+      let t0 = 0;
+      for (const p of pairs) {
+        const ts = (p.request && p.request.timestamp) || 0;
+        if (ts && (!t0 || ts < t0)) t0 = ts;
+      }
+      return t0;
+    }
+
+    // ---- The run card: what am I looking at (item 2) ----
+    // The identity grammar, three lines: the client's mark beside the
+    // PROJECT name in the reading face with the client's label; then what
+    // this run IS — the session's title if it has one, else the human's
+    // first prompt; then the wire meta in faint mono, sid8 and the clock.
+    // The old card read "claude / agent-a3c2a57e6c9dc078c… / dc9d37ec /
+    // view": a lowercase word, a hash, another hash, and a mode.
     let ctxKey = null;
     function renderCtx() {
       const sid = currentSessionId();
       const client = currentClient();
-      const key = client + '|' + sid;
+      const label = clientLabel(client);
+      const name = META.sessionTitle || runPrompt();
+      const started = runStartedAt();
+      const key = client + '|' + sid + '|' + name + '|' + started;
       if (key === ctxKey) return;
       ctxKey = key;
       var t = '';
-      if (client) t += client;
+      if (label) t += label;
       if (META.project) { if (t) t += ' \\u00b7 '; t += META.project; }
       if (sid) { if (t) t += ' \\u00b7 '; t += sid.slice(0, 8); }
       if (META.sessionTitle) t = META.sessionTitle + (t ? ' \\u00b7 ' + t : '');
       document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_READING ? 'CCTrace' : 'CCTrace live');
-      let html = '';
-      if (client) {
-        html += '<span class="ctx-client" title="traced CLI">' + (CLIENT_ICONS[client] || '') +
-          '<span>' + escapeHtml(client) + '</span></span>';
+      // Line 1 — mark, project, client. The trace file's path is the click
+      // target it always was: what you paste into "cctrace view".
+      const rel = META.traceRelPath || META.traceFile || '';
+      const idTip = 'run\\n' +
+        (META.project ? 'project: ' + (META.projectPath || META.project) + '\\n' : '') +
+        (label ? 'client: ' + label + '\\n' : '') +
+        (META.traceFile ? 'trace: ' + META.traceFile + '\\n' : '') +
+        (rel ? '---\\n> click copies ' + rel : '');
+      let html = '<span class="rc-id">' +
+        (client ? '<span class="rc-mark">' + (CLIENT_ICONS[client] || '') + '</span>' : '') +
+        '<span class="rc-proj' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(idTip) + '">' +
+        escapeHtml(META.project || 'unknown project') + '</span>' +
+        (label ? '<span class="rc-client">' + escapeHtml(label) + '</span>' : '') +
+        '</span>';
+      // Line 2 — what this run is. A generated title says so; otherwise the
+      // human's own opening words, which are the honest stand-in.
+      if (name) {
+        const nameTip = (META.sessionTitle ? 'session title\\n' : 'first prompt\\n') +
+          name.slice(0, 400) + (name.length > 400 ? '\\u2026' : '') +
+          (META.sessionTitle ? '\\n---\\ngenerated by cctrace title' : '\\n---\\nno generated title yet \\u2014 cctrace title names a session');
+        html += '<span class="rc-name" data-mask="title" title="' + escapeHtml(nameTip) + '">' + escapeHtml(name) + '</span>';
       }
-      if (META.project) {
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        // The trace title: <project>/<trace-file> — names the artifact
-        // behind this page, live log and view rebuild alike. Clicking it
-        // copies the trace's project-relative path (.cctrace/…jsonl) —
-        // the string you paste into "cctrace view" or hand to an agent.
-        const label = META.project + (META.traceFile ? '/' + META.traceFile : '');
-        const rel = META.traceRelPath || META.traceFile || '';
-        const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '') +
-          (rel ? '\\n\\nclick to copy ' + rel : '');
-        html += '<span class="ctx-proj' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+      // Line 3 — the wire meta, faint and mono: the id you copy, the clock.
+      let meta = '';
+      if (sid) meta += '<button class="ctx-sess" data-mask="sid" title="session id&#10;' + escapeHtml(sid) + '&#10;---&#10;&gt; click copies it">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+      if (started) {
+        if (meta) meta += '<span class="rc-sep">\\u00b7</span>';
+        meta += '<span class="rc-when" title="' + escapeHtml('started\\n' + fmtDateTime(new Date(started * 1000))) + '">' +
+          escapeHtml(fmtTime(new Date(started * 1000)).slice(0, 5)) + '</span>';
       }
-      if (sid) {
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<button class="ctx-sess" data-mask="sid" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
-      }
-      if (META.sessionTitle) {
-        // The session's generated name (cctrace title) — read-only identity,
-        // after the artifact and the id it names.
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<span class="ctx-title" title="' + escapeHtml(META.sessionTitle) + ' \\u2014 generated by cctrace title">' + escapeHtml(META.sessionTitle) + '</span>';
-      }
+      if (meta) html += '<span class="rc-meta">' + meta + '</span>';
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
       if (btn) btn.onclick = function() {

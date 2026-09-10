@@ -914,6 +914,36 @@ describe("the destination rail", () => {
     expect(page.errors).toEqual([]);
   });
 
+  // The card answers "what am I looking at": a place and a subject, not a
+  // path and two hashes.
+  test("the run card reads project + client label, then the run's own name", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1", {
+      reqBody: { messages: [{ role: "user", content: "fold the harness notes to one line" }] },
+    })], { project: "cctrace", projectPath: "/repo/cctrace", client: "claude", traceFile: "trace-x.jsonl", traceRelPath: "/store/trace-x.jsonl" }));
+    const card = page.els["ctx"].innerHTML;
+    expect(card).toContain('class="rc-id"');
+    expect(card).toContain(">cctrace</span>");
+    // the client label is capitalized, never the bare wire word
+    expect(card).toContain('class="rc-client">Claude<');
+    expect(card).not.toContain(">claude<");
+    // no generated title: the human's own first prompt stands in
+    expect(card).toContain("fold the harness notes to one line");
+    // the meta line is the id and the clock
+    expect(card).toContain('class="rc-meta"');
+    expect(card).toContain(">aaaabbbb</button>");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a generated session title wins the name line, and the tab title agrees", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")], {
+      project: "cctrace", client: "codex", sessionTitle: "the fold takes bytes, not the reading",
+    }));
+    expect(page.els["ctx"].innerHTML).toContain("the fold takes bytes, not the reading");
+    expect(String(page.doc.title)).toContain("the fold takes bytes, not the reading");
+    expect(String(page.doc.title)).toContain("Codex");
+    expect(page.errors).toEqual([]);
+  });
+
   test("each destination counts what it holds, in its own unit", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
     expect(page.els["dest-n-req"].textContent).toBe("2");

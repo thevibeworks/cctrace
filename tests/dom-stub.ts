@@ -180,6 +180,8 @@ export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
   return {
     els,
     body: bodyEl,
+    /** The document stub — `doc.title` is the browser tab's title. */
+    doc: documentStub,
     fragments,
     errors,
     sockets,

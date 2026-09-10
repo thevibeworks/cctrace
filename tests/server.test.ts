@@ -384,6 +384,17 @@ describe("dashboard", () => {
     expect(html).toContain("Number(i.port) + '/trace'");
   });
 
+  // A row must not repeat what its group header just said, and the rail's
+  // card must not be a truncated file name when the run's own words exist.
+  test("row identity drops what the grouping implies; the card joins its run", async () => {
+    const html = await (await fetch(`${base}/dashboard`)).text();
+    expect(html).toContain("{ project: groupBy !== 'project', client: groupBy !== 'client' }");
+    // The card reads the producing run's title/prompt off the tombstone that
+    // names the same trace, recorded name or resolved carrier.
+    expect(html).toContain("runs[k].logFile === file || runs[k].traceCarrier === file");
+    expect(html).toContain("if (lastSelf) renderSelf(lastSelf);");
+  });
+
   test("/view/<run-id> renders a past run's snapshot; unknown ids 404", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dashview-"));
     mkdirSync(join(dataDir, "instances"), { recursive: true });

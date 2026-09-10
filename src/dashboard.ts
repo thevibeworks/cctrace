@@ -322,6 +322,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   if (['project', 'client', 'day'].indexOf(groupBy) < 0) groupBy = 'project';
   var lastPast = null;
   var lastLive = null;
+  var lastSelf = null;
   var query = '';
   var liveOnly = false;
   // Keyed by group key / project dir, both of which are user paths: plain
@@ -390,17 +391,31 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     if (ico) m.innerHTML = ico;   // our own asset (src/icons.ts), never wire data
     return m;
   }
-  function runIdentity(i) {
+  // The row drops whatever its GROUP HEADER just said and leads with what is
+  // left: grouped by project, 14 rows each opening with the project name are
+  // 14 copies of the header, so the client leads instead; grouped by client,
+  // the label goes and the project leads (the mark stays — it is the row's
+  // fastest read, not a repetition of a word). Grouped by day, neither is
+  // implied, so both show. Whatever leads wears the reading face.
+  function runIdentity(i, opts) {
+    var showProject = !opts || opts.project !== false;
+    var showClient = !opts || opts.client !== false;
     var box = el('span', 'runid');
     var top = el('span', 'runid-top');
     var p = projectParts(i);
     top.appendChild(clientMark(i.client));
-    var name = el('span', 'runid-name');
-    if (ambiguous[p.base] && p.parent) name.appendChild(el('span', 'runid-parent', p.parent + '/'));
-    name.appendChild(document.createTextNode(p.base));
-    name.title = p.full;
-    top.appendChild(name);
-    top.appendChild(el('span', 'runid-client', clientLabel(i.client, CLIENT_WIRE)));
+    if (showProject) {
+      var name = el('span', 'runid-name');
+      if (ambiguous[p.base] && p.parent) name.appendChild(el('span', 'runid-parent', p.parent + '/'));
+      name.appendChild(document.createTextNode(p.base));
+      name.title = p.full;
+      top.appendChild(name);
+      if (showClient) top.appendChild(el('span', 'runid-client', clientLabel(i.client, CLIENT_WIRE)));
+    } else {
+      var lead = el('span', 'runid-name', clientLabel(i.client, CLIENT_WIRE));
+      lead.title = p.full;
+      top.appendChild(lead);
+    }
     box.appendChild(top);
     // The generated session title when one exists (cctrace title), else the
     // human's first prompt — the wire-derived identity.
@@ -550,7 +565,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     var openable = live || (i.traceExists !== false && i.id);
     var row = el(openable ? 'a' : 'div', 'row' + (i.traceExists === false ? ' gone' : ''));
     row.appendChild(el('span', 'live-dot' + (live ? '' : ' past')));
-    row.appendChild(runIdentity(i));
+    row.appendChild(runIdentity(i, { project: groupBy !== 'project', client: groupBy !== 'client' }));
     // val travels with the identity; tx (clock, port) holds the right edge.
     var meta = el('span', 'runid-meta row-val');
     var tx = el('span', 'runid-meta row-tx');
@@ -667,9 +682,29 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
 
   // ---- the rail's run card: what this server IS ----------------------
   // A live capture says "This run" with the live dot; a cctrace view server
-  // says "Viewing" and names the trace. Either way the card links to the
-  // trace this server holds — the destination that used to be a nameless
-  // "Current trace" row.
+  // says "Viewing". Either way the card links to the trace this server holds
+  // — the destination that used to be a nameless "Current trace" row.
+  //
+  // A view server's registry entry knows WHICH trace it serves, not what was
+  // said in it (no prompt, no session id: nothing wrote them there). The
+  // tombstone of the run that produced that trace knows both, so the card
+  // joins on the trace path — /api/runs re-resolves the carrier, so match
+  // the recorded name and the resolved one — and then reads exactly like
+  // that run's row.
+  function selfRun(me) {
+    var runs = lastPast || [];
+    var file = me.logFile || '';
+    for (var k = 0; file && k < runs.length; k++) {
+      if (runs[k].logFile === file || runs[k].traceCarrier === file) {
+        return Object.assign({}, me, {
+          title: me.title || runs[k].title,
+          firstPrompt: me.firstPrompt || runs[k].firstPrompt,
+          sessionId: me.sessionId || runs[k].sessionId
+        });
+      }
+    }
+    return me;
+  }
   function renderSelf(me) {
     var card = document.getElementById('selfcard');
     card.textContent = '';
@@ -681,18 +716,26 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
       card.appendChild(el('span', 'ctx-title', 'every run sharing this data dir'));
       return;
     }
+    me = selfRun(me);
     var viewer = isViewer(me);
     card.className = 'runcard';
     card.setAttribute('href', '/trace');
     var kind = el('span', 'rc-kind', viewer ? 'Viewing' : 'This run');
     kind.appendChild(el('span', 'status ' + (viewer ? 'snapshot' : 'connected')));
     card.appendChild(kind);
-    card.appendChild(runIdentity(me));
-    if (viewer && me.logFile) {
-      var trace = el('span', 'rc-trace', String(me.logFile).split('/').pop());
-      trace.title = me.logFile;
-      card.appendChild(trace);
+    var ident = runIdentity(me);
+    // Line 2 is the row's line 2: what the run was about. The trace's file
+    // name is a fallback for a trace nothing said anything about — a rail
+    // 208px wide cuts it mid-timestamp, which names nothing — and it is
+    // always one hover away.
+    var trace = me.logFile ? String(me.logFile).split('/').pop() : '';
+    var line = ident.querySelector('.runid-line');
+    if (line && !line.textContent && trace) {
+      line.className = 'runid-line rc-trace';
+      line.textContent = trace;
     }
+    card.appendChild(ident);
+    card.title = projectParts(me).full + (me.logFile ? '\\n' + me.logFile : '');
     var meta = el('span', 'runid-meta');
     if (me.sessionId) meta.appendChild(el('span', 'sid', String(me.sessionId).slice(0, 8)));
     if (me.port) meta.appendChild(el('span', 'port', ':' + me.port));
@@ -1028,7 +1071,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     function read(url) { return fetch(url).then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); }); }
     // /api/self answers from memory — this server's own identity for the
     // rail card. It must never fail the run listing, so it is optional.
-    read('/api/self').then(renderSelf, function () {});
+    read('/api/self').then(function (me) { lastSelf = me; renderSelf(me); }, function () {});
     Promise.all([read('/api/instances'), read('/api/runs')]).then(function (data) {
       lastLive = data[0];
       lastPast = data[1];
@@ -1037,6 +1080,9 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
         if (!lastLive.some(function (i) { return i.id === id; })) delete stopping[id];
       }
       renderRuns();
+      // The card reads its own run out of the tombstones (selfRun), so it is
+      // repainted once they are in hand — /api/self usually lands first.
+      if (lastSelf) renderSelf(lastSelf);
       var note = document.getElementById('note');
       note.className = 'note';
       note.textContent = '';

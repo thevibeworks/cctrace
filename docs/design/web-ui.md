@@ -925,6 +925,12 @@ hash-routed:
     mono: sid8, size/pairs/tokens/cost for a finished run, the clock, the
     port for a live one. Identity gets a measure and the numbers travel
     with it; the clock and port hold the right edge (docs/design/ui.md).
+    A row drops whatever its GROUP HEADER already said: grouped by
+    project the client label leads (14 rows repeating the project name
+    are 14 copies of the header), grouped by client the project leads and
+    only the label goes (the mark stays, it is the fastest read on the
+    row), grouped by day both show. Whatever leads wears the reading
+    face, so the row keeps one strong first word either way.
   - Live and finished runs are **ONE list with one grouping**. Live is a
     STATE (green dot, port, stop control, a `live only` filter chip), not
     a section: a "Live" section made the group control lie, since grouping
@@ -936,9 +942,15 @@ hash-routed:
     prompt and session id.
   - The rail carries the **run card** for what THIS server is, from
     `/api/self`: "This run" with the live dot for a capture, "Viewing"
-    plus the trace's name for a `cctrace view` server, both linking
-    `/trace`. It replaced a "Current trace" destination that could not say
-    what the trace was.
+    for a `cctrace view` server, both linking `/trace`. It replaced a
+    "Current trace" destination that could not say what the trace was.
+    The card's line 2 is a row's line 2 (title, else first prompt). A
+    view server's registry entry has neither, so the card joins the
+    tombstones on the trace path (recorded or resolved carrier) and reads
+    the producing run's; a trace nothing said anything about falls back
+    to the file name. The full path is always in the card's hover, since
+    a 208px rail cuts a trace file name mid-timestamp and a cut timestamp
+    names nothing.
   - Both lists paint a **skeleton** of the rows they are about to hold
     while the first fetch is in flight, and a refresh that cannot reach
     its server keeps the last picture on screen and says so in the note -

@@ -51,6 +51,11 @@ import {
   cwdFromText,
   harnessPrompt,
   harnessTurnKind,
+  harnessNoteKind,
+  harnessNoteHead,
+  harnessNotes,
+  harnessNoteLine,
+  memoryOp,
   continuationSummaryTurn,
   loopTurns,
   threadTimeSplit,
@@ -1275,6 +1280,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .fold-link { color: var(--accent); font-size: 11px; text-decoration: none; flex: none; margin-left: auto; }
     .fold-stat ~ .fold-link { margin-left: 10px; }
     .fold-link:hover { text-decoration: underline; }
+    /* ---- Harness notes: one line, a chevron, nothing else (item 10) ----
+       The CLI stacks the same nudges onto almost every step. Rendered in
+       full they ARE the conversation on a working session, so a harness
+       message is a single folded line: SYSTEM + what the notes say. The
+       turn around it drops its box and its role bar — the step above it
+       already carries the ordinal and the clock. */
+    .turn-sys { border: none; border-radius: 0; margin: 2px 0; }
+    .fold-sys > summary { padding: 3px 12px; }
+    .fold-sys > summary .fold-title {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0;
+      color: var(--text-faint);
+    }
+    .fold-sys > summary .fold-hint { color: var(--text-faint); }
+    .fold-sys > summary:hover .fold-hint { color: var(--text-muted); }
+    .fold-sys .msg-text.sys-note { color: var(--text-muted); font-size: var(--text-sm); }
+    /* the rail's marker for the notes that followed a step — a dot, not a row */
+    .tsys { flex: none; color: var(--text-faint); font-size: 13px; line-height: 1; opacity: 0.7; }
+    .tsys:hover { color: var(--text-muted); opacity: 1; }
     .sys-block { border-bottom: 1px dashed var(--border); }
     .sys-block:last-child { border-bottom: none; }
     .cc-tag { padding: 8px 12px 0; font-size: 10px; color: var(--amber); }
@@ -2649,6 +2672,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
     ${harnessTurnKind.toString()}
+    ${harnessNoteKind.toString()}
+    ${harnessNoteHead.toString()}
+    ${harnessNotes.toString()}
+    ${harnessNoteLine.toString()}
+    ${memoryOp.toString()}
     ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
     ${threadTimeSplit.toString()}
@@ -4383,11 +4411,41 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
     }
 
+    // ---- Harness notes fold to one line (item 10) ----
+    // Claude Code stacks the same nudges onto almost every step — as
+    // <system-reminder> blocks appended to a tool result or a user turn,
+    // and as bare role:"system" wire messages. Rendered in full they ARE
+    // the conversation on a working session. So: the notes collapse to one
+    // summarized line with a chevron, and the human's own text in the same
+    // block renders exactly as before — a prompt is never folded.
+    function harnessSplit(text) {
+      const t = String(text == null ? '' : text);
+      if (t.indexOf('<system-reminder>') === -1) return null;
+      const notes = [];
+      const human = t.replace(/<system-reminder>([\\s\\S]*?)<\\/system-reminder>/g, function(_, inner) {
+        notes.push(String(inner).trim());
+        return '';
+      }).trim();
+      if (!notes.length) return null;
+      return { notes: notes.join('\\n\\n'), human: human };
+    }
+    // The folded line itself: SYSTEM + what the notes say. The body holds
+    // every byte, one click away (and inside item 11's scroll box).
+    function sysFold(text) {
+      const line = harnessNoteLine(text) || fmtCompact(String(text || '').length) + ' chars';
+      return fold('SYSTEM', line, textBlock(text, 'sys-note'), 'fold-sys');
+    }
+    function textOrHarness(text, md, copy) {
+      const hs = harnessSplit(text);
+      if (!hs) return textBlock(text, '', md, copy);
+      return (hs.human ? textBlock(hs.human, '', md, copy) : '') + sysFold(hs.notes);
+    }
+
     function renderBlock(b, md) {
       if (b == null) return '';
-      if (typeof b === 'string') return textBlock(b, '', md, true);
+      if (typeof b === 'string') return textOrHarness(b, md, true);
       const type = b.type;
-      if (type === 'text') return textBlock(b.text, '', md, true);
+      if (type === 'text') return textOrHarness(b.text, md, true);
       if (type === 'thinking') {
         const t = b.thinking || '';
         if (!t) return '<div class="block-note">thinking (no visible content)</div>';
@@ -4400,7 +4458,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (type === 'tool_result') {
         let body = '';
-        if (typeof b.content === 'string') body = textBlock(b.content);
+        if (typeof b.content === 'string') body = textOrHarness(b.content, false, false);
         else if (Array.isArray(b.content)) { for (const c of b.content) body += renderBlock(c); }
         else body = preBlock(formatJson(b.content));
         const len = typeof b.content === 'string' ? fmtCompact(b.content.length) + ' chars \\u00b7 ' : '';
@@ -5416,9 +5474,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const linfo = {};
       const loopSize = {};  // member rows a folded head hides
       const loopSteps = {}; // steps (wire requests) per loop, for "of N"
+      // Harness notes fold to one line in the conversation (item 10) and are
+      // GONE from the rail: a row per "Only you see that command's output"
+      // buried the agent's actual work. The step they followed wears a tiny
+      // dot instead, so the rail never hides that they happened.
+      const isSpoken = (v) => { const r = vis[v] && vis[v].role; return r === 'user' || r === 'assistant'; };
+      const sysAfter = {};
+      {
+        let last = -1;
+        for (let i = 0; i < vis.length; i++) {
+          if (isSpoken(i)) { last = i; continue; }
+          if (last >= 0) sysAfter[last] = (sysAfter[last] || 0) + 1;
+        }
+      }
       for (let li = 0; li < loops.length; li++) {
         const L = loops[li];
-        loopSize[li] = L.members.length;
+        loopSize[li] = L.members.filter(isSpoken).length;
         loopSteps[li] = L.stepCount || 0;
         if (L.head != null) linfo[L.head] = { ord: li, kind: 'head', injected: L.headInjected || '' };
         for (let mi = 0; mi < L.members.length; mi++) {
@@ -5501,6 +5572,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (supAt[vi]) for (const pid of supAt[vi]) html += supRow(pid, vi);
           if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
+          if (!isSpoken(vi)) continue; // harness notes: the dot below says so
           const li = linfo[vi] || { ord: null, kind: 'mid' };
           // A folded loop (❯ gutter click) hides its member rows — the
           // head line stays with a "⋯ N" count; truth markers (compact/
@@ -5647,13 +5719,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                   : 'collapses this turn\\u2019s agent work under the prompt line') +
                 '\\n---\\n> click to ' + (folded ? 'unfold' : 'fold')) + '"'
             : '';
+          const sysN = sysAfter[vi] || 0;
+          const sysDot = sysN
+            ? '<span class="tsys" data-tip="' + escapeHtml(sysN + ' harness note' + (sysN === 1 ? '' : 's') +
+                ' followed this step\\nthe CLI\\u2019s own nudges \\u2014 terminal caveat, token budget, output style' +
+                '\\n---\\n> they read folded in the conversation') + '">\\u00b7</span>'
+            : '';
           html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
             (canFold ? ' data-fold="' + li.ord + '"' : '') +
             ' data-tip="' + escapeHtml(tip) + '">' +
             '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
             '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + traj + '</a>';
+            '<span class="tturn-text">' + text + '</span>' + sysDot + errMark + foldN + traj + '</a>';
           if (turn.role === 'assistant' && !folded) html += branchRows(turn);
         }
       }
@@ -6108,7 +6186,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const res = results[b.id];
         if (res) {
           let rbody = '';
-          if (typeof res.content === 'string') rbody = textBlock(res.content);
+          if (typeof res.content === 'string') rbody = textOrHarness(res.content, false, false);
           else if (Array.isArray(res.content)) { for (const c of res.content) rbody += renderBlock(c); }
           else rbody = preBlock(formatJson(res.content));
           body += '<div class="tool-res' + (res.is_error ? ' errline' : '') + '">' +
@@ -6123,7 +6201,23 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     function renderSessionTurn(turn, results, ord, isSummary, stepLbl, ts) {
+      // A wire message whose role is neither user nor assistant is harness
+      // scope by definition — Claude Code sends its nudges as role
+      // "system". One folded line, no role bar: the step above it already
+      // carries the ordinal and the clock (item 10).
+      const harness = turn.role !== 'user' && turn.role !== 'assistant';
       let inner = '';
+      if (harness) {
+        let raw = '';
+        for (const b of turn.blocks || []) {
+          if (b && b.type === 'text' && typeof b.text === 'string') raw += (raw ? '\\n\\n' : '') + b.text;
+        }
+        if (raw) inner += sysFold(raw);
+        for (const b of turn.blocks || []) {
+          if (!b || b.type !== 'text') inner += renderBlockS(b, results, false);
+        }
+        return '<div class="turn turn-sys"' + (ts ? ' data-ts="' + (ts * 1000) + '"' : '') + '>' + inner + '</div>';
+      }
       for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {

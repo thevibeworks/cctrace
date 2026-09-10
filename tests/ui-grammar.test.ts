@@ -824,6 +824,63 @@ describe("outline tool labels", () => {
   });
 });
 
+// The conversation was dominated by SYSTEM blocks: Claude Code stacks the
+// same nudges onto almost every step. They fold to one summarized line, the
+// human's own prompt text never does, and the rail drops the rows for a dot.
+describe("harness notes fold to one line", () => {
+  const NUDGE = "Only you see that command's output — the user's terminal shows at most a few lines of it.\n\n" +
+    "<total_tokens>14887549 tokens left</total_tokens>\n\n" +
+    "Proactive output style is active. Execute autonomously.";
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "please fix the bug\n<system-reminder>\nCodebase and user instructions are shown below.\n" + "x".repeat(3000) + "\n</system-reminder>" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+        { role: "system", content: NUDGE },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "fixed it" }], stop_reason: "end_turn" },
+  });
+
+  test("a role:system nudge renders as ONE folded line naming its notes", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="fold fold-sys"');
+    expect(convo).toContain("3 harness notes");
+    expect(convo).toContain("terminal caveat");
+    expect(convo).toContain("14.89m tokens left");
+    // no role bar, no box: the step above already carries ordinal and clock
+    expect(convo).toContain('class="turn turn-sys"');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a reminder appended to a prompt folds; the prompt itself never does", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("please fix the bug");
+    expect(convo).toContain("project instructions · 3.0k chars");
+    // the prompt renders as itself; the 3k reminder sits behind a closed fold
+    expect(convo).toContain('<div class="msg-text">please fix the bug</div>');
+    expect(convo).not.toContain('<details open class="fold fold-sys"');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the rail drops the system row and dots the step it followed", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const threads = page.els["threads"].innerHTML;
+    expect(threads).toContain('class="tsys"');
+    expect(threads).toContain("harness note followed this step");
+    expect(threads).not.toContain("Only you see that command");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("harness-authored messages", () => {
   test("a recap prompt wears the sys tag in outline and convo, never the human ring", () => {
     const recap = "The user stepped away and is coming back. Recap in under 40 words.";

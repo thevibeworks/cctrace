@@ -59,6 +59,14 @@ export const CHROME_CSS = `
       --cost-write: color-mix(in srgb, #d97757 50%, #0b0b0b);
       --cost-input: color-mix(in srgb, #d97757 72%, #0b0b0b);
       --cost-output: #d97757;
+      /* What a byte in the trace store is doing: at rest, held by a live
+         run, a legacy .gz, or still plain. One ramp off the same ink,
+         ordered by distance from rest — the store in four states is ONE
+         thing, so it never gets four categorical hues. */
+      --store-zst: color-mix(in srgb, #d97757 26%, #0b0b0b);
+      --store-live: color-mix(in srgb, #d97757 46%, #0b0b0b);
+      --store-gz: color-mix(in srgb, #d97757 68%, #0b0b0b);
+      --store-plain: #d97757;
       /* Faces. anthropic-sans / anthropic-mono are licensed and not ours to
          ship, so the stack is CDS's own declared fallback chain. Mono
          appears only where wire characters matter: urls, ids, numbers,
@@ -108,6 +116,10 @@ export const CHROME_CSS = `
         --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
         --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
         --cost-output: #c6613f;
+        --store-zst: color-mix(in srgb, #d97757 26%, #fcfcfb);
+        --store-live: color-mix(in srgb, #d97757 48%, #fcfcfb);
+        --store-gz: color-mix(in srgb, #d97757 70%, #fcfcfb);
+        --store-plain: #c6613f;
         --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
         --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
       }
@@ -129,6 +141,10 @@ export const CHROME_CSS = `
       --cost-write: color-mix(in srgb, #d97757 52%, #fcfcfb);
       --cost-input: color-mix(in srgb, #d97757 76%, #fcfcfb);
       --cost-output: #c6613f;
+      --store-zst: color-mix(in srgb, #d97757 26%, #fcfcfb);
+      --store-live: color-mix(in srgb, #d97757 48%, #fcfcfb);
+      --store-gz: color-mix(in srgb, #d97757 70%, #fcfcfb);
+      --store-plain: #c6613f;
       --shadow-1: 0 1px 2px 0 rgba(11,11,11,0.06), 0 2px 8px 0 rgba(11,11,11,0.08);
       --shadow-2: 0 2px 4px 0 rgba(11,11,11,0.07), 0 6px 16px 0 rgba(11,11,11,0.08);
     }
@@ -195,6 +211,49 @@ export const CHROME_CSS = `
     }
     .ctx-sess:hover { color: var(--accent); }
     .ctx-sess.copied { color: var(--green); }
+    /* ---- The run identity: one grammar wherever a run is named ----
+       A run is a PROJECT (the name a human says out loud, in the reading
+       face) produced by a CLIENT, with one line of what it was about (its
+       generated title, else the human's first prompt) and its wire meta in
+       mono. The dashboard's rows and the rails' run cards are that same
+       block at two widths — nothing that names a run invents its own
+       layout, and the project stops being a path fragment set in mono. */
+    .runid { display: grid; gap: 1px; min-width: 0; }
+    .runid-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+    .runid-mark { display: flex; align-self: center; width: 16px; height: 16px; flex: none; }
+    .runid-mark svg, .runid-mark img { width: 16px; height: 16px; }
+    .runid-name {
+      font-size: var(--text-body); font-weight: 500; color: var(--text);
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* Two projects can share a basename; the parent segment disambiguates
+       without promoting the whole path to the name. */
+    .runid-parent { color: var(--text-faint); font-weight: 400; }
+    .runid-client { flex: none; font-size: var(--text-sm); color: var(--text-faint); }
+    .runid-line {
+      font-size: var(--text-sm); color: var(--text-muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .runid-line:empty { display: none; }
+    .runid-meta {
+      display: flex; align-items: center; gap: 10px; min-width: 0;
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+      font-size: var(--text-xs); color: var(--text-faint);
+    }
+    /* Live is a STATE, not a section: one dot, the same one, wherever a run
+       appears. It heartbeats only while the run is live. */
+    .live-dot { width: 7px; height: 7px; border-radius: var(--radius-full); background: var(--green); flex: none; }
+    .live-dot.past { background: var(--border-strong); }
+    .status { font-size: var(--text-xs); color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+    .status::before { content: ''; width: 6px; height: 6px; border-radius: var(--radius-full); background: currentColor; flex-shrink: 0; }
+    .status.connected { color: var(--green); }
+    .status.connected::before { animation: heartbeat 2.4s ease-in-out infinite; }
+    .status.disconnected { color: var(--red); }
+    .status.snapshot { color: var(--text-faint); }
+    @keyframes heartbeat { 50% { opacity: 0.3; } }
+    @media (prefers-reduced-motion: reduce) {
+      .status.connected::before { animation: none; }
+    }
     /* Destinations: one row each, the count on the right. */
     .dests { display: grid; gap: 2px; align-content: start; }
     .dest {

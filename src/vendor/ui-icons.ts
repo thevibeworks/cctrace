@@ -41,7 +41,8 @@ import eyeOff from "./lucide/eye-off.svg" with { type: "text" };
 import search from "./lucide/search.svg" with { type: "text" };
 import archive from "./lucide/archive.svg" with { type: "text" };
 import refreshCw from "./lucide/refresh-cw.svg" with { type: "text" };
+import chevronRight from "./lucide/chevron-right.svg" with { type: "text" };
 
 export const UI_ICONS = Object.fromEntries(
-  Object.entries({ x, zoomIn, zoomOut, scan, panelTopClose, panelTopOpen, panelRightClose, panelRightOpen, panelLeftClose, panelLeftOpen, listTree, listFilter, messagesSquare, chartNoAxesColumn, layoutGrid, ellipsis, play, pause, skipBack, skipForward, maximize, minimize, arrowLeft, arrowRight, chevronsUp, chevronsDown, arrowUp, arrowDown, cornerLeftUp, cornerLeftDown, fileText, gitBranch, copy, check, sun, moon, monitor, eye, eyeOff, search, archive, refreshCw }).map(([name, svg]) => [name, svg.replace('<svg', '<svg class="ui-icon" aria-hidden="true"')]),
+  Object.entries({ x, zoomIn, zoomOut, scan, panelTopClose, panelTopOpen, panelRightClose, panelRightOpen, panelLeftClose, panelLeftOpen, listTree, listFilter, messagesSquare, chartNoAxesColumn, layoutGrid, ellipsis, play, pause, skipBack, skipForward, maximize, minimize, arrowLeft, arrowRight, chevronsUp, chevronsDown, arrowUp, arrowDown, cornerLeftUp, cornerLeftDown, fileText, gitBranch, copy, check, sun, moon, monitor, eye, eyeOff, search, archive, refreshCw, chevronRight }).map(([name, svg]) => [name, svg.replace('<svg', '<svg class="ui-icon" aria-hidden="true"')]),
 );

@@ -778,41 +778,92 @@ hash-routed:
   after 10 minutes. A start is never written to the trace: it is live
   state, not wire data, so snapshots and `cctrace view` pages say nothing
   about "now" (docs/design/replay-stage.md).
-- **Dashboard** (`/dashboard`, src/dashboard.ts — every live/view server
-  serves the same page from the shared registry): live runs, the store,
-  finished runs. Two of those three sections ACT.
+- **Dashboard** (`/dashboard`, src/dashboard.ts, every live/view server
+  serves the same page from the shared registry): two destinations, Runs
+  and Storage, and both ACT.
+  - A run's **identity** is one grammar, shared with the trace page's rail
+    card (`.runid` in src/chrome.ts): the client mark, the PROJECT name in
+    the reading face (the basename of `projectPath`, with the parent
+    segment added only when two projects on the page collide, as in
+    `WIP/deva-chore`; the full path is the tooltip), the client's own
+    label from `clientLabel(name, CLIENT_WIRE)` ("Kimi Code", never the
+    selector word `kimi`), then one line of what the run was about (its
+    generated title, else the human's first prompt) and the wire meta in
+    mono: sid8, size/pairs/tokens/cost for a finished run, the clock, the
+    port for a live one. Identity gets a measure and the numbers travel
+    with it; the clock and port hold the right edge (docs/design/ui.md).
+  - Live and finished runs are **ONE list with one grouping**. Live is a
+    STATE (green dot, port, stop control, a `live only` filter chip), not
+    a section: a "Live" section made the group control lie, since grouping
+    by project only grouped the half below it. The control groups every
+    run by project / client / day, live rows sort first inside their
+    group, and each group pages on its own ("show 20 more") so one busy
+    project cannot spend the whole page. The search filters live and
+    finished alike, across project, client (id and label), title, first
+    prompt and session id.
+  - The rail carries the **run card** for what THIS server is, from
+    `/api/self`: "This run" with the live dot for a capture, "Viewing"
+    plus the trace's name for a `cctrace view` server, both linking
+    `/trace`. It replaced a "Current trace" destination that could not say
+    what the trace was.
+  - Both lists paint a **skeleton** of the rows they are about to hold
+    while the first fetch is in flight, and a refresh that cannot reach
+    its server keeps the last picture on screen and says so in the note -
+    a dashboard that blanks on a hiccup is worse than one that is briefly
+    out of date.
   - Each live row carries a **stop** button. It arms on the first click
     ("end session?" for a capture, "close?" for a viewer) and sends on the
     second; arming decays after 5s. The page always posts to ITS OWN
-    origin — `POST /api/instances/stop {id[,force]}` — and that server
+    origin, `POST /api/instances/stop {id[,force]}`, and that server
     relays to the target's own port (`POST /api/shutdown`, node:http,
     exactly how liveness is probed): a pid is neither addressable nor
     trustworthy across the pid namespaces that share a data dir, while
     port + run id name one run. The receiver compares the id against its
     own before acting, so a stale row pointing at a recycled port cannot
-    kill the newcomer. A capture run stops the way Ctrl-C stops it — the
+    kill the newcomer. A capture run stops the way Ctrl-C stops it, the
     traced child takes SIGTERM and its exit runs the whole close-out
     (flush, receipt, seal, tombstone), so stopping from the page never
     costs a trace; `force` escalates to SIGKILL for a child that ignores
     the polite ask. Rows for instances the port sweep found without an id
     (pre-0.10 servers) get no button: unaddressable is not stoppable.
-    Stopping the instance that served the page is allowed and says so —
+    Stopping the instance that served the page is allowed and says so -
     the note turns amber instead of freezing on a stale picture.
-  - The **store** section is the housekeeping picture (`GET /api/store`,
-    src/maintenance.ts): bytes on disk, traces, projects, and the exact
-    archive plan — plain traces and their weight, legacy `.gz` to
-    re-encode, interrupted exit seals, plus how many plain traces a live
-    run is holding (informational: a trace being written can't be
-    archived, so it never justifies the button). **archive now**
-    (`POST /api/store/archive`) spawns `cctrace compress --all --yes` as a
-    CHILD process and streams its output into the job record the page
-    polls every 2s; `{"cancel":true}` kills it between files. The child
-    is the point twice over: there is exactly one implementation of
-    archiving (the CLI), and a multi-GB archive never runs on the event
-    loop of a capture run, whose MITM proxy the traced session depends on
-    — the same reason the exit seal is a detached helper
-    (docs/design/store.md). What the job reports as reclaimed comes from
-    re-measuring the store before and after, never from parsing the log.
+  - **Storage** is the housekeeping picture (`GET /api/store`,
+    src/maintenance.ts), read top to bottom as one question getting
+    narrower:
+    1. the whole store (bytes, traces, projects, the store root) and one
+       stacked bar of where those bytes are: archived `.zst`, held by a
+       live run, legacy `.gz`, still plain. One ramp off the brand ink
+       (`--store-*` in src/chrome.ts), never four categorical hues: this
+       is one store in four states, not four things. A 2px surface gap
+       between fills, and a legend that states each figure once.
+    2. one bar per project, biggest first, split by the same states and
+       scaled to the biggest, with the projects past `STORE_TOP` folded
+       into one "N smaller projects" bar so the total stays whole.
+    3. the archive plan (plain traces and their weight, legacy `.gz` to
+       re-encode, interrupted exit seals, plus how many plain traces a
+       live run is holding, which is informational: a trace being written
+       can't be archived, so it never justifies the button) and the
+       page's ONE primary action, **archive now**, in clay.
+    4. a project's files on demand: expand a bar for name, state, bytes
+       and mtime, biggest first (`FILES_PER_DIR`, the remainder counted).
+       The entries ride the walk /api/store already does; the page never
+       asks the server to re-read a directory.
+    **archive now** (`POST /api/store/archive`) spawns `cctrace compress
+    --all --yes` as a CHILD process and streams its output into the job
+    record the page polls every 2s; `{"cancel":true}` kills it between
+    files, and `{"dir":"<project dir>"}` archives ONE project
+    (`compress --dir DIR --yes`, same runner, still one job at a time -
+    the per-project `archive` button). That dir comes from a browser and
+    the job unlinks what it archives, so `storeDirArg` refuses anything
+    that is not a real directory strictly inside this server's store
+    root. The child is the point twice over: there is exactly one
+    implementation of archiving (the CLI), and a multi-GB archive never
+    runs on the event loop of a capture run, whose MITM proxy the traced
+    session depends on, the same reason the exit seal is a detached
+    helper (docs/design/store.md). What the job reports as reclaimed
+    comes from re-measuring the store before and after, never from
+    parsing the log.
 - Pure data extraction lives in `src/summarize.ts` + `src/session.ts`,
   inlined into the page via `Function.prototype.toString()` (same pattern as
   `categorize.ts`), so it is unit-testable and live/snapshot UIs cannot drift.

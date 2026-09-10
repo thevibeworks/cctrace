@@ -131,6 +131,44 @@ dir can resolve, so `/api/runs` and `/view/<run-id>` open from anywhere.
 last, the same basename in the project's store dir — the fallback that
 opens a trace adopted from a legacy dir without touching its tombstone.
 
+### `GET /api/store`: the store as the page draws it
+
+`storePicture(dataDir, top)` in src/maintenance.ts walks the store ONCE
+(async, yielding between project dirs: a real store is 80 dirs and 1000
+files, and a capture run's MITM proxy is on this event loop) and returns:
+
+```
+root, projects, traces, bytes            the whole store
+plain, plainBytes, upgrades, staleSeals  the archive plan, from planCompress
+liveHeld                                 plain traces a live run is writing
+states { plain, zst, gz, live }          bytes by state, store-wide
+dirs[]  { dir, project, traces, bytes,   the `top` biggest projects
+          plain, plainBytes,
+          states { ... },
+          files[] { name, bytes, state, mtimeMs },   biggest first
+          moreFiles }
+rest    { projects, traces, bytes, states }          everything past `top`
+job                                      the archive job, if one exists
+```
+
+Every trace file is in exactly one state, decided by the same rules the
+archive plan applies: `.jsonl.zst` is `zst`, `.jsonl.gz` is `gz`, a
+`.jsonl` a heartbeat-fresh run holds is `live` (planCompress excludes it),
+the rest is `plain`. So `states` and the plan can never disagree about a
+file, and the states sum to `bytes`. `files` is capped at `FILES_PER_DIR`
+(biggest first, `moreFiles` counts the remainder) and only the listed
+projects carry one; the fold into `rest` is what keeps a 15s poll from
+shipping 80 projects of file lists. The picture is cached for 2s
+(`storePictureCached`); the job's own before/after measurements call
+`storePicture` directly, because those must be exact.
+
+`POST /api/store/archive` takes `{}` (the whole store), `{"cancel":true}`,
+or `{"dir":"<project dir>"}` for one project. The dir arrives from a
+browser and the job unlinks every source it has archived, so `storeDirArg`
+resolves it and refuses anything that is not a real directory strictly
+inside this server's store root, the root itself included, since
+archiving everything is `--all` and needs no path.
+
 ## Legacy `./.cctrace` dirs
 
 A run in a project with a legacy `./.cctrace` prints one line naming it

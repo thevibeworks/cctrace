@@ -1282,6 +1282,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .fold-link { color: var(--accent); font-size: 11px; text-decoration: none; flex: none; margin-left: auto; }
     .fold-stat ~ .fold-link { margin-left: 10px; }
     .fold-link:hover { text-decoration: underline; }
+    /* ---- Memory operations wear their own mark (item 14) ----
+       A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is Claude
+       Code remembering, not a file edit like any other. The ink is CDS's
+       AQUA (#3f9d8f, the git-status teal the palette already ships) — the
+       one data hue the CONVERSATION does not already spend: fold titles use
+       blue for plain tools and violet for notable events, and green/amber/
+       red stay state. (The Bootstrap request category wears the same hue in
+       the requests list; different surface, no collision in reading.) */
+    :root { --memory: #3f9d8f; }
+    .fold.fold-mem > summary .fold-title,
+    .fold.fold-mem > summary .fold-ico { color: var(--memory); }
+    .fold.fold-mem > summary .fold-hint { color: var(--text-muted); }
+    .tname-mem { color: var(--memory); }
+    .tj-row.tj-mem .tj-label { color: var(--memory); }
+    .tj-ico { display: inline-flex; flex: none; color: var(--memory); }
+    .tj-ico svg { width: 13px; height: 13px; }
     /* ---- Harness notes: one line, a chevron, nothing else (item 10) ----
        The CLI stacks the same nudges onto almost every step. Rendered in
        full they ARE the conversation on a working session, so a harness
@@ -5319,6 +5335,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // plug for MCP; subagent spawns reuse the branch (they ARE a thread).
     const ICON_SKILL = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H7l-1 5.5L11.5 7H8z"/></svg>';
     const ICON_MCP = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 01-9 0zM8 12v2.5"/></svg>';
+    // Lucide "brain" — Claude Code's persistent memory (item 14). Inlined
+    // here rather than added to src/vendor/ui-icons.ts because that module
+    // is being edited elsewhere; it belongs there next.
+    const ICON_MEMORY = '<svg class="ui-icon" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+      '<path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/>' +
+      '<path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/>' +
+      '<path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/>' +
+      '<path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/>' +
+      '<path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/>' +
+      '<path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>';
+    // What a memory operation says, wherever it is named: "Memory · write ·
+    // fold-bytes-not-analysis.md" — the store, the verb, the note.
+    function memoryLabel(mem) {
+      return 'Memory \\u00b7 ' + mem.op + ' \\u00b7 ' + mem.file;
+    }
 
     // URL form of a thread key: '<sid8>|<grouping>'. Internal state keeps
     // full keys; only what lands in the location hash is shortened.
@@ -5429,9 +5460,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const n = b.name || '?';
         const i = b.input || {};
         let name = n, args = '', ncls = 'tname';
+        const mem = memoryOp(n, i);
+        if (mem) {
+          // The agent's persistent memory reads as itself on the rail too.
+          ncls = 'tname tname-mem';
+          name = 'Memory';
+          args = mem.op + ' \\u00b7 ' + mem.file;
+        }
         // Spawn shape only (subagent_type / prompt): task-tracking
         // TaskCreate {subject} falls through to the generic preview.
-        if (SPAWN_TOOLS[n] && (i.subagent_type || typeof i.prompt === 'string')) {
+        else if (SPAWN_TOOLS[n] && (i.subagent_type || typeof i.prompt === 'string')) {
           // The real tool name (Task/Agent) + who was spawned for what —
           // a bare "Task" said nothing when the subagent thread wasn't
           // linked (no branch row). Purple name: spawns are notable.
@@ -6303,7 +6341,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const inp = b.input || {};
         // Spawn shape only — task-tracking TaskCreate {subject} is a plain
         // tool fold, not a "subagent" title with no thread behind it.
-        if (SPAWN_TOOLS[name] && (inp.subagent_type || typeof inp.prompt === 'string')) {
+        const mem = memoryOp(name, inp);
+        if (mem) {
+          // Claude Code writing to its own persistent notes is not a file
+          // edit like any other — it is the agent remembering (item 14).
+          title = memoryLabel(mem);
+          pv = wsPath(inp.file_path || inp.path, wsRoot());
+          cls = 'fold-mem';
+          icon = ICON_MEMORY;
+        } else if (SPAWN_TOOLS[name] && (inp.subagent_type || typeof inp.prompt === 'string')) {
           title = 'subagent';
           cls = 'fold-agent';
           icon = ICON_EPOCH;
@@ -7092,10 +7138,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           lastOrd = r.ord;
         }
         const isTool = r.kind === 'tool';
+        // The agent's persistent memory carries its mark into the record
+        // stream too (item 14) — same label, same ink, same brain.
+        const mem = isTool && r.block ? memoryOp(r.block.name, r.block.input) : null;
         rows += '<a class="tj-row tj-k-' + r.kind + (r.think ? ' tj-think' : '') + (r.err ? ' tj-err' : '') +
-            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
+            (mem ? ' tj-mem' : '') +
+            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (mem ? 'var(--memory)' : TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
           tjBadge(r) +
-          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(r.label) + '</span>' +
+          (mem ? '<span class="tj-ico">' + ICON_MEMORY + '</span>' : '') +
+          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(mem ? memoryLabel(mem) : r.label) + '</span>' +
           (isTool && r.detail ? '<span class="tj-arrow">→</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
           '<span class="tj-gap"></span>' +
           '<span class="tj-tok">≈' + fmtCompact(r.tokens) + '</span>' +

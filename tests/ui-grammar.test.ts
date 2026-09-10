@@ -567,6 +567,61 @@ describe("the peek on a collapsed tool row", () => {
   });
 });
 
+// A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is the agent
+// remembering, and every surface that names a tool says so.
+describe("memory operations get a mark", () => {
+  const MEM = "/home/deva/.claude/projects/-Users-eric-cctrace/memory/cctrace-cost-view.md";
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "remember that" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Write", id: "t1", input: { file_path: MEM, content: "notes" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "written" }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "remembered" }], stop_reason: "end_turn" },
+  });
+
+  test("the conversation fold names the store, the verb and the note", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("fold-mem");
+    expect(convo).toContain("Memory · write · cctrace-cost-view.md");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the rail names it too, in the memory ink", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    expect(page.els["threads"].innerHTML).toContain('tname tname-mem">Memory</span>(write · cctrace-cost-view.md)');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the record stream carries the same label and mark", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/context/=stream");
+    const deck = page.els["context-view"].innerHTML;
+    expect(deck).toContain("tj-mem");
+    expect(deck).toContain("Memory · write · cctrace-cost-view.md");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a plain file edit keeps the plain fold", () => {
+    const plain = msgPair("p2", {
+      reqBody: { messages: [
+        { role: "user", content: "edit it" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Write", id: "t2", input: { file_path: "/repo/src/ui.ts", content: "x" } }] },
+      ] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([plain]));
+    page.goto("#/session");
+    expect(page.els["convo"].innerHTML).not.toContain("fold-mem");
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("rich tool bodies in the session view", () => {
   test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
     const p = msgPair("p1", {

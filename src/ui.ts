@@ -784,17 +784,55 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        Type scale unchanged — a presentation is the same page, undressed. */
     body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail, body.present #nav { display: none; }
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
+    /* ---- The live status bar (items 1 + 4) ----
+       State on the left with a pulsing dot and a ticking counter, the
+       prompt-cache window draining on the right. Body size: this is the
+       one line that answers "is anything happening", and it was set two
+       steps below everything it sits under. */
     #pulse {
-      display: none; align-items: center; gap: 10px; padding: 6px 16px;
-      flex: none; min-height: 32px; font-size: 11px; color: var(--text-muted);
+      display: none; align-items: center; gap: 12px; padding: 6px 16px;
+      flex: none; min-height: 34px; font-size: var(--text-body); color: var(--text-muted);
       background: var(--bg-surface); border-top: 1px solid var(--border);
       white-space: nowrap; overflow: hidden;
     }
     body.view-session.pulse-on #pulse { display: flex; }
-    #pulse .p-label, #pulse .p-t { color: var(--text-faint); flex: none; }
-    #pulse .p-act { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    #pulse .p-exp { color: var(--amber); flex: none; }
-    #pulse .p-t { font-variant-numeric: tabular-nums; margin-left: auto; }
+    #pulse .p-state { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+    #pulse .p-dot {
+      width: 8px; height: 8px; border-radius: var(--radius-full);
+      background: var(--text-faint); flex: none;
+    }
+    /* The one moving thing on this bar: a call is OUT. Idle and
+       waiting-on-tools are still frames (motion budget, ui.md 6). */
+    #pulse .p-flight .p-dot { background: var(--accent); animation: heartbeat 1.4s ease-in-out infinite; }
+    #pulse .p-flight .p-label { color: var(--accent); }
+    #pulse .p-tools .p-dot { background: var(--lane-tools); }
+    #pulse .p-label { color: var(--text); flex: none; }
+    #pulse .p-t {
+      color: var(--text-muted); flex: none;
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--text-sm);
+    }
+    #pulse .p-act {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text-faint); font-size: var(--text-sm);
+    }
+    #pulse .p-gap { flex: 1 1 auto; min-width: 8px; }
+    #pulse .p-cache { display: inline-flex; align-items: center; gap: 8px; flex: none; font-size: var(--text-sm); }
+    #pulse .p-clabel { color: var(--text-faint); }
+    #pulse .p-bar {
+      width: 96px; height: 5px; border-radius: var(--radius-full); overflow: hidden;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    #pulse .p-fill { display: block; height: 100%; background: var(--green); }
+    #pulse .p-left {
+      color: var(--text-muted); font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums; min-width: 44px; text-align: right;
+    }
+    #pulse .p-warn .p-fill { background: var(--amber); }
+    #pulse .p-warn .p-left { color: var(--amber); }
+    #pulse .p-exp .p-fill { background: var(--red); }
+    #pulse .p-exp .p-left, #pulse .p-exp .p-clabel { color: var(--red); }
+    @media (prefers-reduced-motion: reduce) { #pulse .p-flight .p-dot { animation: none; } }
+    @media (max-width: 760px) { #pulse .p-act { display: none; } }
     .tj-pagination { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: end; gap: 8px; padding: 8px 0; background: var(--bg); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
     .tj-pagination > span:first-child { margin-right: auto; }
     .tj-pagination button:disabled { opacity: 0.4; cursor: default; }
@@ -3495,11 +3533,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.start && msg.start.id && !openStarts.has(msg.start.id)) {
             openStarts.set(msg.start.id, msg.start);
             rpLiveRefresh();
+            renderPulse(); // the status bar's "in flight" is exactly this
           }
         } else if (msg.type === 'start-end') {
           // The server gave up on an in-flight request (no pair after its
           // TTL) — the one retirement a page cannot see for itself.
-          if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
+          if (msg.id && openStarts.delete(msg.id)) { rpLiveRefresh(); renderPulse(); }
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           // TAIL, measured BEFORE the pair lands: was the cursor at the live
@@ -10427,35 +10466,100 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       render();
     };
 
-    // The live footer reports the last observed response, never inferred activity.
+    // ---- The live STATUS BAR (items 1 + 4) ----
+    // Two facts, always: what this session is doing right now, and how much
+    // of the prompt-cache window is left. The old strip said "Last
+    // response" and a tiny hold-until — a label about the past, not a
+    // state. State comes off the wire: a start frame the server sent with
+    // no pair for it yet IS "in flight"; a last reply that stopped on
+    // tool_use with nothing since IS "waiting on tools"; anything else is
+    // idle, counting since the last response.
+    // Live pages only — a snapshot has no now (ui.md: never pretend). This
+    // is also the one surface that may COUNT DOWN: it re-renders every
+    // second, so it cannot go stale the way a rendered page can, which is
+    // why every OTHER deadline on this page stays absolute wall-clock.
     let pulsePair = null;
     let pulseAction = '';
+    function pulseState() {
+      let oldest = 0;
+      openStarts.forEach((s) => {
+        const ms = (s && s.ts ? s.ts : 0) * 1000;
+        if (ms && (!oldest || ms < oldest)) oldest = ms;
+      });
+      if (oldest) return { kind: 'flight', since: oldest };
+      const p = lastModelPair;
+      if (!p) return { kind: 'none', since: 0 };
+      const ci = p._ci || (p._ci = extractCallInfo(p));
+      return { kind: ci.stopReason === 'tool_use' ? 'tools' : 'idle', since: pairEndMs(p) };
+    }
+    // Elapsed reads coarse ("12s", "3m 20s", "1h 04m"); the cache clock
+    // reads mm:ss, because under five minutes the seconds are the point.
+    function pulseElapsed(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60), sec = s % 60;
+      if (m < 60) return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
+      const h = Math.floor(m / 60), mm = m % 60;
+      return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+    }
+    function pulseClock(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const m = Math.floor(s / 60), sec = s % 60;
+      return m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
     function renderPulse() {
       if (IS_READING || !pulseEl) return;
+      const st = pulseState();
+      const now = Date.now();
       const p = lastModelPair;
-      if (!p) {
-        pulseEl.innerHTML = '<span class="p-label">No model responses received</span>';
-        return;
-      }
-      const ci = p._ci || (p._ci = extractCallInfo(p));
-      const end = pairEndMs(p);
-      if (pulsePair !== p) {
+      if (p && pulsePair !== p) {
         pulsePair = p;
         pulseAction = '';
-        try { pulseAction = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
+        try { pulseAction = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch (_) {}
       }
-      let act = pulseAction;
-      if (!act) act = p.response && p.response.status < 400 ? 'response received' : 'request failed';
-      const cc = summarizeCache(ci, p.request.body, end);
-      let cache = '';
+      let cls = 'p-idle', label = 'idle', detail = '', tip = '';
+      if (st.kind === 'none') {
+        label = 'no model call yet';
+        tip = 'live status\\nNothing has reached /v1/messages on this run yet.';
+      } else if (st.kind === 'flight') {
+        cls = 'p-flight';
+        label = 'in flight';
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nA model call was forwarded and has not answered yet \\u2014 the counter is its wall-clock so far.';
+      } else if (st.kind === 'tools') {
+        cls = 'p-tools';
+        label = 'waiting on tools';
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nThe last reply stopped on tool_use and nothing has come back since \\u2014 the harness is running its tools.';
+      } else {
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nSince the newest response landed. Nothing is on the wire.';
+      }
+      let html = '<span class="p-state ' + cls + '" data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="p-dot"></span><span class="p-label">' + escapeHtml(label) + '</span>' +
+        (detail ? '<span class="p-t">' + escapeHtml(detail) + '</span>' : '') + '</span>';
+      // WHAT it is doing: the tool labels of the newest completed call
+      // while its tools run, the model id while a call is out.
+      const act = st.kind === 'tools' && pulseAction ? pulseAction
+        : st.kind === 'flight' && p && p._ci ? escapeHtml(shortModel(p._ci.model || '') || '')
+        : '';
+      if (act) html += '<span class="p-act">' + act + '</span>';
+      html += '<span class="p-gap"></span>';
+      // The prompt-cache window, DRAINING. Only the newest model call's
+      // deadline means anything (every later hit refreshes the TTL), which
+      // is the same rule the requests list's ≡ chip follows.
+      const cc = p ? summarizeCache(p._ci || (p._ci = extractCallInfo(p)), p.request.body, pairEndMs(p)) : null;
       if (cc && cc.expiresAt) {
-        cache = Date.now() > cc.expiresAt
-          ? '<span class="p-exp" title="Estimated cache TTL has elapsed">cache TTL elapsed</span>'
-          : '<span class="p-exp" data-tip="' + escapeHtml(cc.title) + '">cache until ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
+        const span = Math.max(1, cc.expiresAt - pairEndMs(p));
+        const left = cc.expiresAt - now;
+        const pct = Math.max(0, Math.min(100, (left / span) * 100));
+        const cstate = left <= 0 ? 'p-exp' : left < 300000 ? 'p-warn' : 'p-ok';
+        html += '<span class="p-cache ' + cstate + '" data-tip="' + escapeHtml(cc.title +
+            '\\n---\\nthe newest model call\\u2019s cache window \\u2014 a later hit refreshes it') + '">' +
+          '<span class="p-clabel">cache</span>' +
+          '<span class="p-bar"><span class="p-fill" style="width:' + pct.toFixed(1) + '%"></span></span>' +
+          '<span class="p-left">' + (left <= 0 ? 'expired' : pulseClock(left)) + '</span></span>';
       }
-      const html = '<span class="p-label">Last response</span>' +
-        '<span class="p-act">' + escapeHtml(shortModel(ci.model || '') || '?') + ' · ' + act + '</span>' +
-        '<span class="p-t">' + fmtTime(new Date(end)) + '</span>' + cache;
       if (pulseEl.dataset.content !== html) { pulseEl.dataset.content = html; pulseEl.innerHTML = html; }
     }
     let expFlipped = false;

@@ -227,16 +227,47 @@ describe("live page boot", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
-  test("a tail page behaves live: status 'tail', pulse strip painted from the wire", () => {
+  test("a tail page behaves live: status 'tail', the status bar reads off the wire", () => {
     const page = bootPage(getLiveHtml({ mode: "tail" }));
     expect(page.errors).toEqual([]);
     const ws = page.sockets[0]!;
     ws.onopen!({});
     expect(page.els["status"].textContent).toBe("tail");
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
-    expect(page.els["pulse"].innerHTML).toContain("opus-4-6"); // the newest model call
-    expect(page.els["pulse"].innerHTML).toContain("Last response");
-    expect(page.els["pulse"].innerHTML).not.toContain("p-verb");
+    const bar = page.els["pulse"].innerHTML;
+    // nothing in flight, the last reply ended on end_turn: idle, counting
+    expect(bar).toContain('class="p-state p-idle"');
+    expect(bar).toContain(">idle<");
+    expect(bar).not.toContain("Last response");
+    expect(bar).not.toContain("p-verb");
+  });
+
+  // The status bar states what the session is DOING, from the wire: a
+  // forwarded call with no pair yet is in flight; a reply that stopped on
+  // tool_use with nothing since is waiting on tools.
+  test("an open start puts the bar in flight; a tool_use stop makes it wait on tools", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    const toolStop = msgPair("p1", { resBody: { stop_reason: "tool_use" } });
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [toolStop] }) });
+    expect(page.els["pulse"].innerHTML).toContain("waiting on tools");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p2", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: Date.now() / 1000 } }) });
+    expect(page.els["pulse"].innerHTML).toContain("in flight");
+    expect(page.els["pulse"].innerHTML).toContain('class="p-state p-flight"');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the cache window drains as a bar with the time left", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    const cached = msgPair("p1", { resBody: { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900 } } });
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [cached] }) });
+    const bar = page.els["pulse"].innerHTML;
+    expect(bar).toContain('class="p-bar"');
+    // the fixture's timestamps are 1970-epoch, so the window is long gone
+    expect(bar).toContain("p-exp");
+    expect(bar).toContain("expired");
+    expect(page.errors).toEqual([]);
   });
 
   test("loading and live status have no invented activity; view pages hide the footer", () => {
@@ -1339,8 +1370,8 @@ describe("find in session (toolbar)", () => {
     expect(html).toContain('id="sfind"');
     expect(html).toContain('id="sfind-count"');
     expect(html).toContain("body.view-session #tb-find { display: flex; }");
-    // The observed-response footer participates in layout instead of covering content.
-    expect(html).toContain('class="p-label">Last response');
+    // The live status bar participates in layout instead of covering content.
+    expect(html).toContain("body.view-session.pulse-on #pulse { display: flex; }");
     // The page still boots clean with the new script block.
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     page.goto("#/session");

@@ -767,6 +767,11 @@ export function createServer(config: ServerConfig) {
     websocket: {
       open(ws) {
         clients.add(ws);
+        // A tiny frame BEFORE init: the page has already painted its
+        // loading shell, and this lets it say how much is on the way
+        // ("receiving 480 requests · 71 MB") instead of showing a blank
+        // wait while tens of megabytes stream (docs/design/web-ui.md).
+        ws.send(JSON.stringify({ type: "loading", pairs: pairs.length, bytes: config.traceSize?.() ?? 0 }));
         ws.send(JSON.stringify(initMessage()));
       },
       close(ws) {

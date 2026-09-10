@@ -166,6 +166,42 @@ one gutter column:
     │ ○ turn03  …
     ▸ utility · 2
 
+**Rebuilt in 0.51 (item 17): the row is [gutter][node][label].** The
+context gutter LEADS every row — epoch heads, turns, superseded rows,
+compaction boundaries and error runs all spend the same 30px — the way the
+pen leads a request row. Trailing it left the occupancy column jittering at
+a ragged right edge; leading it, the column reads straight down the
+outline and IS the thread's context trajectory.
+
+    [▁▃] │ ○ turn03  fix the retry gate
+    [▅▅] │ ● .1  Bash(bun test)                   ·   <- the · counts the
+    [▇▆] │ ● .2  Edit(src/upstream.ts)                   harness notes that
+    [  ] │ ╰─┐                                          followed this step
+    [  ] │   ├ [Explore] map the retry path · opus-4-6 · 2 turns · $0.004
+    [  ] │   ├ [Explore] read the tests · 2 turns · $0.003
+    [  ] │   └ ⋯ +17 more
+    [  ] ┊ ● wire  21 failed requests · 429       err   <- dashed spine
+    [▇▇] │ ↳  fixed it
+
+Three rules the rebuild adds:
+
+- **Subagents branch off.** An arm out of the spine into an indented
+  sub-column with its own violet line, git-graph style. Past three spawns
+  on one turn the column lists three and a count, expandable per thread +
+  turn and surviving re-renders — a fan-out of twenty must not bury the
+  turn that ordered it.
+- **A failed step breaks the spine.** Red node, dashed segment. The rail
+  is a claim about what ran; where nothing came back the line should not
+  read solid.
+- **System rows are gone** (item 10). The harness notes fold to one line in
+  the conversation; on the rail the step they followed wears a tiny dot,
+  and its hover counts them. A row per "Only you see that command's
+  output" buried the agent's actual work — 109 of them in one 217-turn
+  thread.
+- **The current turn stays lit.** The row for the turn at the
+  conversation's reading position wears `.cur` — the same sync the
+  trajectory strip's turn block already had, now on the outline too.
+
 - The rail is the git graph: turn dots (existing verdict colors) sit
   ON the line; epoch heads become ring nodes on the same line (the
   3-circle branch glyph in rows is gone — the rail itself carries the
@@ -322,6 +358,38 @@ truth, heavily tested — display language only.)
 - Replay: needs nothing — superseded pairs are real wire events, so
   scrubbing before the divergence shows the branch exactly as it
   existed; stepping past it shows the rewrite.
+
+## Harness notes (0.51, item 10)
+
+Claude Code stacks the same nudges onto almost every step, as role
+"system" wire messages and as `<system-reminder>` blocks appended to a
+prompt or a tool result. Rendered in full they ARE the conversation on a
+working session. Two shapes, one line each:
+
+    SYSTEM  3 harness notes · terminal caveat · 14.89m tokens left · output style
+    SYSTEM  SessionStart hook · 42.2k chars · deadman: auto-handoff from 2026-09-09…
+
+The classifier lives in `src/session.ts` (pure, tested):
+`harnessNoteKind` names the five recurring families (terminal caveat,
+idle nudge, tokens left, output style, date) from precise prefixes, and
+names a one-off INJECTION after itself (a hook's output, a changed file,
+the CLAUDE.md block, the session-context block, deferred tools, the
+skills list, the agent types, the attribution note). Unknown text
+classifies as "note" and the caller prints its first meaningful line —
+the harness rewords these constantly, so the fallback must degrade to an
+honest preview, never a wrong label. `harnessNotes` splits a stacked
+message on blank lines (an injection owns its whole message; splitting a
+document on blank lines shreds it) and reads the token budget out as a
+number. `harnessNoteLine` builds the line.
+
+Rules:
+
+- The human's own prompt text is NEVER folded. A block that mixes a
+  prompt with appended reminders splits: the prompt renders as itself, the
+  reminders fold behind the one line.
+- A harness turn drops its role bar and its box. The step above it already
+  carries the ordinal and the clock.
+- The rail loses the rows entirely; the step they followed carries the dot.
 
 ## Convo pane refinements (2026-07-20 round 4)
 

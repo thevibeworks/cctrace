@@ -131,10 +131,22 @@ silently.
   faint until hovered and every button names its keyboard shortcut.
 - Hover detail is one page-wide `.tip` singleton (filled from `data-tip`,
   first line = heading, a line of exactly `---` = hairline section divider,
-  a `> ` prefix = faint interaction hint). A plain `title=` is folded into
+  a `> ` prefix = faint interaction hint, and a `key: value` line = a
+  two-column row with the value in mono — a tip that lists five numbers is
+  a small TABLE, not a paragraph; the key cap keeps a sentence with a colon
+  in it from being torn into a fake column). A plain `title=` is folded into
   it on first hover (moved to `data-tip` so the native tooltip never
-  fires). A ~120ms show delay debounces mousing across a row of chips — a
-  debounce, not motion. Max width 320px, below the threads pane's 400px.
+  fires). A 400ms show delay: a panel that fires at 120ms flashes past every
+  chip on the way somewhere. Max width 380px, below the threads pane's 400px.
+- A tip must not restate what the row already says. A status chip that
+  reads "200" does not need "HTTP 200"; a category badge does not need its
+  own label; a button labelled "copy" does not need "Copy contents". Tips
+  on icon-only controls are the affordance and stay.
+- Some rows earn a PEEK instead: a collapsed tool row opens a popover on a
+  250ms dwell with the tool, its input and the first lines of its result.
+  It is fixed to the viewport and anchored to the row, so the layout under
+  the cursor never moves — an inline auto-expand shifts the thing you are
+  pointing at. A row never carries both a peek and a tip.
 - A tooltip on a truncated surface LEADS with the full text the surface cut
   off (capped ~600 chars); a divider, then metrics, then hints. Hover
   answers "what does the rest say" first and "what can I do" last.
@@ -153,7 +165,15 @@ silently.
 - Deadlines render as ABSOLUTE wall-clock ("held until ~14:32"), never
   relative countdowns: a rendered page must not go stale, and ticking
   timers are motion. State that depends on "now" (cache expired) is
-  computed at render time only.
+  computed at render time only. The ONE exception is the live status bar,
+  which re-renders every second by design (terminal convention): there the
+  cache window drains as a bar with the remaining mm:ss, because a bar that
+  cannot go stale is the honest form of a deadline you are watching.
+- Category and state colors are spent; a mark that is neither gets the one
+  CDS hue the surface has not used. Memory operations (Claude Code writing
+  its own persistent notes) wear CDS's aqua `--memory` #3f9d8f in the
+  conversation, where blue is plain tools, violet is notable events, and
+  green/amber/red are state.
 - Toolbar grammar: scope narrows left to right — list group
   (filter + prev runs + select) · page group (tail · clear) · trace group
   (replay · focus) holding the right edge in the session view. Trace actions

@@ -140,7 +140,13 @@ test("live folding updates connected pages, survives reconnect, and exports full
     expect(exported.trim().split("\n").map((line) => JSON.parse(line))).toEqual([pair(0), pair(1)]);
     const reconnect = new WebSocket(`ws://127.0.0.1:${server.port}/ws`);
     try {
-      const init = await new Promise<any>((resolve) => { reconnect.onmessage = (event) => resolve(JSON.parse(String(event.data))); });
+      // A connect now opens with the tiny "loading" frame; init follows.
+      const init = await new Promise<any>((resolve) => {
+        reconnect.onmessage = (event) => {
+          const m = JSON.parse(String(event.data));
+          if (m.type === "init") resolve(m);
+        };
+      });
       expect(init.pairs[0].request.body._cctrace_stub).toBe(1);
     } finally { reconnect.close(); }
     rmSync(path);

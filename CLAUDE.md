@@ -19,8 +19,10 @@ src/
 ├── clients/        # Client plugins: binary discovery + declarative wire tables
 │                   #   (claude/codex/grok/kimi/opencode — dialect, firstPartyHosts,
 │                   #   category pins, session/thread headers, providerHosts for
-│                   #   multi-provider clients; JSON-safe, embedded into
-│                   #   the page as CLIENT_WIRE; adding a client = one file)
+│                   #   multi-provider clients, a display `label` — Claude /
+│                   #   Codex / Kimi Code — read through clientLabel(); JSON-safe,
+│                   #   embedded into the page as CLIENT_WIRE; adding a client =
+│                   #   one file)
 ├── dialects/
 │   └── openai.ts   # OpenAI adapters. Responses (codex/grok): response.completed
 │                   #   parsing, input[]->turns. Chat Completions (kimi): messages[]
@@ -84,8 +86,10 @@ src/
 │                   #   archive/stale-sweep helpers
 ├── maintenance.ts  # The dashboard's operator half: the store picture
 │                   #   (/api/store — per-project sizes + the exact archive
-│                   #   plan, live runs excluded) and the archive JOB, which
-│                   #   spawns `cctrace compress --all --yes` as a child so
+│                   #   plan, per-file state — plain/zst/gz/live/interrupted —
+│                   #   live runs excluded) and the archive JOB, which spawns
+│                   #   `cctrace compress --all --yes` (or `--dir` for one
+│                   #   project, the dir checked against the store root) as a child so
 │                   #   there is one implementation of archiving and no
 │                   #   multi-GB walk on a capture run's event loop
 ├── store.ts        # The trace store: <data-dir>/traces/<project-key>/ layout, project
@@ -106,7 +110,9 @@ src/
 ├── chrome.ts       # The shared page frame: CHROME_CSS (the CDS token block +
 │                   #   the destination rail, collapsible to an icon strip on
 │                   #   desktop / a bottom bar under 760px), NAV_SCRIPT and
-│                   #   PREFS_SCRIPT (theme + collapse prefs) — the trace view
+│                   #   PREFS_SCRIPT (theme + collapse prefs), the .runid run
+│                   #   card (mark + project + client label / title or first
+│                   #   prompt / sid8 + time) and the live dot — the trace view
 │                   #   and the dashboard are the same material because they
 │                   #   share this one module
 ├── ui.ts           # The whole web UI: a destination RAIL (mark, run card,
@@ -147,6 +153,11 @@ src/
 │                   #   (docs/design/cost.md)
 ├── summarize.ts    # Pure extractors: SSE usage, count_tokens, usage limits (inlined into UI)
 ├── session.ts      # Conversation reconstruction from wire pairs (inlined into UI).
+│                   #   harnessNotes/harnessNoteKind: the <system-reminder>
+│                   #   families Claude Code appends to every step (terminal
+│                   #   caveat, tokens left, output style, idle nudge) fold to
+│                   #   one line; memoryOp marks Read/Write/Edit under
+│                   #   ~/.claude/projects/*/memory/ as persistent memory
 │                   #   threadTimeSplit: where a thread's wall-clock went
 │                   #   (model/tools/waiting/between) off attributed pairs —
 │                   #   the Sessions "time" chip, the context overview's
@@ -451,8 +462,9 @@ runs (`/api/runs`, traceExists + on-disk size re-resolved per request via
 `findTraceCarrier` in src/view.ts — the tombstone's logFile, its .zst/.gz
 sibling, or the session-<sid8> file auto-merge absorbed it into, so
 compressed/merged traces still open; only a truly absent trace dims),
-groupable by project/client/time with show-more paging, one page for all
-projects/containers sharing the data dir; any instance's port answers the
+one list where live is a STATE on the row (dot, port, stop) not a section,
+groupable by project/client/day with per-group show-more paging and a
+"live only" chip, one page for all projects/containers sharing the data dir; any instance's port answers the
 same (`src/dashboard.ts`, values rendered via textContent — first prompts
 are wire-derived; icon glyphs come from `src/icons.ts`, the same marks as
 the trace view header). A finished run's row shows the stats its tombstone
@@ -468,9 +480,11 @@ tombstone that named the legacy path). Linked from the switcher menu, the
 ⌘ actions menu, an always-visible ▦ header icon on http-served pages, a
 startup `Dashboard (all runs)` line, and a `cctrace ps` footer line. The
 page also OPERATES (docs/design/web-ui.md): a two-step `stop` on every
-live row, and a STORE section — bytes/traces/projects plus the archive
-plan (plain traces and their weight, legacy .gz, interrupted seals, what
-a live run is holding) with one `archive now` button behind it. Port
+live row, and a STORAGE destination — bytes/traces/projects, a stacked
+plain/held/archived bar, per-project bars with expandable file lists
+(name, bytes, state, mtime), the archive plan with one `archive now` and
+a per-project `archive`. The rail's run card says what this server IS
+("This run" live, or "Viewing" + the trace) instead of a "Current trace" link. Port
 allocation walks 8722..8821 (`PORT_WALK` = 100) before falling back to an
 OS-assigned port, so concurrent runs land on predictable neighbors — the
 same walk the discovery sweep covers. Env `PORT` is not honored (0.41):

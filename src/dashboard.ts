@@ -324,7 +324,9 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   var lastLive = null;
   var query = '';
   var liveOnly = false;
-  var shown = {};        // group key -> how many rows that group is showing
+  // Keyed by group key / project dir, both of which are user paths: plain
+  // objects would let one named __proto__ write nowhere.
+  var shown = Object.create(null);   // group key -> rows that group is showing
   var stopping = {};     // run id -> when we asked it to stop
   var selfStopped = false;
   var FORCE_AFTER_MS = 8000;
@@ -709,7 +711,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   var lastJobId = '';
   var archiving = false;
   var lastStore = null;
-  var openDirs = {};
+  var openDirs = Object.create(null);
 
   function stateSum(st) { return (st.plain || 0) + (st.zst || 0) + (st.gz || 0) + (st.live || 0); }
   function stackBar(states, scale) {
@@ -989,14 +991,14 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
   };
   document.getElementById('run-filter').oninput = function (ev) {
     query = ev.target.value.trim().toLowerCase();
-    shown = {};
+    shown = Object.create(null);
     renderRuns();
   };
   var liveChip = document.getElementById('live-only');
   liveChip.onclick = function () {
     liveOnly = !liveOnly;
     liveChip.setAttribute('aria-pressed', String(liveOnly));
-    shown = {};
+    shown = Object.create(null);
     renderRuns();
   };
   var grp = document.getElementById('grp');
@@ -1014,7 +1016,7 @@ export function getDashboardHtml(meta: { version?: string } = {}): string {
     groupBy = g;
     localStorage.setItem('cctrace-dash-group', g);
     paintGrp();
-    shown = {};
+    shown = Object.create(null);
     renderRuns();
   };
   paintGrp();

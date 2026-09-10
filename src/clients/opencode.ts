@@ -52,6 +52,7 @@ export const opencode: ClientPlugin = {
   installHint:
     "Install opencode (npm i -g opencode-ai, or curl -fsSL https://opencode.ai/install | bash) or use --client-path",
   wire: {
+    label: "OpenCode",
     dialect: "openai", // categorize fallback only — model calls pick their dialect per pair (see above)
     // One suffix covers the zen gateway (opencode.ai/zen) and every
     // first-party subdomain: console. (device oauth, account), models.

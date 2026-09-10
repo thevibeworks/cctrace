@@ -921,15 +921,15 @@ describe("the destination rail", () => {
       reqBody: { messages: [{ role: "user", content: "fold the harness notes to one line" }] },
     })], { project: "cctrace", projectPath: "/repo/cctrace", client: "claude", traceFile: "trace-x.jsonl", traceRelPath: "/store/trace-x.jsonl" }));
     const card = page.els["ctx"].innerHTML;
-    expect(card).toContain('class="rc-id"');
+    expect(card).toContain('class="runid-top"');
     expect(card).toContain(">cctrace</span>");
     // the client label is capitalized, never the bare wire word
-    expect(card).toContain('class="rc-client">Claude<');
+    expect(card).toContain('class="runid-client">Claude<');
     expect(card).not.toContain(">claude<");
     // no generated title: the human's own first prompt stands in
     expect(card).toContain("fold the harness notes to one line");
     // the meta line is the id and the clock
-    expect(card).toContain('class="rc-meta"');
+    expect(card).toContain('class="runid-meta"');
     expect(card).toContain(">aaaabbbb</button>");
     expect(page.errors).toEqual([]);
   });

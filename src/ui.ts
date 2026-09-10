@@ -226,25 +226,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        Three lines: the client's mark beside the PROJECT name with the
        client's label; what this run IS (the session title, or the human's
        first prompt); then the wire meta in faint mono. It reads as a place
-       and a subject, not as a path and two hashes. The CSS lives here for
-       now — the shared card class is landing in src/chrome.ts on another
-       branch, and this block collapses into it when it does. */
-    .rc-id { display: flex; align-items: center; gap: 6px; min-width: 0; }
-    .rc-mark { display: inline-flex; flex: none; color: var(--text-muted); }
-    .rc-mark svg { width: 14px; height: 14px; }
-    .rc-proj {
+       and a subject, not as a path and two hashes.
+       DUPLICATE, on purpose: the same .runid-* rules are landing in
+       src/chrome.ts on the dashboard branch, which owns that file. These
+       are the class names it uses, so the merge deletes this block and
+       nothing here has to move. */
+    .runid-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .runid-mark { display: inline-flex; flex: none; color: var(--text-muted); }
+    .runid-mark svg { width: 14px; height: 14px; }
+    .runid-name {
       flex: 0 1 auto; min-width: 0; color: var(--text); font-size: var(--text-body); font-weight: 500;
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .rc-proj.ctx-copy { cursor: pointer; }
-    .rc-proj.ctx-copy:hover { color: var(--accent); }
-    .rc-proj.copied { color: var(--green); }
-    .rc-client { flex: none; color: var(--text-faint); font-size: var(--text-xs); }
-    .rc-name {
+    .runid-name.ctx-copy { cursor: pointer; }
+    .runid-name.ctx-copy:hover { color: var(--accent); }
+    .runid-name.copied { color: var(--green); }
+    .runid-client { flex: none; color: var(--text-faint); font-size: var(--text-xs); }
+    .runid-line {
       color: var(--text-muted); font-size: var(--text-sm);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .rc-meta {
+    .runid-meta {
       display: flex; align-items: baseline; gap: 6px; min-width: 0;
       color: var(--text-faint); font-family: var(--font-mono); font-size: var(--text-xs);
       font-variant-numeric: tabular-nums;
@@ -3315,8 +3317,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // The traced CLI's display NAME. The client wire tables carry a label
     // ("Claude", "Kimi Code", "OpenCode"); until every table has one, the
     // wire word capitalizes — the card must never read "claude" (item 9).
-    function clientLabel(name) {
-      const w = CLIENT_WIRE[name] || {};
+    // Same signature as clientLabel in src/clients/index.ts, which is
+    // landing on another branch and replaces this copy on the merge.
+    function clientLabel(name, wire) {
+      const w = (wire && wire[name]) || {};
       if (w.label) return w.label;
       const s = String(name || '');
       return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
@@ -3356,7 +3360,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function renderCtx() {
       const sid = currentSessionId();
       const client = currentClient();
-      const label = clientLabel(client);
+      const label = clientLabel(client, CLIENT_WIRE);
       const name = META.sessionTitle || runPrompt();
       const started = runStartedAt();
       const key = client + '|' + sid + '|' + name + '|' + started;
@@ -3376,11 +3380,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         (label ? 'client: ' + label + '\\n' : '') +
         (META.traceFile ? 'trace: ' + META.traceFile + '\\n' : '') +
         (rel ? '---\\n> click copies ' + rel : '');
-      let html = '<span class="rc-id">' +
-        (client ? '<span class="rc-mark">' + (CLIENT_ICONS[client] || '') + '</span>' : '') +
-        '<span class="rc-proj' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(idTip) + '">' +
+      let html = '<span class="runid-top">' +
+        (client ? '<span class="runid-mark">' + (CLIENT_ICONS[client] || '') + '</span>' : '') +
+        '<span class="runid-name' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(idTip) + '">' +
         escapeHtml(META.project || 'unknown project') + '</span>' +
-        (label ? '<span class="rc-client">' + escapeHtml(label) + '</span>' : '') +
+        (label ? '<span class="runid-client">' + escapeHtml(label) + '</span>' : '') +
         '</span>';
       // Line 2 — what this run is. A generated title says so; otherwise the
       // human's own opening words, which are the honest stand-in.
@@ -3388,7 +3392,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const nameTip = (META.sessionTitle ? 'session title\\n' : 'first prompt\\n') +
           name.slice(0, 400) + (name.length > 400 ? '\\u2026' : '') +
           (META.sessionTitle ? '\\n---\\ngenerated by cctrace title' : '\\n---\\nno generated title yet \\u2014 cctrace title names a session');
-        html += '<span class="rc-name" data-mask="title" title="' + escapeHtml(nameTip) + '">' + escapeHtml(name) + '</span>';
+        html += '<span class="runid-line" data-mask="title" title="' + escapeHtml(nameTip) + '">' + escapeHtml(name) + '</span>';
       }
       // Line 3 — the wire meta, faint and mono: the id you copy, the clock.
       let meta = '';
@@ -3398,7 +3402,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         meta += '<span class="rc-when" title="' + escapeHtml('started\\n' + fmtDateTime(new Date(started * 1000))) + '">' +
           escapeHtml(fmtTime(new Date(started * 1000)).slice(0, 5)) + '</span>';
       }
-      if (meta) html += '<span class="rc-meta">' + meta + '</span>';
+      if (meta) html += '<span class="runid-meta">' + meta + '</span>';
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
       if (btn) btn.onclick = function() {

@@ -12,7 +12,7 @@ import { wireTables } from "./clients";
 import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries, TAIL_BYTES } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, requestStop, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
-import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } from "./maintenance";
+import { storePictureCached, startArchive, cancelArchive, currentArchiveJob, storeDirArg, STORE_TOP } from "./maintenance";
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier, traceSizes, VIEW_BYTES } from "./view";
 import { titleLookup } from "./title";
@@ -604,7 +604,9 @@ export function createServer(config: ServerConfig) {
         // running. The plan here IS the plan the button executes — same
         // planCompress, same live-run exclusion (maintenance.ts).
         if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
-        return Response.json({ ...(await storePictureCached(config.dataDir)), job: currentArchiveJob() });
+        // STORE_TOP projects carry their file lists (one walk, maintenance.ts);
+        // everything past them is folded into `rest` so the totals still add up.
+        return Response.json({ ...(await storePictureCached(config.dataDir, STORE_TOP)), job: currentArchiveJob() });
       }
       if (url.pathname === "/api/store/archive" && req.method === "POST") {
         // The web face of `cctrace compress --all --yes` — which is exactly
@@ -612,12 +614,21 @@ export function createServer(config: ServerConfig) {
         // union-never-overwrite), so it needs no id proof; it's the same
         // trust boundary as /api/compact.
         if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
-        const body = (await req.json().catch(() => ({}))) as { cancel?: unknown };
+        const body = (await req.json().catch(() => ({}))) as { cancel?: unknown; dir?: unknown };
         if (body?.cancel === true) {
           const stopped = cancelArchive();
           return Response.json({ ok: stopped, job: currentArchiveJob() }, { status: stopped ? 200 : 409 });
         }
-        const { job, started } = await startArchive(config.dataDir);
+        // `{dir}` archives ONE project. The path is not taken on trust: the
+        // job deletes what it has archived, so only a real directory inside
+        // this server's store root is allowed (storeDirArg).
+        let dir: string | undefined;
+        if (body?.dir !== undefined) {
+          const ok = storeDirArg(config.dataDir, body.dir);
+          if (!ok) return Response.json({ error: "not a project dir in this store" }, { status: 400 });
+          dir = ok;
+        }
+        const { job, started } = await startArchive(config.dataDir, dir ? { dir } : {});
         return Response.json({ ok: started, running: !started, job }, { status: started ? 200 : 409 });
       }
       if (url.pathname.startsWith("/view/")) {

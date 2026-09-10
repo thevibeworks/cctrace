@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "child_process";
+import { statSync } from "fs";
 import { readdir, stat } from "fs/promises";
-import { dirname, join, resolve } from "path";
+import { dirname, join, resolve, sep } from "path";
 import { isTraceFile } from "./history";
 import { planCompress } from "./storage";
 import { projectPathOf, storeRoot, liveLogFiles, staleSealJobs } from "./store";
@@ -26,6 +27,56 @@ import { selfExecArgv } from "./version";
 // Truth about what changed comes from re-measuring the store when the child
 // exits (before/after), not from parsing its human-readable lines.
 
+/**
+ * What a byte in the store is doing. Four states, and every trace file is in
+ * exactly one: at rest (`zst`), still plain (`plain` — what `archive now`
+ * takes), a legacy archive to re-encode (`gz`), or plain because a live run
+ * is writing it (`live` — not work, just weight).
+ */
+export type StoreFileState = "plain" | "zst" | "gz" | "live";
+
+export interface StoreFileView {
+  name: string;
+  bytes: number;
+  state: StoreFileState;
+  mtimeMs: number;
+}
+
+/** Bytes by state — the stacked bar the dashboard draws. */
+export interface StoreStates {
+  plain: number;
+  zst: number;
+  gz: number;
+  live: number;
+}
+
+const noStates = (): StoreStates => ({ plain: 0, zst: 0, gz: 0, live: 0 });
+const addStates = (into: StoreStates, from: StoreStates) => {
+  into.plain += from.plain; into.zst += from.zst; into.gz += from.gz; into.live += from.live;
+};
+
+/**
+ * One file's state, by the SAME rules the archive plan applies: a `.jsonl` a
+ * heartbeat-fresh run holds is `live` (planCompress excludes it), a `.gz` is
+ * an upgrade, anything else plain or already at rest. One classification, so
+ * the chart and the plan can never disagree about a file.
+ */
+function fileState(name: string, path: string, live: Set<string>): StoreFileState {
+  if (name.endsWith(".jsonl.zst")) return "zst";
+  if (name.endsWith(".jsonl.gz")) return "gz";
+  return live.has(path) ? "live" : "plain";
+}
+
+/** Per-project file lists are for a reader who opened one project, not a
+ * store dump: the biggest files answer "what is this weight", the rest are
+ * counted. */
+export const FILES_PER_DIR = 50;
+
+/** Projects the picture lists one by one — the dashboard draws a bar each.
+ * Everything past them folds into `rest`, which keeps the totals whole
+ * without shipping 80 projects of file lists on a 15s poll. */
+export const STORE_TOP = 12;
+
 export interface StoreDirView {
   dir: string;
   /** From the dir's project.json marker; null for a hand-made dir. */
@@ -35,6 +86,11 @@ export interface StoreDirView {
   /** Plain .jsonl the archive job would take (live runs already excluded). */
   plain: number;
   plainBytes: number;
+  states: StoreStates;
+  /** Biggest first, capped at FILES_PER_DIR — the expandable file list. */
+  files: StoreFileView[];
+  /** Files past that cap. */
+  moreFiles: number;
 }
 
 export interface StorePicture {
@@ -53,8 +109,12 @@ export interface StorePicture {
   /** Exit seals orphaned by a dead helper — `compress --yes` finishes these
    * inline before it plans, so the button clears them too. */
   staleSeals: number;
+  /** Store-wide bytes by state (every project, not just the listed ones). */
+  states: StoreStates;
   /** Biggest projects first, capped by the caller's `top`. */
   dirs: StoreDirView[];
+  /** The projects past that cap, folded into one bar. */
+  rest: { projects: number; traces: number; bytes: number; states: StoreStates };
 }
 
 /**
@@ -76,19 +136,35 @@ export async function storePicture(dataDir: string, top = 8): Promise<StorePictu
   let keys: string[] = [];
   try { keys = await readdir(root); } catch { /* no store yet */ }
   const dirs: StoreDirView[] = [];
+  const states = noStates();
   let traces = 0, bytes = 0, plain = 0, plainBytes = 0, upgrades = 0, liveHeld = 0;
   for (const key of keys) {
     const dir = join(root, key);
     let names: string[];
     try { names = await readdir(dir); } catch { continue; } // a stray file, or gone
-    const sizes = await Promise.all(
-      names.filter(isTraceFile).map((n) => stat(join(dir, n)).then((st) => st.size, () => -1)),
+    // The one walk: size AND mtime AND state per file, so the page can list
+    // a project's files without the server going back to disk for them.
+    const traceNames = names.filter(isTraceFile);
+    const stats = await Promise.all(
+      traceNames.map((n) => stat(join(dir, n)).then((st) => ({ size: st.size, mtimeMs: st.mtimeMs }), () => null)),
     );
     let dirTraces = 0, dirBytes = 0;
-    for (const b of sizes) { if (b >= 0) { dirTraces++; dirBytes += b; } }
+    const dirStates = noStates();
+    const files: StoreFileView[] = [];
+    for (let i = 0; i < traceNames.length; i++) {
+      const st = stats[i];
+      const name = traceNames[i]!;
+      if (!st) continue;
+      dirTraces++;
+      dirBytes += st.size;
+      const state = fileState(name, resolve(join(dir, name)), live);
+      dirStates[state] += st.size;
+      if (top > 0) files.push({ name, bytes: st.size, state, mtimeMs: st.mtimeMs });
+    }
     // Per dir, so the sync part of the scan stays one dir wide.
     const plan = planCompress(dir, now, undefined, live);
     if (!dirTraces && !plan.files.length && !plan.upgrades.length) continue;
+    files.sort((a, b) => b.bytes - a.bytes);
     dirs.push({
       dir,
       project: projectPathOf(dir),
@@ -96,6 +172,9 @@ export async function storePicture(dataDir: string, top = 8): Promise<StorePictu
       bytes: dirBytes,
       plain: plan.files.length,
       plainBytes: plan.bytes,
+      states: dirStates,
+      files: files.slice(0, FILES_PER_DIR),
+      moreFiles: Math.max(0, files.length - FILES_PER_DIR),
     });
     traces += dirTraces;
     bytes += dirBytes;
@@ -103,14 +182,25 @@ export async function storePicture(dataDir: string, top = 8): Promise<StorePictu
     plainBytes += plan.bytes;
     upgrades += plan.upgrades.length;
     liveHeld += liveDirs.get(resolve(dir)) || 0;
+    addStates(states, dirStates);
   }
-  dirs.sort((a, b) => b.plainBytes - a.plainBytes || b.bytes - a.bytes);
+  // Biggest projects first: the chart's own order, and the list is a chart.
+  dirs.sort((a, b) => b.bytes - a.bytes || b.plainBytes - a.plainBytes);
+  const listed = top > 0 ? dirs.slice(0, top) : [];
+  const rest = { projects: dirs.length - listed.length, traces: 0, bytes: 0, states: noStates() };
+  for (const d of dirs.slice(listed.length)) {
+    rest.traces += d.traces;
+    rest.bytes += d.bytes;
+    addStates(rest.states, d.states);
+  }
   return {
     root,
     projects: dirs.length,
     traces, bytes, plain, plainBytes, upgrades, liveHeld,
     staleSeals: staleSealJobs(dataDir, now).length,
-    dirs: dirs.slice(0, top),
+    states,
+    dirs: listed,
+    rest,
   };
 }
 
@@ -131,6 +221,22 @@ export async function storePictureCached(dataDir: string, top = 8): Promise<Stor
   return pic;
 }
 
+/**
+ * A project dir the PAGE named, resolved against this server's store. The
+ * archive job unlinks the sources it has archived, so a path arriving from a
+ * browser is a delete primitive: only a real directory strictly inside the
+ * store root is allowed, and the root itself is not one of them (archiving
+ * everything is `--all`, which needs no path). Returns null to refuse.
+ */
+export function storeDirArg(dataDir: string, dir: unknown): string | null {
+  if (typeof dir !== "string" || !dir) return null;
+  const root = resolve(storeRoot(dataDir));
+  const full = resolve(dir);
+  if (!full.startsWith(root + sep)) return null;
+  try { if (!statSync(full).isDirectory()) return null; } catch { return null; }
+  return full;
+}
+
 export interface ArchiveJob {
   id: string;
   startedAt: number;
@@ -138,6 +244,8 @@ export interface ArchiveJob {
   state: "running" | "done" | "failed" | "cancelled";
   /** The command line the page is watching — no hidden magic. */
   command: string;
+  /** The one project dir this job covers; absent = the whole store. */
+  dir?: string;
   /** Tail of the child's output, ANSI stripped. */
   lines: string[];
   /** Output dropped off the front of `lines` (the tail is bounded). */
@@ -166,20 +274,24 @@ const totals = (p: StorePicture) => ({ plain: p.plain, plainBytes: p.plainBytes,
 export interface StartArchiveOpts {
   /** Override the child command — tests only; production uses the CLI. */
   argv?: string[];
+  /** Archive ONE project dir instead of the whole store. Must have come
+   * through storeDirArg — this is passed straight to the child. */
+  dir?: string;
 }
 
 /**
- * Start `cctrace compress --all --yes` as a child and track it. One job at a
- * time per server: a second start returns the running one untouched (the
- * caller answers 409), because two concurrent archives of one store are
- * wasted work — safe (every unlink re-stats) but noisy.
+ * Start `cctrace compress --all --yes` (or `--dir <project> --yes`) as a
+ * child and track it. One job at a time per server: a second start returns
+ * the running one untouched (the caller answers 409), because two concurrent
+ * archives of one store are wasted work — safe (every unlink re-stats) but
+ * noisy.
  */
 export async function startArchive(dataDir: string, opts: StartArchiveOpts = {}): Promise<{ job: ArchiveJob; started: boolean }> {
   if (job?.state === "running") return { job, started: false };
   // The data dir travels in the environment, not in argv: the storage
   // subcommands take --dir/--all/--yes only, and CCTRACE_DATA_DIR is the
   // documented way to point a cctrace at another store.
-  const cliArgs = ["compress", "--all", "--yes"];
+  const cliArgs = opts.dir ? ["compress", "--dir", opts.dir, "--yes"] : ["compress", "--all", "--yes"];
   const argv = opts.argv ?? selfExecArgv(cliArgs);
   cancelled = false;
   const j: ArchiveJob = {
@@ -187,6 +299,7 @@ export async function startArchive(dataDir: string, opts: StartArchiveOpts = {})
     startedAt: Date.now(),
     state: "running",
     command: opts.argv ? argv.join(" ") : `cctrace ${cliArgs.join(" ")}`,
+    ...(opts.dir ? { dir: opts.dir } : {}),
     lines: [],
     dropped: 0,
     before: totals(await storePicture(dataDir, 0)),

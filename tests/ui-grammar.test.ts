@@ -569,6 +569,56 @@ describe("the peek on a collapsed tool row", () => {
 
 // A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is the agent
 // remembering, and every surface that names a tool says so.
+// A screenshot the agent looked at is evidence, not an attachment to
+// unfold. Shown by default, bounded, a run of them is a grid, click opens
+// the lightbox.
+describe("images are shown, bounded, galleried", () => {
+  const png = (n: string) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo" + n } });
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "look" }, png("A")] },
+        { role: "assistant", content: [{ type: "tool_use", name: "Read", id: "t1", input: { file_path: "/shots/a.png" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [png("B"), png("C"), png("D")] }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "seen" }], stop_reason: "end_turn" },
+  });
+
+  test("a single image renders shown and lazy; a run of them becomes a gallery", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="msg-img" loading="lazy"');
+    expect(convo).toContain('class="msg-imgwrap gal"');
+    // three images in the Read result, one wrapper around them
+    expect((convo.match(/class="msg-img"/g) || []).length).toBe(4);
+    expect((convo.match(/class="msg-imgwrap gal"/g) || []).length).toBe(1);
+    expect(convo).not.toContain("classList.toggle('full')");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the page ships the lightbox and bounds decoded bitmaps", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("content-visibility: auto");
+    expect(html).toContain(".lbx.show { display: flex; }");
+    expect(html).toContain("max-height: 320px");
+  });
+
+  test("a remote image is still named, never fetched", () => {
+    const remote = msgPair("p2", {
+      reqBody: { messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://evil.example/x.png" } }] }] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([remote]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("not fetched");
+    expect(convo).not.toContain('src="https://evil.example');
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("memory operations get a mark", () => {
   const MEM = "/home/deva/.claude/projects/-Users-eric-cctrace/memory/cctrace-cost-view.md";
   const p = msgPair("p1", {

@@ -1205,15 +1205,43 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .msg-box.open .msg-box-s { max-height: none; overflow: visible; }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
     .block-note a.unfold { cursor: pointer; }
-    /* wire image attachments: thumbnail by default, click for full size —
-       the bytes were already in the trace, rendering them adds nothing */
-    .msg-imgwrap { padding: 6px 12px; }
+    /* ---- Images are shown, bounded, and open in a lightbox (item 15) ----
+       A screenshot the agent looked at is evidence: it renders at reading
+       size instead of hiding behind a click-to-toggle. content-visibility
+       on the wrapper is load-bearing, not polish — a hundred decoded
+       screenshots cost gigabytes of bitmap, so an offscreen gallery is
+       never rasterized. A RUN of images in one block is a grid. */
+    .msg-imgwrap {
+      padding: 6px 12px;
+      content-visibility: auto; contain-intrinsic-size: auto 200px;
+    }
+    .msg-imgwrap.gal {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
     .msg-img {
-      display: block; max-width: 320px; max-height: 240px;
+      display: block; max-width: 100%; max-height: 320px;
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       cursor: zoom-in; background: var(--bg-surface);
     }
-    .msg-img.full { max-width: 100%; max-height: none; cursor: zoom-out; }
+    .msg-imgwrap.gal .msg-img { max-width: min(280px, 100%); max-height: 200px; }
+    /* the lightbox: the image fit to the viewport, nothing else on screen */
+    .lbx {
+      position: fixed; inset: 0; z-index: 200; display: none;
+      align-items: center; justify-content: center;
+      background: color-mix(in srgb, #0b0b0b 82%, transparent);
+      cursor: zoom-out;
+    }
+    .lbx.show { display: flex; }
+    .lbx img {
+      max-width: calc(100vw - 64px); max-height: calc(100vh - 72px);
+      border-radius: var(--radius-sm); background: var(--bg-surface);
+      cursor: default;
+    }
+    .lbx-n {
+      position: absolute; left: 0; right: 0; bottom: 14px; text-align: center;
+      font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted);
+      font-variant-numeric: tabular-nums; pointer-events: none;
+    }
     .fold > summary {
       display: flex; align-items: baseline; gap: 8px;
       padding: 7px 12px; cursor: pointer; user-select: none;
@@ -4548,22 +4576,58 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (type === 'tool_result') {
         let body = '';
         if (typeof b.content === 'string') body = textOrHarness(b.content, false, false);
-        else if (Array.isArray(b.content)) { for (const c of b.content) body += renderBlock(c); }
+        else if (Array.isArray(b.content)) body = renderBlockRun(b.content, (c) => renderBlock(c));
         else body = preBlock(formatJson(b.content));
         const len = typeof b.content === 'string' ? fmtCompact(b.content.length) + ' chars \\u00b7 ' : '';
         return fold('tool_result' + (b.is_error ? ' \\u00b7 error' : ''), len + snippet(b.content, 90), body, b.is_error ? 'errline' : '');
       }
-      if (type === 'image') return renderImageBlock(b);
+      if (type === 'image') return renderGallery([b]);
       return fold(String(type || 'block'), '', preBlock(formatJson(b)));
     }
 
-    // Image blocks render as REAL thumbnails when the bytes are already in
-    // the trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
-    // image_url carried) — click toggles full size. Wire-controlled fields
-    // are validated, not trusted: media_type against an image/* shape, the
-    // base64 payload against its alphabet. A REMOTE url stays a note with
-    // the address — the viewer must never auto-fetch a wire-named resource
-    // (a captured conversation could point the reader's browser anywhere).
+    // ---- Images are SHOWN (item 15) ----
+    // A screenshot the agent looked at is evidence; hiding it behind a
+    // click-to-toggle made the reader guess. Blocks render in order, and a
+    // RUN of images collapses into one gallery so a Read of five
+    // screenshots is a grid, not five stacked columns.
+    function renderBlockRun(list, one) {
+      const arr = list || [];
+      let out = '';
+      let i = 0;
+      while (i < arr.length) {
+        if (arr[i] && arr[i].type === 'image') {
+          const imgs = [];
+          while (i < arr.length && arr[i] && arr[i].type === 'image') imgs.push(arr[i++]);
+          out += renderGallery(imgs);
+          continue;
+        }
+        out += one(arr[i]);
+        i++;
+      }
+      return out;
+    }
+    // content-visibility on the wrapper is not decoration: a hundred
+    // decoded screenshots cost gigabytes of bitmap, so an offscreen gallery
+    // is never rasterized, and every <img> is lazy besides.
+    function renderGallery(imgs) {
+      let cells = '';
+      let n = 0;
+      for (const b of imgs) {
+        const one = renderImageBlock(b);
+        if (one.indexOf('msg-img') !== -1) n++;
+        cells += one;
+      }
+      return '<div class="msg-imgwrap' + (n > 1 ? ' gal' : '') + '">' + cells + '</div>';
+    }
+
+    // Image blocks render as REAL images when the bytes are already in the
+    // trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
+    // image_url carried) — shown at reading size, click opens the lightbox.
+    // Wire-controlled fields are validated, not trusted: media_type against
+    // an image/* shape, the base64 payload against its alphabet. A REMOTE
+    // url stays a note with the address — the viewer must never auto-fetch a
+    // wire-named resource (a captured conversation could point the reader's
+    // browser anywhere).
     function renderImageBlock(b) {
       const src = b.source || {};
       const mt = typeof src.media_type === 'string' && /^image\\/[\\w.+-]+$/.test(src.media_type) ? src.media_type : '';
@@ -4576,9 +4640,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (dataUrl) {
         const kb = Math.round((dataUrl.length * 3) / 4 / 1024);
-        return '<div class="msg-imgwrap"><img class="msg-img" loading="lazy" src="' + escapeHtml(dataUrl) + '"' +
-          ' onclick="this.classList.toggle(\\'full\\')"' +
-          ' title="' + escapeHtml((mt || 'image') + (kb ? ' \\u00b7 ~' + kb + ' KB stored' : '') + '\\n> click toggles full size') + '"></div>';
+        return '<img class="msg-img" loading="lazy" decoding="async" src="' + escapeHtml(dataUrl) + '"' +
+          ' alt="' + escapeHtml(mt || 'image') + '"' +
+          ' title="' + escapeHtml((mt || 'image') + (kb ? '\\nstored: ~' + kb + ' KB' : '') + '\\n---\\n> click opens it full size') + '">';
       }
       if (typeof src.url === 'string' && src.url) {
         return '<div class="block-note">[image \\u00b7 remote \\u00b7 ' + escapeHtml(src.url.slice(0, 120)) + ' \\u2014 not fetched]</div>';
@@ -4588,8 +4652,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function renderTurn(role, content, tag) {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content : []);
-      let inner = '';
-      for (const b of blocks) inner += renderBlock(b, role === 'assistant');
+      const inner = renderBlockRun(blocks, (b) => renderBlock(b, role === 'assistant'));
       return '<div class="turn turn-' + escapeHtml(String(role)) + '">' +
         '<div class="turn-role">' + escapeHtml(String(role)) +
         (tag ? '<span class="turn-tag">' + escapeHtml(tag) + '</span>' : '') +
@@ -5323,6 +5386,58 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
       document.addEventListener('click', hidePeek, true);
       document.addEventListener('scroll', hidePeek, true);
+    }
+
+    // ---- The LIGHTBOX (item 15): the image, fit to the viewport ----
+    // Clicking a rendered image opens it over the page; Esc or a click
+    // outside closes it; the arrows walk the images of the same block, so a
+    // Read that returned five screenshots reads as five, not as one and a
+    // hunt. The key handler binds in the CAPTURE phase so Esc closes the
+    // overlay before the page's own Esc chain gets it.
+    if (document.createElement && document.body) {
+      const lbx = document.createElement('div');
+      lbx.className = 'lbx';
+      lbx.innerHTML = '<img alt=""><div class="lbx-n"></div>';
+      document.body.appendChild(lbx);
+      const lbxImg = lbx.querySelector('img');
+      const lbxN = lbx.querySelector('.lbx-n');
+      let lbxGroup = [], lbxAt = 0;
+      const lbxPaint = () => {
+        const el = lbxGroup[lbxAt];
+        if (!el) return;
+        lbxImg.src = el.getAttribute('src');
+        lbxImg.alt = el.getAttribute('alt') || '';
+        lbxN.textContent = lbxGroup.length > 1 ? (lbxAt + 1) + ' / ' + lbxGroup.length + '  \\u2190 \\u2192  esc' : 'esc';
+      };
+      const lbxOpen = (img) => {
+        const wrap = img.closest ? img.closest('.msg-imgwrap') : null;
+        lbxGroup = wrap && wrap.querySelectorAll
+          ? Array.prototype.slice.call(wrap.querySelectorAll('img.msg-img'))
+          : [img];
+        lbxAt = Math.max(0, lbxGroup.indexOf(img));
+        lbxPaint();
+        lbx.classList.add('show');
+      };
+      const lbxClose = () => { lbx.classList.remove('show'); lbxImg.removeAttribute('src'); lbxGroup = []; };
+      const lbxStep = (d) => {
+        if (lbxGroup.length < 2) return;
+        lbxAt = (lbxAt + d + lbxGroup.length) % lbxGroup.length;
+        lbxPaint();
+      };
+      document.addEventListener('click', (e) => {
+        const img = e.target && e.target.closest ? e.target.closest('img.msg-img') : null;
+        if (img) { e.preventDefault(); lbxOpen(img); return; }
+        if (lbx.classList.contains('show') && e.target !== lbxImg) lbxClose();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (!lbx.classList.contains('show')) return;
+        if (e.key === 'Escape') { lbxClose(); e.stopPropagation(); e.preventDefault(); return; }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          lbxStep(e.key === 'ArrowRight' ? 1 : -1);
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }, true);
     }
 
     // Quiet stroke glyphs for the sessions layer (currentColor, no fills):
@@ -6389,7 +6504,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (res) {
           let rbody = '';
           if (typeof res.content === 'string') rbody = textOrHarness(res.content, false, false);
-          else if (Array.isArray(res.content)) { for (const c of res.content) rbody += renderBlock(c); }
+          else if (Array.isArray(res.content)) rbody = renderBlockRun(res.content, (c) => renderBlock(c));
           else rbody = preBlock(formatJson(res.content));
           body += '<div class="tool-res' + (res.is_error ? ' errline' : '') + '">' +
             '<div class="tool-res-label">result' + (res.is_error ? ' \\u00b7 error' : '') + '</div>' + rbody + '</div>';
@@ -6420,7 +6535,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         return '<div class="turn turn-sys"' + (ts ? ' data-ts="' + (ts * 1000) + '"' : '') + '>' + inner + '</div>';
       }
-      for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
+      inner = renderBlockRun(turn.blocks, (b) => renderBlockS(b, results, turn.role === 'assistant'));
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {
         const u = turn.usage;

@@ -823,10 +823,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        ("receiving 480 requests · 71 MB") instead of nothing. Still, not
        pulsing: the line carries the progress, the rows carry the shape. */
     #work { position: relative; }
+    /* The header stays ABOVE the shell: "where am I" is answerable before
+       the data lands, and the rail plus the destination title are the two
+       things a reader needs while waiting. */
+    header { position: relative; z-index: 21; }
     #boot {
       position: absolute; inset: 0; z-index: 20;
       display: flex; flex-direction: column; gap: 12px;
-      padding: 16px; background: var(--bg);
+      padding: 52px 16px 16px; background: var(--bg);
     }
     body.booted #boot { display: none; }
     .boot-line {
@@ -1684,6 +1688,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       margin-top: 7px; color: var(--text-faint); font-size: 10px;
       text-transform: uppercase; letter-spacing: 0;
     }
+    /* the count is a sentence, not a section label — it does not shout */
+    .peek-more { margin-top: 6px; color: var(--text-faint); font-size: 10px; }
     .peek-b {
       margin-top: 2px; padding: 0; background: none; border-radius: 0;
       max-height: 240px; overflow: hidden;
@@ -2603,7 +2609,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        parsing or streaming. Boot removes it once the pairs are in. -->
   <div id="boot" role="status" aria-live="polite">
     <div class="boot-line" id="boot-n">loading trace</div>
-    <div class="boot-rows">${'<span class="boot-row"></span>'.repeat(10)}</div>
+    <div class="boot-rows">${'<span class="boot-row"></span>'.repeat(22)}</div>
   </div>
   <div id="notice" hidden></div>
   <div id="split">
@@ -5592,7 +5598,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!el) return null;
         const lines = String(el.textContent || '').replace(/^\\s+/, '').split('\\n');
         return {
-          label: res ? 'result' : 'input',
+          label: res ? 'result' : det.classList.contains('fold-sys') ? 'note' : 'input',
           text: lines.slice(0, PEEK_LINES).map(l => l.length > PEEK_COLS ? l.slice(0, PEEK_COLS - 1) + '\\u2026' : l).join('\\n'),
           more: Math.max(0, lines.length - PEEK_LINES),
         };
@@ -5609,7 +5615,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (b && b.text.trim()) {
           h += '<div class="peek-l">' + escapeHtml(b.label) + '</div>' +
             '<pre class="peek-b">' + escapeHtml(b.text) + '</pre>';
-          if (b.more) h += '<div class="peek-l">+' + b.more + ' more lines \\u2014 click the row to open it</div>';
+          if (b.more) h += '<div class="peek-more">+' + b.more.toLocaleString() + ' more lines \\u2014 click the row to open it</div>';
         }
         pk.innerHTML = h;
         pk.classList.add('show');

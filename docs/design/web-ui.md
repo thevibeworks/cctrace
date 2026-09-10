@@ -10,28 +10,69 @@ interactive overview driving a window / stream / events deck,
 docs/design/context-view.md) — serves both the live view
 and static snapshots (`renderSnapshot` embeds pairs as `window.__PAIRS__`).
 The rail identifies the run (0.48 — identity belongs to the navigation, not
-to a strip above the content): the mark, then a RUN CARD carrying traced client (icon + name chip — quiet
-generic monograms in `CLIENT_ICONS`, not vendor logos — from
-`PageMeta.client` or the newest labeled pair; absent for pre-0.13 traces),
-the trace title `<project>/<trace-file>` (PageMeta.project + .traceFile —
-live runs, view serves, and snapshots all name the .jsonl behind the page;
-view resolves the project from the cwd whose store dir it serves (or a
-legacy ./.cctrace's parent, or an explicit --dir's project.json marker),
-and projectPath is that repo root so tool paths relativize;
-live/tail pages carry a PULSE strip (bottom of the session view, body
-.pulse-on): newest model call's tool labels + age (1s tick — the one
-ticking surface, terminal convention) + the newest request's cache
-deadline (absolute hold-until, amber "expired" past it; the same 1s
-timer re-renders the requests list once when the deadline crosses).
-Boot shows a rotating loading VERB (ccx tradition, #boot-verb) until
-the first render replaces it. The cache "expired" state also renders
-on the detail panel's cache chip and the outline's newest-turn hover
-— newest model call ONLY (later hits refresh the TTL);
-clicking the title copies PageMeta.traceRelPath — absolute into the store,
-project-relative for a legacy trace — ready for `cctrace view`) and the current session id (extracted
-client-side from pairs, newest live pair wins, click to copy) and the live
-dot (connected / offline / snapshot) — the browser tab title is
-brand-first: `CCTrace · <client> · <project> · <sid>`. Under the card sit
+to a strip above the content): the mark, then a RUN CARD that follows the
+IDENTITY GRAMMAR (0.51, item 2) — three lines, a place and a subject
+instead of a path and two hashes:
+
+    [mark] cctrace  Claude              <- project + client label
+    fold the harness notes to one line  <- session title, else first prompt
+    dc9d37ec · 04:03                    <- sid8 · started, faint mono
+
+Line 1 is the client's mark (quiet generic monograms in `CLIENT_ICONS`,
+not vendor logos — from `PageMeta.client` or the newest labeled pair;
+absent for pre-0.13 traces) beside the PROJECT name in the reading face,
+then the client's DISPLAY LABEL: `clientLabel(name, wire)` reads
+`wire.label` ("Claude", "Kimi Code", "OpenCode") and capitalizes the wire
+word when a table has none, so no surface ever reads "claude". Clicking the
+project copies `PageMeta.traceRelPath` — absolute into the store,
+project-relative for a legacy trace — ready for `cctrace view`; the hover
+carries the full project path, the client, the trace file and the copy
+hint. Line 2 is what this run IS: `PageMeta.sessionTitle` when `cctrace
+title` has named it, else the human's first real prompt (`firstPromptOfPair`
+— the same function the instance registry stamps with). Line 3 is the wire
+meta: the session id (extracted client-side from pairs, newest live pair
+wins, click to copy) and the run's start clock. View resolves the project
+from the cwd whose store dir it serves (or a legacy ./.cctrace's parent, or
+an explicit --dir's project.json marker), and projectPath is that repo root
+so tool paths relativize. The live dot (connected / offline / snapshot)
+closes the card, and the browser tab title is brand-first:
+`CCTrace · <client label> · <project> · <sid>`.
+
+Live/tail pages carry a STATUS BAR at the bottom of the session view (body
+`.pulse-on`, 0.51 items 1+4). It states what the session is DOING, read off
+the wire: a forwarded call with no pair yet is IN FLIGHT (pulsing accent
+dot, ticking elapsed counter, the model named beside it); a reply that
+stopped on `tool_use` with nothing since is WAITING ON TOOLS (with that
+step's tool labels); anything else is IDLE, counting since the newest
+response. Beside it the prompt-cache window DRAINS — a bar against the
+newest model call's own TTL with the remaining mm:ss, amber under five
+minutes, red and "expired" after. Body size, because this is the one line
+that answers "is anything happening". The in-flight dot is the bar's only
+motion and drops under `prefers-reduced-motion`. It is also the ONE surface
+allowed to count DOWN: it re-renders every second (the terminal
+convention), so it cannot go stale the way a rendered page can — which is
+exactly why every other deadline on the page stays absolute wall-clock. The
+same 1s timer re-renders the requests list once when the newest deadline
+crosses, and the cache "expired" state also renders on the detail panel's
+cache chip and the outline's newest-turn hover — newest model call ONLY
+(later hits refresh the TTL).
+
+The page opens with a LOADING SHELL (0.51 item 5): `#boot` is MARKUP, not a
+render, placed in the body BEFORE the data script, so the browser paints the
+rail, the run card and the destination header while tens of megabytes are
+still parsing or streaming. Under the header sit a skeleton of rows and one
+line that states the size of the wait — the server sends a tiny
+`{type:"loading", pairs, bytes}` frame right before `init`, so it reads
+"receiving 480 requests · 71 MB" instead of nothing. `renderSnapshot` injects
+`window.__PAIRS__` after the shell (at the `<!--CCTRACE_DATA-->` marker)
+instead of before `</head>`, where a 200 MB payload was a blank tab until it
+finished. Boot removes the shell when the pairs are actually in — the init
+frame on a live/view page, the embedded payload on a snapshot — and a lost
+socket or a 15s floor takes it down too, because a skeleton with nothing
+behind it is a lie. A `history` frame (a continuity merge) raises a quiet
+one-line `#notice`: "merged N prior requests from this session" — the
+conversation grew upward and a reader in the middle deserves to know why the
+ground moved. Under the card sit
 the destinations (`Requests` / `Sessions` / `Context` / `Runs`, the last
 only on served pages), each a button whose `.active` state the view
 switcher drives; the work column's own header then names the destination
@@ -292,19 +333,35 @@ hash-routed:
   healthy cache hit, amber weak <90%/cold/miss, red failed) — then
   ordinal + message text, nothing else inline: all metrics live in the
   hover; user rows read in full text color, finals muted, mids faint.
-  Every row CLOSES with the trajectory gutter (`.tctx`, the same shape
-  the context overview draws, at rail scale): a 30px
+  Every row OPENS with the trajectory gutter (`.tctx`, the same shape
+  the context overview draws, at rail scale — moved from the row's tail to
+  its head in 0.51, item 17, so the rail is [gutter][node][label] and the
+  occupancy column reads straight down the outline instead of jittering at
+  a ragged right edge, the way the pen leads a request row): a 30px
   track per wire step, filled to how full the window was, the fill split
   into the prefix read from CACHE (green) and what was billed FRESH
   (amber). Stacked down the rail that column IS the thread's context
   trajectory — it climbs, a ✂ boundary row drops it, the step after is
   all-amber (cold), then green again. Non-wire rows (the human's prompts,
-  superseded/failed runs) get an invisible spacer so the column holds.
+  superseded/failed runs, epoch heads, boundaries) get an invisible spacer
+  so the column holds.
   Every figure is provider-reported; the denominator is the model's
   context window when models.dev knows it, else this thread's own peak
   (same anchored-prompt > window guard as the Context view), and the
-  hover NAMES which — "context 212k · 61% of a 1m window" vs "…of this
-  thread's peak". The replay track carries the same story at trace scale:
+  hover NAMES which — "context: 212k · 61% of a 1m window" vs "…of this
+  thread's peak".
+  Subagent spawns BRANCH off the spine (0.51, item 17): an arm out of the
+  rail into an indented sub-column with its own violet line, git-graph
+  style, each row naming the agent, its model and its outcome. Past three
+  spawns on one turn the sub-column lists three and a count, expandable per
+  thread + turn and surviving re-renders — a fan-out of twenty must not bury
+  the turn that ordered it. A FAILED step breaks the spine: red node,
+  dashed segment (`.tturn-failed`, `.terr-run`) — the rail is a claim about
+  what ran, and where nothing came back the line should not read solid. The
+  outline also follows the reader: the row for the turn at the
+  conversation's reading position wears `.cur`, the same sync the
+  trajectory strip's turn block already had.
+  The replay track carries the same story at trace scale:
   a compaction/rewind pair gets a distinct full-height `.rp-mark.cut`
   beside the per-pair ticks.
   The thread/session model chip wears the identifier color (--text-method,
@@ -477,7 +534,80 @@ hash-routed:
   a spawn fold shows the spawned thread's outcome inline
   ("2 turns · out 50 · $0.0035", agentThreadStats) plus the open-thread
   link, and a Skill fold names the skill in its title ("skill · ccx")
-  with args as the hint; Read/Bash dumps stay quiet). Every turn's role
+  with args as the hint; Read/Bash dumps stay quiet).
+  **Harness notes fold to one line** (0.51, item 10). Claude Code stacks the
+  same nudges onto almost every step — the terminal caveat ("Only you see
+  that command's output…"), the idle nudge, the `<total_tokens>` budget, the
+  output style, the date — as role:"system" wire messages and as
+  `<system-reminder>` blocks appended to a prompt or a tool result. Rendered
+  in full they WERE the conversation on a working session (109 of them in
+  one 217-turn thread). So every harness message renders as ONE folded line
+  with a chevron: `SYSTEM  3 harness notes · terminal caveat · 14.89m tokens
+  left · output style`, and a one-off INJECTION as name · size · first
+  meaningful line: `SYSTEM  SessionStart hook · 42.2k chars · deadman:
+  auto-handoff from …`. The classifier is pure and tested in src/session.ts
+  — `harnessNoteKind` names the recurring families from precise prefixes and
+  names an injection after itself (a hook's output, a changed file, the
+  CLAUDE.md block, the session-context block, deferred tools, the skills
+  list, the agent types, the attribution note); `harnessNotes` splits a
+  stacked message and reads the token budget out as a number;
+  `harnessNoteLine` builds the line. An unknown nudge classifies as "note"
+  and still shows its own first line, so a reworded or brand-new reminder
+  degrades to an honest preview instead of a wrong label. A prompt with a
+  reminder appended keeps its own text UNFOLDED — the human's words are
+  never put away. A system turn drops its role bar and its box: the step
+  above it already carries the ordinal and the clock. On the rail the system
+  rows are GONE; the step they followed wears a tiny dot whose hover counts
+  them.
+  **A long text READS IN PLACE** (item 11): the clamp plus "show all · N
+  chars" made every long tool result a two-step read and hid how much was
+  left behind a gradient. A block over 2k chars keeps a bounded height
+  (60vh), scrolls inside itself, states its size in a thin header (`3.7k
+  chars · 21 lines`) and carries one quiet `expand` in its corner that lifts
+  the bound. Scroll chaining stays the browser default, so reaching the
+  inner end keeps the page moving — the wheel trap the clamp existed to
+  avoid. The last turn still renders in full, and the expand state rides the
+  live patch the way the clamp state did.
+  **Peek on hover, expand on click** (item 12): hovering a COLLAPSED tool
+  row (`summary[data-peek]` — tool, subagent, skill, mcp and SYSTEM folds)
+  for 250ms opens a popover anchored to the row: the tool, what it was
+  given, and the first 12 lines of what came back, mono, 520px, with a "+N
+  more lines" count. FIXED position, so nothing under the cursor moves — an
+  inline auto-expand shifts the layout out from under the pointer, which is
+  the conflict a reader notices immediately. A click still expands the fold
+  inline; an OPEN row never peeks (it is already saying it); a peekable row
+  never also carries a tooltip, because two hover panels over one row is one
+  too many. A FOCUSED tool row is its own list: `j`/`k` or the arrows walk
+  the tool rows of that pane, Enter toggles (the browser's own summary key).
+  **Memory operations wear their own mark** (item 14): a Read/Write/Edit
+  under `~/.claude/projects/<key>/memory/` is Claude Code remembering, not a
+  file edit like any other. `memoryOp` in src/session.ts is the detector
+  (pure, tested — the path SHAPE is the gate, not the word "memory", so a
+  repo's own ./memory/notes.md stays a plain file and a Bash that cats the
+  same path is not claimed). Three surfaces name it identically — the
+  conversation fold, the session rail's tool label, and the context view's
+  record stream — as `Memory · write · cctrace-cost-view.md` with the Lucide
+  brain, in CDS's aqua (`--memory`, #3f9d8f): the one data hue the
+  conversation does not already spend (fold titles use blue for plain tools
+  and violet for notable events; green/amber/red stay state).
+  **Images are shown** (item 15): a screenshot the agent looked at is
+  evidence, so it renders at reading size (320px tall, the width available)
+  instead of hiding behind a click-to-toggle, lazy and async-decoded, and a
+  RUN of image blocks inside one block collapses into a grid gallery — a
+  Read that returned five screenshots is a grid, not five stacked columns.
+  `content-visibility: auto` on the wrapper is load-bearing, not polish: a
+  hundred decoded screenshots cost gigabytes of bitmap, so an offscreen
+  gallery is never rasterized. Clicking one opens the LIGHTBOX — fit to the
+  viewport, Esc or a click outside closes, the arrows walk the images of the
+  same block (its key handler binds in the capture phase so Esc closes the
+  overlay before the page's own Esc chain gets it). A remote url is still
+  named and still never fetched.
+  **The chips stay put** (item 16): the conversation column's chips row
+  (model · requests · in/out · cache · cost · time · `context →`) is sticky
+  at its top, bleeding to the pane edges; past the head it COMPACTS to one
+  scrolling row with a hairline under it, and the `context →` jump pins to
+  the right edge so the way across is never scrolled out of reach.
+  Every turn's role
   bar carries the outline's ordinal ("03" on the rail is "turn 03" here —
   .turn-ord) and its wall-clock at the right edge (.turn-time, 24h, hover =
   full date; turnTimes in ui.ts — a user turn inherits the timestamp of the
@@ -760,6 +890,9 @@ hash-routed:
   IS the moment. Reading pages (snapshot / `cctrace view`) have no live
   chip: there is no edge to chase.
 - **Live wire** (WebSocket `/ws`, served pages only — a snapshot has none):
+  `loading` first (`{ pairs, bytes }`, 0.51 item 5 — a tiny frame sent
+  BEFORE init so the loading shell can state the size of the wait,
+  "receiving 480 requests · 71 MB", instead of showing a blank), then
   `init` on connect (`{ pairs, traceBytes, starts }`, the whole state, re-sent
   wholesale when a speculative preload is evicted), `pair` per capture
   (`{ pair, traceBytes }`), `history` when a continuity merge or `--with`

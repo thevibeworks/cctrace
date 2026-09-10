@@ -270,9 +270,46 @@ describe("live page boot", () => {
     expect(page.errors).toEqual([]);
   });
 
+  // The page used to be blank until the whole init frame landed. The
+  // loading shell is MARKUP that ships before the data script, so the frame
+  // paints first and the wait states a number.
+  test("the loading shell ships before the data and boot takes it down", () => {
+    const html = getLiveHtml({});
+    const shellAt = html.indexOf('id="boot"');
+    expect(shellAt).toBeGreaterThan(-1);
+    expect(shellAt).toBeLessThan(html.indexOf("<!--CCTRACE_DATA-->"));
+    expect(html).toContain('class="boot-row"');
+    expect(html).toContain("body.booted #boot { display: none; }");
+    // a snapshot's payload lands after the shell, not in <head>
+    const snap = renderSnapshot([msgPair("p1")]);
+    expect(snap.indexOf('id="boot"')).toBeLessThan(snap.indexOf("window.__PAIRS__"));
+  });
+
+  test("a live page names what is coming, then clears the shell on init", () => {
+    const page = bootPage(getLiveHtml({}));
+    expect(page.body.classList.contains("booted")).toBe(false);
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "loading", pairs: 480, bytes: 71 * 1024 * 1024 }) });
+    expect(page.els["boot-n"].textContent).toBe("receiving 480 requests · 71.0MB");
+    expect(page.body.classList.contains("booted")).toBe(false);
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    expect(page.body.classList.contains("booted")).toBe(true);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a continuity merge says so quietly instead of moving the ground", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    ws.onmessage!({ data: JSON.stringify({ type: "history", pairs: [msgPair("p2"), msgPair("p3")] }) });
+    expect(page.els["notice"].textContent).toBe("merged 2 prior requests from this session");
+    expect(page.els["notice"].hidden).toBe(false);
+    expect(page.errors).toEqual([]);
+  });
+
   test("loading and live status have no invented activity; view pages hide the footer", () => {
     const html = getLiveHtml({});
-    expect(html).toContain('role="status">Loading trace...');
+    expect(html).toContain('id="boot-n">loading trace');
     expect(html).not.toContain("Reticulating");
     expect(html).not.toContain("rotateBootVerb");
     expect(html).not.toContain("mid-loop");

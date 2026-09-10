@@ -784,6 +784,35 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        Type scale unchanged — a presentation is the same page, undressed. */
     body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail, body.present #nav { display: none; }
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
+    /* ---- The loading shell (item 5) ----
+       The page used to be blank until the whole init frame landed — tens of
+       megabytes on a big session. The shell is MARKUP that ships before the
+       data, so the frame paints immediately and the wait states a number
+       ("receiving 480 requests · 71 MB") instead of nothing. Still, not
+       pulsing: the line carries the progress, the rows carry the shape. */
+    #work { position: relative; }
+    #boot {
+      position: absolute; inset: 0; z-index: 20;
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 16px; background: var(--bg);
+    }
+    body.booted #boot { display: none; }
+    .boot-line {
+      font-size: var(--text-sm); color: var(--text-faint);
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    }
+    .boot-rows { display: flex; flex-direction: column; gap: 11px; }
+    .boot-row { height: 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+    .boot-row:nth-child(2n) { width: 78%; }
+    .boot-row:nth-child(3n) { width: 61%; }
+    .boot-row:nth-child(5n) { width: 88%; }
+    /* A quiet one-line notice under the header: a continuity merge landed,
+       and the reader should know the conversation just grew upward. */
+    #notice {
+      flex: none; padding: 5px 16px;
+      font-size: var(--text-sm); color: var(--text-muted);
+      background: var(--accent-soft); border-bottom: 1px solid var(--border);
+    }
     /* ---- The live status bar (items 1 + 4) ----
        State on the left with a pulsing dot and a ticking counter, the
        prompt-cache window draining on the right. Body size: this is the
@@ -2536,6 +2565,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     </span>
   </div>
   <div class="cats" id="cats"></div>
+  <!-- The loading shell (item 5): markup, not a render — it sits BEFORE the
+       data script, so the browser paints the rail, the header and a
+       skeleton of rows while a hundred megabytes of trace are still
+       parsing or streaming. Boot removes it once the pairs are in. -->
+  <div id="boot" role="status" aria-live="polite">
+    <div class="boot-line" id="boot-n">loading trace</div>
+    <div class="boot-rows">${'<span class="boot-row"></span>'.repeat(10)}</div>
+  </div>
+  <div id="notice" hidden></div>
   <div id="split">
     <main id="pairs"><div class="boot-wait" role="status">Loading trace...</div></main>
     <aside id="detail"></aside>
@@ -2592,6 +2630,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div><!-- /#work -->
   </div><!-- /#shell -->
 
+  <!--CCTRACE_DATA--><!-- renderSnapshot injects window.__PAIRS__ HERE, after
+       the shell markup: a 200 MB payload parsed in <head> is a blank tab
+       until it finishes (item 5). -->
   <script>${markedSrc}</script>
   <script>
     const UI_ICONS = ${JSON.stringify(UI_ICONS)};
@@ -3456,6 +3497,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
     }
 
+    // ---- Boot + notice (item 5) ----
+    // The loading shell stays up until the pairs are actually in: on a live
+    // or view page that is the init frame, on a snapshot it is the embedded
+    // payload. A socket that never answers must not leave a skeleton
+    // forever, so a lost connection and a 15s floor both take it down.
+    function bootDone() { if (document.body.classList) document.body.classList.add('booted'); }
+    function bootSay(s) {
+      const el = document.getElementById('boot-n');
+      if (el) el.textContent = s;
+    }
+    let noticeTimer = 0;
+    function notice(s) {
+      const el = document.getElementById('notice');
+      if (!el) return;
+      el.textContent = s;
+      el.hidden = false;
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => { el.hidden = true; }, 8000);
+    }
+    setTimeout(bootDone, 15000);
+
     function connect() {
       // Origin-relative, never a baked port: behind container/host port
       // forwards the server's bound port is not the port the browser sees,
@@ -3471,10 +3533,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // already here. Only a live capture reports "offline".
         if (IS_VIEW) { statusEl.textContent = 'view'; statusEl.className = 'status snapshot'; }
         else { statusEl.textContent = 'offline'; statusEl.className = 'status disconnected'; }
+        bootDone(); // a shell with no socket behind it is a lie
         setTimeout(connect, 1000);
       };
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'loading') {
+          // Sent right before init: how much is on its way, so the wait is
+          // a number instead of a blank page.
+          const n = msg.pairs || 0;
+          bootSay('receiving ' + n.toLocaleString() + ' request' + (n === 1 ? '' : 's') +
+            (msg.bytes ? ' \\u00b7 ' + fmtBytes(msg.bytes) : ''));
+          return;
+        }
         if (msg.type === 'init') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           pairs.length = 0;
@@ -3500,6 +3571,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           render();
           route();
           renderPulse();
+          bootDone();
         } else if (msg.type === 'fold') {
           for (const item of msg.requests || []) {
             const p = pairOf(item.id);
@@ -3599,6 +3671,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
+          // The conversation just grew UPWARD — say so quietly, or a reader
+          // scrolled into the middle sees the ground move for no reason.
+          const before = pairs.length;
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
             if (!known.has(p.id)) ingestPair(p);
@@ -3607,6 +3682,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (s) liveSids.add(s);
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
+          const grew = pairs.length - before;
+          if (grew > 0) notice('merged ' + grew.toLocaleString() + ' prior request' + (grew === 1 ? '' : 's') + ' from this session');
+          bootDone();
           render();
           refreshDetailNav();
           // Merged history moves the tape's LEFT edge, not the cursor — but
@@ -10586,7 +10664,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Offline snapshot: if pairs are embedded (static export), load them and
     // skip the WebSocket. Otherwise connect live.
     if (IS_SNAPSHOT) {
+      bootSay('opening ' + window.__PAIRS__.length.toLocaleString() + ' requests');
       for (const p of window.__PAIRS__) ingestPair(p);
+      bootDone();
       statusEl.textContent = 'snapshot';
       statusEl.className = 'status snapshot';
       autoScroll = false;
@@ -10615,13 +10695,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
  * review of a saved .jsonl trace.
  */
 export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): string {
+  // Inject AFTER the shell markup and before the page script (item 5): the
+  // payload is defined before anything reads it, and the browser has
+  // already painted the rail and the loading skeleton by the time it starts
+  // parsing a multi-hundred-megabyte array. In <head> it was a blank tab
+  // until the whole thing landed.
   const html = getLiveHtml(meta);
-  // Inject before </head> so __PAIRS__ is defined before the body script runs.
   const inject = `<script>window.__PAIRS__ = ${jsonForScript(tracePairs)};</script>`;
   // Function replacement: a string replacement would $-substitute the payload
   // ($$ collapses, $& / $` splice document text into the JSON) — captured
   // conversations about code contain those daily.
-  return html.replace("</head>", () => `${inject}\n</head>`);
+  return html.replace("<!--CCTRACE_DATA-->", () => inject);
 }
 
 /**
@@ -10633,7 +10717,7 @@ export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): st
  * one-line problem description.
  */
 export function verifySnapshot(html: string, expectedPairs: number): string | null {
-  const m = html.match(/<script>window\.__PAIRS__ = (.*?);<\/script>\n<\/head>/s);
+  const m = html.match(/<script>window\.__PAIRS__ = (.*?);<\/script><!-- renderSnapshot/s);
   if (!m) return "embedded __PAIRS__ script not found";
   if (m[1].includes("<")) return "embedded payload contains a raw '<' (tag breakout)";
   let parsed: unknown;

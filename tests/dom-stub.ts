@@ -156,7 +156,7 @@ export function bootPage(snapshotHtml: string, opts: BootOpts = {}): StubPage {
 
   // Pull __PAIRS__ out of the snapshot's own embed so the test exercises the
   // real serialization path, then run the page script.
-  const pairsMatch = snapshotHtml.match(/<script>window\.__PAIRS__ = (.*?);<\/script>\n<\/head>/s);
+  const pairsMatch = snapshotHtml.match(/<script>window\.__PAIRS__ = (.*?);<\/script><!-- renderSnapshot/s);
   if (pairsMatch) windowStub.__PAIRS__ = JSON.parse(pairsMatch[1]);
   const scriptMatch = snapshotHtml.match(/<script>\n([\s\S]*)\n {2}<\/script>/);
   if (!scriptMatch) throw new Error("page script not found in snapshot html");

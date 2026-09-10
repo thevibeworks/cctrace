@@ -1459,18 +1459,51 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        the whole sidebar column. */
     .tip {
       position: fixed; z-index: 100; display: none;
-      max-width: 320px; padding: 7px 10px;
+      max-width: 380px; padding: 7px 10px;
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,0.35);
       font-size: 11px; line-height: 1.55; color: var(--text-muted);
       pointer-events: none; font-variant-numeric: tabular-nums;
-      overflow-wrap: break-word;
+      overflow-wrap: break-word; white-space: pre-wrap;
     }
     .tip.show { display: block; }
-    .tip-head { color: var(--text); }
+    .tip-head { color: var(--text); white-space: pre-wrap; }
     .tip-gap { height: 6px; }
     .tip-sep { border-top: 1px solid var(--border); margin: 6px -10px; }
     .tip-hint { color: var(--text-faint); font-size: 10px; }
+    /* A "key: value" line is a COLUMN, not a sentence (item 13): the label
+       reads in the reading face at a fixed measure, the value in mono where
+       the eye compares it with the value on the line above. */
+    .tip-kv { display: flex; gap: 10px; align-items: baseline; }
+    .tip-k { flex: 0 0 96px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tip-v { flex: 1; min-width: 0; color: var(--text); font-family: var(--font-mono); overflow-wrap: anywhere; }
+    /* ---- The PEEK: a collapsed tool row, read without opening it ----
+       Fixed to the viewport and anchored to the row, so the layout under
+       the cursor never moves. One panel, no cards inside it. */
+    .peek {
+      position: fixed; z-index: 101; display: none;
+      max-width: 520px; padding: 8px 10px;
+      background: var(--overlay); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
+      font-size: var(--text-xs); color: var(--text-muted);
+      pointer-events: none;
+    }
+    .peek.show { display: block; }
+    .peek-h { color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .peek-in {
+      margin-top: 3px; color: var(--text-muted); font-family: var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+    .peek-l {
+      margin-top: 7px; color: var(--text-faint); font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0;
+    }
+    .peek-b {
+      margin-top: 2px; padding: 0; background: none; border-radius: 0;
+      max-height: 240px; overflow: hidden;
+      font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word; color: var(--text-muted);
+    }
     .tturn {
       display: flex; align-items: center; gap: 8px;
       padding: 3px 10px; font-size: 11px;
@@ -2313,8 +2346,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <span class="status disconnected" id="status">offline</span>
     </div>
     <div class="dests">
-      <button class="dest active" id="tab-requests" title="Requests" aria-label="Requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
-      <button class="dest" id="tab-session" title="Sessions" aria-label="Sessions"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
+      <button class="dest active" id="tab-requests" aria-label="Requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
+      <button class="dest" id="tab-session" aria-label="Sessions"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
       <button class="dest" id="tab-context" aria-label="Context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it"><span class="gl">${DEST_ICONS.context}</span><span class="lb">Context</span><span class="n" id="dest-n-ctx"></span></button>
       <a class="dest" id="dash-link" aria-label="Runs" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page."><span class="gl">${DASH_ICON}</span><span class="lb">Runs</span></a>
     </div>
@@ -3661,9 +3694,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return p._sizes;
     }
 
+    // Tips read as a title then key: value lines — the panel lays those out
+    // as a two-column grid with mono values (item 13), so two numbers on
+    // two lines can be compared instead of parsed out of a sentence.
     function sizeTitle(s) {
-      return 'request body ' + s.up.toLocaleString() + ' B \\u00b7 response body ' + s.down.toLocaleString() + ' B' +
-        (s.exact ? '' : ' \\u2014 estimated from the decoded trace (captured before 0.17)');
+      return 'transfer\\n' +
+        'request: ' + s.up.toLocaleString() + ' B\\n' +
+        'response: ' + s.down.toLocaleString() + ' B' +
+        (s.exact ? '' : '\\n---\\nestimated from the decoded trace \\u2014 this pair was captured before 0.17 stamped wire byte counts');
     }
 
     function sizeCell(pair) {
@@ -3697,9 +3735,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const lat = latOf(pair);
       const t = lat && lat.isToken ? Math.max(0, Math.min(d, lat.ttftMs)) : 0;
       const wt = t > 0 ? Math.min(w, Math.max(1, w * t / d)) : 0;
-      const tip = fmtSpan(d) + ' of 30s full scale' +
-        (wt ? ' \u00b7 ' + fmtMs(t) + ' to first token' : '') +
-        (d > PEN_FULL_MS ? ' \u2014 pinned at full width' : '');
+      const tip = 'duration\\n' +
+        'total: ' + fmtSpan(d) + '\\n' +
+        (wt ? 'first token: ' + fmtMs(t) + '\\n' : '') +
+        'scale: 30s is full width' + (d > PEN_FULL_MS ? ' \u2014 this row pinned' : '');
       return '<span class="pen" style="--cat:' + cat.color + '" title="' + escapeHtml(tip) + '">' +
         (wt ? '<i class="wait" style="left:0;width:' + wt.toFixed(1) + 'px"></i>' : '') +
         '<i style="left:' + wt.toFixed(1) + 'px;width:' + (w - wt).toFixed(1) + 'px"></i></span>';
@@ -3711,8 +3750,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function ttftCell(pair) {
       const lat = latOf(pair);
       if (!lat || !lat.isToken) return '<span class="ttft"></span>';
-      return '<span class="ttft" title="' + escapeHtml('time to first streamed token' +
-        (lat.pct != null ? ' \\u2014 ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
+      return '<span class="ttft" title="' + escapeHtml('time to first streamed token\\n' +
+        'ttft: ' + fmtMs(lat.ttftMs) +
+        (lat.pct != null ? '\\nshare: ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
         escapeHtml(fmtMs(lat.ttftMs)) + '</span>';
     }
 
@@ -3730,8 +3770,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
             penCell(pair, cat) +
             '<span class="method">' + escapeHtml(request.method) + '</span>' +
-            '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
-            '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
+            '<span class="status-code ' + getStatusClass(response && response.status) + '">' + escapeHtml(status) + '</span>' +
+            '<span class="cat-badge" style="--cat:' + cat.color + '">' + cat.label + '</span>' +
             (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
             '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
             '<span class="sum">' + chipsHtml(pair) + '</span>' +
@@ -4013,6 +4053,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
+      // A FOCUSED tool row is its own list (item 12): j/k or the arrows walk
+      // the tool rows of the pane you are in; Enter toggles the one you land
+      // on (the browser's own summary behavior, let through above). Nothing
+      // focused means the pane keys below still mean what they always did.
+      if (/^(j|k|ArrowDown|ArrowUp)$/.test(e.key) && e.target && e.target.matches &&
+          e.target.matches('summary[data-peek]')) {
+        e.preventDefault();
+        const pane = (e.target.closest && e.target.closest('#convo, #detail, #threads')) || document;
+        const rows = Array.prototype.slice.call(pane.querySelectorAll('summary[data-peek]'));
+        const next = rows[rows.indexOf(e.target) + (e.key === 'j' || e.key === 'ArrowDown' ? 1 : -1)];
+        if (next && next.focus) {
+          next.focus();
+          if (next.scrollIntoView) next.scrollIntoView({ block: 'nearest' });
+        }
+        return;
+      }
       if (view === 'context') {
         const ctxThread = () => getThreads().find(x => x.key === sessionSelKey);
         if (e.key === 'Escape') {
@@ -4317,23 +4373,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // extraHtml is raw (not escaped) — only trusted, renderer-built markup
     // like the subagent thread link goes there, never wire-derived strings.
     function fold(title, hint, body, cls, open, extraHtml, icon) {
+      // A conversation fold is PEEKABLE (item 12): hovering it opens the
+      // popover instead of a tooltip — the peek says everything the hint
+      // tip said and shows the first lines of the result besides. Two hover
+      // panels over one row is one too many, so the tip is not emitted here.
+      const peek = /fold-(tool|agent|skill|mcp|sys)/.test(String(cls || '')) ? ' data-peek' : '';
       // A hint long enough to ellipsize gets the full text in the hover,
       // led by the fold's own name — for a tool_use that reads "Edit" then
       // the full file list the row truncated, then metrics/hints. The
       // tooltip answers "what does the rest of this command/preview say"
       // before the user has to open the fold.
-      const hintTip = hint && hint.length > 60
+      const hintTip = !peek && hint && hint.length > 60
         ? ' data-tip="' + escapeHtml(String(title) + '\\n' +
             String(hint).slice(0, 600) + (hint.length > 600 ? '\\u2026' : '') +
             '\\n---\\n> click to expand') + '"'
         : '';
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
-        '<summary' + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
+        '<summary' + peek + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
         '<span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
         (extraHtml || '') +
         (hint ? '' : '<span class="fold-hint"></span>') +
-        '<button class="fold-btn fold-copy" onclick="copyFoldBody(event, this)" title="Copy contents">copy</button>' +
+        '<button class="fold-btn fold-copy" onclick="copyFoldBody(event, this)">copy</button>' +
         '</summary><div class="fold-body">' + body + '</div></details>';
     }
 
@@ -4663,7 +4724,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
         '<span class="fold-hint">' + keys.length + '</span>' +
         '<button class="fold-btn" onclick="copyFold(event, this)" title="Copy headers">copy</button>' +
-        '<button class="fold-btn" onclick="toggleHdrRaw(event, this)" title="Raw view">raw</button>' +
+        '<button class="fold-btn" onclick="toggleHdrRaw(event, this)" title="raw headers&#10;The block as text, unparsed \\u2014 the form you paste into curl.">raw</button>' +
         '</summary><div class="fold-body">' +
         '<div class="hdr-table">' + hdrRows(keys.map(k => [k, headers[k]])) + '</div>' +
         '<pre class="hdr-pre" data-copy>' + escapeHtml(hdrRawText(headers)) + '</pre>' +
@@ -5099,7 +5160,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const tipEl = document.createElement('div');
       tipEl.className = 'tip';
       document.body.appendChild(tipEl);
-      const SHOW_DELAY = 120;
+      // 400ms (item 13): a hover panel that fires at 120ms flashes past
+      // every chip on the way somewhere. Long enough to mean "I stopped
+      // here", short enough that a deliberate hover never waits.
+      const SHOW_DELAY = 400;
       let tipFor = null, showTimer = 0;
       const hideTip = () => { clearTimeout(showTimer); tipFor = null; tipEl.classList.remove('show'); };
       // Live re-renders replace sidebar/convo DOM under the mouse; a tip
@@ -5107,6 +5171,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       tipDetachedGuard = () => {
         if (tipFor && document.body.contains && !document.body.contains(tipFor)) hideTip();
       };
+      // A tip has STRUCTURE (item 13): the first line is the title, a
+      // "key: value" line becomes a two-column row with the value in mono,
+      // and prose stays prose. The key cap is what keeps a sentence with a
+      // colon in it from being torn into a fake column.
+      const TIP_KV = /^([A-Za-z][\\w .\\/+()#%-]{0,26}):[ \\t]+(\\S.*)$/;
       const showTipFor = (t) => {
         const lines = String(t.dataset.tip || '').split('\\n');
         let h = '';
@@ -5114,7 +5183,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (!lines[i].trim()) { h += '<div class="tip-gap"></div>'; continue; }
           if (lines[i].trim() === '---') { h += '<div class="tip-sep"></div>'; continue; }
           if (lines[i].lastIndexOf('> ', 0) === 0) { h += '<div class="tip-hint">' + escapeHtml(lines[i].slice(2)) + '</div>'; continue; }
-          h += '<div class="' + (i === 0 ? 'tip-head' : 'tip-line') + '">' + escapeHtml(lines[i]) + '</div>';
+          if (i === 0) { h += '<div class="tip-head">' + escapeHtml(lines[i]) + '</div>'; continue; }
+          const kv = TIP_KV.exec(lines[i]);
+          if (kv) {
+            h += '<div class="tip-kv"><span class="tip-k">' + escapeHtml(kv[1]) + '</span>' +
+              '<span class="tip-v">' + escapeHtml(kv[2]) + '</span></div>';
+            continue;
+          }
+          h += '<div class="tip-line">' + escapeHtml(lines[i]) + '</div>';
         }
         tipEl.innerHTML = h;
         tipEl.classList.add('show');
@@ -5161,6 +5237,76 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.addEventListener('scroll', hideTip, true);
       document.addEventListener('mouseleave', hideTip);
       document.addEventListener('click', hideTip, true);
+    }
+
+    // ---- The PEEK (item 12): look at a tool row without opening it ----
+    // Hovering a collapsed tool row for 250ms opens a popover anchored to
+    // the row: the tool, what it was given, and the first lines of what
+    // came back. FIXED position, so nothing under the cursor moves — an
+    // inline auto-expand shifts the layout out from under the pointer, and
+    // that fight is exactly what made the two-step read worse. A click
+    // still expands the fold inline, and an OPEN row never peeks: it is
+    // already saying it.
+    const PEEK_DELAY = 250, PEEK_LINES = 12, PEEK_COLS = 160;
+    if (document.createElement && document.body) {
+      const pk = document.createElement('div');
+      pk.className = 'peek';
+      document.body.appendChild(pk);
+      let pkFor = null, pkTimer = 0;
+      const hidePeek = () => { clearTimeout(pkTimer); pkFor = null; pk.classList.remove('show'); };
+      const peekBody = (det) => {
+        const res = det.querySelector('.tool-res .msg-text, .tool-res pre');
+        const el = res || det.querySelector('.fold-body .msg-text, .fold-body pre');
+        if (!el) return null;
+        const lines = String(el.textContent || '').replace(/^\\s+/, '').split('\\n');
+        return {
+          label: res ? 'result' : 'input',
+          text: lines.slice(0, PEEK_LINES).map(l => l.length > PEEK_COLS ? l.slice(0, PEEK_COLS - 1) + '\\u2026' : l).join('\\n'),
+          more: Math.max(0, lines.length - PEEK_LINES),
+        };
+      };
+      const showPeek = (sm) => {
+        const det = sm.parentElement;
+        if (!det || det.open || !det.querySelector) return;
+        const title = sm.querySelector('.fold-title');
+        const hint = sm.querySelector('.fold-hint');
+        const b = peekBody(det);
+        let h = '<div class="peek-h">' + escapeHtml((title && title.textContent) || 'tool') + '</div>';
+        const hv = hint && hint.textContent ? String(hint.textContent) : '';
+        if (hv) h += '<div class="peek-in">' + escapeHtml(hv.length > 400 ? hv.slice(0, 399) + '\\u2026' : hv) + '</div>';
+        if (b && b.text.trim()) {
+          h += '<div class="peek-l">' + escapeHtml(b.label) + '</div>' +
+            '<pre class="peek-b">' + escapeHtml(b.text) + '</pre>';
+          if (b.more) h += '<div class="peek-l">+' + b.more + ' more lines \\u2014 click the row to open it</div>';
+        }
+        pk.innerHTML = h;
+        pk.classList.add('show');
+        pk.style.left = '0px';
+        pk.style.top = '0px';
+        const r = sm.getBoundingClientRect();
+        const w = pk.offsetWidth, ht = pk.offsetHeight;
+        let y = r.bottom + 6;
+        if (y + ht > window.innerHeight - 8) y = Math.max(8, r.top - ht - 6);
+        pk.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+        pk.style.top = y + 'px';
+      };
+      document.addEventListener('mouseover', (e) => {
+        const sm = e.target && e.target.closest ? e.target.closest('summary[data-peek]') : null;
+        if (sm === pkFor) return;
+        clearTimeout(pkTimer);
+        pk.classList.remove('show');
+        pkFor = sm;
+        if (!sm || (sm.parentElement && sm.parentElement.open)) { pkFor = null; return; }
+        pkTimer = setTimeout(() => { if (pkFor === sm) showPeek(sm); }, PEEK_DELAY);
+      });
+      document.addEventListener('mouseout', (e) => {
+        if (!pkFor) return;
+        const to = e.relatedTarget;
+        if (to && to.closest && to.closest('summary[data-peek]') === pkFor) return;
+        hidePeek();
+      });
+      document.addEventListener('click', hidePeek, true);
+      document.addEventListener('scroll', hidePeek, true);
     }
 
     // Quiet stroke glyphs for the sessions layer (currentColor, no fills):
@@ -5648,21 +5794,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             tbits.push('turn ' + ord +
               (li.kind === 'final'
                 ? ' \\u00b7 final response' + (li.step > 1 ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : '')
-                : li.step ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : ' \\u00b7 agent work') +
-              (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : ''));
-            if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
+                : li.step ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : ' \\u00b7 agent work'));
+            if (u && u.model) tbits.push('model: ' + shortModel(u.model));
+            if (p) tbits.push('at: ' + fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
-              let l = 'in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output);
+              tbits.push('tokens: in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output));
               const c = pairCost(u);
-              if (c && c.total > 0) l += ' \\u00b7 ' + fmtCost(c.total);
-              tbits.push(l);
+              if (c && c.total > 0) tbits.push('cost: ' + fmtCost(c.total));
             }
             if (p) {
-              let l = formatDuration(p.duration);
-              if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
-              tbits.push(l);
+              if (p.response && typeof p.response.firstTokenMs === 'number') tbits.push('ttft: ' + fmtMs(p.response.firstTokenMs));
+              tbits.push('duration: ' + formatDuration(p.duration));
             }
-            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push(tj); }
+            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push('context: ' + tj.replace(/^context /, '')); }
             // The final's stop is a wire fact, not an inference: end_turn is
             // a finished response; tool_use here means the loop was cut
             // mid-work and this "final" is just the last reply captured.

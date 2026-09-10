@@ -519,6 +519,54 @@ describe("long texts read in place", () => {
   });
 });
 
+// Peek on hover, expand on click. An inline auto-expand shifts the layout
+// out from under the cursor; a fixed popover anchored to the row does not.
+describe("the peek on a collapsed tool row", () => {
+  test("conversation tool folds are peekable and drop the duplicate hint tip", () => {
+    const p = msgPair("p1", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "run it" },
+          { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "x".repeat(120) } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "out" }] },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("<summary data-peek>");
+    // the peek says everything the hint tip said, so the tip is not emitted
+    expect(convo).not.toMatch(/<summary data-peek data-tip=/);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the page ships the peek panel and its 250ms dwell", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("PEEK_DELAY = 250");
+    expect(html).toContain('pk.className = \'peek\'');
+    expect(html).toContain(".peek.show { display: block; }");
+  });
+
+  test("tooltips lay key: value lines out as a grid, at a 400ms dwell", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("SHOW_DELAY = 400");
+    expect(html).toContain('class="tip-kv"');
+    expect(html).toContain(".tip-k {");
+    expect(html).toContain("max-width: 380px");
+  });
+
+  test("tips that restated visible text are gone", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    const rows = page.fragments.filter((f) => f.id === "pairs").map((f) => f.html).join("\n");
+    // the status chip already reads "200"; the category badge already reads its label
+    expect(rows).not.toContain('title="HTTP 200"');
+    expect(rows).not.toContain('title="Messages"');
+    expect(getLiveHtml({})).not.toContain('id="tab-requests" title="Requests"');
+  });
+});
+
 describe("rich tool bodies in the session view", () => {
   test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
     const p = msgPair("p1", {
@@ -631,7 +679,7 @@ describe("the recorded request row", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     const html = rowsHtml(page);
     expect(html).toContain('class="pen"');
-    expect(html).toContain("of 30s full scale");
+    expect(html).toContain("scale: 30s is full width");
   });
 
   test("a quiet stretch over the fold threshold becomes a named band", () => {
@@ -1765,8 +1813,8 @@ describe("the trajectory gutter on the session rail", () => {
     const rail = page.els["threads"].innerHTML;
     // opus 4.6's window is known (1M — the offline fallback follows the
     // docs' 4.6+ rule), so the % is against the window
-    expect(rail).toContain("context 60.5k");
-    expect(rail).toMatch(/context [\d.]+k · \d+% of a [\d.]+[km] window/);
+    expect(rail).toContain("context: 60.5k");
+    expect(rail).toMatch(/context: [\d.]+k · \d+% of a [\d.]+[km] window/);
   });
 });
 

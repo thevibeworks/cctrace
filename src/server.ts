@@ -9,7 +9,7 @@ import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
-import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries } from "./history";
+import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries, TAIL_BYTES } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, requestStop, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
 import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } from "./maintenance";
@@ -159,6 +159,32 @@ export function createServer(config: ServerConfig) {
     }
   }
 
+  /**
+   * Fold the prior-session preload AS IT READS (history.ts PriorFoldHooks).
+   * loadPriorPairs used to hand back every parsed pair of a 256 MB tail and
+   * mergePairs folded them one by one afterwards, so the peak was the whole
+   * parsed history. Folding on arrival makes the peak what the page holds,
+   * and the ring charges the FOLDED size, so the same budget reaches
+   * further back: measured on a 740 MB store project, 2598 MB peak RSS for
+   * 128 preloaded pairs became 837 MB for 376 (docs/live-resources.md).
+   * mergePairs still calls add() on these pairs; it is idempotent.
+   */
+  const priorFold = bodies
+    ? {
+        onKeep: (p: TracePair) => { bodies.add(p); },
+        // The line minus the body the fold just took out of it. The stub
+        // that replaced it (first user text, composition) is not added
+        // back: ~2 KB a pair against a 256 MB budget, and the arithmetic
+        // stays one subtraction instead of a second stringify per pair.
+        weigh: (p: TracePair, bytes: number) => {
+          const body = p.request.body as { _cctrace_stub?: unknown; droppedBytes?: unknown } | null;
+          const dropped = body?._cctrace_stub && typeof body.droppedBytes === "number" ? body.droppedBytes : 0;
+          return Math.max(0, bytes - dropped);
+        },
+        onDrop: (p: TracePair) => bodies.forget(p.id),
+      }
+    : {};
+
   /** Insert history pairs (deduped by id), keep the array timestamp-sorted. */
   function mergePairs(incoming: TracePair[]): TracePair[] {
     const fresh = incoming.filter((p) => p && p.id && !knownIds.has(p.id));
@@ -232,7 +258,7 @@ export function createServer(config: ServerConfig) {
   // the first live request beats it, the guess is simply not made.
   if (config.speculate && !config.noHistory) {
     const guess = config.speculate;
-    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess])).then((prior) => {
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess]), TAIL_BYTES, priorFold).then((prior) => {
       if (!prior.length || seenSessions.size) return; // a real session already spoke
       for (const p of prior) (p as TracePair & { speculative?: boolean }).speculative = true;
       const merged = mergePairs(prior);
@@ -309,7 +335,7 @@ export function createServer(config: ServerConfig) {
     seenSessions.add(sid);
     config.onSession?.(sid);
     if (config.noHistory) return;
-    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([sid])).then((loaded) => {
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([sid]), TAIL_BYTES, priorFold).then((loaded) => {
       const prior = mergePairs(loaded);
       if (!prior.length) return;
       const files = [...new Set(prior.map((p) => p.prior))].join(", ");

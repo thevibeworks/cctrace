@@ -1,5 +1,6 @@
-import { histLenOf, isStubBody, lastMsgSig, stubPair, threadKeyOf, type StubKind } from "./compact";
+import { histLenOf, historyHas, isStubBody, lastMsgSig, stubPair, threadKeyOf, type StubKind } from "./compact";
 import { categorizeUrl } from "./categorize";
+import { contextComposition } from "./context";
 import { extractCallInfo } from "./summarize";
 import type { TracePair } from "./types";
 
@@ -29,7 +30,13 @@ export function createLiveBodies(bodyBytes: number, wire?: unknown) {
     }
     // Preserve request-derived usage/pricing parameters before removing them.
     (p as TracePair & { _ci?: unknown })._ci = extractCallInfo(p);
+    // ...and the reading the body is about to take with it: ten numbers
+    // that keep the Context view EXACT for this step instead of derived
+    // (src/context.ts ctxEffectiveBody is the fallback, not the plan).
+    const composition = contextComposition(p);
+    delete (p as TracePair & { _ctxc?: unknown })._ctxc; // a memo, not wire data
     const folded = stubPair(p, keeper, kind);
+    if (composition) (folded.request.body as { composition?: unknown }).composition = composition;
     p.request = folded.request;
     retainedBytes -= h.bytes;
     h.bytes = 0;
@@ -38,8 +45,13 @@ export function createLiveBodies(bodyBytes: number, wire?: unknown) {
   };
 
   return {
+    /** Hold one pair's request body. Idempotent: a body already held (or
+     * already folded to a stub) is not taken twice, so the prior-session
+     * preload can fold as it reads and mergePairs can hand the same pairs
+     * over again without double-counting the budget. */
     add(pair: TracePair): TracePair[] {
       if (pair.request.body == null || isStubBody(pair.request.body)) return [];
+      if (full.has(pair.id)) return [];
       const changed: TracePair[] = [];
       const modelCall = categorizeUrl(pair.request.url, pair.client, wire) === "messages";
       const h: Held = { pair, bytes: Buffer.byteLength(JSON.stringify(pair.request.body)),
@@ -50,17 +62,18 @@ export function createLiveBodies(bodyBytes: number, wire?: unknown) {
         const key = threadKeyOf(pair, wire);
         const prev = threads.get(key);
         if (!prev || pair.request.timestamp >= prev.pair.request.timestamp) {
-          if (prev && h.len >= prev.len && prev.sig) {
-            const body = pair.request.body as { messages?: unknown[]; input?: unknown[] };
-            const history = Array.isArray(body.messages) ? body.messages : Array.isArray(body.input) ? body.input : [];
-            for (let i = history.length - 1; i >= 0; i--) {
-              if (JSON.stringify(history[i]).slice(0, 400) === prev.sig) {
-                fold(prev, "superseded", pair.id, changed);
-                break;
-              }
-            }
+          if (prev && h.len >= prev.len && prev.sig && historyHas(pair, prev.sig)) {
+            fold(prev, "superseded", pair.id, changed);
           }
           threads.set(key, h);
+        } else if (h.len <= prev.len && h.sig && historyHas(prev.pair, h.sig)) {
+          // Arrived OLDER than the thread's candidate: the prior-session
+          // preload reads the newest trace file first, and a late pair can
+          // land out of order on a live run. The candidate already re-sent
+          // this history, so THIS is the superseded body — fold it against
+          // the candidate rather than leave it for the budget, which would
+          // drop it with no keeper to read it back from.
+          fold(h, "superseded", prev.pair.id, changed);
         }
       }
       while (retainedBytes > bodyBytes && full.size) {

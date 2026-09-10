@@ -209,4 +209,44 @@ describe("streaming readers", () => {
     expect(one.pairs.map((p: any) => p.id)).toEqual([]); // the newest line is the invalid {"nope":1}
     expect(one.dropped).toBe(21);
   });
+
+  // The live server's preload folds as it reads: the hook sees every kept
+  // pair, the budget charges what the fold LEFT, and an evicted head pair
+  // is handed back so the reader can forget it too.
+  test("readTracePairs: the fold hooks see every kept pair, charge post-fold, and report evictions", async () => {
+    const pairs = Array.from({ length: 12 }, (_, i) => messagesPair(`p${i}`, SID_A, i * 10));
+    const f = join(dir, "trace-hooks.jsonl");
+    writeFileSync(f, toJsonl(pairs));
+    const kept: string[] = [];
+    const dropped: string[] = [];
+    const lineLen = JSON.stringify(pairs[0]).length;
+    const all = await readTracePairs(f, {
+      onKeep: (p: any) => kept.push(p.id),
+      // every pair but the newest folds to a tenth of its line
+      weigh: (_p: any, bytes: number) => Math.round(bytes / 10),
+      onDrop: (p: any) => dropped.push(p.id),
+      tailBytes: lineLen, // one raw line's worth: ten folded pairs fit
+    });
+    expect(kept).toEqual(pairs.map((p) => p.id));
+    // every pair is either held or reported dropped, oldest first
+    const survivors = all.pairs.map((p: any) => p.id);
+    expect(dropped.concat(survivors)).toEqual(pairs.map((p) => p.id));
+    expect(dropped.length).toBeGreaterThan(0);
+    expect(survivors.length).toBeGreaterThan(8); // ~ten folded pairs per raw line
+    expect(all.keptBytes).toBeLessThanOrEqual(lineLen);
+    // without weigh the same budget only reaches one line back
+    const raw = await readTracePairs(f, { tailBytes: lineLen });
+    expect(raw.pairs.length).toBeLessThan(all.pairs.length);
+  });
+
+  test("loadPriorPairs folds as it reads and dedupes before the hook sees a pair", async () => {
+    const kept: string[] = [];
+    writeFileSync(join(dir, "trace-old.jsonl"), toJsonl([messagesPair("1_a", SID_A, 100)]));
+    writeFileSync(join(dir, "session-2d5c.jsonl"), toJsonl([messagesPair("1_a", SID_A, 100), messagesPair("2_b", SID_A, 200)]));
+    const got = await loadPriorPairs(dir, join(dir, "trace-current.jsonl"), new Set([SID_A]), TAIL_BYTES, {
+      onKeep: (p: any) => kept.push(p.id),
+    });
+    expect(got.map((p) => p.id)).toEqual(["1_a", "2_b"]);
+    expect(kept.sort()).toEqual(["1_a", "2_b"]);
+  });
 });

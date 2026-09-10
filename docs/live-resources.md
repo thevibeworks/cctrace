@@ -24,9 +24,12 @@ their existing behavior.
 
 Folding changes presentation, not disk capture or the bytes sent to the
 agent. Every pair remains listed. Older bodies become stubs with model,
-session identity, history length, and a link to the next retained history.
-An independent byte budget also folds older branch/epoch bodies when needed.
-Request-derived usage and pricing parameters are preserved before eviction.
+session identity, history length, the composition of the window they gave
+up, and a link to the next retained history. An independent byte budget also
+folds older branch/epoch bodies when needed. Request-derived usage and
+pricing parameters are preserved before eviction. A body that arrives out of
+order (the cross-run preload reads the newest trace file first) folds against
+the request that already re-sent it, so it keeps a history link too.
 
 Open a folded request and select **load the original** to read its recorded
 body. Only one explicitly loaded inspector body is retained; navigation
@@ -36,14 +39,58 @@ Session JSONL downloads and wire-spec exports read original records from
 disk. Offset lookups verify pair identity and fall back to a scan after a
 trace rewrite.
 
-Detailed context composition/search over folded bodies is unavailable in
-the live view. For complete per-request context analysis, use
-`--live-bodies full` when starting capture, or reopen the recorded trace with
-`cctrace view <target> --full`. Full mode consumes memory proportional to all
-captured bodies; the request-body budget is ignored. Snapshot and slice
-exports reflect the bodies currently loaded in the view; JSONL retains the
-original recorded bodies. Folding does not imply that every historical
-branch can be fully reconstructed from memory alone.
+## Context over folded bodies
+
+Folding takes bytes, not the reading. The Context view composes a folded
+step from two sources, in this order:
+
+1. The **stamp**. Both fold sites measure `contextComposition` on the real
+   body before dropping it and write the result onto the stub
+   (`body.composition`, about ten numbers). Those sums are exact — the
+   per-step bar, the ledger and the six category totals are the same
+   numbers an unfolded page shows.
+2. The **keeper**. A body is folded as superseded because a later request
+   re-sent the same history, so the item-level detail — the icicle, the
+   graph's groups, provenance, tool schemas, the window's turns — is read
+   off that request's body, cut back to this request's history length
+   (`ctxEffectiveBody` in src/context.ts). The keeper may itself have been
+   folded later; the chain is followed to the request that still carries a
+   body. The cut lands on turn boundaries, so a derived window can carry a
+   turn the keeper continued past this request's end; the stamp is what
+   keeps the numbers exact regardless.
+
+The inspector's **origin** facet names the retained request when a step was
+derived, and the margin's reconciliation line says the body was folded.
+`cctrace compact` stubs written before this release carry no stamp; they
+derive both.
+
+A folded body with no retained request to read (a body the byte budget
+dropped before any successor claimed it) is the only case left without a
+composition. The panel says so and offers **Load the recorded body**, which
+fetches the original from the trace on disk. Only one such body is retained
+at a time, like the inspector's: loading the next one puts the previous stub
+back.
+
+For whole-session analysis with every body in memory, `--live-bodies full`
+at capture time or `cctrace view <target> --full` still apply. Full mode
+consumes memory proportional to all captured bodies; the request-body budget
+is ignored. Snapshot and slice exports reflect the bodies currently loaded in
+the view; JSONL retains the original recorded bodies. Folding does not imply
+that every historical branch can be fully reconstructed from memory alone.
+
+## Cross-run preload
+
+A resumed session preloads its prior traces (`loadPriorPairs`). That read
+now folds each pair as it lands instead of parsing the whole 256 MB tail
+first, and charges the budget the folded size, so the same budget reaches
+further back. Measured on a 740 MB store project whose resumed session
+spans a 476 MB trace and its siblings (`process.memoryUsage().rss` sampled
+every 20 ms):
+
+| | peak RSS | pairs preloaded |
+| --- | --- | --- |
+| before (parse the tail, fold after) | 2598 MB | 128 |
+| after (fold as it reads) | 837 MB | 376 |
 
 Capture scope is independent of live retention. `--messages-only` reduces
 which calls are recorded. `--intercept-host HOST` enrolls a host for full

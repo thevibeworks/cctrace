@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { createFold } from "../src/fold";
 import { isStubBody, stubPair, collapsePair } from "../src/compact";
+import { contextComposition } from "../src/context";
 import { buildSession } from "../src/session";
 import { categorizeUrl } from "../src/categorize";
 import { wireTables } from "../src/clients";
@@ -111,6 +112,21 @@ describe("fold rule 1: superseded bodies", () => {
     for (const p of r.pairs.slice(0, 2)) {
       expect((p.request.body as any).keptPairId).toBe(keeper);
       expect((p.request.body as any).kind).toBe("superseded");
+    }
+  });
+
+  // The fold takes bytes, not the reading: what the body was made of is
+  // measured on the way out, so the Context view stays EXACT per step.
+  test("a stub carries the composition of the body it gave up", async () => {
+    seq = 0;
+    const pairs = growingThread(3);
+    const before = pairs.map((p) => contextComposition(structuredClone(p)));
+    const r = await fold(pairs, { bodyBytes: 1 });
+    expect(r.superseded + r.budgeted).toBe(3);
+    for (const [i, p] of r.pairs.entries()) {
+      expect(stubbed(p)).toBe(true);
+      expect((p.request.body as any).composition).toEqual(before[i]);
+      expect((p as any)._ctxc).toBeUndefined(); // a page memo, never page data
     }
   });
 

@@ -78,6 +78,19 @@ export interface ReadTraceOpts {
   /** Keep the newest lines whose bytes fit; Infinity = all. Default TAIL_BYTES. */
   tailBytes?: number;
   stats?: TraceParseStats;
+  /**
+   * Called with each kept pair as it is parsed, BEFORE it is charged to the
+   * budget. This is where a reader that folds (the live server's request-body
+   * fold) does its work: setting it makes the read hold pairs, not lines, and
+   * delays each pair's charge by one arrival — the request that supersedes a
+   * body arrives next, so the ring charges what is still HELD instead of what
+   * the line weighed.
+   */
+  onKeep?: (pair: TracePair) => void;
+  /** The budget charge for a kept pair; default its raw line bytes. */
+  weigh?: (pair: TracePair, bytes: number) => number;
+  /** A pair the budget dropped from the head — the reader's cue to forget it. */
+  onDrop?: (pair: TracePair) => void;
 }
 
 export interface ReadTraceResult {
@@ -104,7 +117,9 @@ export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Pr
   // to decide — it keeps the object instead of the line, which both halves
   // the parsing and lowers the peak: the old ring re-parsed its survivors
   // at the end, holding strings and pairs at once. At 332 KB a line that
-  // was most of a 2.4 GB read (issue #106).
+  // was most of a 2.4 GB read (issue #106). A read with onKeep keeps pairs
+  // for the same reason: the hook folds them as they arrive, so the peak is
+  // what the reader HOLDS, not what the tail weighed on disk.
   const ring: (string | TracePair)[] = [];
   const lens: number[] = [];
   let head = 0;
@@ -125,29 +140,45 @@ export async function readTracePairs(path: string, opts: ReadTraceOpts = {}): Pr
     }
     return pair;
   };
-  for await (const line of traceLines(path)) {
-    if (!line.trim()) continue;
-    if (needles && !needles.some((n) => line.includes(n))) continue;
-    let keep: string | TracePair = line;
-    if (opts.filter) {
-      const pair = parseUsable(line);
-      if (!pair || !opts.filter(pair)) continue;
-      keep = pair; // parsed once, kept parsed
-    }
-    seenBytes += line.length + 1; // + its newline
-    ring.push(keep);
-    lens.push(line.length);
-    keptBytes += line.length;
+  const keep = (held: string | TracePair, bytes: number) => {
+    ring.push(held);
+    const size = opts.weigh && typeof held !== "string" ? opts.weigh(held, bytes) : bytes;
+    lens.push(size);
+    keptBytes += size;
     while (keptBytes > budget && head < ring.length - 1) {
       keptBytes -= lens[head]!;
+      const gone = ring[head]!;
       ring[head] = "";
       head++;
       dropped++;
+      if (opts.onDrop && typeof gone !== "string") opts.onDrop(gone);
     }
     if (head > 4096) { ring.splice(0, head); lens.splice(0, head); head = 0; }
+  };
+  // With onKeep the newest pair is held back one arrival: its successor is
+  // what folds it, and only then is its charge the truth (see ReadTraceOpts).
+  let pending: { pair: TracePair; bytes: number } | null = null;
+  for await (const line of traceLines(path)) {
+    if (!line.trim()) continue;
+    if (needles && !needles.some((n) => line.includes(n))) continue;
+    let held: string | TracePair = line;
+    if (opts.filter || opts.onKeep) {
+      const pair = parseUsable(line);
+      if (!pair || (opts.filter && !opts.filter(pair))) continue;
+      held = pair; // parsed once, kept parsed
+    }
+    seenBytes += line.length + 1; // + its newline
+    if (opts.onKeep && typeof held !== "string") {
+      opts.onKeep(held);
+      if (pending) keep(pending.pair, pending.bytes);
+      pending = { pair: held, bytes: line.length };
+      continue;
+    }
+    keep(held, line.length);
   }
+  if (pending) keep(pending.pair, pending.bytes);
   const pairs: TracePair[] = [];
-  const stats = opts.filter ? undefined : opts.stats; // filtered lines were already counted
+  const stats = opts.filter || opts.onKeep ? undefined : opts.stats; // those lines were already counted
   for (let i = head; i < ring.length; i++) {
     const held = ring[i]!;
     ring[i] = "";
@@ -253,18 +284,38 @@ export function listTraceEntries(dirs: TraceDirArg): { dir: string; name: string
   return out;
 }
 
+/** What a caller that folds as it reads hands the reader (see ReadTraceOpts). */
+export interface PriorFoldHooks {
+  onKeep?: (pair: TracePair) => void;
+  weigh?: (pair: TracePair, bytes: number) => number;
+  onDrop?: (pair: TracePair) => void;
+}
+
 /**
  * Scan the dir(s) for prior traces holding pairs of the given sessions. The
  * current run's own file is excluded; a cheap substring pre-check skips
  * files that can't match before any JSON parsing.
+ *
+ * `hooks` lets a live server fold each pair as it lands instead of after the
+ * whole tail is parsed — the difference between holding a session's raw
+ * history and holding the page it renders as.
  */
-export async function loadPriorPairs(logDir: TraceDirArg, excludeFile: string, sessionIds: Set<string>, tailBytes = TAIL_BYTES): Promise<TracePair[]> {
+export async function loadPriorPairs(logDir: TraceDirArg, excludeFile: string, sessionIds: Set<string>, tailBytes = TAIL_BYTES, hooks: PriorFoldHooks = {}): Promise<TracePair[]> {
   if (!sessionIds.size) return [];
   const excludeAbs = resolve(excludeFile);
   const out: TracePair[] = [];
   const seenIds = new Set<string>();
   const needles = [...sessionIds];
-  const inSet = (p: TracePair) => sessionIds.has(extractSessionId(p, WIRE));
+  // After a `merge`, a pair exists in both its trace-*.jsonl and the
+  // session-*.jsonl output — deduped HERE, as the line is decided, so a
+  // duplicate never reaches the fold hook or the budget either.
+  const inSet = (p: TracePair) => {
+    if (!sessionIds.has(extractSessionId(p, WIRE))) return false;
+    if (!p.id) return true;
+    if (seenIds.has(p.id)) return false;
+    seenIds.add(p.id);
+    return true;
+  };
   // Newest file first with one shared budget: when a session's history is
   // bigger than we are willing to hold, it is the OLDEST turns that go.
   let remaining = tailBytes;
@@ -273,19 +324,12 @@ export async function loadPriorPairs(logDir: TraceDirArg, excludeFile: string, s
     if (remaining <= 0) break;
     let read: ReadTraceResult;
     try {
-      read = await readTracePairs(path, { needles, filter: inSet, tailBytes: remaining });
+      read = await readTracePairs(path, { needles, filter: inSet, tailBytes: remaining, ...hooks });
     } catch {
       continue;
     }
     remaining -= read.keptBytes;
     for (const pair of read.pairs) {
-      // After a `merge`, a pair exists in both its trace-*.jsonl and the
-      // session-*.jsonl output — dedupe across files or snapshots render
-      // every prior turn twice.
-      if (pair.id) {
-        if (seenIds.has(pair.id)) continue;
-        seenIds.add(pair.id);
-      }
       pair.prior = f;
       out.push(pair);
     }

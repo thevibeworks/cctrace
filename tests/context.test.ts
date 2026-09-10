@@ -21,7 +21,10 @@ import {
   ctxTurnSig,
   ctxOriginTurn,
   ctxCarrySpan,
+  ctxEffectiveBody,
+  ctxKeeperPair,
 } from "../src/context";
+import { stubPair } from "../src/compact";
 import { modelWindow } from "../src/pricing";
 import { filterCatalog } from "../src/pricing-catalog";
 
@@ -161,7 +164,7 @@ describe("contextComposition", () => {
     expect(c.sums.system).toBe(estTokens("sys text here".length));
     expect(c.sums.user).toBe(estTokens("hello".length));
   });
-  test("compact stubs return null (composition is gone)", () => {
+  test("a folded stub with no keeper on the page returns null", () => {
     const p = msgPair([{ role: "user", content: "hi" }]);
     p.request.body = { _cctrace_stub: true, kind: "superseded", historyLen: 42 };
     expect(contextComposition(p)).toBeNull();
@@ -319,7 +322,7 @@ describe("contextGraph", () => {
     expect(est).toBe(g.est);
   });
 
-  test("a compact-folded stub has no graph, same as its source walk", () => {
+  test("a folded stub with nothing to derive from has no graph", () => {
     const p = msgPair([{ role: "user", content: "hi" }]);
     p.request.body = { _cctrace_stub: true, model: "claude-sonnet-5", historyLen: 40 };
     expect(contextGraph(p)).toBeNull();
@@ -771,5 +774,134 @@ describe("contextItems: an image-bearing tool result still has a label", () => {
     expect(res.toolName).toBe("mcp__browser__shot");
     expect(res.label).toContain("[image]");
     expect(res.label).toContain("Successfully captured screenshot");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The fold takes BYTES, not the reading. A superseded body was dropped
+// because a later request re-sent the same history, so the keeper's body
+// holds it as a prefix and the page can derive the folded step's window.
+
+describe("derivation: a folded body reads out of the request that kept it", () => {
+  const pairOfList = (list: any[]) => (id: string) => list.find((p) => p.id === id) || null;
+  /** A thread of `n` model calls, each re-sending everything before it. */
+  function thread(n: number) {
+    const history: any[] = [];
+    const out: any[] = [];
+    for (let i = 0; i < n; i++) {
+      history.push({ role: "user", content: [{ type: "text", text: "step " + i + " please" }] });
+      out.push(msgPair(history.map((m) => ({ ...m })), { reply: "ok " + i }));
+      history.push({ role: "assistant", content: [{ type: "text", text: "ok " + i }] });
+    }
+    return out;
+  }
+
+  test("a superseded step composes exactly like the body it lost", () => {
+    const [a, b] = thread(2);
+    const expected = contextComposition(structuredClone(a));
+    const expectedItems = contextItems(structuredClone(a));
+    const folded = stubPair(structuredClone(a), b!.id);
+    const pairOf = pairOfList([folded, b]);
+    const got = contextComposition(folded, pairOf);
+    expect(got.sums).toEqual(expected.sums);
+    expect(got.est).toBe(expected.est);
+    expect(got.histLen).toBe(expected.histLen);
+    expect(got.toolCount).toBe(expected.toolCount);
+    const items = contextItems(folded, pairOf);
+    for (const cat of CTX_CATS) expect(items.cats[cat.id].length).toBe(expectedItems.cats[cat.id].length);
+    expect(items.est).toBe(expectedItems.est);
+    expect(ctxEffectiveBody(folded, pairOf).derivedFrom).toBe(b!.id);
+    // and the window the provenance layer indexes into is the same shape
+    expect(ctxWindowTurns(folded, pairOf).length).toBe(expected.histLen);
+  });
+
+  test("a keeper that was folded later resolves through the chain", () => {
+    const [a, b, c] = thread(3);
+    const expected = contextComposition(structuredClone(a));
+    const foldedA = stubPair(structuredClone(a), b!.id);
+    const foldedB = stubPair(structuredClone(b), c!.id);
+    const pairOf = pairOfList([foldedA, foldedB, c]);
+    expect(ctxKeeperPair(foldedA, pairOf)!.id).toBe(c!.id);
+    expect(contextComposition(foldedA, pairOf).sums).toEqual(expected.sums);
+    expect(ctxEffectiveBody(foldedA, pairOf).derivedFrom).toBe(c!.id);
+  });
+
+  test("a cycle, a missing keeper and a nameless stub all resolve to nothing, never a throw", () => {
+    const [a, b] = thread(2);
+    const foldedA = stubPair(structuredClone(a), "b");
+    const foldedB = stubPair(structuredClone(b), "a");
+    foldedA.id = "a";
+    foldedB.id = "b";
+    const cyclic = pairOfList([foldedA, foldedB]);
+    expect(ctxKeeperPair(foldedA, cyclic)).toBeNull();
+    expect(contextComposition(foldedA, cyclic)).toBeNull();
+    expect(contextGraph(foldedA, cyclic)).toBeNull();
+    expect(ctxWindowTurns(foldedA, cyclic)).toEqual([]);
+    const orphan = stubPair(structuredClone(a), "nobody");
+    expect(contextComposition(orphan, pairOfList([orphan]))).toBeNull();
+    const budgeted = stubPair(structuredClone(a), "", "budgeted");
+    expect(contextComposition(budgeted, pairOfList([budgeted, b]))).toBeNull();
+    // no resolver at all is the snapshot/unit-test path
+    expect(contextComposition(stubPair(structuredClone(a), b!.id))).toBeNull();
+  });
+
+  test("a stamped composition is preferred over the derivation (it is exact)", () => {
+    const [a, b] = thread(2);
+    const expected = contextComposition(structuredClone(a));
+    const folded: any = stubPair(structuredClone(a), b!.id);
+    folded.request.body.composition = expected;
+    // no resolver needed: the fold measured the sums before dropping the body
+    expect(contextComposition(folded)).toEqual(expected);
+  });
+
+  test("the openai dialect slices input[] back to the folded turn count", () => {
+    const item = (i: number) => [
+      { type: "message", role: "user", content: "step " + i },
+      { type: "function_call", call_id: "c" + i, name: "shell", arguments: '{"command":["ls"]}' },
+      { type: "function_call_output", call_id: "c" + i, output: "files " + i },
+      { type: "message", role: "assistant", content: "done " + i },
+    ];
+    const mk = (id: string, input: any[]) => ({
+      id,
+      request: {
+        timestamp: 1751900500 + Number(id.slice(1)), method: "POST",
+        url: "https://chatgpt.com/backend-api/codex/responses", headers: {},
+        body: { model: "gpt-5.4", tools: [{ type: "function", name: "shell", parameters: {} }], input },
+      },
+      response: { timestamp: 1751900600, status: 200, headers: {}, bodyRaw: "" },
+      duration: 500,
+    }) as any;
+    const head = [{ type: "message", role: "developer", content: "You are Codex." }];
+    const short = mk("o1", [...head, ...item(0)]);
+    const long = mk("o2", [...head, ...item(0), ...item(1)]);
+    const expected = contextComposition(structuredClone(short));
+    const folded = stubPair(structuredClone(short), long.id);
+    const pairOf = pairOfList([folded, long]);
+    expect((folded.request.body as any).historyLen).toBe(expected.histLen);
+    const got = contextComposition(folded, pairOf);
+    expect(got.sums).toEqual(expected.sums);
+    expect(got.histLen).toBe(expected.histLen);
+    expect(ctxWindowTurns(folded, pairOf).length).toBe(expected.histLen);
+  });
+
+  test("a folded thread reports a composition for every superseded step", () => {
+    const pairsIn = thread(5);
+    const expected = pairsIn.map((p) => contextComposition(structuredClone(p)));
+    // fold like the render fold does: every step but the last supersedes
+    const folded = pairsIn.map((p, i) => (i === pairsIn.length - 1 ? p : stubPair(structuredClone(p), pairsIn[i + 1]!.id)));
+    const pairOf = pairOfList(folded);
+    const tl = contextTimeline(folded, [], pairOf);
+    expect(tl.steps).toHaveLength(5);
+    for (let i = 0; i < 5; i++) {
+      expect(tl.steps[i].sums).toEqual(expected[i]!.sums);
+      expect(tl.steps[i].est).toBe(expected[i]!.est);
+      expect(tl.steps[i].stub).toBe(i < 4);
+      // every stub in a fully folded thread chains to the ONE body left
+      expect(tl.steps[i].derived).toBe(i < 4 ? pairsIn[4]!.id : null);
+    }
+    // and the same thread unfolded reads identically
+    const plain = contextTimeline(pairsIn.map((p) => structuredClone(p)), []);
+    expect(tl.steps.map((s: any) => s.est)).toEqual(plain.steps.map((s: any) => s.est));
+    expect(tl.events.map((e: any) => e.kind + ":" + e.label)).toEqual(plain.events.map((e: any) => e.kind + ":" + e.label));
   });
 });

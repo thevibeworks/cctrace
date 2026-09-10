@@ -70,6 +70,9 @@ import {
   ctxEnvelope,
   ctxNormalizeTurns,
   ctxSnippet,
+  ctxKeeperPair,
+  ctxOpenaiCut,
+  ctxEffectiveBody,
   contextComposition,
   contextItems,
   ctxGroupOf,
@@ -2575,6 +2578,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${ctxEnvelope.toString()}
     ${ctxNormalizeTurns.toString()}
     ${ctxSnippet.toString()}
+    ${ctxKeeperPair.toString()}
+    ${ctxOpenaiCut.toString()}
+    ${ctxEffectiveBody.toString()}
     ${contextComposition.toString()}
     ${contextItems.toString()}
     ${ctxGroupOf.toString()}
@@ -3277,6 +3283,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairIdx = { n: -1, map: null };
           detailOriginal = null;
           replayOriginal = null;
+          ctxLoaded = null; // its pair object is gone with the list
           if (replayLoad) replayLoad.controller.abort();
           replayLoad = null;
           lastModelPair = null;
@@ -3298,10 +3305,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           for (const item of msg.requests || []) {
             const p = pairOf(item.id);
             if (!p) continue;
+            // Context memos computed from the REAL body outlive the fold:
+            // exact beats derived, and the stub that replaces it carries
+            // the same sums anyway. A memo that was already derived is
+            // dropped — this frame may name a different keeper, and a
+            // derived body holds a slice of a keeper that just folded.
+            const wasStub = !!(p.request.body && p.request.body._cctrace_stub);
             p.request.body = item.body;
+            if (wasStub) { delete p._ctxc; delete p._ctxBody; }
             if (item.callInfo) p._ci = item.callInfo;
             delete p._sc;
           }
+          // The keeper this frame folded backs other steps' derivations;
+          // drop those slices so they re-derive against what is left.
+          for (const p of pairs) delete p._ctxBody;
           sessionRevision++;
           sessionCache = { key: '', threads: [] };
           fullCache = { key: '', threads: [] };
@@ -3406,6 +3423,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairIdx = { n: -1, map: null };
           if (detailOriginal && gone.has(detailOriginal.id)) detailOriginal = null;
           if (replayOriginal && gone.has(replayOriginal.id)) replayOriginal = null;
+          if (ctxLoaded && gone.has(ctxLoaded.id)) ctxLoaded = null;
           if (replayLoad && gone.has(replayLoad.id)) { replayLoad.controller.abort(); replayLoad = null; }
           for (let i = pairs.length - 1; i >= 0; i--) if (gone.has(pairs[i].id)) pairs.splice(i, 1);
           for (const id of gone) selIds.delete(id);
@@ -6532,7 +6550,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let hit = ctxTlCache.get(t.key);
       if (!hit || hit.key !== key) {
         const tpairs = t.pairIds.map(id => pairOf(id)).filter(Boolean);
-        const tl = contextTimeline(tpairs, t.compactions);
+        const tl = contextTimeline(tpairs, t.compactions, pairOf);
         // pairId -> {ord, step}: the outline's working-loop address for
         // each wire request — bars and events speak "turn 04 · step 2",
         // the same numbering the sessions rail uses.
@@ -6593,6 +6611,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return out;
     }
 
+    // Where a FOLDED step's composition came from, in one clause. The fold
+    // takes bytes, not the reading: either the sums were stamped as the
+    // body went (exact), or they were read off the request that kept the
+    // same history (derived). Empty for a step that carries its own body.
+    function ctxFoldNote(s) {
+      if (!s || !s.stub) return '';
+      if (s.stamped) return ' \\u00b7 body folded; these sums were measured before it went';
+      if (s.derived) return ' \\u00b7 body folded; composition from the request that kept the history';
+      return '';
+    }
+
     function ctxOrdLbl(addr, pairId) {
       const a = addr && addr[pairId];
       if (!a) return '';
@@ -6650,8 +6679,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       bits.push((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : ''));
       if (extra) bits.push(extra);
       if (s.t) bits.push(fmtDateTime(new Date(s.t * 1000)));
-      if (s.stub) bits.push('request body folded by cctrace compact \\u2014 composition unknown, usage kept');
-      else bits.push('estimated \\u2248' + fmtCompact(s.est));
+      // A folded body is not a missing composition: the fold stamps the
+      // sums it measured, and the request that kept the history carries
+      // the rest. Only a fold with neither says nothing.
+      if (s.sums) bits.push('estimated \\u2248' + fmtCompact(s.est) + (s.stub ? ctxFoldNote(s) : ''));
+      else if (s.stub) bits.push('request body folded \\u2014 composition unavailable, usage kept');
       if (s.actualIn != null) {
         bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
         // Cache behavior is the step's cost story: a healthy step reads
@@ -7034,7 +7066,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const name = ctxPickTool(pick);
       const p = pick.pairId ? pairOf(pick.pairId) : null;
       if (!name || !p) return ctxNote('no carrying request loaded for this call');
-      const body = (p.request && p.request.body) || {};
+      // Schemas ride every request of a thread, so a folded body's are in
+      // the request that kept its history — same derivation as the graph.
+      const body = ctxEffectiveBody(p, pairOf).body || {};
       const dialect = wireDialect(p) || 'anthropic';
       const tools = dialect === 'openai' ? openaiTools(body) : (Array.isArray(body.tools) ? body.tools : []);
       const tname = (t) => (t && (t.name || (t.function && t.function.name) || t.type)) || '';
@@ -7057,6 +7091,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return rank +
         (desc ? '<div class="cx-insp-desc">' + escapeHtml(desc.length > 4000 ? desc.slice(0, 4000) + '\\u2026' : desc) + '</div>' : ctxNote('no description declared')) +
         preBlock(formatJson(schema || t));
+    }
+
+    // The one line that says this window is not this request's own bytes:
+    // the fold dropped them, so what is drawn came out of the request that
+    // kept the same history. Linked, because the reader may want to see it.
+    function ctxDerivedNote(s) {
+      if (!s || !s.stub || !s.derived) return '';
+      return ctxKv('derived from', '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.derived) + '">the retained request \\u2192</a>') +
+        ctxNote('this request\\u2019s body was folded off the page; its history is read from the request that re-sent it' +
+          (s.stamped ? ', and the sums were measured before it went' : ''));
     }
 
     // ORIGIN: when the picked thing entered the window, and the CARRY —
@@ -7089,6 +7133,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         toPid = ctxGraphAt;
       }
       let h = '';
+      // Where the window on screen came from, when it is not this
+      // request's own bytes (the window deck reads a derived body).
+      if (pick.kind === 'node') h += ctxDerivedNote(steps.find(x => x.pairId === pick.pairId));
       if (producedBy) h += ctxKv('produced by', ctxStepChip(producedBy) + (producedBy.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(producedBy.t * 1000)) + '</span>' : ''));
       if (i0 >= steps.length) return h + ctxNote('not re-sent yet \\u2014 no request has followed it');
       const span = ctxCarrySpan(steps, steps[i0].pairId, toPid);
@@ -7157,7 +7204,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (ev.kind === 'inject') {
         // the block: the carrying request's window, searched from its end
         // (the injection rode the turns this request appended)
-        const win = p ? ctxWindowTurns(p) : [];
+        const win = p ? ctxWindowTurns(p, pairOf) : [];
         let blk = null;
         for (let ti = win.length - 1; ti >= 0 && !blk; ti--) {
           const turn = win[ti];
@@ -7169,7 +7216,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
         h += ctxKv('weight', '<b>\\u2248' + fmtCompact(ev.tokens || 0) + '</b> tokens added to the window');
         h += blk ? renderBlock(blk, false)
-          : ctxNote('the injected text is not in this request\\u2019s captured body' + (s && s.stub ? ' \\u2014 folded by cctrace compact' : ''));
+          : ctxNote('the injected text is not in this request\\u2019s window' +
+            (s && s.stub ? (s.derived ? ' \\u2014 its body was folded, and the retained request\\u2019s copy does not carry it either'
+              : ' \\u2014 its body was folded and no retained request carries the history') : ''));
         return h;
       }
       if (ev.kind === 'compact') {
@@ -7260,7 +7309,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!it || it.ti == null || it.ti < 0) return null;
       if (c.winPair !== ctxGraphAt) {
         const p = pairOf(ctxGraphAt);
-        c.win = p ? ctxWindowTurns(p) : [];
+        c.win = p ? ctxWindowTurns(p, pairOf) : [];
         c.winPair = ctxGraphAt;
         // Where this request's window ENDS in the spine: the reply it
         // produced (anchors the content match — see ctxOriginTurn).
@@ -7288,11 +7337,60 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const verb = c.spine[vi].role === 'assistant' ? 'from' : 'since';
       return { pid, verb, lbl };
     }
+    // ---- loading one folded body back from disk ----
+    // The last resort of the Context view: a fold whose history no
+    // retained request carries (the budget dropped it before a successor
+    // named a keeper). The bytes were never destroyed — the trace on disk
+    // has them — so the panel offers one fetch. Exactly ONE such body is
+    // held at a time (docs/live-resources.md): loading the next one puts
+    // the previous stub back, so reading a session can never re-inflate it.
+    let ctxLoaded = null; // { id, stub } — the body on loan, and what it replaced
+    // Only where a body can actually come back: a /view/<run-id> page
+    // (the route streams the trace for one pair) or a live capture (its
+    // server reads its own .jsonl). A view server holds the rendered
+    // trace and nothing else, and a file:// snapshot has no server at
+    // all — neither is offered an action that would fail.
+    function ctxCanLoad() { return !!VIEW_RUN || (!IS_SNAPSHOT && !IS_VIEW && !IS_TAIL); }
+    function ctxDropMemos(id) {
+      const p = pairOf(id);
+      if (p) { delete p._ctxc; delete p._ctxBody; }
+      ctxGraphCache.delete(id);
+      ctxTlCache.clear();
+    }
+    function ctxReleaseLoaded() {
+      if (!ctxLoaded) return;
+      const p = pairOf(ctxLoaded.id);
+      if (p) p.request.body = ctxLoaded.stub;
+      ctxDropMemos(ctxLoaded.id);
+      ctxLoaded = null;
+    }
+    async function ctxLoadBody(id, el) {
+      const p = pairOf(id);
+      if (!p || !ctxCanLoad() || el.dataset.busy) return;
+      el.dataset.busy = '1';
+      el.textContent = 'loading\\u2026';
+      try {
+        const res = await fetch(VIEW_RUN ? '/view/' + encodeURIComponent(VIEW_RUN) + '/pair/' + encodeURIComponent(id) : '/api/pair/' + encodeURIComponent(id));
+        if (!res.ok) throw new Error(String(res.status));
+        const full = await res.json();
+        const body = full && full.request && full.request.body;
+        if (!body || body._cctrace_stub) throw new Error('original body unavailable');
+        ctxReleaseLoaded();
+        ctxLoaded = { id, stub: p.request.body };
+        p.request.body = body;
+        ctxDropMemos(id);
+        if (ctxCurThread) renderContextView(ctxCurThread);
+      } catch (err) {
+        delete el.dataset.busy;
+        el.textContent = 'could not load \\u2014 retry';
+      }
+    }
+
     function ctxGraphOf(pairId) {
       let g = ctxGraphCache.get(pairId);
       if (g === undefined) {
         const p = pairOf(pairId);
-        g = p ? contextGraph(p) : null;
+        g = p ? contextGraph(p, pairOf) : null;
         ctxGraphCache.set(pairId, g);
         while (ctxGraphCache.size > CTX_GRAPH_KEEP) ctxGraphCache.delete(ctxGraphCache.keys().next().value);
       }
@@ -7320,16 +7418,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // the honest form of showing both numbers.
     function ctxReconLine(s) {
       if (!s) return '';
-      if (s.stub) return 'Request body folded; reported usage retained.';
+      // A folded body with nothing to read it from is the only case that
+      // still has no estimate to reconcile.
+      if (s.stub && !s.sums) return 'Request body folded; reported usage retained.';
+      const fold = ctxFoldNote(s);
       if (s.actualIn == null) {
-        return s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
-          : 'no usage reported \\u2014 the bar is the estimate alone';
+        return (s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
+          : 'no usage reported \\u2014 the bar is the estimate alone') + fold;
       }
       if (!s.est) return '';
       const d = (s.est - s.actualIn) / s.actualIn * 100;
       const est = '\\u2248' + fmtCompact(s.est) + ' estimated \\u00b7 chars/4 ';
-      if (Math.abs(d) < 2) return est + '<b>matches</b> the bill';
-      return est + 'reads <b>' + Math.abs(Math.round(d)) + '% ' + (d < 0 ? 'under' : 'over') + '</b>';
+      if (Math.abs(d) < 2) return est + '<b>matches</b> the bill' + fold;
+      return est + 'reads <b>' + Math.abs(Math.round(d)) + '% ' + (d < 0 ? 'under' : 'over') + '</b>' + fold;
     }
 
     function renderCtxMargin(s, addr) {
@@ -7410,9 +7511,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // top tool schemas: where the tools budget goes, in the margin
       // because it is a standing cost, not an event
       const fp = pairOf(s.pairId);
-      if (fp && !s.stub) {
+      const fb = fp ? ctxEffectiveBody(fp, pairOf).body : null;
+      if (fb) {
         try {
-          const env = ctxEnvelope(fp.request.body || {}, wireDialect(fp) || 'anthropic');
+          const env = ctxEnvelope(fb, wireDialect(fp) || 'anthropic');
           const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 5);
           if (ranked.length) {
             h += '<div class="cx-mblock"><div class="cx-mlabel">heaviest tool schemas<span class="cx-mlabel-r">of ' + env.tools.length + '</span></div>' +
@@ -7597,15 +7699,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ctxGraphAt = s ? s.pairId : null;
       ctxLast = { step: s, addr };
       if (!s) return '<div class="cx-note">nothing to open yet</div>';
-      if (s.stub) {
+      const g = ctxGraphOf(s.pairId);
+      // A folded body is drawn from the request that kept its history; the
+      // panel below is only for a fold nothing on this page can read —
+      // no keeper loaded, or a body the budget dropped without one. Then
+      // the bytes are still on disk, one fetch away (ctxLoadBody).
+      if ((!g || !g.est) && s.stub) {
         const p = pairOf(s.pairId);
         const kept = p && p.request.body && p.request.body.keptPairId;
         return '<div class="cx-unavailable"><span>' + UI_ICONS.fileText + ' Request body folded</span>' +
-          '<p>Composition is unavailable for this request. Reported tokens, timing, and cost are retained.</p>' +
+          '<p>No retained request carries this history, so composition cannot be derived. Reported tokens, timing, and cost are kept.</p>' +
+          (ctxCanLoad() ? '<a href="#" data-cxload="' + escapeHtml(s.pairId) + '">Load the recorded body ' + UI_ICONS.arrowRight + '</a>' : '') +
           '<a href="#/p/' + encodeURIComponent(s.pairId) + '">Inspect request ' + UI_ICONS.arrowRight + '</a>' +
           (kept ? '<a href="#/p/' + encodeURIComponent(kept) + '">Retained history ' + UI_ICONS.arrowRight + '</a>' : '') + '</div>';
       }
-      const g = ctxGraphOf(s.pairId);
       if (!g || !g.est) return '<div class="cx-note">request not loaded</div>';
       ctxFlameTotal = g.est;
       // No head here. The margin beside this chart already names the step,
@@ -7766,6 +7873,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     contextEl.addEventListener('click', ctxPinFromLink, true);
     contextEl.addEventListener('keydown', ctxPinFromLink, true);
+    // "Load the recorded body": the one action on the unavailable panel.
+    contextEl.addEventListener('click', (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('[data-cxload]') : null;
+      if (!a) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ctxLoadBody(a.dataset.cxload, a);
+    }, true);
     contextEl.addEventListener('toggle', (e) => {
       const det = e.target;
       if (!det || !det.dataset || !det.dataset.cxitem) return;
@@ -8448,7 +8563,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first — what is eating the window">by size</button>' +
           '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order — how the window was assembled">in order</button>' +
           '</span>';
-        hint = focus.stub ? '' : 'Composition estimated from the captured request';
+        hint = !focus.sums ? ''
+          : focus.derived ? 'Composition estimated from the request that kept this history'
+          : 'Composition estimated from the captured request';
         deck = '<div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div>';
       }
       const bar = '<div class="cx-modes" role="tablist" aria-label="Context views">' +

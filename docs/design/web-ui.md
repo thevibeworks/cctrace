@@ -600,8 +600,10 @@ hash-routed:
   children ranked, each row naming its PROVENANCE ("since turn NN · step
   N", clickable to pin that step). "by size" / "in order" lens ranks
   INSIDE a category (never the categories), persisted in
-  `cctrace-ctx-sort`; compact stubs
-  say "composition unavailable" + their surviving usage; the pane scrolls
+  `cctrace-ctx-sort`; a folded body draws from the request that kept its
+  history (the sums were measured before it went) and only a fold with
+  neither says "composition unavailable" + its surviving usage, with one
+  action to load the recorded body back; the pane scrolls
   inside itself. The deck carries no head of its own — the margin beside
   it already names the step, its estimate, its billed prompt and both
   links; the one thing that head said which the margin does not,

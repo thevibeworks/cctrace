@@ -35,7 +35,20 @@ src/
 ├── history.ts      # Streaming trace readers (traceLines/readTracePairs: plain/.zst/.gz, line
 │                   #   by line, tail budget TAIL_BYTES = newest 256 MB) + cross-run session
 │                   #   continuity: find prior traces by session_id, newest first, one budget;
-│                   #   newest-prior-session guess for --continue preload
+│                   #   newest-prior-session guess for --continue preload. A reader can
+│                   #   FOLD as it reads (onKeep/weigh/onDrop): the live server's preload
+│                   #   holds the folded page, not the parsed tail, and the ring charges
+│                   #   the folded size so the same budget reaches further back
+├── live-bodies.ts  # The live request-body fold: hold each pair's body, drop the ones a
+│                   #   later request re-sent (compact's supersede stub + its composition,
+│                   #   stamped before the bytes go) and the oldest past --live-body-mb.
+│                   #   Idempotent per pair; folds out-of-order arrivals against the
+│                   #   request that already re-sent them (docs/live-resources.md)
+├── upstream.ts     # Model-call forwarding for mitm: bounded retries for
+│                   #   connection-refused/DNS only, manual redirects, and the
+│                   #   cctrace-generated 502 that carries the failure as trace data
+├── trace-log.ts    # The .jsonl sink: append a pair, remember its offset, read one back
+│                   #   without retaining a body (identity-verified, scan after a rewrite)
 ├── termlog.ts      # Terminal guard: cctrace output buffers while the traced TUI owns the screen, flushes at exit
 ├── title.ts        # `cctrace title`: the DATA layer for session naming — extract a
 │                   #   session's SPINE (human prompts + agent final answers, main chat
@@ -158,8 +171,14 @@ src/
 │                   #   STREAM deck, MAP/READ/FULL from archify.
 │                   #   ctxCarrySpan: the CARRY behind the inspector's
 │                   #   origin facet — how many requests re-sent an
-│                   #   item, to a known window or the next ✂ boundary
-│                   #   (docs/design/context-view.md)
+│                   #   item, to a known window or the next ✂ boundary.
+│                   #   ctxEffectiveBody: a FOLDED body still reads — the
+│                   #   request that kept the history (keptPairId, chained)
+│                   #   carries it as a prefix, sliced back to the stub's
+│                   #   historyLen (shared blocks, no copy); every reader
+│                   #   here takes the page's pairOf to resolve it, and the
+│                   #   sums come from the stub's fold-time stamp when it
+│                   #   has one (exact) (docs/design/context-view.md)
 ├── vendor/
 │   ├── marked.umd.js  # Vendored marked.js UMD (GFM markdown for session text)
 │   ├── lucide/        # Vendored Lucide SVGs (ISC) — the interface icon set

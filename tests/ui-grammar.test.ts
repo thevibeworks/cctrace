@@ -1676,7 +1676,10 @@ describe("the trajectory gutter on the session rail", () => {
 });
 
 describe("context view", () => {
-  test("pinning a folded request clears the previous composition and inspector", () => {
+  // The fold takes bytes, not the reading: a superseded body's history is
+  // a prefix of the request that superseded it, so pinning a folded step
+  // still draws its composition — off the keeper, and it says so.
+  test("pinning a folded request derives its composition from the request that kept the history", () => {
     const folded = msgPair("p1", { reqBody: {
       _cctrace_stub: true, kind: "superseded", firstUserText: "hi", historyLen: 1,
       messages: undefined, keptPairId: "p2",
@@ -1689,11 +1692,69 @@ describe("context view", () => {
     input.value = "1";
     input.onchange!({});
     const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-flame"');
+    expect(cx).not.toContain("Request body folded");
+    expect(cx).toContain("Composition estimated from the request that kept this history");
+    expect(cx).toContain("body folded; composition from the request that kept the history");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a folded request no retained request can explain says so, and offers the recorded body", () => {
+    const orphan = msgPair("p1", { reqBody: {
+      _cctrace_stub: true, kind: "budgeted", firstUserText: "hi", historyLen: 1,
+      messages: undefined, keptPairId: "",
+    } });
+    const full = msgPair("p2");
+    const page = bootSnapshotPage(renderSnapshot([orphan, full]));
+    page.goto("#/context");
+    const input = page.els["cx-step-number"];
+    input.value = "1";
+    input.onchange!({});
+    const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("Request body folded");
-    expect(cx).toContain('href="#/p/p2">Retained history');
+    expect(cx).toContain("composition cannot be derived");
     expect(cx).toContain('id="cx-insp" hidden');
     expect(cx).not.toContain('class="cx-flame"');
     expect(cx).not.toContain('id="cx-insp-body"');
+    // A file:// snapshot has no server to fetch the recorded body from.
+    expect(cx).not.toContain("data-cxload");
+    expect(page.errors).toEqual([]);
+  });
+
+  // ...but a live page can go get it. One body at a time (the retention
+  // policy in docs/live-resources.md), and the view rebuilds around it.
+  test("a live page loads a folded body back from the trace and composes it", async () => {
+    const original = msgPair("p1");
+    const orphan = msgPair("p1", { reqBody: {
+      _cctrace_stub: true, kind: "budgeted", firstUserText: "hi", historyLen: 1,
+      messages: undefined, keptPairId: "",
+    } });
+    const asked: string[] = [];
+    const page = bootPage(getLiveHtml({ liveBodies: "folded" }), {
+      hash: "#/context",
+      fetch: async (url: string) => {
+        if (!url.startsWith("/api/pair/")) return new Promise(() => {});
+        asked.push(url);
+        return { ok: true, json: async () => structuredClone(original) };
+      },
+    });
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [orphan, msgPair("p2")] }) });
+    const input = page.els["cx-step-number"];
+    input.value = "1";
+    input.onchange!({});
+    expect(page.els["context-view"].innerHTML).toContain('data-cxload="p1"');
+    // the delegated listener resolves the click through closest()
+    const link: any = { textContent: "", dataset: { cxload: "p1" } };
+    link.closest = (sel: string) => (sel === "[data-cxload]" ? link : null);
+    for (const fire of [...(page.els["context-view"].listeners.click || [])]) {
+      fire({ target: link, preventDefault() {}, stopPropagation() {} });
+    }
+    await Bun.sleep(20);
+    expect(asked).toEqual(["/api/pair/p1"]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-flame"');
+    expect(cx).not.toContain("cx-unavailable");
     expect(page.errors).toEqual([]);
   });
   const REMINDER = "<system-reminder>Recalled memory: the user prefers tabs.</system-reminder>";

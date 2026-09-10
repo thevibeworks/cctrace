@@ -569,6 +569,65 @@ describe("the peek on a collapsed tool row", () => {
 
 // A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is the agent
 // remembering, and every surface that names a tool says so.
+// The rail is [gutter][node][label]: the context gutter LEADS every row
+// the way the pen leads a request row, subagents branch off into their own
+// indented sub-column, and a failed step breaks the spine.
+describe("the session rail's spine", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+
+  test("the context gutter leads every row instead of trailing it", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    // the gutter is the row's first child, before the rail node
+    expect(rail).toMatch(/<a class="tturn[^"]*"[^>]*><span class="tctx/);
+    expect(rail).not.toMatch(/<span class="tctx[^"]*"><\/span><\/a>/);
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a fan-out of subagents branches into an indented sub-column, capped with a count", () => {
+    const spawn = (i: number) => ({ type: "tool_use", id: "tu" + i, name: "Task", input: { subagent_type: "Explore", description: "probe " + i, prompt: "explore area " + i } });
+    const parent = msgPair("p1", {
+      reqBody: { messages: [
+        u("fan out"),
+        { role: "assistant", content: [spawn(1), spawn(2), spawn(3), spawn(4), spawn(5)] },
+        { role: "user", content: [1, 2, 3, 4, 5].map((i) => ({ type: "tool_result", tool_use_id: "tu" + i, content: "done" })) },
+      ] },
+      resBody: { content: [{ type: "text", text: "all back" }], stop_reason: "end_turn" },
+    });
+    const kids = [1, 2, 3, 4, 5].map((i) => msgPair("k" + i, { reqBody: { messages: [u("explore area " + i)] } }));
+    const page = bootSnapshotPage(renderSnapshot([parent, ...kids]));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    expect(rail).toContain('class="tbranches"');
+    expect((rail.match(/class="tbranch"/g) || []).length).toBe(3);
+    expect(rail).toContain("+2 more");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a failed run breaks the spine, dashed and red", () => {
+    const hist = [u("q one"), a("r1"), u("q two")];
+    const ok1 = msgPair("p1");
+    const fail = msgPair("p2", { reqBody: { messages: hist }, resBody: undefined as any });
+    (fail.response as any).status = 500;
+    const ok2 = msgPair("p3", { reqBody: { messages: hist }, resBody: { content: [{ type: "text", text: "r2" }] } });
+    const page = bootSnapshotPage(renderSnapshot([ok1, fail, ok2]));
+    page.goto("#/session");
+    expect(page.els["threads"].innerHTML).toContain("terr-run");
+    expect(getLiveHtml({})).toContain(".tturn-failed .rgut::before, .terr-run .rgut::before {");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the outline lights the turn under the reading position", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("function syncOutlineCur()");
+    expect(html).toContain(".tturn.cur {");
+  });
+});
+
 // The chips answer "what am I reading" and used to scroll away on the
 // first turn.
 describe("the session chips stay put", () => {

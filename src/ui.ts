@@ -1453,12 +1453,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       width: 1px; margin-left: -0.5px;
       background: color-mix(in srgb, var(--accent) 22%, var(--border));
     }
-    /* branch elbow: the rail continues, an arm curves off to the row */
+    /* branch elbow: the sub-column's line continues, an arm curves off to
+       the row — violet, because a spawn is a notable event (ui.md rule 3) */
     .rgut-br::after {
-      content: ''; position: absolute; left: 50%; top: -2px;
-      width: 9px; height: 58%; margin-left: -0.5px;
-      border-left: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-      border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+      content: ''; position: absolute; left: -10px; top: -2px;
+      width: 9px; height: 58%;
+      border-left: 1px solid color-mix(in srgb, var(--purple) 30%, var(--border));
+      border-bottom: 1px solid color-mix(in srgb, var(--purple) 30%, var(--border));
       border-bottom-left-radius: 7px;
     }
     /* epoch node: a hollow accent ring on the rail — structure, not a
@@ -1478,16 +1479,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tepoch:hover { background: var(--hover); }
     .tepoch-ord { color: var(--text-faint); flex-shrink: 0; }
     .tepoch-turns { margin-left: auto; color: var(--text-faint); }
-    /* subagent branch row: attached at its spawn turn, elbow off the rail,
-       outcome stats inline — the thread is one click away */
+    /* subagent branch rows: an arm out of the spine into an INDENTED
+       sub-column with its own line — the way a git graph draws a branch.
+       The sub-column starts under the gutter + node the parent row spends,
+       so the spine itself never moves. */
+    .tbranches {
+      position: relative;
+      margin-left: 44px; padding-left: 10px;
+    }
+    .tbranches::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 8px;
+      width: 1px; background: color-mix(in srgb, var(--purple) 30%, var(--border));
+    }
     .tbranch {
-      display: flex; align-items: center; gap: 8px;
-      padding: 3px 10px; font-size: 11px;
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 3px 10px 3px 0; font: inherit; font-size: 11px; text-align: left;
+      background: none; border: 0; cursor: pointer;
       color: var(--text-faint); text-decoration: none;
       font-variant-numeric: tabular-nums;
     }
-    .tbranch .rgut { margin: -3px 0; }
+    .tbranch .rgut { margin: -3px 0; width: 10px; }
+    .tbranch .rgut::before { display: none; }
     .tbranch:hover { background: var(--hover); }
+    .tbranch-more .tbranch-label { color: var(--text-faint); }
+    .tbranch-more:hover .tbranch-label { color: var(--text-muted); }
     /* content indents one outline level under its spawn turn — the rail
        column itself never moves, only the arm reaches further */
     .tbranch-label {
@@ -1643,6 +1658,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        it happened here, then left history */
     .tturn-sup { opacity: 0.6; }
     .tturn-sup:hover { opacity: 1; }
+    /* A failed step BREAKS the spine (item 17): red node, dashed segment.
+       The rail is a claim about what ran; where nothing came back, the line
+       should not read solid. */
+    .tturn-failed .rgut::before, .terr-run .rgut::before {
+      background: none;
+      border-left: 1px dashed color-mix(in srgb, var(--red) 55%, var(--border));
+    }
+    /* the row under the conversation's reading position, lit — the same
+       sync the trajectory strip's turn block gets (replay-stage rev 4) */
+    .tturn.cur { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .tturn.cur .tturn-text { color: var(--text); }
     /* Session rollup line above the thread cards: counts across all threads,
        error parts red and only present when nonzero. */
     .threads-sum {
@@ -5567,6 +5593,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '\\n\\nclick to jump to where this run starts';
       return '<a class="tepoch" href="' + threadHash(t.key) + '" data-key="' + escapeHtml(t.key) + '" data-turn="' + e.from + '"' +
         ' data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="tctx tctx-none"></span>' +
         '<span class="rgut"><span class="enode"></span></span>' +
         '<span class="tepoch-ord">T' + i + '</span>' +
         '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + '</span>' +
@@ -5712,10 +5739,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'turn ' + ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
           '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
         return '<a class="tturn tturn-sup" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cdot"></span></span>' +
           '<span class="tturn-ord">' + ord + '</span>' +
           '<span class="tturn-text">' + (prompt ? escapeHtml(prompt.slice(0, 120)) : 'superseded exchange') + '</span>' +
-          '<span class="treq-mark">superseded</span>' + trajNone + '</a>';
+          '<span class="treq-mark">superseded</span></a>';
       };
       // The compact boundary: the request body sent to the API changed
       // completely at this point — everything above lives on only in the
@@ -5752,6 +5780,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ? 'the turns above this line left the conversation history; their wire pairs are kept\\nclick to open the first post-rewind wire request'
             : 'everything above this line survives only in the summary/folded form\\nclick to open the first post-compact wire request');
         return '<a class="tcompact" href="#/p/' + encodeURIComponent(c.pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cnode"></span></span>' +
           '<span class="tcompact-label">' + (rw ? 'rewound' : 'compacted') + '</span>' +
           '<span class="tcompact-note">' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns</span></a>';
@@ -5783,28 +5812,43 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '\\nno reply from these requests entered the conversation \\u2014 retries at the same history position' +
           '\\nclick to open the first failed wire pair';
         return '<a class="tturn terr-run" href="#/p/' + encodeURIComponent(list[0].pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
           '<span class="tturn-ord">wire</span>' +
           '<span class="tturn-text">' + escapeHtml(label) + '</span>' +
-          '<span class="treq-mark err">err</span>' + trajNone + '</a>';
+          '<span class="treq-mark err">err</span></a>';
       };
       // A subagent spawned by this turn attaches HERE, as a branch off the
-      // rail — label + outcome inline, the thread one click away (its
-      // detached card disappears while this thread is the selected one).
-      const branchRows = (turn) => {
-        let out = '';
+      // rail — an arm out of the spine into an INDENTED sub-column with its
+      // own line, the way a git graph draws a branch. Label + outcome
+      // inline, the thread one click away (its detached card disappears
+      // while this thread is the selected one). Past three spawns on one
+      // turn the sub-column collapses behind a count: a fan-out of twenty
+      // must not bury the turn that ordered it.
+      const BRANCH_SHOWN = 3;
+      const branchRows = (turn, vi) => {
+        const rows = [];
         for (const b of turn.blocks || []) {
           if (!b || b.type !== 'tool_use' || !SPAWN_TOOLS[b.name] || !b.id) continue;
           const m = agentThreadMeta[b.id];
           if (!m) continue;
-          out += '<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
+          rows.push('<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
             ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n---\\n> click to open this subagent thread') + '">' +
             '<span class="rgut rgut-br"></span>' +
             '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
             (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + '</span>' : '') +
-            '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>';
+            '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>');
         }
-        return out;
+        if (!rows.length) return '';
+        const key = t.key + '#b' + vi;
+        const open = rows.length <= BRANCH_SHOWN || !!branchOpen[key];
+        const shown = open ? rows : rows.slice(0, BRANCH_SHOWN);
+        const more = open ? '' :
+          '<button class="tbranch tbranch-more" data-branch="' + escapeHtml(key) + '"' +
+          ' data-tip="' + escapeHtml((rows.length - BRANCH_SHOWN) + ' more subagents this turn spawned\\n---\\n> click to list them') + '">' +
+          '<span class="rgut rgut-br"></span>' +
+          '<span class="tbranch-label">\\u22ef +' + (rows.length - BRANCH_SHOWN) + ' more</span></button>';
+        return '<div class="tbranches">' + shown.join('') + more + '</div>';
       };
       // Working-loop grouping (loopTurns): the outline's TURN is the human
       // unit — user request, agent work nested under it, final response —
@@ -5936,6 +5980,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           let dot = '';
           let tip = '';
           let errMark = '';
+          let rowFailed = false; // a failed request: red node, dashed spine
           let traj = trajNone;   // the trajectory gutter; blank on non-wire rows
           if (turn.role === 'assistant') {
             let raw = '';
@@ -5958,6 +6003,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             // (tokens, cost, ttft, duration, folded) lives in the hover —
             // inline numbers were fighting the text for the same pixels.
             const failed = p && (!p.response || p.response.status >= 400);
+            rowFailed = !!failed;
             const cc = u && p ? summarizeCache(u, p.request.body, isNewestModelPair(p) ? pairEndMs(p) : null) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
             // Step outcome: tool calls this step made whose folded results
@@ -6062,14 +6108,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                 ' followed this step\\nthe CLI\\u2019s own nudges \\u2014 terminal caveat, token budget, output style' +
                 '\\n---\\n> they read folded in the conversation') + '">\\u00b7</span>'
             : '';
-          html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
+          html += '<a class="tturn' + rowCls + (rowFailed ? ' tturn-failed' : '') + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
             (canFold ? ' data-fold="' + li.ord + '"' : '') +
             ' data-tip="' + escapeHtml(tip) + '">' +
+            traj +
             '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
             '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + sysDot + errMark + foldN + traj + '</a>';
-          if (turn.role === 'assistant' && !folded) html += branchRows(turn);
+            '<span class="tturn-text">' + text + '</span>' + sysDot + errMark + foldN + '</a>';
+          if (turn.role === 'assistant' && !folded) html += branchRows(turn, vi);
         }
       }
       // boundary rows / superseded exchanges / error runs whose position
@@ -6208,6 +6255,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // ordinal so live re-renders (and thread switches back and forth)
     // keep what the user collapsed.
     const foldedTurns = {};
+    // A turn that fanned out to more than three subagents lists three and a
+    // count; expanding is per thread + turn and survives re-renders, like a
+    // folded turn (item 17).
+    const branchOpen = {};
 
     // Was the stage up on the LAST render? Entering replay drops one at the
     // top of a column the reader may have scrolled deep into (focusThreadsPane
@@ -6347,6 +6398,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           e.preventDefault();
           e.stopPropagation();
           jumpToTurn(a.dataset.key, +a.dataset.turn);
+        });
+      }
+      for (const b of threadsEl.querySelectorAll('button[data-branch]')) {
+        b.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          branchOpen[b.dataset.branch] = true;
+          showSession(sessionSelKey);
         });
       }
     }
@@ -6671,6 +6730,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // only under the reader's own scroll (the scrollbar-thumb exemption in
     // the motion budget) and hides while replaying — the playhead owns
     // position there.
+    // The OUTLINE follows the reader too (item 17): the row for the turn at
+    // the conversation's reading position wears .cur. Turn nodes in the
+    // convo are the same vis order the rail's data-turn indexes, so the
+    // topmost visible .turn IS the row to light; harness turns render in
+    // the convo but not on the rail, so the last row at or before that
+    // index takes it.
+    function syncOutlineCur() {
+      if (!convoEl.querySelectorAll || !threadsEl.querySelectorAll) return;
+      const turns = convoEl.querySelectorAll('.turn');
+      const cbox = convoEl.getBoundingClientRect ? convoEl.getBoundingClientRect() : null;
+      let idx = -1;
+      for (let i = 0; i < turns.length; i++) {
+        const el = turns[i];
+        if (!cbox || !el.getBoundingClientRect) { idx = i; break; }
+        if (el.getBoundingClientRect().bottom - cbox.top > 24) { idx = i; break; }
+      }
+      let cur = null;
+      for (const row of threadsEl.querySelectorAll('a.tturn[data-turn]')) {
+        const v = +row.dataset.turn;
+        if (idx >= 0 && v <= idx) cur = row;
+        row.classList.remove('cur');
+      }
+      if (cur) cur.classList.add('cur');
+    }
     let rpReadQueued = false;
     function rpSyncRead() {
       if (!rpRead || !rpRead.style) return;
@@ -6683,7 +6766,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!cbox || !el.getBoundingClientRect) { ts = parseFloat(el.dataset.ts); break; }
         if (el.getBoundingClientRect().bottom - cbox.top > 24) { ts = parseFloat(el.dataset.ts); break; }
       }
-      if (!ts) { rpRead.style.display = 'none'; return; }
+      if (!ts) { rpRead.style.display = 'none'; syncOutlineCur(); return; }
+      syncOutlineCur();
       const frac = Math.min(1, Math.max(0, scaleX(sc, ts) / sc.px));
       rpRead.style.left = (frac * 100).toFixed(3) + '%';
       rpRead.style.display = 'block';

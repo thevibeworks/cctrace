@@ -569,6 +569,29 @@ describe("the peek on a collapsed tool row", () => {
 
 // A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is the agent
 // remembering, and every surface that names a tool says so.
+// The chips answer "what am I reading" and used to scroll away on the
+// first turn.
+describe("the session chips stay put", () => {
+  test("the chips are the conversation column's own sticky bar", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("#convo > .chips {");
+    expect(html).toContain("position: sticky; top: 0; z-index: 3;");
+    expect(html).toContain("#convo.stuck > .chips {");
+    // the context jump pins to the right edge of that row
+    expect(html).toContain("#convo > .chips > .turn-wire {");
+    expect(html).toContain("classList.toggle('stuck', convoEl.scrollTop > 4)");
+  });
+
+  test("the chips row still opens the conversation and carries the context jump", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo.indexOf('<div class="chips">')).toBe(0);
+    expect(convo).toContain("context →");
+    expect(page.errors).toEqual([]);
+  });
+});
+
 // A screenshot the agent looked at is evidence, not an attachment to
 // unfold. Shown by default, bounded, a run of them is a grid, click opens
 // the lightbox.

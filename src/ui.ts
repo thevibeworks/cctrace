@@ -1061,6 +1061,34 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .chip { font-variant-numeric: tabular-nums; }
     .chip b { color: var(--text-muted); font-weight: 500; margin-right: 6px; }
+    /* ---- The session chips stay put (item 16) ----
+       They answer "what am I reading" — model, requests, tokens, cache,
+       cost, time — and they used to scroll away on the first turn. In the
+       conversation column they are the column's own bar: sticky at the top,
+       bleeding to the pane edges, and once the reader is past the head they
+       COMPACT to one scrolling row with a hairline under it. The context
+       jump pins to the right edge, so the way across is never scrolled out
+       of reach. */
+    #convo > .chips {
+      position: sticky; top: 0; z-index: 3;
+      margin: -12px -48px 8px -16px;
+      padding: 8px 16px;
+      border: 0; border-bottom: 1px solid transparent; border-radius: 0;
+      background: var(--bg);
+    }
+    #convo.stuck > .chips {
+      flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+      padding-top: 5px; padding-bottom: 5px;
+      border-bottom-color: var(--border);
+    }
+    #convo.stuck > .chips > .chip { flex: none; }
+    #convo > .chips > .turn-wire {
+      position: sticky; right: 0; margin-left: auto; flex: none;
+      padding-left: 12px; background: var(--bg);
+    }
+    @media (max-width: 760px) {
+      #convo > .chips { margin: -10px -44px 8px -12px; padding: 6px 12px; }
+    }
     .turn { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
     .turn-role {
       display: flex; align-items: center; gap: 8px;
@@ -6632,6 +6660,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     convoEl.addEventListener('scroll', () => {
       if (convoAtBottom()) tailPill.classList.remove('show');
+      // Past the head, the sticky chips row compacts to one line (item 16).
+      if (convoEl.classList) convoEl.classList.toggle('stuck', convoEl.scrollTop > 4);
       rpQueueSyncRead();
     });
 

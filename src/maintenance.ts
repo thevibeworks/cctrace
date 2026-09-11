@@ -302,9 +302,17 @@ export async function startArchive(dataDir: string, opts: StartArchiveOpts = {})
     ...(opts.dir ? { dir: opts.dir } : {}),
     lines: [],
     dropped: 0,
-    before: totals(await storePicture(dataDir, 0)),
+    before: { plain: 0, plainBytes: 0, bytes: 0 },
   };
+  // Claim the slot BEFORE the store walk: the guard above is synchronous,
+  // and two POSTs interleaving at this await would both spawn a child.
   job = j;
+  try {
+    j.before = totals(await storePicture(dataDir, 0));
+  } catch (e) {
+    j.state = "failed"; j.endedAt = Date.now(); j.error = String((e as Error)?.message ?? e);
+    return { job: j, started: false };
+  }
   const push = (text: string) => {
     for (const line of stripAnsi(text).split("\n")) {
       const t = line.replace(/\s+$/, "");

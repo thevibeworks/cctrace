@@ -603,8 +603,15 @@ describe("store housekeeping", () => {
       // The real job spawns `cctrace compress --all --yes`; here a stand-in
       // proves the plumbing: start -> running -> child output -> re-measure.
       resetArchiveJob();
-      const started = await startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo archiving trace-a; sleep 0.2"] });
-      expect(started.started).toBe(true);
+      // Two starts racing at the store walk spawn ONE child: the slot is
+      // claimed before the await, not after it.
+      const [first, second] = await Promise.all([
+        startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo archiving trace-a; sleep 0.2"] }),
+        startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo second; sleep 0.2"] }),
+      ]);
+      expect(first.started).toBe(true);
+      expect(second.started).toBe(false);
+      expect(second.job.id).toBe(first.job.id);
       expect((await startArchive(dataDir)).started).toBe(false); // one job at a time
       const running = await (await fetch(`${sbase}/api/store`)).json() as any;
       expect(running.job.state).toBe("running");

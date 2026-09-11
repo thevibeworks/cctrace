@@ -323,9 +323,14 @@ export async function loadPriorPairs(logDir: TraceDirArg, excludeFile: string, s
     if (resolve(path) === excludeAbs) continue;
     if (remaining <= 0) break;
     let read: ReadTraceResult;
+    // A read that throws mid-file has already handed pairs to onKeep; give
+    // them back through onDrop so a fold hook's budget does not keep them.
+    const kept: TracePair[] = [];
+    const onKeep = hooks.onKeep ? (p: TracePair) => { kept.push(p); hooks.onKeep!(p); } : undefined;
     try {
-      read = await readTracePairs(path, { needles, filter: inSet, tailBytes: remaining, ...hooks });
+      read = await readTracePairs(path, { needles, filter: inSet, tailBytes: remaining, ...hooks, ...(onKeep ? { onKeep } : {}) });
     } catch {
+      if (hooks.onDrop) for (const p of kept) hooks.onDrop(p);
       continue;
     }
     remaining -= read.keptBytes;

@@ -259,10 +259,14 @@ export function createServer(config: ServerConfig) {
   if (config.speculate && !config.noHistory) {
     const guess = config.speculate;
     loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess]), TAIL_BYTES, priorFold).then((prior) => {
-      if (!prior.length || seenSessions.size) return; // a real session already spoke
+      // The fold hook already handed every kept pair to the ring; a guess
+      // that is not made must hand them back, or they sit in the budget
+      // with nothing in `pairs` to evict them through.
+      const discard = () => { for (const p of prior) bodies?.forget(p.id); };
+      if (!prior.length || seenSessions.size) { discard(); return; } // a real session already spoke
       for (const p of prior) (p as TracePair & { speculative?: boolean }).speculative = true;
       const merged = mergePairs(prior);
-      if (!merged.length) return;
+      if (!merged.length) { discard(); return; }
       speculativeSid = guess;
       termWrite(`[cctrace] preloaded ${merged.length} pairs from session ${guess.slice(0, 8)} — confirming on first request`);
       broadcast({ type: "history", pairs: merged });

@@ -17,6 +17,8 @@
 - The dashboard is one list of runs. Live is a state (green dot, port, stop control, live-only chip), not a section. Grouping by project, client or day covers every run, live rows head their group, each group pages on its own, and a row omits what its group header already says.
 - Storage is a picture: one stacked bar for the store (archived, held by a live run, legacy gz, plain), one bar per project biggest first, each expandable to its files and archivable on its own. /api/store classifies every file by state in the same walk as the archive plan and returns the top projects with their largest files. A project archive path from the browser must be a real directory inside this server's store root.
 - Upstream retries now cover TLS handshake failures as well as connect and DNS. Bun labels an egress proxy's dial timeout as a certificate verification error, which the previous predicate never retried. Reset and timeout stay excluded.
+- A speculative continuity preload that is discarded (the first live request named another session, or a file read failed mid-way) releases the bodies it had already handed to the live retention budget.
+- Starting an archive job claims the job slot before the store walk, so two clicks racing on the dashboard spawn one child, not two.
 - Documented --live-bodies, --live-body-mb and --upstream-retry in the agent skill. Docs for the trace page, session tab, store api and design rules updated to match.
 
 ## 0.50.0

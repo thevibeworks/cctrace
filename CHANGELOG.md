@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.51.0
+
+- Context view reads every folded step. A superseded request body is derived from the keeper's body sliced back to the stub's history length, and both fold sites stamp the composition on the stub before dropping the bytes. On a live run 3 of 40 steps had a composition before; all do now. The margin, the deck hint and the inspector's origin facet say when a step is derived.
+- The continuity preload folds while it streams. readTracePairs folds each pair as it lands instead of parsing the whole tail first. Measured on a 476 MB trace with siblings: peak RSS 2598 MB -> 837 MB, pairs preloaded 128 -> 376.
+- Harness system messages fold to one line: the terminal caveat, idle nudge, token budget, output style and date are named from their prefixes, a stacked message is split, and a large injection shows its name, size and first meaningful line. A prompt with a reminder appended keeps its own text. The session rail drops the system rows and marks the step they followed.
+- Long tool results read in place: a bounded 60vh box that scrolls inside itself, a size line (chars, lines), one expand control. The two-step clamp is gone.
+- Hovering a collapsed tool row for 250ms opens a fixed-position peek (tool, input, first 12 lines of output); click still expands inline. j/k and the arrows walk tool rows, Enter toggles. Tooltips are title plus key: value rows, wait 400ms, and the ones that restated visible text are removed.
+- Memory operations are marked: a Read/Write/Edit under ~/.claude/projects/<key>/memory/ shows as Memory with a brain icon in the conversation, the rail and the record stream. Detection is on the path shape, not the word memory.
+- Images render inline at reading size, lazy and async-decoded; a run of images in one block becomes a grid; click opens a lightbox with arrow navigation and Esc. Offscreen galleries are never rasterized. Remote urls are named and never fetched.
+- The session chips (model, requests, tokens, cache, cost, time) are sticky at the top of the conversation column and compact to one row after the head. The context jump stays pinned right.
+- The session rail leads every row with the context gutter. Subagent spawns branch into an indented sub-column (three shown, then a count, expandable). A failed step draws a red node and a dashed segment. The row for the turn under the reader's position is highlighted.
+- The live footer is a status bar: in flight (model, elapsed), waiting on tools (tool names), or idle since the last response. Beside it the prompt-cache window drains against the newest call's TTL, amber under five minutes, red when expired. Live pages only.
+- The page paints a loading shell before the data: rail, header and a skeleton, removed when the pairs land. The server sends a loading frame (pairs, bytes) ahead of init so the wait shows a number. A continuity merge announces itself in a one-line notice.
+- Run identity is one grammar on the dashboard and the rail: project name, client label, the session title or first prompt, session id and start time in mono. Client labels come from the plugin's wire table (Claude, Codex, Kimi Code, opencode); an unknown or pre-0.51 client capitalizes its id. The rail's third destination is the run card (This run / Viewing).
+- The dashboard is one list of runs. Live is a state (green dot, port, stop control, live-only chip), not a section. Grouping by project, client or day covers every run, live rows head their group, each group pages on its own, and a row omits what its group header already says.
+- Storage is a picture: one stacked bar for the store (archived, held by a live run, legacy gz, plain), one bar per project biggest first, each expandable to its files and archivable on its own. /api/store classifies every file by state in the same walk as the archive plan and returns the top projects with their largest files. A project archive path from the browser must be a real directory inside this server's store root.
+- Upstream retries now cover TLS handshake failures as well as connect and DNS. Bun labels an egress proxy's dial timeout as a certificate verification error, which the previous predicate never retried. Reset and timeout stay excluded.
+- Documented --live-bodies, --live-body-mb and --upstream-retry in the agent skill. Docs for the trace page, session tab, store api and design rules updated to match.
+
 ## 0.50.0
 
 - Live proxy capture folds superseded request bodies in memory while retaining full redacted JSONL on disk. Exit statistics no longer retain the run's pairs. `--live-bodies full` restores full live retention; `--live-body-mb` controls the default 64 MiB retained request-body budget. Responses and metadata remain outside that budget.

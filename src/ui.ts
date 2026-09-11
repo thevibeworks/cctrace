@@ -3418,10 +3418,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 a view page holds the WHOLE session \\u2014 it FOLDS instead of truncating: every pair reaches the page, and request bodies a later request re-sent (or past the 32 MB body budget) become stubs that link the keeper; on a served page \\u201cload the original\\u201d fetches the wire bytes back. A 1.5 GB session is a 26 MB page with all of its requests\\n' +
-        '\\u00b7 the rail collapses to an icon strip and the session outline collapses on its own; focus hides both, Esc restores them, and the preferences survive reloads. Nested sub-agents render recursively and the thread picker lists every thread\\n' +
-        '\\u00b7 official agent marks and Lucide interface icons \\u2014 embedded, so snapshots stay self-contained; the dashboard wears the trace view\\u2019s frame with Runs and Storage as destinations and a run search\\n' +
-        '\\u00b7 large sessions open faster \\u2014 hidden views render when shown, Context sub-tabs repaint only the deck (stream switching 144 ms \\u2192 30 ms on the largest trace), the record stream paginates, and the fake live-status verbs are gone\\n' +
+        '\\u00b7 the conversation reads clean: harness system notes fold to one line, long tool results scroll in place, a hover peeks a collapsed tool row, images render inline with a lightbox, memory writes wear a brain\\n' +
+        '\\u00b7 the live status bar says what the session is doing now (in flight / waiting on tools / idle) and how long the prompt cache has left\\n' +
+        '\\u00b7 the Context view composes every folded step: a superseded body is derived from the request that kept the history, so a fold takes bytes, never the reading\\n' +
+        '\\u00b7 the dashboard is one list of runs with one identity grammar (project, client, what it was about) and a storage picture per project, each archivable on its own\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

@@ -9,10 +9,10 @@ import { categorizeUrl } from "./categorize";
 import { extractSessionId } from "./summarize";
 import { firstPromptOfPair } from "./session";
 import { wireTables } from "./clients";
-import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries } from "./history";
+import { loadPriorPairs, loadTraceFiles, traceLines, listTraceEntries, TAIL_BYTES } from "./history";
 import { termWrite } from "./termlog";
 import { listLiveInstances, listPastRuns, listAllRuns, requestStop, SCAN_PORTS, PORT_WALK, type InstanceInfo } from "./instances";
-import { storePictureCached, startArchive, cancelArchive, currentArchiveJob } from "./maintenance";
+import { storePictureCached, startArchive, cancelArchive, currentArchiveJob, storeDirArg, STORE_TOP } from "./maintenance";
 import { getDashboardHtml } from "./dashboard";
 import { resolveView, findTraceCarrier, traceSizes, VIEW_BYTES } from "./view";
 import { titleLookup } from "./title";
@@ -159,6 +159,32 @@ export function createServer(config: ServerConfig) {
     }
   }
 
+  /**
+   * Fold the prior-session preload AS IT READS (history.ts PriorFoldHooks).
+   * loadPriorPairs used to hand back every parsed pair of a 256 MB tail and
+   * mergePairs folded them one by one afterwards, so the peak was the whole
+   * parsed history. Folding on arrival makes the peak what the page holds,
+   * and the ring charges the FOLDED size, so the same budget reaches
+   * further back: measured on a 740 MB store project, 2598 MB peak RSS for
+   * 128 preloaded pairs became 837 MB for 376 (docs/live-resources.md).
+   * mergePairs still calls add() on these pairs; it is idempotent.
+   */
+  const priorFold = bodies
+    ? {
+        onKeep: (p: TracePair) => { bodies.add(p); },
+        // The line minus the body the fold just took out of it. The stub
+        // that replaced it (first user text, composition) is not added
+        // back: ~2 KB a pair against a 256 MB budget, and the arithmetic
+        // stays one subtraction instead of a second stringify per pair.
+        weigh: (p: TracePair, bytes: number) => {
+          const body = p.request.body as { _cctrace_stub?: unknown; droppedBytes?: unknown } | null;
+          const dropped = body?._cctrace_stub && typeof body.droppedBytes === "number" ? body.droppedBytes : 0;
+          return Math.max(0, bytes - dropped);
+        },
+        onDrop: (p: TracePair) => bodies.forget(p.id),
+      }
+    : {};
+
   /** Insert history pairs (deduped by id), keep the array timestamp-sorted. */
   function mergePairs(incoming: TracePair[]): TracePair[] {
     const fresh = incoming.filter((p) => p && p.id && !knownIds.has(p.id));
@@ -232,11 +258,15 @@ export function createServer(config: ServerConfig) {
   // the first live request beats it, the guess is simply not made.
   if (config.speculate && !config.noHistory) {
     const guess = config.speculate;
-    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess])).then((prior) => {
-      if (!prior.length || seenSessions.size) return; // a real session already spoke
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([guess]), TAIL_BYTES, priorFold).then((prior) => {
+      // The fold hook already handed every kept pair to the ring; a guess
+      // that is not made must hand them back, or they sit in the budget
+      // with nothing in `pairs` to evict them through.
+      const discard = () => { for (const p of prior) bodies?.forget(p.id); };
+      if (!prior.length || seenSessions.size) { discard(); return; } // a real session already spoke
       for (const p of prior) (p as TracePair & { speculative?: boolean }).speculative = true;
       const merged = mergePairs(prior);
-      if (!merged.length) return;
+      if (!merged.length) { discard(); return; }
       speculativeSid = guess;
       termWrite(`[cctrace] preloaded ${merged.length} pairs from session ${guess.slice(0, 8)} — confirming on first request`);
       broadcast({ type: "history", pairs: merged });
@@ -309,7 +339,7 @@ export function createServer(config: ServerConfig) {
     seenSessions.add(sid);
     config.onSession?.(sid);
     if (config.noHistory) return;
-    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([sid])).then((loaded) => {
+    loadPriorPairs(config.readDirs ?? config.logDir, config.logFile || "", new Set([sid]), TAIL_BYTES, priorFold).then((loaded) => {
       const prior = mergePairs(loaded);
       if (!prior.length) return;
       const files = [...new Set(prior.map((p) => p.prior))].join(", ");
@@ -578,7 +608,9 @@ export function createServer(config: ServerConfig) {
         // running. The plan here IS the plan the button executes — same
         // planCompress, same live-run exclusion (maintenance.ts).
         if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
-        return Response.json({ ...(await storePictureCached(config.dataDir)), job: currentArchiveJob() });
+        // STORE_TOP projects carry their file lists (one walk, maintenance.ts);
+        // everything past them is folded into `rest` so the totals still add up.
+        return Response.json({ ...(await storePictureCached(config.dataDir, STORE_TOP)), job: currentArchiveJob() });
       }
       if (url.pathname === "/api/store/archive" && req.method === "POST") {
         // The web face of `cctrace compress --all --yes` — which is exactly
@@ -586,12 +618,21 @@ export function createServer(config: ServerConfig) {
         // union-never-overwrite), so it needs no id proof; it's the same
         // trust boundary as /api/compact.
         if (!config.dataDir) return Response.json({ error: "no store on this server" }, { status: 501 });
-        const body = (await req.json().catch(() => ({}))) as { cancel?: unknown };
+        const body = (await req.json().catch(() => ({}))) as { cancel?: unknown; dir?: unknown };
         if (body?.cancel === true) {
           const stopped = cancelArchive();
           return Response.json({ ok: stopped, job: currentArchiveJob() }, { status: stopped ? 200 : 409 });
         }
-        const { job, started } = await startArchive(config.dataDir);
+        // `{dir}` archives ONE project. The path is not taken on trust: the
+        // job deletes what it has archived, so only a real directory inside
+        // this server's store root is allowed (storeDirArg).
+        let dir: string | undefined;
+        if (body?.dir !== undefined) {
+          const ok = storeDirArg(config.dataDir, body.dir);
+          if (!ok) return Response.json({ error: "not a project dir in this store" }, { status: 400 });
+          dir = ok;
+        }
+        const { job, started } = await startArchive(config.dataDir, dir ? { dir } : {});
         return Response.json({ ok: started, running: !started, job }, { status: started ? 200 : 409 });
       }
       if (url.pathname.startsWith("/view/")) {
@@ -730,6 +771,11 @@ export function createServer(config: ServerConfig) {
     websocket: {
       open(ws) {
         clients.add(ws);
+        // A tiny frame BEFORE init: the page has already painted its
+        // loading shell, and this lets it say how much is on the way
+        // ("receiving 480 requests · 71 MB") instead of showing a blank
+        // wait while tens of megabytes stream (docs/design/web-ui.md).
+        ws.send(JSON.stringify({ type: "loading", pairs: pairs.length, bytes: config.traceSize?.() ?? 0 }));
         ws.send(JSON.stringify(initMessage()));
       },
       close(ws) {

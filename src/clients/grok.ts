@@ -16,6 +16,7 @@ export const grok: ClientPlugin = {
   ],
   installHint: "Install the Grok CLI or use --client-path",
   wire: {
+    label: "Grok",
     dialect: "openai",
     firstPartyHosts: ["grok.com", "x.ai"],
     hostCategories: [

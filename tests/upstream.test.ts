@@ -22,7 +22,15 @@ test("retries pre-connect failures with the same body and fresh connections", as
   expect(logs.join(" ")).not.toContain("private request data");
 });
 
-test.each(["ECONNRESET", "ETIMEDOUT", "UNKNOWN_CERTIFICATE_VERIFICATION_ERROR", "CERT_HAS_EXPIRED", "ENETUNREACH"])("does not replay ambiguous or permanent %s failures", async (code) => {
+test.each(["UNKNOWN_CERTIFICATE_VERIFICATION_ERROR", "ENETUNREACH", "ENOTFOUND"])("retries pre-send %s failures", async (code) => {
+  let calls = 0;
+  const upstream = createUpstream({ retryMs: 30000, sleep: async () => {}, report: () => {},
+    fetch: async () => { calls++; if (calls < 2) throw failure(code); return new Response("ok"); } });
+  expect((await upstream.fetch(target, { method: "POST", redirect: "manual" }, true)).status).toBe(200);
+  expect(calls).toBe(2);
+});
+
+test.each(["ECONNRESET", "ETIMEDOUT", "EPIPE"])("does not replay ambiguous %s failures", async (code) => {
   let calls = 0;
   const upstream = createUpstream({ retryMs: 30000, report: () => {}, fetch: async () => { calls++; throw failure(code); } });
   await expect(upstream.fetch(target, { method: "POST", redirect: "manual" }, true)).rejects.toBeInstanceOf(UpstreamError);

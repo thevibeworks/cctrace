@@ -109,11 +109,11 @@ export function createUpstream(opts: {
           }
           const remaining = (opts.retryMs ?? 0) - detail.elapsedMs;
           const pause = Math.min(1000 * 2 ** (attempts - 1), 8000);
-          // Manual redirects establish that a later TLS failure cannot be
-          // from a redirect after the original POST was already processed.
-          // Reset, timeout and TLS labels alone cannot prove pre-send state.
+          // Manual redirects establish that a TLS failure is on the first
+          // connection, i.e. before any byte of the POST was written. Reset
+          // and timeout labels alone cannot prove pre-send state.
           const retry = modelCall && init.redirect === "manual" &&
-            (/^(ECONNREFUSED|ConnectionRefused)$/.test(failure.code) || failure.kind === "dns") &&
+            (failure.kind === "connect" || failure.kind === "dns" || failure.kind === "tls") &&
             attempts < 6 && remaining > pause && !init.signal?.aborted;
           if (!retry) throw new UpstreamError(detail);
           try { await sleep(pause, init.signal); }

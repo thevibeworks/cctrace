@@ -20,6 +20,22 @@ export function wireTables(): Record<string, ClientWire> {
   return out;
 }
 
+/**
+ * The display name for a traced client: the plugin's own `label`, else the
+ * id with its first letter capitalized (an unlabeled pre-0.51 trace, or a
+ * client this build has never heard of).
+ *
+ * Pure and self-contained on purpose — both pages inline it beside the
+ * embedded `CLIENT_WIRE` tables (`clientLabel(pair.client, CLIENT_WIRE)`),
+ * so a run reads as "Kimi Code" in the dashboard, the rail run card and the
+ * trace header without any of them keeping a second list of names.
+ */
+export function clientLabel(name: string, wire?: Record<string, { label?: string }>): string {
+  const id = String(name || "claude");
+  const known = wire && wire[id] && wire[id].label;
+  return known || id.charAt(0).toUpperCase() + id.slice(1);
+}
+
 /** Locate a client binary: explicit override > well-known paths > $PATH. */
 export function findClientBinary(
   profile: Pick<ClientPlugin, "name" | "bin" | "candidates" | "installHint">,

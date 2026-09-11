@@ -3,6 +3,7 @@ import { harnessPrompt, turnContentSig, loopTurns, buildToolResultIndex } from "
 import {
   wireDialect,
   openaiInput,
+  openaiBlocks,
   openaiSystemText,
   openaiTools,
   normalizeOpenaiTurns,
@@ -134,22 +135,139 @@ export function ctxEnvelope(body: any, dialect: string): any {
 }
 
 /**
+ * Follow a folded body's keeper chain to the request that still carries the
+ * history. A stub folded as "superseded" was folded BECAUSE a later request
+ * in the same thread re-sent its whole history, so that request's body holds
+ * this one as a prefix; `keptPairId` names it. The keeper may itself have
+ * been folded later, so the walk repeats — bounded (64 hops) and
+ * cycle-guarded, because a page's pair set is whatever the wire produced.
+ * Returns the keeper pair, or null when none is loaded (a budgeted stub
+ * names no keeper, and a prior run's keeper may not be on this page).
+ */
+export function ctxKeeperPair(pair: any, pairOf: any): any {
+  if (!pairOf) return null;
+  let body = (pair && pair.request && pair.request.body) || null;
+  const seen: any = {};
+  for (let hop = 0; hop < 64; hop++) {
+    const id = body && body.keptPairId;
+    if (!id || seen[id]) return null;
+    seen[id] = 1;
+    const next = pairOf(id);
+    const nb = next && next.request && next.request.body;
+    if (!nb) return null;
+    if (!nb._cctrace_stub) return next;
+    body = nb;
+  }
+  return null;
+}
+
+/**
+ * How many `input[]` items of an OpenAI request make up its first `turns`
+ * normalized turns — the cut that slices a keeper's conversation back to a
+ * folded request's history length. Mirrors normalizeOpenaiTurns' rules
+ * (leading system/developer prefix skipped, empty items open no turn, a
+ * turn continues while the role holds), so the two cannot drift.
+ *
+ * A turn count is the only length a stub keeps, so the cut lands on turn
+ * boundaries: where the keeper CONTINUED the folded request's last turn
+ * (consecutive same-role items — a tool result the next user message runs
+ * straight into), the derived window carries that continuation too. Same
+ * class of approximation as the anthropic side, and the reason the fold
+ * stamps the exact sums it measured (contextComposition reads those first).
+ */
+export function ctxOpenaiCut(input: any[], turns: number): number {
+  const items = input || [];
+  let n = 0;
+  let role = "";
+  let inSystemPrefix = true;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item || item.type === "additional_tools") continue;
+    if (inSystemPrefix && item.type === "message" && (item.role === "system" || item.role === "developer")) continue;
+    inSystemPrefix = false;
+    if (!openaiBlocks(item).length) continue;
+    const r = item.type === "message"
+      ? (item.role === "assistant" ? "assistant" : "user")
+      : (item.type === "function_call_output" || item.type === "custom_tool_call_output") ? "user" : "assistant";
+    if (r !== role) {
+      if (n >= turns) return i;
+      n++;
+      role = r;
+    }
+  }
+  return items.length;
+}
+
+/**
+ * The body to read this request's context out of — its own, or the one
+ * DERIVED from the request that kept its history.
+ *
+ * The fold (src/live-bodies.ts, src/fold.ts) and `cctrace compact` drop a
+ * request body only when a later request re-sent the same conversation. So
+ * the bytes are gone from this pair but not from the page: the keeper's
+ * body, cut back to this request's `historyLen`, IS this request's window.
+ * The cut SHARES the keeper's block objects (a slice, never a copy), so
+ * deriving costs one array and no memory.
+ *
+ * Returns { body, derivedFrom } — derivedFrom is the keeper's pair id, or
+ * null when the body is the pair's own. body is null when the fold left
+ * nothing to derive from: no keeper on the page, a budgeted stub that names
+ * none, or a stub with no history length.
+ */
+export function ctxEffectiveBody(pair: any, pairOf?: any): any {
+  const own = (pair && pair.request && pair.request.body) || null;
+  if (!own || !own._cctrace_stub) return { body: own, derivedFrom: null };
+  const memo = pair._ctxBody;
+  if (memo !== undefined) return memo;
+  const miss = { body: null, derivedFrom: null };
+  const n = typeof own.historyLen === "number" ? own.historyLen : 0;
+  if (n <= 0) return miss;
+  const keeper = ctxKeeperPair(pair, pairOf);
+  if (!keeper) return miss;
+  const kb = keeper.request.body;
+  let body: any = null;
+  if (wireDialect(keeper) === "openai") {
+    // Chat Completions carry messages[]; openaiInput normalizes both shapes
+    // to input[] items, and reads `input` first — so the derived body is
+    // the sliced items, whichever shape the keeper was.
+    const items = openaiInput(kb);
+    body = { ...kb, input: items.slice(0, ctxOpenaiCut(items, n)) };
+  } else if (Array.isArray(kb.messages)) {
+    body = { ...kb, messages: kb.messages.slice(0, n) };
+  }
+  if (!body) return miss;
+  const out = { body, derivedFrom: keeper.id };
+  // Only a hit is memoized: a miss can become a hit when the keeper lands
+  // (a continuity merge, an explicitly loaded body) and must re-resolve.
+  pair._ctxBody = out;
+  return out;
+}
+
+/**
  * Per-category composition of ONE request's assembled context. Cheap on
  * purpose (length arithmetic over strings already in memory — the timeline
  * calls this once per request): sums only, no item lists (contextItems is
- * the detailed walk for the browser). Returns null for compact-folded stub
- * bodies (their composition is gone; the pair's usage survives) and for
- * non-model-call pairs.
+ * the detailed walk for the browser). Reads a folded body's composition
+ * from the stub when the fold stamped it (exact — it was measured on the
+ * real body), else derives it from the keeper (ctxEffectiveBody). Returns
+ * null only when neither is available, and for non-model-call pairs.
  * Shape: { sums: {system,tools,user,inject,assistant,toolResult}, est,
  *          histLen, toolCount, images }
  */
-export function contextComposition(pair: any): any {
+export function contextComposition(pair: any, pairOf?: any): any {
   const dialect = wireDialect(pair);
   if (!dialect) return null;
-  const body = (pair.request && pair.request.body) || {};
-  if (body._cctrace_stub) return null;
   const memo = pair._ctxc;
   if (memo !== undefined) return memo;
+  const raw = (pair.request && pair.request.body) || {};
+  // Stamped at fold time from the body that was dropped: the sums the page
+  // would have computed, for the price of ten numbers on the stub.
+  if (raw._cctrace_stub && raw.composition) {
+    pair._ctxc = raw.composition;
+    return raw.composition;
+  }
+  const body = ctxEffectiveBody(pair, pairOf).body;
+  if (!body) return null;
   const env = ctxEnvelope(body, dialect);
   const turns = dialect === "openai"
     ? normalizeOpenaiTurns(openaiInput(body))
@@ -201,18 +319,20 @@ export function ctxSnippet(text: any, n: number): string {
 /**
  * The detailed per-item walk of one request — the Context browser's data.
  * One entry per system block / tool schema / content block, each with its
- * estimate and a label. EXACT by construction: the request body is the
- * assembled context. Returns { cats: {catId: [item…]}, est } or null
- * (stub / not a model call). Item: { label, tokens, ti (history turn index,
+ * estimate and a label. EXACT by construction when the pair carries its own
+ * body: the request body is the assembled context. A folded body walks the
+ * keeper's copy of the same history (ctxEffectiveBody). Returns
+ * { cats: {catId: [item…]}, est } or null (nothing to derive from / not a
+ * model call). Item: { label, tokens, ti (history turn index,
  * -1 = envelope), kind, err?, toolName?, b } — b is a REFERENCE to the
  * source block (or tool schema object), so the browser can render the full
  * content lazily without a second walk.
  */
-export function contextItems(pair: any): any {
+export function contextItems(pair: any, pairOf?: any): any {
   const dialect = wireDialect(pair);
   if (!dialect) return null;
-  const body = (pair.request && pair.request.body) || {};
-  if (body._cctrace_stub) return null;
+  const body = ctxEffectiveBody(pair, pairOf).body;
+  if (!body) return null;
   const cats: any = { system: [], tools: [], user: [], inject: [], assistant: [], toolResult: [] };
   const env = ctxEnvelope(body, dialect);
   if (dialect === "openai") {
@@ -338,10 +458,11 @@ export function ctxGroupOf(catId: string, it: any, idx: number): any {
  *
  * Shape: { est, cats: [{ id, label, color, tokens, count, groups: [
  *          { key, label, tokens, count, err, items: [item, ...] } ] }] }
- * Returns null for compact stubs / non-model-call pairs, same as its source.
+ * Returns null when its source does: a folded body with no keeper on the
+ * page, or a non-model-call pair.
  */
-export function contextGraph(pair: any): any {
-  const items = contextItems(pair);
+export function contextGraph(pair: any, pairOf?: any): any {
+  const items = contextItems(pair, pairOf);
   if (!items) return null;
   const cats: any[] = [];
   for (const c of CTX_CATS) {
@@ -550,18 +671,24 @@ export function ctxFlameDefault(graph: any): string {
  * classified; drops it didn't (≥10 turns below the running max, the same
  * rule buildSession uses) are still marked, honestly unlabeled.
  *
+ * `stub` says the request body was FOLDED, which is no longer the same
+ * question as "is there a composition": `stamped` marks sums the fold
+ * measured on the real body before dropping it, `derived` names the pair
+ * whose retained body this step's composition and detail were read from.
+ *
  * Steps: { pairId, t, model, sums|null, est, actualIn|null, out, histLen,
- *          stub, failed, mark? ('compact'|'rewind'|'rewrite') }
+ *          stub, stamped, derived|null, failed,
+ *          mark? ('compact'|'rewind'|'rewrite') }
  * Events: { kind: 'inject'|'compact'|'model'|'tools'|'system',
  *           t, pairId, label?, tokens?, from?, to?, fromTurns?, toTurns?,
  *           mode? }
  */
-export function contextTimeline(threadPairs: any[], compactions?: any[]): any {
+export function contextTimeline(threadPairs: any[], compactions?: any[], pairOf?: any): any {
   const steps: any[] = [];
   const events: any[] = [];
   const compByPair: any = {};
   for (const c of compactions || []) if (c && c.pairId) compByPair[c.pairId] = c;
-  let prev: any = null;        // previous non-stub step (composition available)
+  let prev: any = null;        // previous step with a composition
   let prevTurns: any[] = [];   // its normalized turns (for injection diffing)
   let maxHist = 0;
   let maxTotal = 0;
@@ -571,7 +698,8 @@ export function contextTimeline(threadPairs: any[], compactions?: any[]): any {
     if (!dialect) continue;
     const body = p.request.body || {};
     const stub = !!body._cctrace_stub;
-    const comp = stub ? null : contextComposition(p);
+    const eff = ctxEffectiveBody(p, pairOf);
+    const comp = contextComposition(p, pairOf);
     const ci = p._ci || (p._ci = extractCallInfo(p));
     const failed = !p.response || p.response.status >= 400;
     const actualIn = !failed && ((ci.input || 0) + (ci.cacheRead || 0) + (ci.cacheWrite || 0)) > 0
@@ -589,6 +717,8 @@ export function contextTimeline(threadPairs: any[], compactions?: any[]): any {
       out: failed ? 0 : ci.output || 0,
       histLen,
       stub,
+      stamped: stub && !!body.composition,
+      derived: eff.derivedFrom,
       failed,
     };
     // ---- events between the previous step and this one ----
@@ -630,30 +760,31 @@ export function contextTimeline(threadPairs: any[], compactions?: any[]): any {
     // APPENDED (indices past the previous request's history) — plus, on the
     // very first step, the injections its opening turns carry. After a
     // repack (mark set) indices shift; skip diffing that boundary rather
-    // than mis-attribute rows.
-    if (comp && !step.mark) {
+    // than mis-attribute rows. A folded request diffs on the keeper's copy
+    // of its history; one with no keeper leaves the baseline alone rather
+    // than reset it to nothing (the next step would re-report every
+    // injection it ever carried).
+    if (comp && eff.body) {
       const turns = dialect === "openai"
-        ? normalizeOpenaiTurns(openaiInput(body))
-        : ctxNormalizeTurns(body.messages);
-      const from = prev ? Math.min(prevTurns.length, turns.length) : 0;
-      for (let ti = from; ti < turns.length; ti++) {
-        const turn = turns[ti];
-        if (!turn || turn.role === "assistant") continue;
-        for (const b of turn.blocks || []) {
-          if (!b || b.type !== "text") continue;
-          if (ctxTextCat(b.text) !== "inject") continue;
-          events.push({
-            kind: "inject", t: step.t, pairId: p.id,
-            label: ctxInjectLabel(b.text),
-            tokens: ctxBlockTokens(b),
-          });
+        ? normalizeOpenaiTurns(openaiInput(eff.body))
+        : ctxNormalizeTurns(eff.body.messages);
+      if (!step.mark) {
+        const from = prev ? Math.min(prevTurns.length, turns.length) : 0;
+        for (let ti = from; ti < turns.length; ti++) {
+          const turn = turns[ti];
+          if (!turn || turn.role === "assistant") continue;
+          for (const b of turn.blocks || []) {
+            if (!b || b.type !== "text") continue;
+            if (ctxTextCat(b.text) !== "inject") continue;
+            events.push({
+              kind: "inject", t: step.t, pairId: p.id,
+              label: ctxInjectLabel(b.text),
+              tokens: ctxBlockTokens(b),
+            });
+          }
         }
       }
       prevTurns = turns;
-    } else if (comp) {
-      prevTurns = dialect === "openai"
-        ? normalizeOpenaiTurns(openaiInput(body))
-        : ctxNormalizeTurns(body.messages);
     }
     if (histLen > maxHist) maxHist = histLen;
     const total = actualIn != null ? actualIn : step.est;
@@ -719,12 +850,13 @@ export function ctxAggregateTurns(steps: any[], stepAddr: any): any[] {
 
 /** The window's history turns as the request body carries them — the same
  * normalization contextItems walks, dialect-aware, so an item's `ti`
- * indexes into this list. Empty for stubs and non-model-call pairs. */
-export function ctxWindowTurns(pair: any): any[] {
+ * indexes into this list. A folded body reads the keeper's copy; empty for
+ * non-model-call pairs and folds with nothing to derive from. */
+export function ctxWindowTurns(pair: any, pairOf?: any): any[] {
   const dialect = wireDialect(pair);
   if (!dialect) return [];
-  const body = (pair.request && pair.request.body) || {};
-  if (body._cctrace_stub) return [];
+  const body = ctxEffectiveBody(pair, pairOf).body;
+  if (!body) return [];
   return dialect === "openai" ? normalizeOpenaiTurns(openaiInput(body)) : ctxNormalizeTurns(body.messages);
 }
 

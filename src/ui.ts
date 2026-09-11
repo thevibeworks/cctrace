@@ -1,6 +1,6 @@
 import type { TracePair } from "./types";
 import { CATEGORIES, categorizeUrl } from "./categorize";
-import { wireTables } from "./clients";
+import { clientLabel, wireTables } from "./clients";
 import { CLIENT_ICONS, CCTRACE_MARK } from "./icons";
 import { UI_ICONS } from "./vendor/ui-icons";
 import { CHROME_CSS, NAV_SCRIPT, PREFS_SCRIPT } from "./chrome";
@@ -51,6 +51,12 @@ import {
   cwdFromText,
   harnessPrompt,
   harnessTurnKind,
+  firstPromptOfPair,
+  harnessNoteKind,
+  harnessNoteHead,
+  harnessNotes,
+  harnessNoteLine,
+  memoryOp,
   continuationSummaryTurn,
   loopTurns,
   threadTimeSplit,
@@ -70,6 +76,9 @@ import {
   ctxEnvelope,
   ctxNormalizeTurns,
   ctxSnippet,
+  ctxKeeperPair,
+  ctxOpenaiCut,
+  ctxEffectiveBody,
   contextComposition,
   contextItems,
   ctxGroupOf,
@@ -213,6 +222,18 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       font-family: var(--font-mono);
       font-variant-numeric: tabular-nums;
     }
+    /* ---- The run card's identity grammar (item 2) ----
+       Three lines: the client's mark beside the PROJECT name with the
+       client's label; what this run IS (the session title, or the human's
+       first prompt); then the wire meta in faint mono. It reads as a place
+       and a subject, not as a path and two hashes.
+       The .runid-* rules live in src/chrome.ts (shared with the dashboard);
+       only the trace page's own additions are here. */
+    .runid-name.ctx-copy { cursor: pointer; }
+    .runid-name.ctx-copy:hover { color: var(--accent); }
+    .runid-name.copied { color: var(--green); }
+    .rc-when { flex: none; }
+    .rc-sep { color: var(--text-faint); }
     /* ---- The work surface's own header: this destination, its numbers ---- */
     header {
       padding: 10px 16px;
@@ -776,17 +797,88 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        Type scale unchanged — a presentation is the same page, undressed. */
     body.present header, body.present #toolbar, body.present .cats, body.present .nav-rail, body.present #nav { display: none; }
     .boot-wait { padding: 48px 24px; color: var(--text-faint); font-size: 13px; }
+    /* ---- The loading shell (item 5) ----
+       The page used to be blank until the whole init frame landed — tens of
+       megabytes on a big session. The shell is MARKUP that ships before the
+       data, so the frame paints immediately and the wait states a number
+       ("receiving 480 requests · 71 MB") instead of nothing. Still, not
+       pulsing: the line carries the progress, the rows carry the shape. */
+    #work { position: relative; }
+    /* The header stays ABOVE the shell: "where am I" is answerable before
+       the data lands, and the rail plus the destination title are the two
+       things a reader needs while waiting. */
+    header { position: relative; z-index: 21; }
+    #boot {
+      position: absolute; inset: 0; z-index: 20;
+      display: flex; flex-direction: column; gap: 12px;
+      padding: 52px 16px 16px; background: var(--bg);
+    }
+    body.booted #boot { display: none; }
+    .boot-line {
+      font-size: var(--text-sm); color: var(--text-faint);
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    }
+    .boot-rows { display: flex; flex-direction: column; gap: 11px; }
+    .boot-row { height: 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+    .boot-row:nth-child(2n) { width: 78%; }
+    .boot-row:nth-child(3n) { width: 61%; }
+    .boot-row:nth-child(5n) { width: 88%; }
+    /* A quiet one-line notice under the header: a continuity merge landed,
+       and the reader should know the conversation just grew upward. */
+    #notice {
+      flex: none; padding: 5px 16px;
+      font-size: var(--text-sm); color: var(--text-muted);
+      background: var(--accent-soft); border-bottom: 1px solid var(--border);
+    }
+    /* ---- The live status bar (items 1 + 4) ----
+       State on the left with a pulsing dot and a ticking counter, the
+       prompt-cache window draining on the right. Body size: this is the
+       one line that answers "is anything happening", and it was set two
+       steps below everything it sits under. */
     #pulse {
-      display: none; align-items: center; gap: 10px; padding: 6px 16px;
-      flex: none; min-height: 32px; font-size: 11px; color: var(--text-muted);
+      display: none; align-items: center; gap: 12px; padding: 6px 16px;
+      flex: none; min-height: 34px; font-size: var(--text-body); color: var(--text-muted);
       background: var(--bg-surface); border-top: 1px solid var(--border);
       white-space: nowrap; overflow: hidden;
     }
     body.view-session.pulse-on #pulse { display: flex; }
-    #pulse .p-label, #pulse .p-t { color: var(--text-faint); flex: none; }
-    #pulse .p-act { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-    #pulse .p-exp { color: var(--amber); flex: none; }
-    #pulse .p-t { font-variant-numeric: tabular-nums; margin-left: auto; }
+    #pulse .p-state { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+    #pulse .p-dot {
+      width: 8px; height: 8px; border-radius: var(--radius-full);
+      background: var(--text-faint); flex: none;
+    }
+    /* The one moving thing on this bar: a call is OUT. Idle and
+       waiting-on-tools are still frames (motion budget, ui.md 6). */
+    #pulse .p-flight .p-dot { background: var(--accent); animation: heartbeat 1.4s ease-in-out infinite; }
+    #pulse .p-flight .p-label { color: var(--accent); }
+    #pulse .p-tools .p-dot { background: var(--lane-tools); }
+    #pulse .p-label { color: var(--text); flex: none; }
+    #pulse .p-t {
+      color: var(--text-muted); flex: none;
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: var(--text-sm);
+    }
+    #pulse .p-act {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      color: var(--text-faint); font-size: var(--text-sm);
+    }
+    #pulse .p-gap { flex: 1 1 auto; min-width: 8px; }
+    #pulse .p-cache { display: inline-flex; align-items: center; gap: 8px; flex: none; font-size: var(--text-sm); }
+    #pulse .p-clabel { color: var(--text-faint); }
+    #pulse .p-bar {
+      width: 96px; height: 5px; border-radius: var(--radius-full); overflow: hidden;
+      background: var(--bg); border: 1px solid var(--border);
+    }
+    #pulse .p-fill { display: block; height: 100%; background: var(--green); }
+    #pulse .p-left {
+      color: var(--text-muted); font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums; min-width: 44px; text-align: right;
+    }
+    #pulse .p-warn .p-fill { background: var(--amber); }
+    #pulse .p-warn .p-left { color: var(--amber); }
+    #pulse .p-exp .p-fill { background: var(--red); }
+    #pulse .p-exp .p-left, #pulse .p-exp .p-clabel { color: var(--red); }
+    @media (prefers-reduced-motion: reduce) { #pulse .p-flight .p-dot { animation: none; } }
+    @media (max-width: 760px) { #pulse .p-act { display: none; } }
     .tj-pagination { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: end; gap: 8px; padding: 8px 0; background: var(--bg); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
     .tj-pagination > span:first-child { margin-right: auto; }
     .tj-pagination button:disabled { opacity: 0.4; cursor: default; }
@@ -1053,6 +1145,39 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .chip { font-variant-numeric: tabular-nums; }
     .chip b { color: var(--text-muted); font-weight: 500; margin-right: 6px; }
+    /* ---- The session chips stay put (item 16) ----
+       They answer "what am I reading" — model, requests, tokens, cache,
+       cost, time — and they used to scroll away on the first turn. In the
+       conversation column they are the column's own bar: sticky at the top,
+       bleeding to the pane edges, and once the reader is past the head they
+       COMPACT to one scrolling row with a hairline under it. The context
+       jump pins to the right edge, so the way across is never scrolled out
+       of reach. */
+    #convo > .chips {
+      position: sticky; top: 0; z-index: 3;
+      margin: -12px -48px 8px -16px;
+      padding: 8px 16px;
+      border: 0; border-bottom: 1px solid transparent; border-radius: 0;
+      background: var(--bg);
+    }
+    #convo.stuck > .chips {
+      flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+      padding-top: 5px; padding-bottom: 5px;
+      border-bottom-color: var(--border);
+    }
+    #convo.stuck > .chips > .chip { flex: none; }
+    #convo > .chips > .turn-wire {
+      position: sticky; right: 0; margin-left: auto; flex: none;
+      padding-left: 12px; background: var(--bg);
+    }
+    /* Stuck, the row scrolls under the pane's 48px right gutter (the
+       floating toolbar lives there): the jump wears that gutter as its own
+       padding so no chip text shows to its right. */
+    #convo.stuck > .chips { padding-right: 0; }
+    #convo.stuck > .chips > .turn-wire { padding-right: 48px; }
+    @media (max-width: 760px) {
+      #convo > .chips { margin: -10px -44px 8px -12px; padding: 6px 12px; }
+    }
     .turn { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
     .turn-role {
       display: flex; align-items: center; gap: 8px;
@@ -1171,39 +1296,69 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .msg-md strong { font-weight: 600; color: var(--text); }
     .msg-md del { color: var(--text-muted); }
     .msg-md img { max-width: 100%; }
-    /* Long texts clamp with an explicit expander instead of an inner scrollbar,
-       so the mouse wheel never gets trapped inside a turn. */
-    .msg-clamp.clamped .msg-text {
-      max-height: 380px;
-      overflow: hidden;
-      -webkit-mask-image: linear-gradient(to bottom, #000 85%, transparent);
-      mask-image: linear-gradient(to bottom, #000 85%, transparent);
+    /* ---- Read in place (item 11) ----
+       A long text is bounded, not truncated: the block keeps ~60vh and
+       scrolls inside itself, its size stated in a thin header, one quiet
+       "expand" in the corner lifting the bound. The old clamp made every
+       long tool result a two-step read and hid how much was left behind a
+       gradient. Scroll chaining stays the browser default, so reaching the
+       inner end keeps the page moving — the wheel trap the clamp was
+       invented to avoid. */
+    .msg-box { border-top: 1px dashed var(--border); }
+    .msg-box:first-child { border-top: none; }
+    .msg-box-h {
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 12px 0; font-size: 10px; color: var(--text-faint);
+      font-family: var(--font-mono); font-variant-numeric: tabular-nums;
     }
-    .msg-more {
-      display: block;
-      width: 100%;
-      padding: 6px 12px;
-      background: none;
-      border: none;
-      border-top: 1px dashed var(--border);
-      color: var(--accent);
-      cursor: pointer;
-      font-family: inherit;
-      font-size: 11px;
-      text-align: left;
+    .msg-box-x {
+      margin-left: auto; flex: none;
+      font: inherit; font-size: 10px; line-height: 1;
+      background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      color: var(--text-faint); cursor: pointer; padding: 2px 7px;
     }
-    .msg-more:hover { background: var(--hover); }
+    .msg-box-x:hover { color: var(--text); border-color: var(--accent); }
+    .msg-box-s { max-height: 60vh; overflow-y: auto; }
+    .msg-box.open .msg-box-s { max-height: none; overflow: visible; }
     .block-note { padding: 6px 12px; color: var(--text-faint); font-size: 11px; }
     .block-note a.unfold { cursor: pointer; }
-    /* wire image attachments: thumbnail by default, click for full size —
-       the bytes were already in the trace, rendering them adds nothing */
-    .msg-imgwrap { padding: 6px 12px; }
+    /* ---- Images are shown, bounded, and open in a lightbox (item 15) ----
+       A screenshot the agent looked at is evidence: it renders at reading
+       size instead of hiding behind a click-to-toggle. content-visibility
+       on the wrapper is load-bearing, not polish — a hundred decoded
+       screenshots cost gigabytes of bitmap, so an offscreen gallery is
+       never rasterized. A RUN of images in one block is a grid. */
+    .msg-imgwrap {
+      padding: 6px 12px;
+      content-visibility: auto; contain-intrinsic-size: auto 200px;
+    }
+    .msg-imgwrap.gal {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
     .msg-img {
-      display: block; max-width: 320px; max-height: 240px;
+      display: block; max-width: 100%; max-height: 320px;
       border: 1px solid var(--border); border-radius: var(--radius-sm);
       cursor: zoom-in; background: var(--bg-surface);
     }
-    .msg-img.full { max-width: 100%; max-height: none; cursor: zoom-out; }
+    .msg-imgwrap.gal .msg-img { max-width: min(280px, 100%); max-height: 200px; }
+    /* the lightbox: the image fit to the viewport, nothing else on screen */
+    .lbx {
+      position: fixed; inset: 0; z-index: 200; display: none;
+      align-items: center; justify-content: center;
+      background: color-mix(in srgb, #0b0b0b 82%, transparent);
+      cursor: zoom-out;
+    }
+    .lbx.show { display: flex; }
+    .lbx img {
+      max-width: calc(100vw - 64px); max-height: calc(100vh - 72px);
+      border-radius: var(--radius-sm); background: var(--bg-surface);
+      cursor: default;
+    }
+    .lbx-n {
+      position: absolute; left: 0; right: 0; bottom: 14px; text-align: center;
+      font-family: var(--font-mono); font-size: var(--text-xs); color: var(--text-muted);
+      font-variant-numeric: tabular-nums; pointer-events: none;
+    }
     .fold > summary {
       display: flex; align-items: baseline; gap: 8px;
       padding: 7px 12px; cursor: pointer; user-select: none;
@@ -1272,6 +1427,40 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .fold-link { color: var(--accent); font-size: 11px; text-decoration: none; flex: none; margin-left: auto; }
     .fold-stat ~ .fold-link { margin-left: 10px; }
     .fold-link:hover { text-decoration: underline; }
+    /* ---- Memory operations wear their own mark (item 14) ----
+       A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is Claude
+       Code remembering, not a file edit like any other. The ink is CDS's
+       AQUA (#3f9d8f, the git-status teal the palette already ships) — the
+       one data hue the CONVERSATION does not already spend: fold titles use
+       blue for plain tools and violet for notable events, and green/amber/
+       red stay state. (The Bootstrap request category wears the same hue in
+       the requests list; different surface, no collision in reading.) */
+    :root { --memory: #3f9d8f; }
+    .fold.fold-mem > summary .fold-title,
+    .fold.fold-mem > summary .fold-ico { color: var(--memory); }
+    .fold.fold-mem > summary .fold-hint { color: var(--text-muted); }
+    .tname-mem { color: var(--memory); }
+    .tj-row.tj-mem .tj-label { color: var(--memory); }
+    .tj-ico { display: inline-flex; flex: none; color: var(--memory); }
+    .tj-ico svg { width: 13px; height: 13px; }
+    /* ---- Harness notes: one line, a chevron, nothing else (item 10) ----
+       The CLI stacks the same nudges onto almost every step. Rendered in
+       full they ARE the conversation on a working session, so a harness
+       message is a single folded line: SYSTEM + what the notes say. The
+       turn around it drops its box and its role bar — the step above it
+       already carries the ordinal and the clock. */
+    .turn-sys { border: none; border-radius: 0; margin: 2px 0; }
+    .fold-sys > summary { padding: 3px 12px; }
+    .fold-sys > summary .fold-title {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0;
+      color: var(--text-faint);
+    }
+    .fold-sys > summary .fold-hint { color: var(--text-faint); }
+    .fold-sys > summary:hover .fold-hint { color: var(--text-muted); }
+    .fold-sys .msg-text.sys-note { color: var(--text-muted); font-size: var(--text-sm); }
+    /* the rail's marker for the notes that followed a step — a dot, not a row */
+    .tsys { flex: none; color: var(--text-faint); font-size: 13px; line-height: 1; opacity: 0.7; }
+    .tsys:hover { color: var(--text-muted); opacity: 1; }
     .sys-block { border-bottom: 1px dashed var(--border); }
     .sys-block:last-child { border-bottom: none; }
     .cc-tag { padding: 8px 12px 0; font-size: 10px; color: var(--amber); }
@@ -1353,12 +1542,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       width: 1px; margin-left: -0.5px;
       background: color-mix(in srgb, var(--accent) 22%, var(--border));
     }
-    /* branch elbow: the rail continues, an arm curves off to the row */
+    /* branch elbow: the sub-column's line continues, an arm curves off to
+       the row — violet, because a spawn is a notable event (ui.md rule 3) */
     .rgut-br::after {
-      content: ''; position: absolute; left: 50%; top: -2px;
-      width: 9px; height: 58%; margin-left: -0.5px;
-      border-left: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
-      border-bottom: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
+      content: ''; position: absolute; left: -10px; top: -2px;
+      width: 9px; height: 58%;
+      border-left: 1px solid color-mix(in srgb, var(--purple) 30%, var(--border));
+      border-bottom: 1px solid color-mix(in srgb, var(--purple) 30%, var(--border));
       border-bottom-left-radius: 7px;
     }
     /* epoch node: a hollow accent ring on the rail — structure, not a
@@ -1378,16 +1568,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tepoch:hover { background: var(--hover); }
     .tepoch-ord { color: var(--text-faint); flex-shrink: 0; }
     .tepoch-turns { margin-left: auto; color: var(--text-faint); }
-    /* subagent branch row: attached at its spawn turn, elbow off the rail,
-       outcome stats inline — the thread is one click away */
+    /* subagent branch rows: an arm out of the spine into an INDENTED
+       sub-column with its own line — the way a git graph draws a branch.
+       The sub-column starts under the gutter + node the parent row spends,
+       so the spine itself never moves. */
+    .tbranches {
+      position: relative;
+      margin-left: 44px; padding-left: 10px;
+    }
+    .tbranches::before {
+      content: ''; position: absolute; left: 0; top: 0; bottom: 8px;
+      width: 1px; background: color-mix(in srgb, var(--purple) 30%, var(--border));
+    }
     .tbranch {
-      display: flex; align-items: center; gap: 8px;
-      padding: 3px 10px; font-size: 11px;
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 3px 10px 3px 0; font: inherit; font-size: 11px; text-align: left;
+      background: none; border: 0; cursor: pointer;
       color: var(--text-faint); text-decoration: none;
       font-variant-numeric: tabular-nums;
     }
-    .tbranch .rgut { margin: -3px 0; }
+    .tbranch .rgut { margin: -3px 0; width: 10px; }
+    .tbranch .rgut::before { display: none; }
     .tbranch:hover { background: var(--hover); }
+    .tbranch-more .tbranch-label { color: var(--text-faint); }
+    .tbranch-more:hover .tbranch-label { color: var(--text-muted); }
     /* content indents one outline level under its spawn turn — the rail
        column itself never moves, only the arm reaches further */
     .tbranch-label {
@@ -1431,18 +1635,53 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        the whole sidebar column. */
     .tip {
       position: fixed; z-index: 100; display: none;
-      max-width: 320px; padding: 7px 10px;
+      max-width: 380px; padding: 7px 10px;
       background: var(--bg-surface); border: 1px solid var(--border);
       border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,0.35);
       font-size: 11px; line-height: 1.55; color: var(--text-muted);
       pointer-events: none; font-variant-numeric: tabular-nums;
-      overflow-wrap: break-word;
+      overflow-wrap: break-word; white-space: pre-wrap;
     }
     .tip.show { display: block; }
-    .tip-head { color: var(--text); }
+    .tip-head { color: var(--text); white-space: pre-wrap; }
     .tip-gap { height: 6px; }
     .tip-sep { border-top: 1px solid var(--border); margin: 6px -10px; }
     .tip-hint { color: var(--text-faint); font-size: 10px; }
+    /* A "key: value" line is a COLUMN, not a sentence (item 13): the label
+       reads in the reading face at a fixed measure, the value in mono where
+       the eye compares it with the value on the line above. */
+    .tip-kv { display: flex; gap: 10px; align-items: baseline; }
+    .tip-k { flex: 0 0 96px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .tip-v { flex: 1; min-width: 0; color: var(--text); font-family: var(--font-mono); overflow-wrap: anywhere; }
+    /* ---- The PEEK: a collapsed tool row, read without opening it ----
+       Fixed to the viewport and anchored to the row, so the layout under
+       the cursor never moves. One panel, no cards inside it. */
+    .peek {
+      position: fixed; z-index: 101; display: none;
+      max-width: 520px; padding: 8px 10px;
+      background: var(--overlay); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
+      font-size: var(--text-xs); color: var(--text-muted);
+      pointer-events: none;
+    }
+    .peek.show { display: block; }
+    .peek-h { color: var(--text); font-family: var(--font-mono); font-size: var(--text-sm); }
+    .peek-in {
+      margin-top: 3px; color: var(--text-muted); font-family: var(--font-mono);
+      overflow-wrap: anywhere;
+    }
+    .peek-l {
+      margin-top: 7px; color: var(--text-faint); font-size: 10px;
+      text-transform: uppercase; letter-spacing: 0;
+    }
+    /* the count is a sentence, not a section label — it does not shout */
+    .peek-more { margin-top: 6px; color: var(--text-faint); font-size: 10px; }
+    .peek-b {
+      margin-top: 2px; padding: 0; background: none; border-radius: 0;
+      max-height: 240px; overflow: hidden;
+      font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+      white-space: pre-wrap; word-break: break-word; color: var(--text-muted);
+    }
     .tturn {
       display: flex; align-items: center; gap: 8px;
       padding: 3px 10px; font-size: 11px;
@@ -1510,6 +1749,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
        it happened here, then left history */
     .tturn-sup { opacity: 0.6; }
     .tturn-sup:hover { opacity: 1; }
+    /* A failed step BREAKS the spine (item 17): red node, dashed segment.
+       The rail is a claim about what ran; where nothing came back, the line
+       should not read solid. */
+    .tturn-failed .rgut::before, .terr-run .rgut::before {
+      background: none;
+      border-left: 1px dashed color-mix(in srgb, var(--red) 55%, var(--border));
+    }
+    /* the row under the conversation's reading position, lit — the same
+       sync the trajectory strip's turn block gets (replay-stage rev 4) */
+    .tturn.cur { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .tturn.cur .tturn-text { color: var(--text); }
     /* Session rollup line above the thread cards: counts across all threads,
        error parts red and only present when nonzero. */
     .threads-sum {
@@ -2285,8 +2535,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <span class="status disconnected" id="status">offline</span>
     </div>
     <div class="dests">
-      <button class="dest active" id="tab-requests" title="Requests" aria-label="Requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
-      <button class="dest" id="tab-session" title="Sessions" aria-label="Sessions"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
+      <button class="dest active" id="tab-requests" aria-label="Requests"><span class="gl">${DEST_ICONS.requests}</span><span class="lb">Requests</span><span class="n" id="dest-n-req"></span></button>
+      <button class="dest" id="tab-session" aria-label="Sessions"><span class="gl">${DEST_ICONS.session}</span><span class="lb">Sessions</span><span class="n" id="dest-n-sess"></span></button>
       <button class="dest" id="tab-context" aria-label="Context" title="context&#10;The agent&#8217;s context window over time. An interactive overview on top &#8212; one column per wire request, a second track for where its time went &#8212; then three readings of what you select: the WINDOW (what the model is carrying, decomposed), the STREAM (every record the run produced, injections inline), and the EVENTS (what grew or reclaimed it).&#10;---&#10;&gt; drag the overview to select a range, wheel to zoom, click a column to pin it"><span class="gl">${DEST_ICONS.context}</span><span class="lb">Context</span><span class="n" id="dest-n-ctx"></span></button>
       <a class="dest" id="dash-link" aria-label="Runs" href="/dashboard" hidden title="dashboard&#10;Every live instance and recent run, all projects sharing this data dir.&#10;Any instance serves the same page."><span class="gl">${DASH_ICON}</span><span class="lb">Runs</span></a>
     </div>
@@ -2339,6 +2589,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     </span>
   </div>
   <div class="cats" id="cats"></div>
+  <!-- The loading shell (item 5): markup, not a render — it sits BEFORE the
+       data script, so the browser paints the rail, the header and a
+       skeleton of rows while a hundred megabytes of trace are still
+       parsing or streaming. Boot removes it once the pairs are in. -->
+  <div id="boot" role="status" aria-live="polite">
+    <div class="boot-line" id="boot-n">loading trace</div>
+    <div class="boot-rows">${'<span class="boot-row"></span>'.repeat(22)}</div>
+  </div>
+  <div id="notice" hidden></div>
   <div id="split">
     <main id="pairs"><div class="boot-wait" role="status">Loading trace...</div></main>
     <aside id="detail"></aside>
@@ -2395,6 +2654,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
   </div><!-- /#work -->
   </div><!-- /#shell -->
 
+  <!--CCTRACE_DATA--><!-- renderSnapshot injects window.__PAIRS__ HERE, after
+       the shell markup: a 200 MB payload parsed in <head> is a blank tab
+       until it finishes (item 5). -->
   <script>${markedSrc}</script>
   <script>
     const UI_ICONS = ${JSON.stringify(UI_ICONS)};
@@ -2575,6 +2837,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${ctxEnvelope.toString()}
     ${ctxNormalizeTurns.toString()}
     ${ctxSnippet.toString()}
+    ${ctxKeeperPair.toString()}
+    ${ctxOpenaiCut.toString()}
+    ${ctxEffectiveBody.toString()}
     ${contextComposition.toString()}
     ${contextItems.toString()}
     ${ctxGroupOf.toString()}
@@ -2643,6 +2908,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     ${cwdFromText.toString()}
     ${harnessPrompt.toString()}
     ${harnessTurnKind.toString()}
+    ${firstPromptOfPair.toString()}
+    ${harnessNoteKind.toString()}
+    ${harnessNoteHead.toString()}
+    ${harnessNotes.toString()}
+    ${harnessNoteLine.toString()}
+    ${memoryOp.toString()}
     ${continuationSummaryTurn.toString()}
     ${loopTurns.toString()}
     ${threadTimeSplit.toString()}
@@ -3035,46 +3306,86 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (el) el.textContent = n > 0 ? fmtCompact(n) : '';
     }
 
+    // The traced CLI's display NAME, from the wire table's label (src/clients).
+    ${clientLabel.toString()}
+    // The human's first real prompt on this run — the trace's identity when
+    // no one has titled the session yet (the same value the registry
+    // stamps, from the same function). Memoized; rescans until found.
+    let runPromptText = '', runPromptScan = -1;
+    function runPrompt() {
+      if (runPromptText || runPromptScan === pairs.length) return runPromptText;
+      runPromptScan = pairs.length;
+      for (const p of pairs) {
+        if (p._cat !== 'messages') continue;
+        let s = '';
+        try { s = firstPromptOfPair(p); } catch (_) {}
+        if (s) { runPromptText = s; return s; }
+      }
+      return '';
+    }
+    function runStartedAt() {
+      let t0 = 0;
+      for (const p of pairs) {
+        const ts = (p.request && p.request.timestamp) || 0;
+        if (ts && (!t0 || ts < t0)) t0 = ts;
+      }
+      return t0;
+    }
+
+    // ---- The run card: what am I looking at (item 2) ----
+    // The identity grammar, three lines: the client's mark beside the
+    // PROJECT name in the reading face with the client's label; then what
+    // this run IS — the session's title if it has one, else the human's
+    // first prompt; then the wire meta in faint mono, sid8 and the clock.
+    // The old card read "claude / agent-a3c2a57e6c9dc078c… / dc9d37ec /
+    // view": a lowercase word, a hash, another hash, and a mode.
     let ctxKey = null;
     function renderCtx() {
       const sid = currentSessionId();
       const client = currentClient();
-      const key = client + '|' + sid;
+      const label = clientLabel(client, CLIENT_WIRE);
+      const name = META.sessionTitle || runPrompt();
+      const started = runStartedAt();
+      const key = client + '|' + sid + '|' + name + '|' + started;
       if (key === ctxKey) return;
       ctxKey = key;
       var t = '';
-      if (client) t += client;
+      if (label) t += label;
       if (META.project) { if (t) t += ' \\u00b7 '; t += META.project; }
       if (sid) { if (t) t += ' \\u00b7 '; t += sid.slice(0, 8); }
       if (META.sessionTitle) t = META.sessionTitle + (t ? ' \\u00b7 ' + t : '');
       document.title = t ? 'CCTrace \\u00b7 ' + t : (IS_READING ? 'CCTrace' : 'CCTrace live');
-      let html = '';
-      if (client) {
-        html += '<span class="ctx-client" title="traced CLI">' + (CLIENT_ICONS[client] || '') +
-          '<span>' + escapeHtml(client) + '</span></span>';
+      // Line 1 — mark, project, client. The trace file's path is the click
+      // target it always was: what you paste into "cctrace view".
+      const rel = META.traceRelPath || META.traceFile || '';
+      const idTip = 'run\\n' +
+        (META.project ? 'project: ' + (META.projectPath || META.project) + '\\n' : '') +
+        (label ? 'client: ' + label + '\\n' : '') +
+        (META.traceFile ? 'trace: ' + META.traceFile + '\\n' : '') +
+        (rel ? '---\\n> click copies ' + rel : '');
+      let html = '<span class="runid-top">' +
+        (client ? '<span class="runid-mark">' + (CLIENT_ICONS[client] || '') + '</span>' : '') +
+        '<span class="runid-name' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(idTip) + '">' +
+        escapeHtml(META.project || 'unknown project') + '</span>' +
+        (label ? '<span class="runid-client">' + escapeHtml(label) + '</span>' : '') +
+        '</span>';
+      // Line 2 — what this run is. A generated title says so; otherwise the
+      // human's own opening words, which are the honest stand-in.
+      if (name) {
+        const nameTip = (META.sessionTitle ? 'session title\\n' : 'first prompt\\n') +
+          name.slice(0, 400) + (name.length > 400 ? '\\u2026' : '') +
+          (META.sessionTitle ? '\\n---\\ngenerated by cctrace title' : '\\n---\\nno generated title yet \\u2014 cctrace title names a session');
+        html += '<span class="runid-line" data-mask="title" title="' + escapeHtml(nameTip) + '">' + escapeHtml(name) + '</span>';
       }
-      if (META.project) {
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        // The trace title: <project>/<trace-file> — names the artifact
-        // behind this page, live log and view rebuild alike. Clicking it
-        // copies the trace's project-relative path (.cctrace/…jsonl) —
-        // the string you paste into "cctrace view" or hand to an agent.
-        const label = META.project + (META.traceFile ? '/' + META.traceFile : '');
-        const rel = META.traceRelPath || META.traceFile || '';
-        const tip = (META.projectPath || META.project) + (META.traceFile ? ' \\u00b7 trace ' + META.traceFile : '') +
-          (rel ? '\\n\\nclick to copy ' + rel : '');
-        html += '<span class="ctx-proj' + (rel ? ' ctx-copy' : '') + '" data-mask="title" title="' + escapeHtml(tip) + '">' + escapeHtml(label) + '</span>';
+      // Line 3 — the wire meta, faint and mono: the id you copy, the clock.
+      let meta = '';
+      if (sid) meta += '<button class="ctx-sess" data-mask="sid" title="session id&#10;' + escapeHtml(sid) + '&#10;---&#10;&gt; click copies it">' + escapeHtml(sid.slice(0, 8)) + '</button>';
+      if (started) {
+        if (meta) meta += '<span class="rc-sep">\\u00b7</span>';
+        meta += '<span class="rc-when" title="' + escapeHtml('started\\n' + fmtDateTime(new Date(started * 1000))) + '">' +
+          escapeHtml(fmtTime(new Date(started * 1000)).slice(0, 5)) + '</span>';
       }
-      if (sid) {
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<button class="ctx-sess" data-mask="sid" title="session ' + escapeHtml(sid) + ' \\u2014 click to copy">' + escapeHtml(sid.slice(0, 8)) + '</button>';
-      }
-      if (META.sessionTitle) {
-        // The session's generated name (cctrace title) — read-only identity,
-        // after the artifact and the id it names.
-        if (html) html += '<span class="ctx-sep">\\u00b7</span>';
-        html += '<span class="ctx-title" title="' + escapeHtml(META.sessionTitle) + ' \\u2014 generated by cctrace title">' + escapeHtml(META.sessionTitle) + '</span>';
-      }
+      if (meta) html += '<span class="runid-meta">' + meta + '</span>';
       ctxEl.innerHTML = html;
       const btn = ctxEl.querySelector('.ctx-sess');
       if (btn) btn.onclick = function() {
@@ -3107,10 +3418,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 a view page holds the WHOLE session \\u2014 it FOLDS instead of truncating: every pair reaches the page, and request bodies a later request re-sent (or past the 32 MB body budget) become stubs that link the keeper; on a served page \\u201cload the original\\u201d fetches the wire bytes back. A 1.5 GB session is a 26 MB page with all of its requests\\n' +
-        '\\u00b7 the rail collapses to an icon strip and the session outline collapses on its own; focus hides both, Esc restores them, and the preferences survive reloads. Nested sub-agents render recursively and the thread picker lists every thread\\n' +
-        '\\u00b7 official agent marks and Lucide interface icons \\u2014 embedded, so snapshots stay self-contained; the dashboard wears the trace view\\u2019s frame with Runs and Storage as destinations and a run search\\n' +
-        '\\u00b7 large sessions open faster \\u2014 hidden views render when shown, Context sub-tabs repaint only the deck (stream switching 144 ms \\u2192 30 ms on the largest trace), the record stream paginates, and the fake live-status verbs are gone\\n' +
+        '\\u00b7 the conversation reads clean: harness system notes fold to one line, long tool results scroll in place, a hover peeks a collapsed tool row, images render inline with a lightbox, memory writes wear a brain\\n' +
+        '\\u00b7 the live status bar says what the session is doing now (in flight / waiting on tools / idle) and how long the prompt cache has left\\n' +
+        '\\u00b7 the Context view composes every folded step: a superseded body is derived from the request that kept the history, so a fold takes bytes, never the reading\\n' +
+        '\\u00b7 the dashboard is one list of runs with one identity grammar (project, client, what it was about) and a storage picture per project, each archivable on its own\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';
@@ -3251,6 +3562,27 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       });
     }
 
+    // ---- Boot + notice (item 5) ----
+    // The loading shell stays up until the pairs are actually in: on a live
+    // or view page that is the init frame, on a snapshot it is the embedded
+    // payload. A socket that never answers must not leave a skeleton
+    // forever, so a lost connection and a 15s floor both take it down.
+    function bootDone() { if (document.body.classList) document.body.classList.add('booted'); }
+    function bootSay(s) {
+      const el = document.getElementById('boot-n');
+      if (el) el.textContent = s;
+    }
+    let noticeTimer = 0;
+    function notice(s) {
+      const el = document.getElementById('notice');
+      if (!el) return;
+      el.textContent = s;
+      el.hidden = false;
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => { el.hidden = true; }, 8000);
+    }
+    setTimeout(bootDone, 15000);
+
     function connect() {
       // Origin-relative, never a baked port: behind container/host port
       // forwards the server's bound port is not the port the browser sees,
@@ -3266,10 +3598,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // already here. Only a live capture reports "offline".
         if (IS_VIEW) { statusEl.textContent = 'view'; statusEl.className = 'status snapshot'; }
         else { statusEl.textContent = 'offline'; statusEl.className = 'status disconnected'; }
+        bootDone(); // a shell with no socket behind it is a lie
         setTimeout(connect, 1000);
       };
       ws.onmessage = (e) => {
         const msg = JSON.parse(e.data);
+        if (msg.type === 'loading') {
+          // Sent right before init: how much is on its way, so the wait is
+          // a number instead of a blank page.
+          const n = msg.pairs || 0;
+          bootSay('receiving ' + n.toLocaleString() + ' request' + (n === 1 ? '' : 's') +
+            (msg.bytes ? ' \\u00b7 ' + fmtBytes(msg.bytes) : ''));
+          return;
+        }
         if (msg.type === 'init') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           pairs.length = 0;
@@ -3277,6 +3618,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairIdx = { n: -1, map: null };
           detailOriginal = null;
           replayOriginal = null;
+          ctxLoaded = null; // its pair object is gone with the list
           if (replayLoad) replayLoad.controller.abort();
           replayLoad = null;
           lastModelPair = null;
@@ -3294,14 +3636,25 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           render();
           route();
           renderPulse();
+          bootDone();
         } else if (msg.type === 'fold') {
           for (const item of msg.requests || []) {
             const p = pairOf(item.id);
             if (!p) continue;
+            // Context memos computed from the REAL body outlive the fold:
+            // exact beats derived, and the stub that replaces it carries
+            // the same sums anyway. A memo that was already derived is
+            // dropped — this frame may name a different keeper, and a
+            // derived body holds a slice of a keeper that just folded.
+            const wasStub = !!(p.request.body && p.request.body._cctrace_stub);
             p.request.body = item.body;
+            if (wasStub) { delete p._ctxc; delete p._ctxBody; }
             if (item.callInfo) p._ci = item.callInfo;
             delete p._sc;
           }
+          // The keeper this frame folded backs other steps' derivations;
+          // drop those slices so they re-derive against what is left.
+          for (const p of pairs) delete p._ctxBody;
           sessionRevision++;
           sessionCache = { key: '', threads: [] };
           fullCache = { key: '', threads: [] };
@@ -3317,11 +3670,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (msg.start && msg.start.id && !openStarts.has(msg.start.id)) {
             openStarts.set(msg.start.id, msg.start);
             rpLiveRefresh();
+            renderPulse(); // the status bar's "in flight" is exactly this
           }
         } else if (msg.type === 'start-end') {
           // The server gave up on an in-flight request (no pair after its
           // TTL) — the one retirement a page cannot see for itself.
-          if (msg.id && openStarts.delete(msg.id)) rpLiveRefresh();
+          if (msg.id && openStarts.delete(msg.id)) { rpLiveRefresh(); renderPulse(); }
         } else if (msg.type === 'pair') {
           if (msg.traceBytes) traceBytes = msg.traceBytes;
           // TAIL, measured BEFORE the pair lands: was the cursor at the live
@@ -3382,6 +3736,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           }
         } else if (msg.type === 'history') {
           // Prior-run pairs of a continued session: merge, resort, re-render.
+          // The conversation just grew UPWARD — say so quietly, or a reader
+          // scrolled into the middle sees the ground move for no reason.
+          const before = pairs.length;
           const known = new Set(pairs.map(p => p.id));
           for (const p of msg.pairs) {
             if (!known.has(p.id)) ingestPair(p);
@@ -3390,6 +3747,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             if (s) liveSids.add(s);
           }
           pairs.sort((a, b) => (a.request.timestamp || 0) - (b.request.timestamp || 0));
+          const grew = pairs.length - before;
+          if (grew > 0) notice('merged ' + grew.toLocaleString() + ' prior request' + (grew === 1 ? '' : 's') + ' from this session');
+          bootDone();
           render();
           refreshDetailNav();
           // Merged history moves the tape's LEFT edge, not the cursor — but
@@ -3406,6 +3766,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           pairIdx = { n: -1, map: null };
           if (detailOriginal && gone.has(detailOriginal.id)) detailOriginal = null;
           if (replayOriginal && gone.has(replayOriginal.id)) replayOriginal = null;
+          if (ctxLoaded && gone.has(ctxLoaded.id)) ctxLoaded = null;
           if (replayLoad && gone.has(replayLoad.id)) { replayLoad.controller.abort(); replayLoad = null; }
           for (let i = pairs.length - 1; i >= 0; i--) if (gone.has(pairs[i].id)) pairs.splice(i, 1);
           for (const id of gone) selIds.delete(id);
@@ -3613,9 +3974,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return p._sizes;
     }
 
+    // Tips read as a title then key: value lines — the panel lays those out
+    // as a two-column grid with mono values (item 13), so two numbers on
+    // two lines can be compared instead of parsed out of a sentence.
     function sizeTitle(s) {
-      return 'request body ' + s.up.toLocaleString() + ' B \\u00b7 response body ' + s.down.toLocaleString() + ' B' +
-        (s.exact ? '' : ' \\u2014 estimated from the decoded trace (captured before 0.17)');
+      return 'transfer\\n' +
+        'request: ' + s.up.toLocaleString() + ' B\\n' +
+        'response: ' + s.down.toLocaleString() + ' B' +
+        (s.exact ? '' : '\\n---\\nestimated from the decoded trace \\u2014 this pair was captured before 0.17 stamped wire byte counts');
     }
 
     function sizeCell(pair) {
@@ -3649,9 +4015,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const lat = latOf(pair);
       const t = lat && lat.isToken ? Math.max(0, Math.min(d, lat.ttftMs)) : 0;
       const wt = t > 0 ? Math.min(w, Math.max(1, w * t / d)) : 0;
-      const tip = fmtSpan(d) + ' of 30s full scale' +
-        (wt ? ' \u00b7 ' + fmtMs(t) + ' to first token' : '') +
-        (d > PEN_FULL_MS ? ' \u2014 pinned at full width' : '');
+      const tip = 'duration\\n' +
+        'total: ' + fmtSpan(d) + '\\n' +
+        (wt ? 'first token: ' + fmtMs(t) + '\\n' : '') +
+        'scale: 30s is full width' + (d > PEN_FULL_MS ? ' \u2014 this row pinned' : '');
       return '<span class="pen" style="--cat:' + cat.color + '" title="' + escapeHtml(tip) + '">' +
         (wt ? '<i class="wait" style="left:0;width:' + wt.toFixed(1) + 'px"></i>' : '') +
         '<i style="left:' + wt.toFixed(1) + 'px;width:' + (w - wt).toFixed(1) + 'px"></i></span>';
@@ -3663,8 +4030,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     function ttftCell(pair) {
       const lat = latOf(pair);
       if (!lat || !lat.isToken) return '<span class="ttft"></span>';
-      return '<span class="ttft" title="' + escapeHtml('time to first streamed token' +
-        (lat.pct != null ? ' \\u2014 ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
+      return '<span class="ttft" title="' + escapeHtml('time to first streamed token\\n' +
+        'ttft: ' + fmtMs(lat.ttftMs) +
+        (lat.pct != null ? '\\nshare: ' + lat.pct + '% of ' + fmtMs(lat.totalMs) + ' wall-clock' : '')) + '">' +
         escapeHtml(fmtMs(lat.ttftMs)) + '</span>';
     }
 
@@ -3682,8 +4050,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<a class="pair-header" href="#/p/' + encodeURIComponent(pair.id) + '" title="' + escapeHtml(request.url) + '">' +
             penCell(pair, cat) +
             '<span class="method">' + escapeHtml(request.method) + '</span>' +
-            '<span class="status-code ' + getStatusClass(response && response.status) + '" title="HTTP ' + escapeHtml(status) + '">' + escapeHtml(status) + '</span>' +
-            '<span class="cat-badge" style="--cat:' + cat.color + '" title="' + cat.label + '">' + cat.label + '</span>' +
+            '<span class="status-code ' + getStatusClass(response && response.status) + '">' + escapeHtml(status) + '</span>' +
+            '<span class="cat-badge" style="--cat:' + cat.color + '">' + cat.label + '</span>' +
             (pair.prior ? '<span class="prior-badge" title="from ' + escapeHtml(pair.prior) + '">prev</span>' : '') +
             '<span class="url">' + escapeHtml(shortUrl(request.url)) + '</span>' +
             '<span class="sum">' + chipsHtml(pair) + '</span>' +
@@ -3965,6 +4333,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         return;
       }
       if (e.key === '/') { (view === 'session' && sfindEl ? sfindEl : filterEl).focus(); e.preventDefault(); return; }
+      // A FOCUSED tool row is its own list (item 12): j/k or the arrows walk
+      // the tool rows of the pane you are in; Enter toggles the one you land
+      // on (the browser's own summary behavior, let through above). Nothing
+      // focused means the pane keys below still mean what they always did.
+      if (/^(j|k|ArrowDown|ArrowUp)$/.test(e.key) && e.target && e.target.matches &&
+          e.target.matches('summary[data-peek]')) {
+        e.preventDefault();
+        const pane = (e.target.closest && e.target.closest('#convo, #detail, #threads')) || document;
+        const rows = Array.prototype.slice.call(pane.querySelectorAll('summary[data-peek]'));
+        const next = rows[rows.indexOf(e.target) + (e.key === 'j' || e.key === 'ArrowDown' ? 1 : -1)];
+        if (next && next.focus) {
+          next.focus();
+          if (next.scrollIntoView) next.scrollIntoView({ block: 'nearest' });
+        }
+        return;
+      }
       if (view === 'context') {
         const ctxThread = () => getThreads().find(x => x.key === sessionSelKey);
         if (e.key === 'Escape') {
@@ -4269,23 +4653,28 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // extraHtml is raw (not escaped) — only trusted, renderer-built markup
     // like the subagent thread link goes there, never wire-derived strings.
     function fold(title, hint, body, cls, open, extraHtml, icon) {
+      // A conversation fold is PEEKABLE (item 12): hovering it opens the
+      // popover instead of a tooltip — the peek says everything the hint
+      // tip said and shows the first lines of the result besides. Two hover
+      // panels over one row is one too many, so the tip is not emitted here.
+      const peek = /fold-(tool|agent|skill|mcp|sys)/.test(String(cls || '')) ? ' data-peek' : '';
       // A hint long enough to ellipsize gets the full text in the hover,
       // led by the fold's own name — for a tool_use that reads "Edit" then
       // the full file list the row truncated, then metrics/hints. The
       // tooltip answers "what does the rest of this command/preview say"
       // before the user has to open the fold.
-      const hintTip = hint && hint.length > 60
+      const hintTip = !peek && hint && hint.length > 60
         ? ' data-tip="' + escapeHtml(String(title) + '\\n' +
             String(hint).slice(0, 600) + (hint.length > 600 ? '\\u2026' : '') +
             '\\n---\\n> click to expand') + '"'
         : '';
       return '<details class="fold ' + (cls || '') + '"' + (open ? ' open' : '') + '>' +
-        '<summary' + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
+        '<summary' + peek + hintTip + '>' + (icon ? '<span class="fold-ico">' + icon + '</span>' : '') +
         '<span class="fold-title">' + escapeHtml(title) + '</span>' +
         (hint ? '<span class="fold-hint">' + escapeHtml(hint) + '</span>' : '') +
         (extraHtml || '') +
         (hint ? '' : '<span class="fold-hint"></span>') +
-        '<button class="fold-btn fold-copy" onclick="copyFoldBody(event, this)" title="Copy contents">copy</button>' +
+        '<button class="fold-btn fold-copy" onclick="copyFoldBody(event, this)">copy</button>' +
         '</summary><div class="fold-body">' + body + '</div></details>';
     }
 
@@ -4322,7 +4711,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return marked.parse(t);
     }
 
-    // Long texts render clamped with a "show all" expander; short ones inline.
+    // A long text READS IN PLACE (item 11): the block keeps a bounded height
+    // and scrolls inside itself, with its size stated in a thin header and
+    // one "expand" in the corner that lifts the bound. The old pattern —
+    // clamp to 380px, then a "show all · N chars" click — made every long
+    // tool result a two-step read, and a clamped block hid how much was
+    // left behind a gradient. Scroll CHAINING stays default: the page keeps
+    // scrolling once the inner box reaches its end, which is the wheel-trap
+    // the clamp was invented to avoid.
     // md renders assistant reply text as markdown (marked.js GFM).
     function textBlock(text, cls, md, copy) {
       const t = String(text == null ? '' : text);
@@ -4330,46 +4726,79 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const inner = '<div class="' + mcls + '">' + (md ? renderMd(t) : escapeHtml(t)) + '</div>';
       // copy: a hover copy button for standalone user/assistant text (thinking
       // and tool_result text live inside folds that already carry copy). The
-      // button copies the block's full text even when it renders clamped.
+      // button copies the block's full text, bounded or expanded.
       const box = copy && t
         ? '<div class="pre-wrap"><button class="copy-btn" onclick="copyBlock(this)" title="Copy">' + COPY_SVG + '</button>' + inner + '</div>'
         : inner;
       if (t.length <= 2000) return box;
-      return '<div class="msg-clamp clamped">' + box +
-        '<button class="msg-more" onclick="toggleClamp(this)">show all \\u00b7 ' + fmtCompact(t.length) + ' chars</button></div>';
+      const lines = t.split('\\n').length;
+      return '<div class="msg-box">' +
+        '<div class="msg-box-h"><span class="msg-box-n">' + fmtCompact(t.length) + ' chars \\u00b7 ' +
+          fmtCompact(lines) + ' line' + (lines === 1 ? '' : 's') + '</span>' +
+        '<button class="msg-box-x" onclick="toggleBox(this)"' +
+          ' title="expand&#10;Drops this block\\u2019s height limit so it reads with the page instead of inside its own scroll.">expand</button></div>' +
+        '<div class="msg-box-s">' + box + '</div></div>';
     }
-    window.toggleClamp = function(btn) {
-      const clamped = btn.parentElement.classList.toggle('clamped');
-      if (clamped) {
-        btn.textContent = btn.dataset.label;
-        btn.parentElement.scrollIntoView({ block: 'nearest' });
-      } else {
-        btn.dataset.label = btn.textContent;
-        btn.textContent = 'collapse';
-      }
+    window.toggleBox = function(btn) {
+      const box = btn.closest ? btn.closest('.msg-box') : btn.parentElement.parentElement;
+      if (!box) return;
+      const open = box.classList.toggle('open');
+      btn.textContent = open ? 'collapse' : 'expand';
+      if (!open && box.scrollIntoView) box.scrollIntoView({ block: 'nearest' });
     };
 
     // The LAST turn is what the user came back to read — the final answer
-    // renders in full, no "show all" click. Earlier turns keep the clamp
-    // (they're context, and unclamping all of them makes the page a scroll
-    // marathon). Runs after a convo render; a live patch that rebuilds the
-    // tail node re-applies it via the clamp-state carry in applyConvoParts.
+    // renders in full, no click. Earlier turns keep the bounded box (they're
+    // context, and expanding all of them makes the page a scroll marathon).
+    // Runs after a convo render; a live patch that rebuilds the tail node
+    // re-applies it via the expand-state carry in applyConvoParts.
     function unclampLastTurn() {
       if (!convoEl.querySelectorAll) return; // headless test stub
       const turns = convoEl.querySelectorAll('.turn');
       if (!turns.length) return;
       const last = turns[turns.length - 1];
-      for (const mc of last.querySelectorAll('.msg-clamp.clamped')) {
-        const btn = mc.querySelector(':scope > .msg-more');
-        if (btn) window.toggleClamp(btn);
+      for (const mb of last.querySelectorAll('.msg-box')) {
+        if (mb.classList.contains('open')) continue;
+        const btn = mb.querySelector(':scope > .msg-box-h > .msg-box-x');
+        if (btn) window.toggleBox(btn);
       }
+    }
+
+    // ---- Harness notes fold to one line (item 10) ----
+    // Claude Code stacks the same nudges onto almost every step — as
+    // <system-reminder> blocks appended to a tool result or a user turn,
+    // and as bare role:"system" wire messages. Rendered in full they ARE
+    // the conversation on a working session. So: the notes collapse to one
+    // summarized line with a chevron, and the human's own text in the same
+    // block renders exactly as before — a prompt is never folded.
+    function harnessSplit(text) {
+      const t = String(text == null ? '' : text);
+      if (t.indexOf('<system-reminder>') === -1) return null;
+      const notes = [];
+      const human = t.replace(/<system-reminder>([\\s\\S]*?)<\\/system-reminder>/g, function(_, inner) {
+        notes.push(String(inner).trim());
+        return '';
+      }).trim();
+      if (!notes.length) return null;
+      return { notes: notes.join('\\n\\n'), human: human };
+    }
+    // The folded line itself: SYSTEM + what the notes say. The body holds
+    // every byte, one click away (and inside item 11's scroll box).
+    function sysFold(text) {
+      const line = harnessNoteLine(text) || fmtCompact(String(text || '').length) + ' chars';
+      return fold('SYSTEM', line, textBlock(text, 'sys-note'), 'fold-sys');
+    }
+    function textOrHarness(text, md, copy) {
+      const hs = harnessSplit(text);
+      if (!hs) return textBlock(text, '', md, copy);
+      return (hs.human ? textBlock(hs.human, '', md, copy) : '') + sysFold(hs.notes);
     }
 
     function renderBlock(b, md) {
       if (b == null) return '';
-      if (typeof b === 'string') return textBlock(b, '', md, true);
+      if (typeof b === 'string') return textOrHarness(b, md, true);
       const type = b.type;
-      if (type === 'text') return textBlock(b.text, '', md, true);
+      if (type === 'text') return textOrHarness(b.text, md, true);
       if (type === 'thinking') {
         const t = b.thinking || '';
         if (!t) return '<div class="block-note">thinking (no visible content)</div>';
@@ -4382,23 +4811,59 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (type === 'tool_result') {
         let body = '';
-        if (typeof b.content === 'string') body = textBlock(b.content);
-        else if (Array.isArray(b.content)) { for (const c of b.content) body += renderBlock(c); }
+        if (typeof b.content === 'string') body = textOrHarness(b.content, false, false);
+        else if (Array.isArray(b.content)) body = renderBlockRun(b.content, (c) => renderBlock(c));
         else body = preBlock(formatJson(b.content));
         const len = typeof b.content === 'string' ? fmtCompact(b.content.length) + ' chars \\u00b7 ' : '';
         return fold('tool_result' + (b.is_error ? ' \\u00b7 error' : ''), len + snippet(b.content, 90), body, b.is_error ? 'errline' : '');
       }
-      if (type === 'image') return renderImageBlock(b);
+      if (type === 'image') return renderGallery([b]);
       return fold(String(type || 'block'), '', preBlock(formatJson(b)));
     }
 
-    // Image blocks render as REAL thumbnails when the bytes are already in
-    // the trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
-    // image_url carried) — click toggles full size. Wire-controlled fields
-    // are validated, not trusted: media_type against an image/* shape, the
-    // base64 payload against its alphabet. A REMOTE url stays a note with
-    // the address — the viewer must never auto-fetch a wire-named resource
-    // (a captured conversation could point the reader's browser anywhere).
+    // ---- Images are SHOWN (item 15) ----
+    // A screenshot the agent looked at is evidence; hiding it behind a
+    // click-to-toggle made the reader guess. Blocks render in order, and a
+    // RUN of images collapses into one gallery so a Read of five
+    // screenshots is a grid, not five stacked columns.
+    function renderBlockRun(list, one) {
+      const arr = list || [];
+      let out = '';
+      let i = 0;
+      while (i < arr.length) {
+        if (arr[i] && arr[i].type === 'image') {
+          const imgs = [];
+          while (i < arr.length && arr[i] && arr[i].type === 'image') imgs.push(arr[i++]);
+          out += renderGallery(imgs);
+          continue;
+        }
+        out += one(arr[i]);
+        i++;
+      }
+      return out;
+    }
+    // content-visibility on the wrapper is not decoration: a hundred
+    // decoded screenshots cost gigabytes of bitmap, so an offscreen gallery
+    // is never rasterized, and every <img> is lazy besides.
+    function renderGallery(imgs) {
+      let cells = '';
+      let n = 0;
+      for (const b of imgs) {
+        const one = renderImageBlock(b);
+        if (one.indexOf('msg-img') !== -1) n++;
+        cells += one;
+      }
+      return '<div class="msg-imgwrap' + (n > 1 ? ' gal' : '') + '">' + cells + '</div>';
+    }
+
+    // Image blocks render as REAL images when the bytes are already in the
+    // trace (Anthropic base64 source, or a data: URL an OpenAI-dialect
+    // image_url carried) — shown at reading size, click opens the lightbox.
+    // Wire-controlled fields are validated, not trusted: media_type against
+    // an image/* shape, the base64 payload against its alphabet. A REMOTE
+    // url stays a note with the address — the viewer must never auto-fetch a
+    // wire-named resource (a captured conversation could point the reader's
+    // browser anywhere).
     function renderImageBlock(b) {
       const src = b.source || {};
       const mt = typeof src.media_type === 'string' && /^image\\/[\\w.+-]+$/.test(src.media_type) ? src.media_type : '';
@@ -4411,9 +4876,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       }
       if (dataUrl) {
         const kb = Math.round((dataUrl.length * 3) / 4 / 1024);
-        return '<div class="msg-imgwrap"><img class="msg-img" loading="lazy" src="' + escapeHtml(dataUrl) + '"' +
-          ' onclick="this.classList.toggle(\\'full\\')"' +
-          ' title="' + escapeHtml((mt || 'image') + (kb ? ' \\u00b7 ~' + kb + ' KB stored' : '') + '\\n> click toggles full size') + '"></div>';
+        return '<img class="msg-img" loading="lazy" decoding="async" src="' + escapeHtml(dataUrl) + '"' +
+          ' alt="' + escapeHtml(mt || 'image') + '"' +
+          ' title="' + escapeHtml((mt || 'image') + (kb ? '\\nstored: ~' + kb + ' KB' : '') + '\\n---\\n> click opens it full size') + '">';
       }
       if (typeof src.url === 'string' && src.url) {
         return '<div class="block-note">[image \\u00b7 remote \\u00b7 ' + escapeHtml(src.url.slice(0, 120)) + ' \\u2014 not fetched]</div>';
@@ -4423,8 +4888,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     function renderTurn(role, content, tag) {
       const blocks = typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content : []);
-      let inner = '';
-      for (const b of blocks) inner += renderBlock(b, role === 'assistant');
+      const inner = renderBlockRun(blocks, (b) => renderBlock(b, role === 'assistant'));
       return '<div class="turn turn-' + escapeHtml(String(role)) + '">' +
         '<div class="turn-role">' + escapeHtml(String(role)) +
         (tag ? '<span class="turn-tag">' + escapeHtml(tag) + '</span>' : '') +
@@ -4575,7 +5039,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<summary><span class="fold-title">' + escapeHtml(title) + '</span>' +
         '<span class="fold-hint">' + keys.length + '</span>' +
         '<button class="fold-btn" onclick="copyFold(event, this)" title="Copy headers">copy</button>' +
-        '<button class="fold-btn" onclick="toggleHdrRaw(event, this)" title="Raw view">raw</button>' +
+        '<button class="fold-btn" onclick="toggleHdrRaw(event, this)" title="raw headers&#10;The block as text, unparsed \\u2014 the form you paste into curl.">raw</button>' +
         '</summary><div class="fold-body">' +
         '<div class="hdr-table">' + hdrRows(keys.map(k => [k, headers[k]])) + '</div>' +
         '<pre class="hdr-pre" data-copy>' + escapeHtml(hdrRawText(headers)) + '</pre>' +
@@ -5011,7 +5475,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const tipEl = document.createElement('div');
       tipEl.className = 'tip';
       document.body.appendChild(tipEl);
-      const SHOW_DELAY = 120;
+      // 400ms (item 13): a hover panel that fires at 120ms flashes past
+      // every chip on the way somewhere. Long enough to mean "I stopped
+      // here", short enough that a deliberate hover never waits.
+      const SHOW_DELAY = 400;
       let tipFor = null, showTimer = 0;
       const hideTip = () => { clearTimeout(showTimer); tipFor = null; tipEl.classList.remove('show'); };
       // Live re-renders replace sidebar/convo DOM under the mouse; a tip
@@ -5019,6 +5486,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       tipDetachedGuard = () => {
         if (tipFor && document.body.contains && !document.body.contains(tipFor)) hideTip();
       };
+      // A tip has STRUCTURE (item 13): the first line is the title, a
+      // "key: value" line becomes a two-column row with the value in mono,
+      // and prose stays prose. The key cap is what keeps a sentence with a
+      // colon in it from being torn into a fake column.
+      const TIP_KV = /^([A-Za-z][\\w .\\/+()#%-]{0,26}):[ \\t]+(\\S.*)$/;
       const showTipFor = (t) => {
         const lines = String(t.dataset.tip || '').split('\\n');
         let h = '';
@@ -5026,7 +5498,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (!lines[i].trim()) { h += '<div class="tip-gap"></div>'; continue; }
           if (lines[i].trim() === '---') { h += '<div class="tip-sep"></div>'; continue; }
           if (lines[i].lastIndexOf('> ', 0) === 0) { h += '<div class="tip-hint">' + escapeHtml(lines[i].slice(2)) + '</div>'; continue; }
-          h += '<div class="' + (i === 0 ? 'tip-head' : 'tip-line') + '">' + escapeHtml(lines[i]) + '</div>';
+          if (i === 0) { h += '<div class="tip-head">' + escapeHtml(lines[i]) + '</div>'; continue; }
+          const kv = TIP_KV.exec(lines[i]);
+          if (kv) {
+            h += '<div class="tip-kv"><span class="tip-k">' + escapeHtml(kv[1]) + '</span>' +
+              '<span class="tip-v">' + escapeHtml(kv[2]) + '</span></div>';
+            continue;
+          }
+          h += '<div class="tip-line">' + escapeHtml(lines[i]) + '</div>';
         }
         tipEl.innerHTML = h;
         tipEl.classList.add('show');
@@ -5075,6 +5554,128 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       document.addEventListener('click', hideTip, true);
     }
 
+    // ---- The PEEK (item 12): look at a tool row without opening it ----
+    // Hovering a collapsed tool row for 250ms opens a popover anchored to
+    // the row: the tool, what it was given, and the first lines of what
+    // came back. FIXED position, so nothing under the cursor moves — an
+    // inline auto-expand shifts the layout out from under the pointer, and
+    // that fight is exactly what made the two-step read worse. A click
+    // still expands the fold inline, and an OPEN row never peeks: it is
+    // already saying it.
+    const PEEK_DELAY = 250, PEEK_LINES = 12, PEEK_COLS = 160;
+    if (document.createElement && document.body) {
+      const pk = document.createElement('div');
+      pk.className = 'peek';
+      document.body.appendChild(pk);
+      let pkFor = null, pkTimer = 0;
+      const hidePeek = () => { clearTimeout(pkTimer); pkFor = null; pk.classList.remove('show'); };
+      const peekBody = (det) => {
+        const res = det.querySelector('.tool-res .msg-text, .tool-res pre');
+        const el = res || det.querySelector('.fold-body .msg-text, .fold-body pre');
+        if (!el) return null;
+        const lines = String(el.textContent || '').replace(/^\\s+/, '').split('\\n');
+        return {
+          label: res ? 'result' : det.classList.contains('fold-sys') ? 'note' : 'input',
+          text: lines.slice(0, PEEK_LINES).map(l => l.length > PEEK_COLS ? l.slice(0, PEEK_COLS - 1) + '\\u2026' : l).join('\\n'),
+          more: Math.max(0, lines.length - PEEK_LINES),
+        };
+      };
+      const showPeek = (sm) => {
+        const det = sm.parentElement;
+        if (!det || det.open || !det.querySelector) return;
+        const title = sm.querySelector('.fold-title');
+        const hint = sm.querySelector('.fold-hint');
+        const b = peekBody(det);
+        let h = '<div class="peek-h">' + escapeHtml((title && title.textContent) || 'tool') + '</div>';
+        const hv = hint && hint.textContent ? String(hint.textContent) : '';
+        if (hv) h += '<div class="peek-in">' + escapeHtml(hv.length > 400 ? hv.slice(0, 399) + '\\u2026' : hv) + '</div>';
+        if (b && b.text.trim()) {
+          h += '<div class="peek-l">' + escapeHtml(b.label) + '</div>' +
+            '<pre class="peek-b">' + escapeHtml(b.text) + '</pre>';
+          if (b.more) h += '<div class="peek-more">+' + b.more.toLocaleString() + ' more lines \\u2014 click the row to open it</div>';
+        }
+        pk.innerHTML = h;
+        pk.classList.add('show');
+        pk.style.left = '0px';
+        pk.style.top = '0px';
+        const r = sm.getBoundingClientRect();
+        const w = pk.offsetWidth, ht = pk.offsetHeight;
+        let y = r.bottom + 6;
+        if (y + ht > window.innerHeight - 8) y = Math.max(8, r.top - ht - 6);
+        pk.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 12)) + 'px';
+        pk.style.top = y + 'px';
+      };
+      document.addEventListener('mouseover', (e) => {
+        const sm = e.target && e.target.closest ? e.target.closest('summary[data-peek]') : null;
+        if (sm === pkFor) return;
+        clearTimeout(pkTimer);
+        pk.classList.remove('show');
+        pkFor = sm;
+        if (!sm || (sm.parentElement && sm.parentElement.open)) { pkFor = null; return; }
+        pkTimer = setTimeout(() => { if (pkFor === sm) showPeek(sm); }, PEEK_DELAY);
+      });
+      document.addEventListener('mouseout', (e) => {
+        if (!pkFor) return;
+        const to = e.relatedTarget;
+        if (to && to.closest && to.closest('summary[data-peek]') === pkFor) return;
+        hidePeek();
+      });
+      document.addEventListener('click', hidePeek, true);
+      document.addEventListener('scroll', hidePeek, true);
+    }
+
+    // ---- The LIGHTBOX (item 15): the image, fit to the viewport ----
+    // Clicking a rendered image opens it over the page; Esc or a click
+    // outside closes it; the arrows walk the images of the same block, so a
+    // Read that returned five screenshots reads as five, not as one and a
+    // hunt. The key handler binds in the CAPTURE phase so Esc closes the
+    // overlay before the page's own Esc chain gets it.
+    if (document.createElement && document.body) {
+      const lbx = document.createElement('div');
+      lbx.className = 'lbx';
+      lbx.innerHTML = '<img alt=""><div class="lbx-n"></div>';
+      document.body.appendChild(lbx);
+      const lbxImg = lbx.querySelector('img');
+      const lbxN = lbx.querySelector('.lbx-n');
+      let lbxGroup = [], lbxAt = 0;
+      const lbxPaint = () => {
+        const el = lbxGroup[lbxAt];
+        if (!el) return;
+        lbxImg.src = el.getAttribute('src');
+        lbxImg.alt = el.getAttribute('alt') || '';
+        lbxN.textContent = lbxGroup.length > 1 ? (lbxAt + 1) + ' / ' + lbxGroup.length + '  \\u2190 \\u2192  esc' : 'esc';
+      };
+      const lbxOpen = (img) => {
+        const wrap = img.closest ? img.closest('.msg-imgwrap') : null;
+        lbxGroup = wrap && wrap.querySelectorAll
+          ? Array.prototype.slice.call(wrap.querySelectorAll('img.msg-img'))
+          : [img];
+        lbxAt = Math.max(0, lbxGroup.indexOf(img));
+        lbxPaint();
+        lbx.classList.add('show');
+      };
+      const lbxClose = () => { lbx.classList.remove('show'); lbxImg.removeAttribute('src'); lbxGroup = []; };
+      const lbxStep = (d) => {
+        if (lbxGroup.length < 2) return;
+        lbxAt = (lbxAt + d + lbxGroup.length) % lbxGroup.length;
+        lbxPaint();
+      };
+      document.addEventListener('click', (e) => {
+        const img = e.target && e.target.closest ? e.target.closest('img.msg-img') : null;
+        if (img) { e.preventDefault(); lbxOpen(img); return; }
+        if (lbx.classList.contains('show') && e.target !== lbxImg) lbxClose();
+      });
+      document.addEventListener('keydown', (e) => {
+        if (!lbx.classList.contains('show')) return;
+        if (e.key === 'Escape') { lbxClose(); e.stopPropagation(); e.preventDefault(); return; }
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+          lbxStep(e.key === 'ArrowRight' ? 1 : -1);
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }, true);
+    }
+
     // Quiet stroke glyphs for the sessions layer (currentColor, no fills):
     // a prompt-in-a-frame for the session, a branch for a model run.
     const ICON_SESSION = UI_ICONS.messagesSquare;
@@ -5085,6 +5686,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // plug for MCP; subagent spawns reuse the branch (they ARE a thread).
     const ICON_SKILL = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M9 1.5L3.5 9H7l-1 5.5L11.5 7H8z"/></svg>';
     const ICON_MCP = '<svg class="sico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 01-9 0zM8 12v2.5"/></svg>';
+    // Lucide "brain" — Claude Code's persistent memory (item 14). Inlined
+    const ICON_MEMORY = UI_ICONS.brain;
+    // What a memory operation says, wherever it is named: "Memory · write ·
+    // fold-bytes-not-analysis.md" — the store, the verb, the note.
+    function memoryLabel(mem) {
+      return 'Memory \\u00b7 ' + mem.op + ' \\u00b7 ' + mem.file;
+    }
 
     // URL form of a thread key: '<sid8>|<grouping>'. Internal state keeps
     // full keys; only what lands in the location hash is shortened.
@@ -5159,6 +5767,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '\\n\\nclick to jump to where this run starts';
       return '<a class="tepoch" href="' + threadHash(t.key) + '" data-key="' + escapeHtml(t.key) + '" data-turn="' + e.from + '"' +
         ' data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="tctx tctx-none"></span>' +
         '<span class="rgut"><span class="enode"></span></span>' +
         '<span class="tepoch-ord">T' + i + '</span>' +
         '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + '</span>' +
@@ -5195,9 +5804,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const n = b.name || '?';
         const i = b.input || {};
         let name = n, args = '', ncls = 'tname';
+        const mem = memoryOp(n, i);
+        if (mem) {
+          // The agent's persistent memory reads as itself on the rail too.
+          ncls = 'tname tname-mem';
+          name = 'Memory';
+          args = mem.op + ' \\u00b7 ' + mem.file;
+        }
         // Spawn shape only (subagent_type / prompt): task-tracking
         // TaskCreate {subject} falls through to the generic preview.
-        if (SPAWN_TOOLS[n] && (i.subagent_type || typeof i.prompt === 'string')) {
+        else if (SPAWN_TOOLS[n] && (i.subagent_type || typeof i.prompt === 'string')) {
           // The real tool name (Task/Agent) + who was spawned for what —
           // a bare "Task" said nothing when the subagent thread wasn't
           // linked (no branch row). Purple name: spawns are notable.
@@ -5297,10 +5913,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           'turn ' + ord + ' \\u00b7 superseded exchange\\n' + fmtDateTime(new Date(p.request.timestamp * 1000)) +
           '\\n\\nthis exchange left the conversation history \\u2014 /rewind, an edited message, or an ephemeral injected exchange (recap, notices). The wire pair is kept.\\nclick to open the wire pair';
         return '<a class="tturn tturn-sup" href="#/p/' + encodeURIComponent(pid) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cdot"></span></span>' +
           '<span class="tturn-ord">' + ord + '</span>' +
           '<span class="tturn-text">' + (prompt ? escapeHtml(prompt.slice(0, 120)) : 'superseded exchange') + '</span>' +
-          '<span class="treq-mark">superseded</span>' + trajNone + '</a>';
+          '<span class="treq-mark">superseded</span></a>';
       };
       // The compact boundary: the request body sent to the API changed
       // completely at this point — everything above lives on only in the
@@ -5337,6 +5954,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ? 'the turns above this line left the conversation history; their wire pairs are kept\\nclick to open the first post-rewind wire request'
             : 'everything above this line survives only in the summary/folded form\\nclick to open the first post-compact wire request');
         return '<a class="tcompact" href="#/p/' + encodeURIComponent(c.pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cnode"></span></span>' +
           '<span class="tcompact-label">' + (rw ? 'rewound' : 'compacted') + '</span>' +
           '<span class="tcompact-note">' + c.fromTurns + ' \\u2192 ' + c.toTurns + ' turns</span></a>';
@@ -5368,28 +5986,43 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '\\nno reply from these requests entered the conversation \\u2014 retries at the same history position' +
           '\\nclick to open the first failed wire pair';
         return '<a class="tturn terr-run" href="#/p/' + encodeURIComponent(list[0].pairId) + '" data-tip="' + escapeHtml(tip) + '">' +
+          trajNone +
           '<span class="rgut"><span class="cdot cdot-err"></span></span>' +
           '<span class="tturn-ord">wire</span>' +
           '<span class="tturn-text">' + escapeHtml(label) + '</span>' +
-          '<span class="treq-mark err">err</span>' + trajNone + '</a>';
+          '<span class="treq-mark err">err</span></a>';
       };
       // A subagent spawned by this turn attaches HERE, as a branch off the
-      // rail — label + outcome inline, the thread one click away (its
-      // detached card disappears while this thread is the selected one).
-      const branchRows = (turn) => {
-        let out = '';
+      // rail — an arm out of the spine into an INDENTED sub-column with its
+      // own line, the way a git graph draws a branch. Label + outcome
+      // inline, the thread one click away (its detached card disappears
+      // while this thread is the selected one). Past three spawns on one
+      // turn the sub-column collapses behind a count: a fan-out of twenty
+      // must not bury the turn that ordered it.
+      const BRANCH_SHOWN = 3;
+      const branchRows = (turn, vi) => {
+        const rows = [];
         for (const b of turn.blocks || []) {
           if (!b || b.type !== 'tool_use' || !SPAWN_TOOLS[b.name] || !b.id) continue;
           const m = agentThreadMeta[b.id];
           if (!m) continue;
-          out += '<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
+          rows.push('<a class="tbranch" href="' + threadHash(m.t.key) + '"' +
             ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n---\\n> click to open this subagent thread') + '">' +
             '<span class="rgut rgut-br"></span>' +
             '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
             (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + '</span>' : '') +
-            '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>';
+            '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>');
         }
-        return out;
+        if (!rows.length) return '';
+        const key = t.key + '#b' + vi;
+        const open = rows.length <= BRANCH_SHOWN || !!branchOpen[key];
+        const shown = open ? rows : rows.slice(0, BRANCH_SHOWN);
+        const more = open ? '' :
+          '<button class="tbranch tbranch-more" data-branch="' + escapeHtml(key) + '"' +
+          ' data-tip="' + escapeHtml((rows.length - BRANCH_SHOWN) + ' more subagents this turn spawned\\n---\\n> click to list them') + '">' +
+          '<span class="rgut rgut-br"></span>' +
+          '<span class="tbranch-label">\\u22ef +' + (rows.length - BRANCH_SHOWN) + ' more</span></button>';
+        return '<div class="tbranches">' + shown.join('') + more + '</div>';
       };
       // Working-loop grouping (loopTurns): the outline's TURN is the human
       // unit — user request, agent work nested under it, final response —
@@ -5398,9 +6031,22 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const linfo = {};
       const loopSize = {};  // member rows a folded head hides
       const loopSteps = {}; // steps (wire requests) per loop, for "of N"
+      // Harness notes fold to one line in the conversation (item 10) and are
+      // GONE from the rail: a row per "Only you see that command's output"
+      // buried the agent's actual work. The step they followed wears a tiny
+      // dot instead, so the rail never hides that they happened.
+      const isSpoken = (v) => { const r = vis[v] && vis[v].role; return r === 'user' || r === 'assistant'; };
+      const sysAfter = {};
+      {
+        let last = -1;
+        for (let i = 0; i < vis.length; i++) {
+          if (isSpoken(i)) { last = i; continue; }
+          if (last >= 0) sysAfter[last] = (sysAfter[last] || 0) + 1;
+        }
+      }
       for (let li = 0; li < loops.length; li++) {
         const L = loops[li];
-        loopSize[li] = L.members.length;
+        loopSize[li] = L.members.filter(isSpoken).length;
         loopSteps[li] = L.stepCount || 0;
         if (L.head != null) linfo[L.head] = { ord: li, kind: 'head', injected: L.headInjected || '' };
         for (let mi = 0; mi < L.members.length; mi++) {
@@ -5483,6 +6129,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (supAt[vi]) for (const pid of supAt[vi]) html += supRow(pid, vi);
           if (errAt[vi]) html += errRow(errAt[vi]);
           const turn = vis[vi];
+          if (!isSpoken(vi)) continue; // harness notes: the dot below says so
           const li = linfo[vi] || { ord: null, kind: 'mid' };
           // A folded loop (❯ gutter click) hides its member rows — the
           // head line stays with a "⋯ N" count; truth markers (compact/
@@ -5507,6 +6154,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           let dot = '';
           let tip = '';
           let errMark = '';
+          let rowFailed = false; // a failed request: red node, dashed spine
           let traj = trajNone;   // the trajectory gutter; blank on non-wire rows
           if (turn.role === 'assistant') {
             let raw = '';
@@ -5529,6 +6177,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             // (tokens, cost, ttft, duration, folded) lives in the hover —
             // inline numbers were fighting the text for the same pixels.
             const failed = p && (!p.response || p.response.status >= 400);
+            rowFailed = !!failed;
             const cc = u && p ? summarizeCache(u, p.request.body, isNewestModelPair(p) ? pairEndMs(p) : null) : null;
             dot = '<span class="cdot' + (failed ? ' cdot-err' : cc ? (cc.c === 'ok' ? ' cdot-hit' : ' cdot-warn') : '') + '"></span>';
             // Step outcome: tool calls this step made whose folded results
@@ -5546,21 +6195,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             tbits.push('turn ' + ord +
               (li.kind === 'final'
                 ? ' \\u00b7 final response' + (li.step > 1 ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : '')
-                : li.step ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : ' \\u00b7 agent work') +
-              (u && u.model ? ' \\u00b7 ' + shortModel(u.model) : ''));
-            if (p) tbits.push(fmtDateTime(new Date(p.request.timestamp * 1000)));
+                : li.step ? ' \\u00b7 step ' + li.step + ' of ' + (loopSteps[li.ord] || li.step) : ' \\u00b7 agent work'));
+            if (u && u.model) tbits.push('model: ' + shortModel(u.model));
+            if (p) tbits.push('at: ' + fmtDateTime(new Date(p.request.timestamp * 1000)));
             if (u) {
-              let l = 'in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output);
+              tbits.push('tokens: in ' + fmtCompact(u.input) + ' \\u00b7 out ' + fmtCompact(u.output));
               const c = pairCost(u);
-              if (c && c.total > 0) l += ' \\u00b7 ' + fmtCost(c.total);
-              tbits.push(l);
+              if (c && c.total > 0) tbits.push('cost: ' + fmtCost(c.total));
             }
             if (p) {
-              let l = formatDuration(p.duration);
-              if (p.response && typeof p.response.firstTokenMs === 'number') l = 'ttft ' + fmtMs(p.response.firstTokenMs) + ' \\u00b7 ' + l + ' total';
-              tbits.push(l);
+              if (p.response && typeof p.response.firstTokenMs === 'number') tbits.push('ttft: ' + fmtMs(p.response.firstTokenMs));
+              tbits.push('duration: ' + formatDuration(p.duration));
             }
-            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push(tj); }
+            if (u && !failed) { const tj = trajLine(u); if (tj) tbits.push('context: ' + tj.replace(/^context /, '')); }
             // The final's stop is a wire fact, not an inference: end_turn is
             // a finished response; tool_use here means the loop was cut
             // mid-work and this "final" is just the last reply captured.
@@ -5629,14 +6276,21 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                   : 'collapses this turn\\u2019s agent work under the prompt line') +
                 '\\n---\\n> click to ' + (folded ? 'unfold' : 'fold')) + '"'
             : '';
-          html += '<a class="tturn' + rowCls + '" href="' + threadHash(t.key) + '"' +
+          const sysN = sysAfter[vi] || 0;
+          const sysDot = sysN
+            ? '<span class="tsys" data-tip="' + escapeHtml(sysN + ' harness note' + (sysN === 1 ? '' : 's') +
+                ' followed this step\\nthe CLI\\u2019s own nudges \\u2014 terminal caveat, token budget, output style' +
+                '\\n---\\n> they read folded in the conversation') + '">\\u00b7</span>'
+            : '';
+          html += '<a class="tturn' + rowCls + (rowFailed ? ' tturn-failed' : '') + '" href="' + threadHash(t.key) + '"' +
             ' data-key="' + escapeHtml(t.key) + '" data-turn="' + vi + '"' +
             (canFold ? ' data-fold="' + li.ord + '"' : '') +
             ' data-tip="' + escapeHtml(tip) + '">' +
+            traj +
             '<span class="rgut"' + gutTip + '>' + dot + '</span>' +
             '<span class="tturn-ord' + (li.kind === 'mid' && li.step ? ' tturn-sord' : '') + '">' + ordLabel + '</span>' +
-            '<span class="tturn-text">' + text + '</span>' + errMark + foldN + traj + '</a>';
-          if (turn.role === 'assistant' && !folded) html += branchRows(turn);
+            '<span class="tturn-text">' + text + '</span>' + sysDot + errMark + foldN + '</a>';
+          if (turn.role === 'assistant' && !folded) html += branchRows(turn, vi);
         }
       }
       // boundary rows / superseded exchanges / error runs whose position
@@ -5775,6 +6429,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // ordinal so live re-renders (and thread switches back and forth)
     // keep what the user collapsed.
     const foldedTurns = {};
+    // A turn that fanned out to more than three subagents lists three and a
+    // count; expanding is per thread + turn and survives re-renders, like a
+    // folded turn (item 17).
+    const branchOpen = {};
 
     // Was the stage up on the LAST render? Entering replay drops one at the
     // top of a column the reader may have scrolled deep into (focusThreadsPane
@@ -5916,6 +6574,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           jumpToTurn(a.dataset.key, +a.dataset.turn);
         });
       }
+      for (const b of threadsEl.querySelectorAll('button[data-branch]')) {
+        b.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          branchOpen[b.dataset.branch] = true;
+          showSession(sessionSelKey);
+        });
+      }
     }
 
     // Epoch/turn row click: select the thread (if needed) and scroll the
@@ -6051,7 +6717,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const inp = b.input || {};
         // Spawn shape only — task-tracking TaskCreate {subject} is a plain
         // tool fold, not a "subagent" title with no thread behind it.
-        if (SPAWN_TOOLS[name] && (inp.subagent_type || typeof inp.prompt === 'string')) {
+        const mem = memoryOp(name, inp);
+        if (mem) {
+          // Claude Code writing to its own persistent notes is not a file
+          // edit like any other — it is the agent remembering (item 14).
+          title = memoryLabel(mem);
+          pv = wsPath(inp.file_path || inp.path, wsRoot());
+          cls = 'fold-mem';
+          icon = ICON_MEMORY;
+        } else if (SPAWN_TOOLS[name] && (inp.subagent_type || typeof inp.prompt === 'string')) {
           title = 'subagent';
           cls = 'fold-agent';
           icon = ICON_EPOCH;
@@ -6090,8 +6764,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const res = results[b.id];
         if (res) {
           let rbody = '';
-          if (typeof res.content === 'string') rbody = textBlock(res.content);
-          else if (Array.isArray(res.content)) { for (const c of res.content) rbody += renderBlock(c); }
+          if (typeof res.content === 'string') rbody = textOrHarness(res.content, false, false);
+          else if (Array.isArray(res.content)) rbody = renderBlockRun(res.content, (c) => renderBlock(c));
           else rbody = preBlock(formatJson(res.content));
           body += '<div class="tool-res' + (res.is_error ? ' errline' : '') + '">' +
             '<div class="tool-res-label">result' + (res.is_error ? ' \\u00b7 error' : '') + '</div>' + rbody + '</div>';
@@ -6105,8 +6779,24 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
 
     function renderSessionTurn(turn, results, ord, isSummary, stepLbl, ts) {
+      // A wire message whose role is neither user nor assistant is harness
+      // scope by definition — Claude Code sends its nudges as role
+      // "system". One folded line, no role bar: the step above it already
+      // carries the ordinal and the clock (item 10).
+      const harness = turn.role !== 'user' && turn.role !== 'assistant';
       let inner = '';
-      for (const b of turn.blocks) inner += renderBlockS(b, results, turn.role === 'assistant');
+      if (harness) {
+        let raw = '';
+        for (const b of turn.blocks || []) {
+          if (b && b.type === 'text' && typeof b.text === 'string') raw += (raw ? '\\n\\n' : '') + b.text;
+        }
+        if (raw) inner += sysFold(raw);
+        for (const b of turn.blocks || []) {
+          if (!b || b.type !== 'text') inner += renderBlockS(b, results, false);
+        }
+        return '<div class="turn turn-sys"' + (ts ? ' data-ts="' + (ts * 1000) + '"' : '') + '>' + inner + '</div>';
+      }
+      inner = renderBlockRun(turn.blocks, (b) => renderBlockS(b, results, turn.role === 'assistant'));
       let meta = '';
       if (turn.role === 'assistant' && turn.usage) {
         const u = turn.usage;
@@ -6203,6 +6893,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     convoEl.addEventListener('scroll', () => {
       if (convoAtBottom()) tailPill.classList.remove('show');
+      // Past the head, the sticky chips row compacts to one line (item 16).
+      if (convoEl.classList) convoEl.classList.toggle('stuck', convoEl.scrollTop > 4);
       rpQueueSyncRead();
     });
 
@@ -6212,6 +6904,30 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // only under the reader's own scroll (the scrollbar-thumb exemption in
     // the motion budget) and hides while replaying — the playhead owns
     // position there.
+    // The OUTLINE follows the reader too (item 17): the row for the turn at
+    // the conversation's reading position wears .cur. Turn nodes in the
+    // convo are the same vis order the rail's data-turn indexes, so the
+    // topmost visible .turn IS the row to light; harness turns render in
+    // the convo but not on the rail, so the last row at or before that
+    // index takes it.
+    function syncOutlineCur() {
+      if (!convoEl.querySelectorAll || !threadsEl.querySelectorAll) return;
+      const turns = convoEl.querySelectorAll('.turn');
+      const cbox = convoEl.getBoundingClientRect ? convoEl.getBoundingClientRect() : null;
+      let idx = -1;
+      for (let i = 0; i < turns.length; i++) {
+        const el = turns[i];
+        if (!cbox || !el.getBoundingClientRect) { idx = i; break; }
+        if (el.getBoundingClientRect().bottom - cbox.top > 24) { idx = i; break; }
+      }
+      let cur = null;
+      for (const row of threadsEl.querySelectorAll('a.tturn[data-turn]')) {
+        const v = +row.dataset.turn;
+        if (idx >= 0 && v <= idx) cur = row;
+        row.classList.remove('cur');
+      }
+      if (cur) cur.classList.add('cur');
+    }
     let rpReadQueued = false;
     function rpSyncRead() {
       if (!rpRead || !rpRead.style) return;
@@ -6224,7 +6940,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         if (!cbox || !el.getBoundingClientRect) { ts = parseFloat(el.dataset.ts); break; }
         if (el.getBoundingClientRect().bottom - cbox.top > 24) { ts = parseFloat(el.dataset.ts); break; }
       }
-      if (!ts) { rpRead.style.display = 'none'; return; }
+      if (!ts) { rpRead.style.display = 'none'; syncOutlineCur(); return; }
+      syncOutlineCur();
       const frac = Math.min(1, Math.max(0, scaleX(sc, ts) / sc.px));
       rpRead.style.left = (frac * 100).toFixed(3) + '%';
       rpRead.style.display = 'block';
@@ -6486,13 +7203,13 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const old = convoEl.children[i];
         const of_ = old.querySelectorAll('details'), nf = nu.querySelectorAll('details');
         for (let j = 0; j < of_.length && j < nf.length; j++) nf[j].open = of_[j].open;
-        // Clamp state rides along too: a final answer the user expanded (or
-        // unclampLastTurn did) must not snap shut when its node re-renders.
-        const oc = old.querySelectorAll('.msg-clamp'), nc = nu.querySelectorAll('.msg-clamp');
+        // Expand state rides along too: a final answer the user expanded (or
+        // unclampLastTurn did) must not snap back when its node re-renders.
+        const oc = old.querySelectorAll('.msg-box'), nc = nu.querySelectorAll('.msg-box');
         for (let j = 0; j < oc.length && j < nc.length; j++) {
-          if (!oc[j].classList.contains('clamped') && nc[j].classList.contains('clamped')) {
-            const btn = nc[j].querySelector(':scope > .msg-more');
-            if (btn) window.toggleClamp(btn);
+          if (oc[j].classList.contains('open') && !nc[j].classList.contains('open')) {
+            const btn = nc[j].querySelector(':scope > .msg-box-h > .msg-box-x');
+            if (btn) window.toggleBox(btn);
           }
         }
         convoEl.replaceChild(nu, old);
@@ -6532,7 +7249,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let hit = ctxTlCache.get(t.key);
       if (!hit || hit.key !== key) {
         const tpairs = t.pairIds.map(id => pairOf(id)).filter(Boolean);
-        const tl = contextTimeline(tpairs, t.compactions);
+        const tl = contextTimeline(tpairs, t.compactions, pairOf);
         // pairId -> {ord, step}: the outline's working-loop address for
         // each wire request — bars and events speak "turn 04 · step 2",
         // the same numbering the sessions rail uses.
@@ -6593,6 +7310,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return out;
     }
 
+    // Where a FOLDED step's composition came from, in one clause. The fold
+    // takes bytes, not the reading: either the sums were stamped as the
+    // body went (exact), or they were read off the request that kept the
+    // same history (derived). Empty for a step that carries its own body.
+    function ctxFoldNote(s) {
+      if (!s || !s.stub) return '';
+      if (s.stamped) return ' \\u00b7 body folded; these sums were measured before it went';
+      if (s.derived) return ' \\u00b7 body folded; composition from the request that kept the history';
+      return '';
+    }
+
     function ctxOrdLbl(addr, pairId) {
       const a = addr && addr[pairId];
       if (!a) return '';
@@ -6650,8 +7378,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       bits.push((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : ''));
       if (extra) bits.push(extra);
       if (s.t) bits.push(fmtDateTime(new Date(s.t * 1000)));
-      if (s.stub) bits.push('request body folded by cctrace compact \\u2014 composition unknown, usage kept');
-      else bits.push('estimated \\u2248' + fmtCompact(s.est));
+      // A folded body is not a missing composition: the fold stamps the
+      // sums it measured, and the request that kept the history carries
+      // the rest. Only a fold with neither says nothing.
+      if (s.sums) bits.push('estimated \\u2248' + fmtCompact(s.est) + (s.stub ? ctxFoldNote(s) : ''));
+      else if (s.stub) bits.push('request body folded \\u2014 composition unavailable, usage kept');
       if (s.actualIn != null) {
         bits.push('actual prompt ' + fmtCompact(s.actualIn) + ' \\u00b7 output ' + fmtCompact(s.out));
         // Cache behavior is the step's cost story: a healthy step reads
@@ -6810,10 +7541,15 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           lastOrd = r.ord;
         }
         const isTool = r.kind === 'tool';
+        // The agent's persistent memory carries its mark into the record
+        // stream too (item 14) — same label, same ink, same brain.
+        const mem = isTool && r.block ? memoryOp(r.block.name, r.block.input) : null;
         rows += '<a class="tj-row tj-k-' + r.kind + (r.think ? ' tj-think' : '') + (r.err ? ' tj-err' : '') +
-            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
+            (mem ? ' tj-mem' : '') +
+            (r._i === tjSel ? ' sel' : '') + '" href="#" data-tj="' + r._i + '" style="--tjc:' + (mem ? 'var(--memory)' : TJ_KIND_COLOR[r.kind] || 'var(--text-faint)') + '">' +
           tjBadge(r) +
-          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(r.label) + '</span>' +
+          (mem ? '<span class="tj-ico">' + ICON_MEMORY + '</span>' : '') +
+          '<span class="tj-label' + (isTool ? ' tj-mono' : '') + '">' + escapeHtml(mem ? memoryLabel(mem) : r.label) + '</span>' +
           (isTool && r.detail ? '<span class="tj-arrow">→</span><span class="tj-result">' + escapeHtml(r.detail) + '</span>' : '') +
           '<span class="tj-gap"></span>' +
           '<span class="tj-tok">≈' + fmtCompact(r.tokens) + '</span>' +
@@ -7034,7 +7770,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const name = ctxPickTool(pick);
       const p = pick.pairId ? pairOf(pick.pairId) : null;
       if (!name || !p) return ctxNote('no carrying request loaded for this call');
-      const body = (p.request && p.request.body) || {};
+      // Schemas ride every request of a thread, so a folded body's are in
+      // the request that kept its history — same derivation as the graph.
+      const body = ctxEffectiveBody(p, pairOf).body || {};
       const dialect = wireDialect(p) || 'anthropic';
       const tools = dialect === 'openai' ? openaiTools(body) : (Array.isArray(body.tools) ? body.tools : []);
       const tname = (t) => (t && (t.name || (t.function && t.function.name) || t.type)) || '';
@@ -7057,6 +7795,16 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       return rank +
         (desc ? '<div class="cx-insp-desc">' + escapeHtml(desc.length > 4000 ? desc.slice(0, 4000) + '\\u2026' : desc) + '</div>' : ctxNote('no description declared')) +
         preBlock(formatJson(schema || t));
+    }
+
+    // The one line that says this window is not this request's own bytes:
+    // the fold dropped them, so what is drawn came out of the request that
+    // kept the same history. Linked, because the reader may want to see it.
+    function ctxDerivedNote(s) {
+      if (!s || !s.stub || !s.derived) return '';
+      return ctxKv('derived from', '<a class="turn-wire" href="#/p/' + encodeURIComponent(s.derived) + '">the retained request \\u2192</a>') +
+        ctxNote('this request\\u2019s body was folded off the page; its history is read from the request that re-sent it' +
+          (s.stamped ? ', and the sums were measured before it went' : ''));
     }
 
     // ORIGIN: when the picked thing entered the window, and the CARRY —
@@ -7089,6 +7837,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         toPid = ctxGraphAt;
       }
       let h = '';
+      // Where the window on screen came from, when it is not this
+      // request's own bytes (the window deck reads a derived body).
+      if (pick.kind === 'node') h += ctxDerivedNote(steps.find(x => x.pairId === pick.pairId));
       if (producedBy) h += ctxKv('produced by', ctxStepChip(producedBy) + (producedBy.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(producedBy.t * 1000)) + '</span>' : ''));
       if (i0 >= steps.length) return h + ctxNote('not re-sent yet \\u2014 no request has followed it');
       const span = ctxCarrySpan(steps, steps[i0].pairId, toPid);
@@ -7157,7 +7908,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (ev.kind === 'inject') {
         // the block: the carrying request's window, searched from its end
         // (the injection rode the turns this request appended)
-        const win = p ? ctxWindowTurns(p) : [];
+        const win = p ? ctxWindowTurns(p, pairOf) : [];
         let blk = null;
         for (let ti = win.length - 1; ti >= 0 && !blk; ti--) {
           const turn = win[ti];
@@ -7169,7 +7920,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         h += ctxKv('at', ctxStepChip(s) + (ev.t ? ' <span class="cx-insp-addr">' + fmtDateTime(new Date(ev.t * 1000)) + '</span>' : ''));
         h += ctxKv('weight', '<b>\\u2248' + fmtCompact(ev.tokens || 0) + '</b> tokens added to the window');
         h += blk ? renderBlock(blk, false)
-          : ctxNote('the injected text is not in this request\\u2019s captured body' + (s && s.stub ? ' \\u2014 folded by cctrace compact' : ''));
+          : ctxNote('the injected text is not in this request\\u2019s window' +
+            (s && s.stub ? (s.derived ? ' \\u2014 its body was folded, and the retained request\\u2019s copy does not carry it either'
+              : ' \\u2014 its body was folded and no retained request carries the history') : ''));
         return h;
       }
       if (ev.kind === 'compact') {
@@ -7260,7 +8013,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       if (!it || it.ti == null || it.ti < 0) return null;
       if (c.winPair !== ctxGraphAt) {
         const p = pairOf(ctxGraphAt);
-        c.win = p ? ctxWindowTurns(p) : [];
+        c.win = p ? ctxWindowTurns(p, pairOf) : [];
         c.winPair = ctxGraphAt;
         // Where this request's window ENDS in the spine: the reply it
         // produced (anchors the content match — see ctxOriginTurn).
@@ -7288,11 +8041,60 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const verb = c.spine[vi].role === 'assistant' ? 'from' : 'since';
       return { pid, verb, lbl };
     }
+    // ---- loading one folded body back from disk ----
+    // The last resort of the Context view: a fold whose history no
+    // retained request carries (the budget dropped it before a successor
+    // named a keeper). The bytes were never destroyed — the trace on disk
+    // has them — so the panel offers one fetch. Exactly ONE such body is
+    // held at a time (docs/live-resources.md): loading the next one puts
+    // the previous stub back, so reading a session can never re-inflate it.
+    let ctxLoaded = null; // { id, stub } — the body on loan, and what it replaced
+    // Only where a body can actually come back: a /view/<run-id> page
+    // (the route streams the trace for one pair) or a live capture (its
+    // server reads its own .jsonl). A view server holds the rendered
+    // trace and nothing else, and a file:// snapshot has no server at
+    // all — neither is offered an action that would fail.
+    function ctxCanLoad() { return !!VIEW_RUN || (!IS_SNAPSHOT && !IS_VIEW && !IS_TAIL); }
+    function ctxDropMemos(id) {
+      const p = pairOf(id);
+      if (p) { delete p._ctxc; delete p._ctxBody; }
+      ctxGraphCache.delete(id);
+      ctxTlCache.clear();
+    }
+    function ctxReleaseLoaded() {
+      if (!ctxLoaded) return;
+      const p = pairOf(ctxLoaded.id);
+      if (p) p.request.body = ctxLoaded.stub;
+      ctxDropMemos(ctxLoaded.id);
+      ctxLoaded = null;
+    }
+    async function ctxLoadBody(id, el) {
+      const p = pairOf(id);
+      if (!p || !ctxCanLoad() || el.dataset.busy) return;
+      el.dataset.busy = '1';
+      el.textContent = 'loading\\u2026';
+      try {
+        const res = await fetch(VIEW_RUN ? '/view/' + encodeURIComponent(VIEW_RUN) + '/pair/' + encodeURIComponent(id) : '/api/pair/' + encodeURIComponent(id));
+        if (!res.ok) throw new Error(String(res.status));
+        const full = await res.json();
+        const body = full && full.request && full.request.body;
+        if (!body || body._cctrace_stub) throw new Error('original body unavailable');
+        ctxReleaseLoaded();
+        ctxLoaded = { id, stub: p.request.body };
+        p.request.body = body;
+        ctxDropMemos(id);
+        if (ctxCurThread) renderContextView(ctxCurThread);
+      } catch (err) {
+        delete el.dataset.busy;
+        el.textContent = 'could not load \\u2014 retry';
+      }
+    }
+
     function ctxGraphOf(pairId) {
       let g = ctxGraphCache.get(pairId);
       if (g === undefined) {
         const p = pairOf(pairId);
-        g = p ? contextGraph(p) : null;
+        g = p ? contextGraph(p, pairOf) : null;
         ctxGraphCache.set(pairId, g);
         while (ctxGraphCache.size > CTX_GRAPH_KEEP) ctxGraphCache.delete(ctxGraphCache.keys().next().value);
       }
@@ -7320,16 +8122,19 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // the honest form of showing both numbers.
     function ctxReconLine(s) {
       if (!s) return '';
-      if (s.stub) return 'Request body folded; reported usage retained.';
+      // A folded body with nothing to read it from is the only case that
+      // still has no estimate to reconcile.
+      if (s.stub && !s.sums) return 'Request body folded; reported usage retained.';
+      const fold = ctxFoldNote(s);
       if (s.actualIn == null) {
-        return s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
-          : 'no usage reported \\u2014 the bar is the estimate alone';
+        return (s.failed ? 'request <b>failed</b> \\u2014 the bar shows what was sent, never answered'
+          : 'no usage reported \\u2014 the bar is the estimate alone') + fold;
       }
       if (!s.est) return '';
       const d = (s.est - s.actualIn) / s.actualIn * 100;
       const est = '\\u2248' + fmtCompact(s.est) + ' estimated \\u00b7 chars/4 ';
-      if (Math.abs(d) < 2) return est + '<b>matches</b> the bill';
-      return est + 'reads <b>' + Math.abs(Math.round(d)) + '% ' + (d < 0 ? 'under' : 'over') + '</b>';
+      if (Math.abs(d) < 2) return est + '<b>matches</b> the bill' + fold;
+      return est + 'reads <b>' + Math.abs(Math.round(d)) + '% ' + (d < 0 ? 'under' : 'over') + '</b>' + fold;
     }
 
     function renderCtxMargin(s, addr) {
@@ -7410,9 +8215,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // top tool schemas: where the tools budget goes, in the margin
       // because it is a standing cost, not an event
       const fp = pairOf(s.pairId);
-      if (fp && !s.stub) {
+      const fb = fp ? ctxEffectiveBody(fp, pairOf).body : null;
+      if (fb) {
         try {
-          const env = ctxEnvelope(fp.request.body || {}, wireDialect(fp) || 'anthropic');
+          const env = ctxEnvelope(fb, wireDialect(fp) || 'anthropic');
           const ranked = env.tools.slice().sort((a, b) => b.tokens - a.tokens).slice(0, 5);
           if (ranked.length) {
             h += '<div class="cx-mblock"><div class="cx-mlabel">heaviest tool schemas<span class="cx-mlabel-r">of ' + env.tools.length + '</span></div>' +
@@ -7597,15 +8403,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       ctxGraphAt = s ? s.pairId : null;
       ctxLast = { step: s, addr };
       if (!s) return '<div class="cx-note">nothing to open yet</div>';
-      if (s.stub) {
+      const g = ctxGraphOf(s.pairId);
+      // A folded body is drawn from the request that kept its history; the
+      // panel below is only for a fold nothing on this page can read —
+      // no keeper loaded, or a body the budget dropped without one. Then
+      // the bytes are still on disk, one fetch away (ctxLoadBody).
+      if ((!g || !g.est) && s.stub) {
         const p = pairOf(s.pairId);
         const kept = p && p.request.body && p.request.body.keptPairId;
         return '<div class="cx-unavailable"><span>' + UI_ICONS.fileText + ' Request body folded</span>' +
-          '<p>Composition is unavailable for this request. Reported tokens, timing, and cost are retained.</p>' +
+          '<p>No retained request carries this history, so composition cannot be derived. Reported tokens, timing, and cost are kept.</p>' +
+          (ctxCanLoad() ? '<a href="#" data-cxload="' + escapeHtml(s.pairId) + '">Load the recorded body ' + UI_ICONS.arrowRight + '</a>' : '') +
           '<a href="#/p/' + encodeURIComponent(s.pairId) + '">Inspect request ' + UI_ICONS.arrowRight + '</a>' +
           (kept ? '<a href="#/p/' + encodeURIComponent(kept) + '">Retained history ' + UI_ICONS.arrowRight + '</a>' : '') + '</div>';
       }
-      const g = ctxGraphOf(s.pairId);
       if (!g || !g.est) return '<div class="cx-note">request not loaded</div>';
       ctxFlameTotal = g.est;
       // No head here. The margin beside this chart already names the step,
@@ -7766,6 +8577,14 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     contextEl.addEventListener('click', ctxPinFromLink, true);
     contextEl.addEventListener('keydown', ctxPinFromLink, true);
+    // "Load the recorded body": the one action on the unavailable panel.
+    contextEl.addEventListener('click', (e) => {
+      const a = e.target && e.target.closest ? e.target.closest('[data-cxload]') : null;
+      if (!a) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ctxLoadBody(a.dataset.cxload, a);
+    }, true);
     contextEl.addEventListener('toggle', (e) => {
       const det = e.target;
       if (!det || !det.dataset || !det.dataset.cxitem) return;
@@ -8448,7 +9267,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           '<button class="cx-fchip' + (ctxSort === 'size' ? ' active' : '') + '" data-cxsort="size" title="heaviest node first — what is eating the window">by size</button>' +
           '<button class="cx-fchip' + (ctxSort === 'order' ? ' active' : '') + '" data-cxsort="order" title="wire order — how the window was assembled">in order</button>' +
           '</span>';
-        hint = focus.stub ? '' : 'Composition estimated from the captured request';
+        hint = !focus.sums ? ''
+          : focus.derived ? 'Composition estimated from the request that kept this history'
+          : 'Composition estimated from the captured request';
         deck = '<div id="cx-graph">' + renderCtxGraph(focus, addr) + '</div>';
       }
       const bar = '<div class="cx-modes" role="tablist" aria-label="Context views">' +
@@ -9780,35 +10601,100 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       render();
     };
 
-    // The live footer reports the last observed response, never inferred activity.
+    // ---- The live STATUS BAR (items 1 + 4) ----
+    // Two facts, always: what this session is doing right now, and how much
+    // of the prompt-cache window is left. The old strip said "Last
+    // response" and a tiny hold-until — a label about the past, not a
+    // state. State comes off the wire: a start frame the server sent with
+    // no pair for it yet IS "in flight"; a last reply that stopped on
+    // tool_use with nothing since IS "waiting on tools"; anything else is
+    // idle, counting since the last response.
+    // Live pages only — a snapshot has no now (ui.md: never pretend). This
+    // is also the one surface that may COUNT DOWN: it re-renders every
+    // second, so it cannot go stale the way a rendered page can, which is
+    // why every OTHER deadline on this page stays absolute wall-clock.
     let pulsePair = null;
     let pulseAction = '';
+    function pulseState() {
+      let oldest = 0;
+      openStarts.forEach((s) => {
+        const ms = (s && s.ts ? s.ts : 0) * 1000;
+        if (ms && (!oldest || ms < oldest)) oldest = ms;
+      });
+      if (oldest) return { kind: 'flight', since: oldest };
+      const p = lastModelPair;
+      if (!p) return { kind: 'none', since: 0 };
+      const ci = p._ci || (p._ci = extractCallInfo(p));
+      return { kind: ci.stopReason === 'tool_use' ? 'tools' : 'idle', since: pairEndMs(p) };
+    }
+    // Elapsed reads coarse ("12s", "3m 20s", "1h 04m"); the cache clock
+    // reads mm:ss, because under five minutes the seconds are the point.
+    function pulseElapsed(ms) {
+      const s = Math.max(0, Math.round(ms / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60), sec = s % 60;
+      if (m < 60) return m + 'm ' + (sec < 10 ? '0' : '') + sec + 's';
+      const h = Math.floor(m / 60), mm = m % 60;
+      return h + 'h ' + (mm < 10 ? '0' : '') + mm + 'm';
+    }
+    function pulseClock(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const m = Math.floor(s / 60), sec = s % 60;
+      return m + ':' + (sec < 10 ? '0' : '') + sec;
+    }
     function renderPulse() {
       if (IS_READING || !pulseEl) return;
+      const st = pulseState();
+      const now = Date.now();
       const p = lastModelPair;
-      if (!p) {
-        pulseEl.innerHTML = '<span class="p-label">No model responses received</span>';
-        return;
-      }
-      const ci = p._ci || (p._ci = extractCallInfo(p));
-      const end = pairEndMs(p);
-      if (pulsePair !== p) {
+      if (p && pulsePair !== p) {
         pulsePair = p;
         pulseAction = '';
-        try { pulseAction = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch {}
+        try { pulseAction = turnToolLabel({ role: 'assistant', blocks: responseBlocks(p) }) || ''; } catch (_) {}
       }
-      let act = pulseAction;
-      if (!act) act = p.response && p.response.status < 400 ? 'response received' : 'request failed';
-      const cc = summarizeCache(ci, p.request.body, end);
-      let cache = '';
+      let cls = 'p-idle', label = 'idle', detail = '', tip = '';
+      if (st.kind === 'none') {
+        label = 'no model call yet';
+        tip = 'live status\\nNothing has reached /v1/messages on this run yet.';
+      } else if (st.kind === 'flight') {
+        cls = 'p-flight';
+        label = 'in flight';
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nA model call was forwarded and has not answered yet \\u2014 the counter is its wall-clock so far.';
+      } else if (st.kind === 'tools') {
+        cls = 'p-tools';
+        label = 'waiting on tools';
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nThe last reply stopped on tool_use and nothing has come back since \\u2014 the harness is running its tools.';
+      } else {
+        detail = pulseElapsed(now - st.since);
+        tip = 'live status\\nSince the newest response landed. Nothing is on the wire.';
+      }
+      let html = '<span class="p-state ' + cls + '" data-tip="' + escapeHtml(tip) + '">' +
+        '<span class="p-dot"></span><span class="p-label">' + escapeHtml(label) + '</span>' +
+        (detail ? '<span class="p-t">' + escapeHtml(detail) + '</span>' : '') + '</span>';
+      // WHAT it is doing: the tool labels of the newest completed call
+      // while its tools run, the model id while a call is out.
+      const act = st.kind === 'tools' && pulseAction ? pulseAction
+        : st.kind === 'flight' && p && p._ci ? escapeHtml(shortModel(p._ci.model || '') || '')
+        : '';
+      if (act) html += '<span class="p-act">' + act + '</span>';
+      html += '<span class="p-gap"></span>';
+      // The prompt-cache window, DRAINING. Only the newest model call's
+      // deadline means anything (every later hit refreshes the TTL), which
+      // is the same rule the requests list's ≡ chip follows.
+      const cc = p ? summarizeCache(p._ci || (p._ci = extractCallInfo(p)), p.request.body, pairEndMs(p)) : null;
       if (cc && cc.expiresAt) {
-        cache = Date.now() > cc.expiresAt
-          ? '<span class="p-exp" title="Estimated cache TTL has elapsed">cache TTL elapsed</span>'
-          : '<span class="p-exp" data-tip="' + escapeHtml(cc.title) + '">cache until ~' + fmtTime(new Date(cc.expiresAt)).slice(0, 5) + '</span>';
+        const span = Math.max(1, cc.expiresAt - pairEndMs(p));
+        const left = cc.expiresAt - now;
+        const pct = Math.max(0, Math.min(100, (left / span) * 100));
+        const cstate = left <= 0 ? 'p-exp' : left < 300000 ? 'p-warn' : 'p-ok';
+        html += '<span class="p-cache ' + cstate + '" data-tip="' + escapeHtml(cc.title +
+            '\\n---\\nthe newest model call\\u2019s cache window \\u2014 a later hit refreshes it') + '">' +
+          '<span class="p-clabel">cache</span>' +
+          '<span class="p-bar"><span class="p-fill" style="width:' + pct.toFixed(1) + '%"></span></span>' +
+          '<span class="p-left">' + (left <= 0 ? 'expired' : pulseClock(left)) + '</span></span>';
       }
-      const html = '<span class="p-label">Last response</span>' +
-        '<span class="p-act">' + escapeHtml(shortModel(ci.model || '') || '?') + ' · ' + act + '</span>' +
-        '<span class="p-t">' + fmtTime(new Date(end)) + '</span>' + cache;
       if (pulseEl.dataset.content !== html) { pulseEl.dataset.content = html; pulseEl.innerHTML = html; }
     }
     let expFlipped = false;
@@ -9835,7 +10721,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // Offline snapshot: if pairs are embedded (static export), load them and
     // skip the WebSocket. Otherwise connect live.
     if (IS_SNAPSHOT) {
+      bootSay('opening ' + window.__PAIRS__.length.toLocaleString() + ' requests');
       for (const p of window.__PAIRS__) ingestPair(p);
+      bootDone();
       statusEl.textContent = 'snapshot';
       statusEl.className = 'status snapshot';
       autoScroll = false;
@@ -9864,13 +10752,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
  * review of a saved .jsonl trace.
  */
 export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): string {
+  // Inject AFTER the shell markup and before the page script (item 5): the
+  // payload is defined before anything reads it, and the browser has
+  // already painted the rail and the loading skeleton by the time it starts
+  // parsing a multi-hundred-megabyte array. In <head> it was a blank tab
+  // until the whole thing landed.
   const html = getLiveHtml(meta);
-  // Inject before </head> so __PAIRS__ is defined before the body script runs.
   const inject = `<script>window.__PAIRS__ = ${jsonForScript(tracePairs)};</script>`;
   // Function replacement: a string replacement would $-substitute the payload
   // ($$ collapses, $& / $` splice document text into the JSON) — captured
   // conversations about code contain those daily.
-  return html.replace("</head>", () => `${inject}\n</head>`);
+  return html.replace("<!--CCTRACE_DATA-->", () => inject);
 }
 
 /**
@@ -9882,7 +10774,7 @@ export function renderSnapshot(tracePairs: TracePair[], meta: PageMeta = {}): st
  * one-line problem description.
  */
 export function verifySnapshot(html: string, expectedPairs: number): string | null {
-  const m = html.match(/<script>window\.__PAIRS__ = (.*?);<\/script>\n<\/head>/s);
+  const m = html.match(/<script>window\.__PAIRS__ = (.*?);<\/script><!-- renderSnapshot/s);
   if (!m) return "embedded __PAIRS__ script not found";
   if (m[1].includes("<")) return "embedded payload contains a raw '<' (tag breakout)";
   let parsed: unknown;

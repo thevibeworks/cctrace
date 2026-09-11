@@ -45,8 +45,12 @@ reconstruct past steps. cctrace sits on the wire, and every captured
 `/v1/messages` (or Responses/Chat-Completions) request body IS the fully
 assembled context of that step. So:
 
-- per-step composition is **exact** — no fold, no shadow-price protocol, no
-  removed-node archive, no "reconstruction is approximate" caveat;
+- per-step composition is **exact** — no shadow-price protocol, no
+  removed-node archive, no "reconstruction is approximate" caveat. cctrace
+  does fold bodies to fit a session on one page, but it measures the
+  composition before dropping one, so the numbers stay the body's own
+  (§Folded bodies); only the item-level detail is read from the request
+  that kept the same history, and the view says so where it does;
 - every step carries the provider's own usage, so the estimate is always
   **anchored** to a real prompt-token count from the same wire pair.
 
@@ -104,18 +108,25 @@ Unknown window = no percentage, never a made-up denominator.
 
 ## Data layer (src/context.ts, toString-inlined like session.ts)
 
-- `contextComposition(pair)` — per-category sums for one request. Cheap by
-  design (length arithmetic; memoized on the pair as `_ctxc`); null for
-  compact stubs (their composition is gone; usage survives) and
-  non-model-call pairs.
-- `contextItems(pair)` — the flat walk: one item per system block / tool
+Every function that reads a request body takes an optional `pairOf(id)`
+resolver as its last argument — the page's own pair index (ui.ts), so a
+FOLDED body can be read out of the request that kept its history (see
+"Folded bodies" below). Passing nothing is the unit-test / snapshot path:
+a stub then simply has no composition, as before.
+
+- `contextComposition(pair, pairOf?)` — per-category sums for one request.
+  Cheap by design (length arithmetic; memoized on the pair as `_ctxc`).
+  For a folded body it prefers the stub's own `composition` (stamped at
+  fold time from the real body — exact), then the derivation; null only
+  when neither is available, and for non-model-call pairs.
+- `contextItems(pair, pairOf?)` — the flat walk: one item per system block / tool
   schema / content block, each with tokens, a label, and a REFERENCE to its
   source block (`b`) so full content renders lazily with the page's
   existing `renderBlock`. tool_results are labeled with the tool that
   produced them (tool_use id → name map within the request); inject items
   carry their PRODUCER (`src`, from `ctxInjectLabel`) — the same vocabulary
   the events list speaks.
-- `contextGraph(pair)` / `ctxGroupOf(catId, item, idx)` — the grouped
+- `contextGraph(pair, pairOf?)` / `ctxGroupOf(catId, item, idx)` — the grouped
   tree the view renders: category → group → item, built ON contextItems so
   the body is walked once. The grouping is the question each category
   answers, and that is the whole design:
@@ -140,8 +151,10 @@ Unknown window = no percentage, never a made-up denominator.
   positioned spans. A row entry says `hasKids` (can I zoom this) rather
   than carrying a child list — the tree already holds the children, and
   one name for two shapes was a readability trap.
-- `contextTimeline(threadPairs, compactions?)` — one step per wire request
-  in thread order, plus events between consecutive steps:
+- `contextTimeline(threadPairs, compactions?, pairOf?)` — one step per wire
+  request in thread order (`stub` = the body was folded, `stamped` = its
+  sums were measured before it went, `derived` = the pair its detail is
+  read from), plus events between consecutive steps:
   - `model` — request model changed;
   - `compact` — history dropped ≥10 turns below the running max
     (buildSession's own rule), labeled fold/rewrite/rewind when the session
@@ -160,6 +173,40 @@ Unknown window = no percentage, never a made-up denominator.
 Turn/step addressing (`stepAddr`: pairId → {ord, step}) is built in the
 page from the same `loopTurns` data the sessions outline uses, so bars and
 events say "turn 04 · step 2" in the outline's numbering.
+
+### Folded bodies (`ctxKeeperPair` / `ctxEffectiveBody`)
+
+0.50 folds request bodies in the live server and on view pages, and the
+first cut of this view read a stub as "no composition" — on a live run that
+meant 3 of 40 steps had one, which inverts what the page is for. The fold
+takes BYTES, not the reading:
+
+- a body folds as **superseded** because a LATER request in the same thread
+  re-sent its whole history, so the keeper's body holds it as a prefix.
+  `ctxEffectiveBody(pair, pairOf)` follows `keptPairId` (through keepers
+  that were folded later, bounded at 64 hops, cycle-guarded) and returns
+  that body with the conversation sliced back to the stub's `historyLen` —
+  `messages` for anthropic, `input[]` cut at the matching turn boundary
+  (`ctxOpenaiCut`) for the OpenAI dialect. The slice SHARES the keeper's
+  block objects: deriving costs one array, not a copy. Memoized as
+  `_ctxBody`, hits only, so a keeper that lands later still resolves.
+- the numbers do not depend on that: both fold sites (src/live-bodies.ts,
+  src/fold.ts) stamp `contextComposition` onto the stub before dropping the
+  body, so per-step sums stay EXACT. Derivation is what the item-level
+  detail (icicle, provenance, schemas, window turns) reads.
+- what a derived window cannot promise is byte-for-byte identity with what
+  that request sent: Claude Code repacks ephemeral turns between requests,
+  so a turn-count cut can land a turn off, and the ENVELOPE (system prompt,
+  tool schemas) is the keeper's — on a step where a deferred tool loaded
+  between the two, the icicle's total can sit slightly off the stamped
+  ledger beside it. Both wear `≈`. That is why the sums are stamped rather
+  than derived, and why the view says where a step's detail came from
+  instead of implying it is the pair's own bytes.
+- a fold with no keeper on the page (a body the byte budget dropped before
+  any successor claimed it) is the one case left with no composition. The
+  panel says so and offers to load the recorded body from the trace, with
+  the same one-body-at-a-time retention the requests detail panel uses
+  (docs/live-resources.md).
 
 ## The view (ui.ts)
 
@@ -310,8 +357,9 @@ The whole balance, repainted on every scrub (`ctxRepaintMargin` swaps
   (grey = headroom), `N% of context used`, and **the reconciliation**:
   `≈134k estimated · chars/4 reads 49% under`. On code-heavy bodies the
   estimate reads well under the bill, and saying so by how much is the
-  honest form of showing both numbers. A failed or compact-stubbed step
-  says that instead.
+  honest form of showing both numbers. A failed step says that instead, and
+  a folded one adds where its composition came from (measured before the
+  body went, or read off the request that kept the history).
 - **the ledger** — the six categories, always all six, always in CTX_CATS
   order, with weight, ≈tokens and %. This is the page's ONE list of those
   numbers; the icicle's row 1 is the other rendering and it is a *chart*
@@ -589,8 +637,9 @@ The picked step as an **icicle**: rows top-down,
    under a group called "Bash", 15 rows of "tool_result | Bash → …" is one
    fact repeated 30 times. Selection defaults to the heaviest group
    (`ctxFlameDefault`), so the section opens ON the answer instead of
-   asking the reader to go find it. Compact-stub steps say so instead of
-   pretending.
+   asking the reader to go find it. A folded step draws the same graph off
+   the request that kept its history; one with no such request says so
+   instead of pretending, and offers to load the recorded body.
 
    The lens toggle — **by size** (default) / **in order** — ranks *inside*
    a category, never the categories themselves; re-ranking row 1 would
@@ -681,8 +730,10 @@ context route renders in ~45ms, the sessions route in ~35ms.
 - `≈` on every estimate; the provider-reported number beside it whenever
   the wire has one.
 - No window % without a known window.
-- A compact-folded stub renders as "composition unavailable" + its real
-  usage — never a guessed bar split (the bar is a single neutral segment).
+- A folded body is never guessed at: the sums the fold stamped are exact,
+  the detail is named as derived (the origin facet links the request it was
+  read from), and a fold with neither renders as "composition unavailable"
+  + its real usage, the bar a single neutral segment.
 - Failed requests keep their bar (the request was sent; that is wire
   truth) with a dashed red outline and no fake usage.
 - Unlabeled history drops still get a ✂ (the drop is real) without

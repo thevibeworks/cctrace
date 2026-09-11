@@ -37,6 +37,9 @@ cctrace --dir path/to/logs       # trace dir (default: the project's store dir)
 cctrace --fresh                  # don't merge prior traces of a continued session
 cctrace --no-auto-merge          # don't fold this run into session-<id>.jsonl at exit
 cctrace --no-compress            # leave the trace plain .jsonl at exit (default: .jsonl.zst)
+cctrace --live-bodies full       # keep every request body in the live server (default: folded)
+cctrace --live-body-mb 128       # live request-body budget in MB (default: 64)
+cctrace --upstream-retry 0       # disable the 30s retry window for pre-send model failures
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead
@@ -125,14 +128,16 @@ destination and carries its numbers. Hash-routed views:
   — handy for agents: fetch the .md to read a traced conversation
   without parsing SSE. `GET /dashboard` (any live instance — also the ▦
   header icon) is the central picture: every live + recently finished run
-  across projects, groupable by project/client/time, with per-run stats
+  in ONE list, groupable by project/client/day (live rows first in their
+  group, a `live only` chip beside the search), with per-run stats
   (size · pairs · tokens · est cost) stamped at exit. Past rows open
   `GET /view/<run-id>` — a snapshot the serving instance renders on
   demand from that run's trace (JSON: `/api/instances` live, `/api/runs`
   finished).
   The dashboard also OPERATES: each live row has a **stop** button
-  (two-step confirm) and the **store** section shows what the traces cost
-  on disk with an **archive now** button. Server side:
+  (two-step confirm) and the **Storage** destination shows what the traces
+  cost on disk (bytes by state per project, files on demand) with an
+  **archive now** button, or `archive` on one project. Server side:
   `POST /api/instances/stop {id[,force]}` relays to that run's own port
   (a capture run ends like Ctrl-C — the client exits, cctrace prints its
   receipt and seals the trace; a viewer just closes), and

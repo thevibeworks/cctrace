@@ -1,5 +1,6 @@
 import { traceLines, type TraceParseStats } from "./history";
-import { histLenOf, threadKeyOf, lastMsgSig, isStubBody, stubPair, collapsePair, type Categorize, type StubKind } from "./compact";
+import { histLenOf, threadKeyOf, lastMsgSig, historyHas, isStubBody, stubPair, collapsePair, type Categorize, type StubKind } from "./compact";
+import { contextComposition } from "./context";
 import type { TracePair } from "./types";
 
 // The render FOLD — how a whole session fits on one page.
@@ -38,8 +39,9 @@ import type { TracePair } from "./types";
 // two questions for a REWRITE and therefore plans a whole file before
 // touching it. The fold streams instead: it never holds a trace, only the
 // page it is building. The stub FORMAT and the facts behind the decision
-// (histLenOf / threadKeyOf / lastMsgSig / stubPair / collapsePair) are
-// compact.ts's, single-implementation; only the traversal differs.
+// (histLenOf / threadKeyOf / lastMsgSig / historyHas / stubPair /
+// collapsePair) are compact.ts's, single-implementation; only the
+// traversal differs.
 
 /** Default bytes of full bodies a rendered page may carry. */
 export const FOLD_BODY_BYTES = 32 * 1024 * 1024;
@@ -124,10 +126,17 @@ export function createFold(opts: FoldOpts): Folder {
     const h = held[i]!;
     if (h.folded) return;
     // A model call keeps its reconstruction stub (history length, first
-    // user text, session metadata) and its RESPONSE — the reply is the
-    // conversation's other half and exists exactly once. Everything else
-    // is noise whose bodies collapse to byte counts, response included.
-    h.pair = h.isModelCall ? stubPair(h.pair, h.keptPairId ?? "", kind) : collapsePair(h.pair);
+    // user text, session metadata), the COMPOSITION of the window it is
+    // giving up (ten numbers, so the Context view stays exact for this
+    // step) and its RESPONSE — the reply is the conversation's other half
+    // and exists exactly once. Everything else is noise whose bodies
+    // collapse to byte counts, response included.
+    if (h.isModelCall) {
+      const composition = contextComposition(h.pair);
+      h.pair = stubPair(h.pair, h.keptPairId ?? "", kind);
+      delete (h.pair as TracePair & { _ctxc?: unknown })._ctxc; // a memo, not page data
+      if (composition) (h.pair.request.body as { composition?: unknown }).composition = composition;
+    } else h.pair = collapsePair(h.pair);
     h.folded = true;
     // What the fold actually bought, measured on the folded pair rather
     // than assumed: a stub carries up to 2 KB of first-user-text.
@@ -305,23 +314,4 @@ function jsonLen(v: unknown): number {
   } catch {
     return 0;
   }
-}
-
-/**
- * Does this request's history still carry the given message signature?
- * Scanned from the END with an early exit: a superseded request's tip sits
- * a turn or two from the successor's, so the common answer costs a handful
- * of stringifies instead of one per message in the conversation.
- */
-function historyHas(pair: TracePair, sig: string): boolean {
-  const body = pair.request.body as { messages?: unknown[]; input?: unknown[] } | null;
-  const hist = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : [];
-  for (let i = hist.length - 1; i >= 0; i--) {
-    try {
-      if ((JSON.stringify(hist[i]) || "").slice(0, 400) === sig) return true;
-    } catch {
-      // unserializable message — nothing to match against
-    }
-  }
-  return false;
 }

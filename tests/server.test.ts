@@ -3,7 +3,7 @@ import { createServer } from "../src/server";
 import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { startArchive, cancelArchive, currentArchiveJob, resetArchiveJob } from "../src/maintenance";
+import { startArchive, cancelArchive, currentArchiveJob, resetArchiveJob, storeDirArg } from "../src/maintenance";
 import type { TracePair } from "../src/types";
 
 // The live server's ingestion surface. Regression territory (containers
@@ -384,6 +384,17 @@ describe("dashboard", () => {
     expect(html).toContain("Number(i.port) + '/trace'");
   });
 
+  // A row must not repeat what its group header just said, and the rail's
+  // card must not be a truncated file name when the run's own words exist.
+  test("row identity drops what the grouping implies; the card joins its run", async () => {
+    const html = await (await fetch(`${base}/dashboard`)).text();
+    expect(html).toContain("{ project: groupBy !== 'project', client: groupBy !== 'client' }");
+    // The card reads the producing run's title/prompt off the tombstone that
+    // names the same trace, recorded name or resolved carrier.
+    expect(html).toContain("runs[k].logFile === file || runs[k].traceCarrier === file");
+    expect(html).toContain("if (lastSelf) renderSelf(lastSelf);");
+  });
+
   test("/view/<run-id> renders a past run's snapshot; unknown ids 404", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dashview-"));
     mkdirSync(join(dataDir, "instances"), { recursive: true });
@@ -592,8 +603,15 @@ describe("store housekeeping", () => {
       // The real job spawns `cctrace compress --all --yes`; here a stand-in
       // proves the plumbing: start -> running -> child output -> re-measure.
       resetArchiveJob();
-      const started = await startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo archiving trace-a; sleep 0.2"] });
-      expect(started.started).toBe(true);
+      // Two starts racing at the store walk spawn ONE child: the slot is
+      // claimed before the await, not after it.
+      const [first, second] = await Promise.all([
+        startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo archiving trace-a; sleep 0.2"] }),
+        startArchive(dataDir, { argv: ["/bin/sh", "-c", "echo second; sleep 0.2"] }),
+      ]);
+      expect(first.started).toBe(true);
+      expect(second.started).toBe(false);
+      expect(second.job.id).toBe(first.job.id);
       expect((await startArchive(dataDir)).started).toBe(false); // one job at a time
       const running = await (await fetch(`${sbase}/api/store`)).json() as any;
       expect(running.job.state).toBe("running");
@@ -627,6 +645,62 @@ describe("store housekeeping", () => {
       await Bun.sleep(300);
       expect(currentArchiveJob()?.state).toBe("cancelled");
       resetArchiveJob();
+    } finally {
+      s.stop();
+    }
+  });
+
+  // The dashboard's storage page draws a stacked bar per project and lists a
+  // project's files on demand — both off THIS one walk, never a second one.
+  test("/api/store carries bytes by state and the per-project file list", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-states-"));
+    const proj = join(dataDir, "traces", "-x-states");
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(join(proj, "project.json"), JSON.stringify({ path: "/x/states" }));
+    writeFileSync(join(proj, "trace-plain.jsonl"), "x".repeat(100));
+    writeFileSync(join(proj, "trace-rest.jsonl.zst"), "y".repeat(40));
+    writeFileSync(join(proj, "trace-old.jsonl.gz"), "z".repeat(10));
+    const s = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    try {
+      const pic = await (await fetch(`http://127.0.0.1:${s.port}/api/store`)).json() as any;
+      expect(pic.states).toEqual({ plain: 100, zst: 40, gz: 10, live: 0 });
+      // Every byte is in exactly one state, and the states add up to the total.
+      expect(pic.states.plain + pic.states.zst + pic.states.gz + pic.states.live).toBe(pic.bytes);
+      const dir = pic.dirs[0];
+      expect(dir.states).toEqual(pic.states);
+      expect(dir.files.map((f: any) => [f.name, f.state])).toEqual([
+        ["trace-plain.jsonl", "plain"],
+        ["trace-rest.jsonl.zst", "zst"],
+        ["trace-old.jsonl.gz", "gz"],
+      ]);
+      expect(dir.files[0].mtimeMs).toBeGreaterThan(0);
+      expect(dir.moreFiles).toBe(0);
+      // Nothing was folded away: one project, so `rest` is empty but present.
+      expect(pic.rest).toEqual({ projects: 0, traces: 0, bytes: 0, states: { plain: 0, zst: 0, gz: 0, live: 0 } });
+    } finally {
+      s.stop();
+    }
+  });
+
+  // The page can archive ONE project. That path takes a directory from a
+  // browser, and the job deletes what it archives, so the path is checked
+  // against this server's store before it is ever handed to a child.
+  test("/api/store/archive refuses a dir outside this store", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "cctrace-dirguard-"));
+    mkdirSync(join(dataDir, "traces", "-x-guard"), { recursive: true });
+    const s = createServer({ port: 0, logDir: ".cctrace-test-none", noHistory: true, dataDir });
+    const post = (body: unknown) => fetch(`http://127.0.0.1:${s.port}/api/store/archive`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    try {
+      resetArchiveJob();
+      for (const dir of [tmpdir(), join(dataDir, "traces"), join(dataDir, "traces", "..", "..", "etc"), join(dataDir, "traces", "-x-nope"), 7]) {
+        expect((await post({ dir })).status).toBe(400);
+      }
+      expect(currentArchiveJob()).toBe(null); // nothing was ever spawned
+      // The one shape that is allowed: a real project dir inside the store.
+      expect(storeDirArg(dataDir, join(dataDir, "traces", "-x-guard"))).toBe(join(dataDir, "traces", "-x-guard"));
+      expect(storeDirArg(dataDir, join(dataDir, "traces"))).toBe(null);
     } finally {
       s.stop();
     }

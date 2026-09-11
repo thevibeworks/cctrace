@@ -15,6 +15,11 @@ import {
   cwdFromText,
   harnessPrompt,
   harnessTurnKind,
+  harnessNoteKind,
+  harnessNotes,
+  harnessNoteLine,
+  harnessNoteHead,
+  memoryOp,
   loopTurns,
 } from "../src/session";
 
@@ -955,5 +960,99 @@ describe("richToolBody", () => {
   test("diffHunk tolerates missing sides", () => {
     expect(diffHunk("", "new")).toContain("dv-add");
     expect(diffHunk(undefined, undefined)).toContain("diffview");
+  });
+});
+
+// The harness stacks the same nudges onto almost every step — as a
+// role:"system" wire message, or as <system-reminder> blocks in a user
+// turn. The classifier decides what the ONE folded line says.
+describe("harness notes", () => {
+  const CAVEAT = "Only you see that command's output — the user's terminal shows at most a few lines of it. If the user needs to read any of it, put it in your reply.";
+  const IDLE = "The user hasn't heard from you in a while — say in a few words what you're doing, then continue.";
+  const TOKENS = "<total_tokens>14887549 tokens left</total_tokens>";
+  const STYLE = "Proactive output style is active. Execute autonomously, minimize interruptions, prefer action over planning.";
+
+  test("the recurring families are named from their own prefixes", () => {
+    expect(harnessNoteKind(CAVEAT)).toBe("terminal caveat");
+    expect(harnessNoteKind(IDLE)).toBe("idle nudge");
+    expect(harnessNoteKind(TOKENS)).toBe("tokens left");
+    expect(harnessNoteKind(STYLE)).toBe("output style");
+    expect(harnessNoteKind("Today's date is 2026-09-10.")).toBe("date");
+  });
+
+  test("a curly apostrophe classifies the same as a straight one", () => {
+    expect(harnessNoteKind("The user hasn’t heard from you in a while — say something.")).toBe("idle nudge");
+  });
+
+  test("injections name themselves: hooks, changed files, the CLAUDE.md block", () => {
+    expect(harnessNoteKind("SessionStart hook additional context: deadman: auto-handoff")).toBe("SessionStart hook");
+    expect(harnessNoteKind("Note: src/ui.ts changed on disk since you last read it. Here are the relevant changes:\n1\tx"))
+      .toBe("file changed");
+    expect(harnessNoteKind("Codebase and user instructions are shown below.")).toBe("project instructions");
+    expect(harnessNoteKind("[SYSTEM NOTIFICATION - NOT USER INPUT] a background task finished")).toBe("notification");
+  });
+
+  test("an unknown nudge degrades to 'note', never a wrong label", () => {
+    expect(harnessNoteKind("Some brand new reminder the harness shipped yesterday.")).toBe("note");
+    expect(harnessNoteKind("")).toBe("");
+  });
+
+  test("stacked nudges split, count, and surrender the token budget as a number", () => {
+    const msg = [CAVEAT, IDLE, TOKENS, STYLE].join("\n\n");
+    const s = harnessNotes(msg);
+    expect(s.injection).toBe(false);
+    expect(s.notes.map((n: any) => n.kind)).toEqual(["terminal caveat", "idle nudge", "tokens left", "output style"]);
+    expect(s.tokensLeft).toBe(14887549);
+    expect(harnessNoteLine(msg)).toBe("4 harness notes · terminal caveat · idle nudge · 14.89m tokens left · output style");
+  });
+
+  test("the three-note step reads exactly as designed", () => {
+    expect(harnessNoteLine([CAVEAT, TOKENS, STYLE].join("\n\n")))
+      .toBe("3 harness notes · terminal caveat · 14.89m tokens left · output style");
+  });
+
+  test("an injection stays ONE note: name, size, first meaningful line", () => {
+    const hook = "SessionStart hook additional context: deadman: auto-handoff from 2026-09-09T00:28Z\n\n" + "a".repeat(12000);
+    const s = harnessNotes(hook);
+    expect(s.injection).toBe(true);
+    expect(s.notes.length).toBe(1);
+    const line = harnessNoteLine(hook);
+    expect(line).toContain("SessionStart hook");
+    expect(line).toContain("chars");
+    expect(line).toContain("deadman: auto-handoff");
+  });
+
+  test("harnessNoteHead skips reminder wrappers and heading marks", () => {
+    expect(harnessNoteHead("<system-reminder>\n\n# Memory Index\n- a thing")).toBe("Memory Index");
+    expect(harnessNoteHead("")).toBe("");
+    expect(harnessNoteHead("x".repeat(200)).length).toBe(90);
+  });
+});
+
+// Claude Code's persistent memory lives under
+// ~/.claude/projects/<key>/memory/ — a Read/Write/Edit there is not a file
+// operation like any other, and the conversation says so.
+describe("memory operations", () => {
+  const MEM = "/home/deva/.claude/projects/-Users-eric-wrk-cctrace/memory/MEMORY.md";
+  const NOTE = "/home/deva/.claude/projects/-Users-eric-wrk-cctrace/memory/cctrace-release-flow.md";
+
+  test("read/write/edit under a project's memory dir are memory operations", () => {
+    expect(memoryOp("Read", { file_path: MEM })).toEqual({ op: "read", file: "MEMORY.md" });
+    expect(memoryOp("Write", { file_path: NOTE })).toEqual({ op: "write", file: "cctrace-release-flow.md" });
+    expect(memoryOp("Edit", { file_path: NOTE })).toEqual({ op: "edit", file: "cctrace-release-flow.md" });
+    expect(memoryOp("MultiEdit", { file_path: NOTE })).toEqual({ op: "edit", file: "cctrace-release-flow.md" });
+  });
+
+  test("everything else is a plain file operation", () => {
+    expect(memoryOp("Read", { file_path: "/repo/src/ui.ts" })).toBeNull();
+    expect(memoryOp("Bash", { command: "cat " + MEM })).toBeNull();
+    expect(memoryOp("Read", { file_path: "/home/deva/.claude/settings.json" })).toBeNull();
+    // a "memory" dir that is not the harness's own store stays plain
+    expect(memoryOp("Read", { file_path: "/repo/memory/notes.md" })).toBeNull();
+    expect(memoryOp("Read", {})).toBeNull();
+  });
+
+  test("kimi's `path` key is honored like Claude Code's file_path", () => {
+    expect(memoryOp("Read", { path: MEM })).toEqual({ op: "read", file: "MEMORY.md" });
   });
 });

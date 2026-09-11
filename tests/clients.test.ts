@@ -2,7 +2,7 @@ import { describe, test, expect } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { CLIENTS, findClientBinary, wireTables } from "../src/clients";
+import { CLIENTS, clientLabel, findClientBinary, wireTables } from "../src/clients";
 import { codexProviderHosts } from "../src/clients/codex";
 import { opencodeConfigHosts } from "../src/clients/opencode";
 
@@ -24,7 +24,24 @@ describe("client profiles (#20)", () => {
       // Completions) legitimately carries neither, so "" is valid.
       expect(typeof p.wire.sessionHeader).toBe("string");
       expect(typeof p.wire.threadHeader).toBe("string");
+      // Every client names itself: the surfaces that LABEL a run show this,
+      // never the lowercase selector word.
+      expect(p.wire.label).toBeTruthy();
     }
+  });
+
+  // One list of product names, kept where the wire table is. A page inlines
+  // clientLabel beside the embedded tables and asks it; nothing keeps a
+  // second copy.
+  test("clientLabel names a client from its wire table, capitalizes otherwise", () => {
+    const w = wireTables();
+    expect(clientLabel("kimi", w)).toBe("Kimi Code");
+    expect(clientLabel("opencode", w)).toBe("OpenCode");
+    expect(clientLabel("claude", w)).toBe("Claude");
+    // An unlabeled pre-0.51 trace, or a client this build has never heard of.
+    expect(clientLabel("gemini", w)).toBe("Gemini");
+    expect(clientLabel("codex")).toBe("Codex");
+    expect(clientLabel("")).toBe("Claude");
   });
 
   // The tables are embedded into the web UI page as data — they must survive

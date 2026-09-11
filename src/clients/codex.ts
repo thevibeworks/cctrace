@@ -51,6 +51,7 @@ export const codex: ClientPlugin = {
   ],
   installHint: "Install the OpenAI Codex CLI (npm i -g @openai/codex) or use --client-path",
   wire: {
+    label: "Codex",
     dialect: "openai",
     // oaiusercontent.com is OpenAI's file CDN — first-party, not External.
     firstPartyHosts: ["chatgpt.com", "openai.com", "oaiusercontent.com"],

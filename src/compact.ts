@@ -106,6 +106,28 @@ export function lastMsgSig(pair: any): string {
 }
 
 /**
+ * Does this request's history still carry the given message signature?
+ * The supersede guard both folds ask: a request whose durable tip appears
+ * in the candidate's packing was re-sent by it; one whose tip is absent is
+ * a rewound/edited branch whose body holds its only copy. Scanned from the
+ * END with an early exit — the tip of a superseded request sits a turn or
+ * two from its successor's, so the common answer costs a handful of
+ * stringifies instead of one per message in the conversation.
+ */
+export function historyHas(pair: any, sig: string): boolean {
+  const body = pair && pair.request && pair.request.body;
+  const hist = Array.isArray(body?.messages) ? body.messages : Array.isArray(body?.input) ? body.input : [];
+  for (let i = hist.length - 1; i >= 0; i--) {
+    try {
+      if ((JSON.stringify(hist[i]) || "").slice(0, 400) === sig) return true;
+    } catch {
+      // unserializable message — nothing to match against
+    }
+  }
+  return false;
+}
+
+/**
  * Thread grouping key, mirroring buildSession: session id + agent-id header
  * (Anthropic) / conv header (OpenAI) when present, else the first-user-text
  * signature. Stubs carry their firstUserText so they keep grouping equal.

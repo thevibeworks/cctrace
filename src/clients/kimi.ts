@@ -26,6 +26,7 @@ export const kimi: ClientPlugin = {
   installHint:
     "Install Kimi Code (curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash) or use --client-path",
   wire: {
+    label: "Kimi Code",
     dialect: "openai",
     firstPartyHosts: ["kimi.com", "moonshot.ai", "moonshot.cn"],
     hostCategories: [

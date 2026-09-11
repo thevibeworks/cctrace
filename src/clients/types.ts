@@ -11,6 +11,13 @@
  * the web UI page as data, the same way META/__PAIRS__ are.
  */
 export interface ClientWire {
+  /**
+   * How the product writes its own name — "Kimi Code", not "kimi". The
+   * selector word stays lowercase everywhere it is typed (argv, `ps`
+   * columns, pair.client); this is what a surface that LABELS a run shows,
+   * and it travels with the plugin so a new client names itself once.
+   */
+  label: string;
   /** Model-call wire shape: Anthropic /v1/messages vs OpenAI Responses. */
   dialect: "anthropic" | "openai";
   /** Host suffixes that are this client's own infrastructure. */

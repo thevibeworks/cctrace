@@ -976,6 +976,147 @@ export function harnessTurnKind(blocks: any[]): string {
 }
 
 /**
+ * The recurring harness NOTES — the nudges Claude Code stacks onto a step,
+ * either as a role:"system" wire message or as a <system-reminder> block
+ * inside a user turn. Five of them repeat after almost every tool call
+ * ("Only you see that command's output...", the idle nudge, the token
+ * budget, the output style, the date); everything else is a one-off
+ * INJECTION whose size and first line say more than a label would.
+ *
+ * Precise prefixes only — harnessPrompt's discipline. A note we do not know
+ * classifies as "note" and the caller still prints its first meaningful
+ * line, so a reworded or brand-new nudge degrades to an honest preview
+ * instead of a wrong name. Curly apostrophes normalize first (the harness
+ * has shipped both).
+ */
+export function harnessNoteKind(text: any): string {
+  const t = String(text || "").replace(/[‘’]/g, "'").trim();
+  if (!t) return "";
+  if (t.lastIndexOf("Only you see that command", 0) === 0) return "terminal caveat";
+  if (t.lastIndexOf("The user hasn't heard from you in a while", 0) === 0) return "idle nudge";
+  if (t.lastIndexOf("<total_tokens>", 0) === 0) return "tokens left";
+  if (t.lastIndexOf("Proactive output style is active", 0) === 0) return "output style";
+  if (t.lastIndexOf("Today's date is", 0) === 0) return "date";
+  if (t.lastIndexOf("[SYSTEM NOTIFICATION", 0) === 0) return "notification";
+  if (t.lastIndexOf("Note: ", 0) === 0 && t.indexOf("changed on disk since you last read it") !== -1) return "file changed";
+  // A hook's output names itself: "SessionStart hook additional context: ..."
+  const hook = /^([A-Za-z]+) hook additional context\s*:/.exec(t);
+  if (hook) return hook[1] + " hook";
+  if (t.lastIndexOf("Codebase and user instructions are shown below", 0) === 0) return "project instructions";
+  if (t.lastIndexOf("As you answer the user's questions", 0) === 0) return "session context";
+  if (t.lastIndexOf("Contents of ", 0) === 0) return "file contents";
+  if (t.lastIndexOf("The following deferred tools", 0) === 0) return "deferred tools";
+  if (t.lastIndexOf("The following skills are available", 0) === 0) return "skills";
+  if (t.lastIndexOf("Available agent types", 0) === 0) return "agent types";
+  if (t.lastIndexOf("Attribution for git commits", 0) === 0) return "attribution";
+  if (t.lastIndexOf("You are powered by the model named", 0) === 0) return "model note";
+  if (t.lastIndexOf("# Environment", 0) === 0) return "environment";
+  return "note";
+}
+
+/** First meaningful line of a note, for the injection summaries: reminder
+ * wrappers and markdown heading marks stripped, whitespace collapsed. */
+export function harnessNoteHead(text: any, cap?: number): string {
+  const lines = String(text || "").replace(/<\/?system-reminder>/g, "").split("\n");
+  for (const raw of lines) {
+    const s = raw.replace(/^#+\s*/, "").replace(/\s+/g, " ").trim();
+    if (!s) continue;
+    const n = cap || 90;
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+  return "";
+}
+
+/**
+ * A harness message read as the facts worth ONE line. Returns
+ *   { notes: [{ kind, chars, head }], tokensLeft, chars, injection }
+ * Recurring nudges arrive STACKED in one message, separated by a blank
+ * line, so they split and count. An INJECTION (a hook's output, a changed
+ * file, the CLAUDE.md block) owns its whole message — splitting it on blank
+ * lines would shred a document into nonsense — so it stays one note and the
+ * caller names it by size and first line.
+ */
+export function harnessNotes(text: any): any {
+  // The five nudges that repeat every step — the ones worth COUNTING rather
+  // than naming one at a time. Everything else is an injection.
+  const recurring: Record<string, number> = {
+    "terminal caveat": 1, "idle nudge": 1, "tokens left": 1, "output style": 1, "date": 1,
+  };
+  const t = String(text || "");
+  const parts = t.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  const firstKind = harnessNoteKind(parts[0] || "");
+  if (!parts.length) return { notes: [], tokensLeft: null, chars: 0, injection: false };
+  if (!recurring[firstKind]) {
+    return {
+      notes: [{ kind: firstKind, chars: t.length, head: harnessNoteHead(t) }],
+      tokensLeft: null,
+      chars: t.length,
+      injection: true,
+    };
+  }
+  const notes: any[] = [];
+  let tokensLeft: number | null = null;
+  for (const p of parts) {
+    const kind = harnessNoteKind(p);
+    if (kind === "tokens left") {
+      const m = /<total_tokens>\s*([\d,]+)/.exec(p);
+      if (m) tokensLeft = parseInt(m[1]!.replace(/,/g, ""), 10);
+    }
+    notes.push({ kind, chars: p.length, head: harnessNoteHead(p) });
+  }
+  return { notes, tokensLeft, chars: t.length, injection: false };
+}
+
+/**
+ * The one line a folded harness message shows:
+ *   recurring  "3 harness notes · terminal caveat · 14.9M tokens left · output style"
+ *   injection  "SessionStart hook · 12.3k chars · deadman: auto-handoff from ..."
+ * "" when there is nothing to summarize.
+ */
+export function harnessNoteLine(text: any): string {
+  const s = harnessNotes(text);
+  if (!s.notes.length) return "";
+  if (s.injection) {
+    const n = s.notes[0];
+    const bits = [n.kind === "note" ? "injected context" : n.kind, fmtCompact(s.chars) + " chars"];
+    if (n.head) bits.push(n.head);
+    return bits.join(" · ");
+  }
+  const bits = [s.notes.length + " harness note" + (s.notes.length === 1 ? "" : "s")];
+  for (const n of s.notes) {
+    if (n.kind === "tokens left") {
+      bits.push(s.tokensLeft != null ? fmtCompact(s.tokensLeft) + " tokens left" : "tokens left");
+      continue;
+    }
+    bits.push(n.kind === "note" ? n.head || "note" : n.kind);
+  }
+  return bits.join(" · ");
+}
+
+/**
+ * Claude Code's persistent MEMORY: the notes it keeps for itself under
+ * `<home>/.claude/projects/<project-key>/memory/` (MEMORY.md is the index).
+ * A Read/Write/Edit there is not a file operation like any other — it is the
+ * agent remembering, and the conversation says so with its own mark.
+ *
+ * Returns { op: "read"|"write"|"edit", file } or null. The path shape is the
+ * gate, not the word "memory": a repo's own ./memory/notes.md is a plain
+ * file. Bash that happens to `cat` the same path is not claimed — the tool
+ * the agent chose is the fact we have.
+ */
+export function memoryOp(name: any, input: any): any {
+  const op = name === "Read" || name === "NotebookRead" ? "read"
+    : name === "Write" ? "write"
+    : name === "Edit" || name === "MultiEdit" || name === "NotebookEdit" ? "edit"
+    : "";
+  if (!op) return null;
+  const i = input || {};
+  const p = String(i.file_path || i.notebook_path || i.path || i.file || "");
+  if (!/(^|\/)\.claude\/projects\/[^/]+\/memory\/[^/]+$/.test(p)) return null;
+  return { op, file: p.slice(p.lastIndexOf("/") + 1) };
+}
+
+/**
  * The subagent-dispatch tool names: a tool_use with one of these SPAWNS a
  * thread (buildSession's agent linker keys on the same three; so does the
  * page's fold). Name-level only — whether a given call is a dispatch or

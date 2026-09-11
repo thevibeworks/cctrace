@@ -227,21 +227,89 @@ describe("live page boot", () => {
     expect(fragmentErrors(page)).toEqual([]);
   });
 
-  test("a tail page behaves live: status 'tail', pulse strip painted from the wire", () => {
+  test("a tail page behaves live: status 'tail', the status bar reads off the wire", () => {
     const page = bootPage(getLiveHtml({ mode: "tail" }));
     expect(page.errors).toEqual([]);
     const ws = page.sockets[0]!;
     ws.onopen!({});
     expect(page.els["status"].textContent).toBe("tail");
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
-    expect(page.els["pulse"].innerHTML).toContain("opus-4-6"); // the newest model call
-    expect(page.els["pulse"].innerHTML).toContain("Last response");
-    expect(page.els["pulse"].innerHTML).not.toContain("p-verb");
+    const bar = page.els["pulse"].innerHTML;
+    // nothing in flight, the last reply ended on end_turn: idle, counting
+    expect(bar).toContain('class="p-state p-idle"');
+    expect(bar).toContain(">idle<");
+    expect(bar).not.toContain("Last response");
+    expect(bar).not.toContain("p-verb");
+  });
+
+  // The status bar states what the session is DOING, from the wire: a
+  // forwarded call with no pair yet is in flight; a reply that stopped on
+  // tool_use with nothing since is waiting on tools.
+  test("an open start puts the bar in flight; a tool_use stop makes it wait on tools", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    const toolStop = msgPair("p1", { resBody: { stop_reason: "tool_use" } });
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [toolStop] }) });
+    expect(page.els["pulse"].innerHTML).toContain("waiting on tools");
+    ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p2", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: Date.now() / 1000 } }) });
+    expect(page.els["pulse"].innerHTML).toContain("in flight");
+    expect(page.els["pulse"].innerHTML).toContain('class="p-state p-flight"');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the cache window drains as a bar with the time left", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    const cached = msgPair("p1", { resBody: { usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900 } } });
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [cached] }) });
+    const bar = page.els["pulse"].innerHTML;
+    expect(bar).toContain('class="p-bar"');
+    // the fixture's timestamps are 1970-epoch, so the window is long gone
+    expect(bar).toContain("p-exp");
+    expect(bar).toContain("expired");
+    expect(page.errors).toEqual([]);
+  });
+
+  // The page used to be blank until the whole init frame landed. The
+  // loading shell is MARKUP that ships before the data script, so the frame
+  // paints first and the wait states a number.
+  test("the loading shell ships before the data and boot takes it down", () => {
+    const html = getLiveHtml({});
+    const shellAt = html.indexOf('id="boot"');
+    expect(shellAt).toBeGreaterThan(-1);
+    expect(shellAt).toBeLessThan(html.indexOf("<!--CCTRACE_DATA-->"));
+    expect(html).toContain('class="boot-row"');
+    expect(html).toContain("body.booted #boot { display: none; }");
+    // a snapshot's payload lands after the shell, not in <head>
+    const snap = renderSnapshot([msgPair("p1")]);
+    expect(snap.indexOf('id="boot"')).toBeLessThan(snap.indexOf("window.__PAIRS__"));
+  });
+
+  test("a live page names what is coming, then clears the shell on init", () => {
+    const page = bootPage(getLiveHtml({}));
+    expect(page.body.classList.contains("booted")).toBe(false);
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "loading", pairs: 480, bytes: 71 * 1024 * 1024 }) });
+    expect(page.els["boot-n"].textContent).toBe("receiving 480 requests · 71.0MB");
+    expect(page.body.classList.contains("booted")).toBe(false);
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    expect(page.body.classList.contains("booted")).toBe(true);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a continuity merge says so quietly instead of moving the ground", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")] }) });
+    ws.onmessage!({ data: JSON.stringify({ type: "history", pairs: [msgPair("p2"), msgPair("p3")] }) });
+    expect(page.els["notice"].textContent).toBe("merged 2 prior requests from this session");
+    expect(page.els["notice"].hidden).toBe(false);
+    expect(page.errors).toEqual([]);
   });
 
   test("loading and live status have no invented activity; view pages hide the footer", () => {
     const html = getLiveHtml({});
-    expect(html).toContain('role="status">Loading trace...');
+    expect(html).toContain('id="boot-n">loading trace');
     expect(html).not.toContain("Reticulating");
     expect(html).not.toContain("rotateBootVerb");
     expect(html).not.toContain("mid-loop");
@@ -481,6 +549,279 @@ describe("sessions sidebar: ordering + subagent nesting", () => {
   });
 });
 
+// A long text reads IN PLACE: bounded height, its own scroll, its size
+// stated, one expand in the corner. The clamp + "show all · N chars" made
+// every long tool result a two-step read.
+describe("long texts read in place", () => {
+  const long = "line of output\n".repeat(400);
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "run it" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: long }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+  });
+
+  test("a long block is a scroll box with its size in the header, not a clamp", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="msg-box"');
+    expect(convo).toContain('class="msg-box-s"');
+    expect(convo).toContain("6.0k chars · 401 lines");
+    expect(convo).toContain('onclick="toggleBox(this)"');
+    expect(convo).not.toContain("msg-clamp");
+    expect(convo).not.toContain("show all");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the detail panel uses the same box", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/p/p1");
+    expect(page.els["detail"].innerHTML).toContain('class="msg-box"');
+    expect(page.errors).toEqual([]);
+  });
+});
+
+// Peek on hover, expand on click. An inline auto-expand shifts the layout
+// out from under the cursor; a fixed popover anchored to the row does not.
+describe("the peek on a collapsed tool row", () => {
+  test("conversation tool folds are peekable and drop the duplicate hint tip", () => {
+    const p = msgPair("p1", {
+      reqBody: {
+        messages: [
+          { role: "user", content: "run it" },
+          { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "x".repeat(120) } }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "out" }] },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" },
+    });
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("<summary data-peek>");
+    // the peek says everything the hint tip said, so the tip is not emitted
+    expect(convo).not.toMatch(/<summary data-peek data-tip=/);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the page ships the peek panel and its 250ms dwell", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("PEEK_DELAY = 250");
+    expect(html).toContain('pk.className = \'peek\'');
+    expect(html).toContain(".peek.show { display: block; }");
+  });
+
+  test("tooltips lay key: value lines out as a grid, at a 400ms dwell", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("SHOW_DELAY = 400");
+    expect(html).toContain('class="tip-kv"');
+    expect(html).toContain(".tip-k {");
+    expect(html).toContain("max-width: 380px");
+  });
+
+  test("tips that restated visible text are gone", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    const rows = page.fragments.filter((f) => f.id === "pairs").map((f) => f.html).join("\n");
+    // the status chip already reads "200"; the category badge already reads its label
+    expect(rows).not.toContain('title="HTTP 200"');
+    expect(rows).not.toContain('title="Messages"');
+    expect(getLiveHtml({})).not.toContain('id="tab-requests" title="Requests"');
+  });
+});
+
+// A Read/Write/Edit under ~/.claude/projects/<key>/memory/ is the agent
+// remembering, and every surface that names a tool says so.
+// The rail is [gutter][node][label]: the context gutter LEADS every row
+// the way the pen leads a request row, subagents branch off into their own
+// indented sub-column, and a failed step breaks the spine.
+describe("the session rail's spine", () => {
+  const u = (s: string) => ({ role: "user", content: s });
+  const a = (s: string) => ({ role: "assistant", content: [{ type: "text", text: s }] });
+
+  test("the context gutter leads every row instead of trailing it", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    // the gutter is the row's first child, before the rail node
+    expect(rail).toMatch(/<a class="tturn[^"]*"[^>]*><span class="tctx/);
+    expect(rail).not.toMatch(/<span class="tctx[^"]*"><\/span><\/a>/);
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a fan-out of subagents branches into an indented sub-column, capped with a count", () => {
+    const spawn = (i: number) => ({ type: "tool_use", id: "tu" + i, name: "Task", input: { subagent_type: "Explore", description: "probe " + i, prompt: "explore area " + i } });
+    const parent = msgPair("p1", {
+      reqBody: { messages: [
+        u("fan out"),
+        { role: "assistant", content: [spawn(1), spawn(2), spawn(3), spawn(4), spawn(5)] },
+        { role: "user", content: [1, 2, 3, 4, 5].map((i) => ({ type: "tool_result", tool_use_id: "tu" + i, content: "done" })) },
+      ] },
+      resBody: { content: [{ type: "text", text: "all back" }], stop_reason: "end_turn" },
+    });
+    const kids = [1, 2, 3, 4, 5].map((i) => msgPair("k" + i, { reqBody: { messages: [u("explore area " + i)] } }));
+    const page = bootSnapshotPage(renderSnapshot([parent, ...kids]));
+    page.goto("#/session");
+    const rail = page.els["threads"].innerHTML;
+    expect(rail).toContain('class="tbranches"');
+    expect((rail.match(/class="tbranch"/g) || []).length).toBe(3);
+    expect(rail).toContain("+2 more");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a failed run breaks the spine, dashed and red", () => {
+    const hist = [u("q one"), a("r1"), u("q two")];
+    const ok1 = msgPair("p1");
+    const fail = msgPair("p2", { reqBody: { messages: hist }, resBody: undefined as any });
+    (fail.response as any).status = 500;
+    const ok2 = msgPair("p3", { reqBody: { messages: hist }, resBody: { content: [{ type: "text", text: "r2" }] } });
+    const page = bootSnapshotPage(renderSnapshot([ok1, fail, ok2]));
+    page.goto("#/session");
+    expect(page.els["threads"].innerHTML).toContain("terr-run");
+    expect(getLiveHtml({})).toContain(".tturn-failed .rgut::before, .terr-run .rgut::before {");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the outline lights the turn under the reading position", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("function syncOutlineCur()");
+    expect(html).toContain(".tturn.cur {");
+  });
+});
+
+// The chips answer "what am I reading" and used to scroll away on the
+// first turn.
+describe("the session chips stay put", () => {
+  test("the chips are the conversation column's own sticky bar", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("#convo > .chips {");
+    expect(html).toContain("position: sticky; top: 0; z-index: 3;");
+    expect(html).toContain("#convo.stuck > .chips {");
+    // the context jump pins to the right edge of that row
+    expect(html).toContain("#convo > .chips > .turn-wire {");
+    expect(html).toContain("classList.toggle('stuck', convoEl.scrollTop > 4)");
+  });
+
+  test("the chips row still opens the conversation and carries the context jump", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo.indexOf('<div class="chips">')).toBe(0);
+    expect(convo).toContain("context →");
+    expect(page.errors).toEqual([]);
+  });
+});
+
+// A screenshot the agent looked at is evidence, not an attachment to
+// unfold. Shown by default, bounded, a run of them is a grid, click opens
+// the lightbox.
+describe("images are shown, bounded, galleried", () => {
+  const png = (n: string) => ({ type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo" + n } });
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "look" }, png("A")] },
+        { role: "assistant", content: [{ type: "tool_use", name: "Read", id: "t1", input: { file_path: "/shots/a.png" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: [png("B"), png("C"), png("D")] }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "seen" }], stop_reason: "end_turn" },
+  });
+
+  test("a single image renders shown and lazy; a run of them becomes a gallery", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="msg-img" loading="lazy"');
+    expect(convo).toContain('class="msg-imgwrap gal"');
+    // three images in the Read result, one wrapper around them
+    expect((convo.match(/class="msg-img"/g) || []).length).toBe(4);
+    expect((convo.match(/class="msg-imgwrap gal"/g) || []).length).toBe(1);
+    expect(convo).not.toContain("classList.toggle('full')");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the page ships the lightbox and bounds decoded bitmaps", () => {
+    const html = getLiveHtml({});
+    expect(html).toContain("content-visibility: auto");
+    expect(html).toContain(".lbx.show { display: flex; }");
+    expect(html).toContain("max-height: 320px");
+  });
+
+  test("a remote image is still named, never fetched", () => {
+    const remote = msgPair("p2", {
+      reqBody: { messages: [{ role: "user", content: [{ type: "image", source: { type: "url", url: "https://evil.example/x.png" } }] }] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([remote]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("not fetched");
+    expect(convo).not.toContain('src="https://evil.example');
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe("memory operations get a mark", () => {
+  const MEM = "/home/deva/.claude/projects/-Users-eric-cctrace/memory/cctrace-cost-view.md";
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "remember that" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Write", id: "t1", input: { file_path: MEM, content: "notes" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "written" }] },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "remembered" }], stop_reason: "end_turn" },
+  });
+
+  test("the conversation fold names the store, the verb and the note", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("fold-mem");
+    expect(convo).toContain("Memory · write · cctrace-cost-view.md");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the rail names it too, in the memory ink", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    expect(page.els["threads"].innerHTML).toContain('tname tname-mem">Memory</span>(write · cctrace-cost-view.md)');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the record stream carries the same label and mark", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/context/=stream");
+    const deck = page.els["context-view"].innerHTML;
+    expect(deck).toContain("tj-mem");
+    expect(deck).toContain("Memory · write · cctrace-cost-view.md");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a plain file edit keeps the plain fold", () => {
+    const plain = msgPair("p2", {
+      reqBody: { messages: [
+        { role: "user", content: "edit it" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Write", id: "t2", input: { file_path: "/repo/src/ui.ts", content: "x" } }] },
+      ] },
+    });
+    const page = bootSnapshotPage(renderSnapshot([plain]));
+    page.goto("#/session");
+    expect(page.els["convo"].innerHTML).not.toContain("fold-mem");
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("rich tool bodies in the session view", () => {
   test("an Edit fold carries the diff, hostile content stays escaped, raw input one fold deeper", () => {
     const p = msgPair("p1", {
@@ -573,6 +914,36 @@ describe("the destination rail", () => {
     expect(page.errors).toEqual([]);
   });
 
+  // The card answers "what am I looking at": a place and a subject, not a
+  // path and two hashes.
+  test("the run card reads project + client label, then the run's own name", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1", {
+      reqBody: { messages: [{ role: "user", content: "fold the harness notes to one line" }] },
+    })], { project: "cctrace", projectPath: "/repo/cctrace", client: "claude", traceFile: "trace-x.jsonl", traceRelPath: "/store/trace-x.jsonl" }));
+    const card = page.els["ctx"].innerHTML;
+    expect(card).toContain('class="runid-top"');
+    expect(card).toContain(">cctrace</span>");
+    // the client label is capitalized, never the bare wire word
+    expect(card).toContain('class="runid-client">Claude<');
+    expect(card).not.toContain(">claude<");
+    // no generated title: the human's own first prompt stands in
+    expect(card).toContain("fold the harness notes to one line");
+    // the meta line is the id and the clock
+    expect(card).toContain('class="runid-meta"');
+    expect(card).toContain(">aaaabbbb</button>");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a generated session title wins the name line, and the tab title agrees", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")], {
+      project: "cctrace", client: "codex", sessionTitle: "the fold takes bytes, not the reading",
+    }));
+    expect(page.els["ctx"].innerHTML).toContain("the fold takes bytes, not the reading");
+    expect(String(page.doc.title)).toContain("the fold takes bytes, not the reading");
+    expect(String(page.doc.title)).toContain("Codex");
+    expect(page.errors).toEqual([]);
+  });
+
   test("each destination counts what it holds, in its own unit", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1"), msgPair("p2")]));
     expect(page.els["dest-n-req"].textContent).toBe("2");
@@ -593,7 +964,7 @@ describe("the recorded request row", () => {
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     const html = rowsHtml(page);
     expect(html).toContain('class="pen"');
-    expect(html).toContain("of 30s full scale");
+    expect(html).toContain("scale: 30s is full width");
   });
 
   test("a quiet stretch over the fold threshold becomes a named band", () => {
@@ -824,6 +1195,63 @@ describe("outline tool labels", () => {
   });
 });
 
+// The conversation was dominated by SYSTEM blocks: Claude Code stacks the
+// same nudges onto almost every step. They fold to one summarized line, the
+// human's own prompt text never does, and the rail drops the rows for a dot.
+describe("harness notes fold to one line", () => {
+  const NUDGE = "Only you see that command's output — the user's terminal shows at most a few lines of it.\n\n" +
+    "<total_tokens>14887549 tokens left</total_tokens>\n\n" +
+    "Proactive output style is active. Execute autonomously.";
+  const p = msgPair("p1", {
+    reqBody: {
+      messages: [
+        { role: "user", content: "please fix the bug\n<system-reminder>\nCodebase and user instructions are shown below.\n" + "x".repeat(3000) + "\n</system-reminder>" },
+        { role: "assistant", content: [{ type: "tool_use", name: "Bash", id: "t1", input: { command: "bun test" } }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+        { role: "system", content: NUDGE },
+      ],
+    },
+    resBody: { content: [{ type: "text", text: "fixed it" }], stop_reason: "end_turn" },
+  });
+
+  test("a role:system nudge renders as ONE folded line naming its notes", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain('class="fold fold-sys"');
+    expect(convo).toContain("3 harness notes");
+    expect(convo).toContain("terminal caveat");
+    expect(convo).toContain("14.89m tokens left");
+    // no role bar, no box: the step above already carries ordinal and clock
+    expect(convo).toContain('class="turn turn-sys"');
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a reminder appended to a prompt folds; the prompt itself never does", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const convo = page.els["convo"].innerHTML;
+    expect(convo).toContain("please fix the bug");
+    expect(convo).toContain("project instructions · 3.0k chars");
+    // the prompt renders as itself; the 3k reminder sits behind a closed fold
+    expect(convo).toContain('<div class="msg-text">please fix the bug</div>');
+    expect(convo).not.toContain('<details open class="fold fold-sys"');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("the rail drops the system row and dots the step it followed", () => {
+    const page = bootSnapshotPage(renderSnapshot([p]));
+    page.goto("#/session");
+    const threads = page.els["threads"].innerHTML;
+    expect(threads).toContain('class="tsys"');
+    expect(threads).toContain("harness note followed this step");
+    expect(threads).not.toContain("Only you see that command");
+    expect(fragmentErrors(page)).toEqual([]);
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe("harness-authored messages", () => {
   test("a recap prompt wears the sys tag in outline and convo, never the human ring", () => {
     const recap = "The user stepped away and is coming back. Recap in under 40 words.";
@@ -1009,8 +1437,8 @@ describe("find in session (toolbar)", () => {
     expect(html).toContain('id="sfind"');
     expect(html).toContain('id="sfind-count"');
     expect(html).toContain("body.view-session #tb-find { display: flex; }");
-    // The observed-response footer participates in layout instead of covering content.
-    expect(html).toContain('class="p-label">Last response');
+    // The live status bar participates in layout instead of covering content.
+    expect(html).toContain("body.view-session.pulse-on #pulse { display: flex; }");
     // The page still boots clean with the new script block.
     const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
     page.goto("#/session");
@@ -1670,13 +2098,16 @@ describe("the trajectory gutter on the session rail", () => {
     const rail = page.els["threads"].innerHTML;
     // opus 4.6's window is known (1M — the offline fallback follows the
     // docs' 4.6+ rule), so the % is against the window
-    expect(rail).toContain("context 60.5k");
-    expect(rail).toMatch(/context [\d.]+k · \d+% of a [\d.]+[km] window/);
+    expect(rail).toContain("context: 60.5k");
+    expect(rail).toMatch(/context: [\d.]+k · \d+% of a [\d.]+[km] window/);
   });
 });
 
 describe("context view", () => {
-  test("pinning a folded request clears the previous composition and inspector", () => {
+  // The fold takes bytes, not the reading: a superseded body's history is
+  // a prefix of the request that superseded it, so pinning a folded step
+  // still draws its composition — off the keeper, and it says so.
+  test("pinning a folded request derives its composition from the request that kept the history", () => {
     const folded = msgPair("p1", { reqBody: {
       _cctrace_stub: true, kind: "superseded", firstUserText: "hi", historyLen: 1,
       messages: undefined, keptPairId: "p2",
@@ -1689,11 +2120,69 @@ describe("context view", () => {
     input.value = "1";
     input.onchange!({});
     const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-flame"');
+    expect(cx).not.toContain("Request body folded");
+    expect(cx).toContain("Composition estimated from the request that kept this history");
+    expect(cx).toContain("body folded; composition from the request that kept the history");
+    expect(page.errors).toEqual([]);
+  });
+
+  test("a folded request no retained request can explain says so, and offers the recorded body", () => {
+    const orphan = msgPair("p1", { reqBody: {
+      _cctrace_stub: true, kind: "budgeted", firstUserText: "hi", historyLen: 1,
+      messages: undefined, keptPairId: "",
+    } });
+    const full = msgPair("p2");
+    const page = bootSnapshotPage(renderSnapshot([orphan, full]));
+    page.goto("#/context");
+    const input = page.els["cx-step-number"];
+    input.value = "1";
+    input.onchange!({});
+    const cx = page.els["context-view"].innerHTML;
     expect(cx).toContain("Request body folded");
-    expect(cx).toContain('href="#/p/p2">Retained history');
+    expect(cx).toContain("composition cannot be derived");
     expect(cx).toContain('id="cx-insp" hidden');
     expect(cx).not.toContain('class="cx-flame"');
     expect(cx).not.toContain('id="cx-insp-body"');
+    // A file:// snapshot has no server to fetch the recorded body from.
+    expect(cx).not.toContain("data-cxload");
+    expect(page.errors).toEqual([]);
+  });
+
+  // ...but a live page can go get it. One body at a time (the retention
+  // policy in docs/live-resources.md), and the view rebuilds around it.
+  test("a live page loads a folded body back from the trace and composes it", async () => {
+    const original = msgPair("p1");
+    const orphan = msgPair("p1", { reqBody: {
+      _cctrace_stub: true, kind: "budgeted", firstUserText: "hi", historyLen: 1,
+      messages: undefined, keptPairId: "",
+    } });
+    const asked: string[] = [];
+    const page = bootPage(getLiveHtml({ liveBodies: "folded" }), {
+      hash: "#/context",
+      fetch: async (url: string) => {
+        if (!url.startsWith("/api/pair/")) return new Promise(() => {});
+        asked.push(url);
+        return { ok: true, json: async () => structuredClone(original) };
+      },
+    });
+    const ws = page.sockets[0]!;
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [orphan, msgPair("p2")] }) });
+    const input = page.els["cx-step-number"];
+    input.value = "1";
+    input.onchange!({});
+    expect(page.els["context-view"].innerHTML).toContain('data-cxload="p1"');
+    // the delegated listener resolves the click through closest()
+    const link: any = { textContent: "", dataset: { cxload: "p1" } };
+    link.closest = (sel: string) => (sel === "[data-cxload]" ? link : null);
+    for (const fire of [...(page.els["context-view"].listeners.click || [])]) {
+      fire({ target: link, preventDefault() {}, stopPropagation() {} });
+    }
+    await Bun.sleep(20);
+    expect(asked).toEqual(["/api/pair/p1"]);
+    const cx = page.els["context-view"].innerHTML;
+    expect(cx).toContain('class="cx-flame"');
+    expect(cx).not.toContain("cx-unavailable");
     expect(page.errors).toEqual([]);
   });
   const REMINDER = "<system-reminder>Recalled memory: the user prefers tabs.</system-reminder>";

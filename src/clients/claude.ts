@@ -18,6 +18,7 @@ export const claude: ClientPlugin = {
   ],
   installHint: "Install Claude Code or use --claude-path",
   wire: {
+    label: "Claude",
     dialect: "anthropic",
     firstPartyHosts: ["anthropic.com", "claude.ai", "claude.com"],
     hostCategories: [

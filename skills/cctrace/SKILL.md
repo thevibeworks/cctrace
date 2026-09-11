@@ -37,6 +37,9 @@ cctrace --dir path/to/logs       # trace dir (default: the project's store dir)
 cctrace --fresh                  # don't merge prior traces of a continued session
 cctrace --no-auto-merge          # don't fold this run into session-<id>.jsonl at exit
 cctrace --no-compress            # leave the trace plain .jsonl at exit (default: .jsonl.zst)
+cctrace --live-bodies full       # keep every request body in the live server (default: folded)
+cctrace --live-body-mb 128       # live request-body budget in MB (default: 64)
+cctrace --upstream-retry 0       # disable the 30s retry window for pre-send model failures
 cctrace --version                # print version (+ newer version if known)
 cctrace --no-update-check        # skip the daily npm version check / prompt
 cctrace codex -- exec "..."      # trace the OpenAI Codex CLI instead

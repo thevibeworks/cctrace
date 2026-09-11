@@ -112,16 +112,18 @@ A TLS error label does not prove that the origin certificate caused an
 outage. A reset or timeout does not establish whether the origin received
 the request. These distinctions matter more than the displayed label.
 
-MITM model calls retry only connection-refused and DNS failures, with
+MITM model calls retry connect, DNS and TLS handshake failures, with
 manual redirects so a failure cannot come from a redirect after the first
-POST was processed. The default window for starting retries is 30 seconds,
+POST was processed. A TLS handshake fails before any request byte is
+written, and an egress proxy's dial timeout surfaces as a certificate
+verification error in Bun, which is why TLS is in the set. The default window for starting retries is 30 seconds,
 with 1/2/4/8-second backoff and at most six attempts. `--upstream-retry`
 accepts 0–60 seconds. Attempt duration counts against the window; it is not
 a new timeout on an in-flight connection or long model inference. Client
 cancellation stops waiting/retrying before response headers. Subsequent
 streaming keeps the existing response pump's disconnect behavior.
 
-TLS, reset, timeout, HTTP error responses, opaque tunnels, and non-model
+Reset, timeout, HTTP error responses, opaque tunnels, and non-model
 calls are not retried by this layer. Base-URL mode retains automatic redirect
 following and does not add retries. The agent's own retry policy still
 applies. This cannot hide a sustained egress outage or resume a broken SSE

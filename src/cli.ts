@@ -1392,8 +1392,9 @@ ${C.yellow}OPTIONS:${C.reset}
   --messages-only    Only capture model API calls
   --live-bodies MODE folded (default): request bodies on demand; full: keep all
   --live-body-mb N   Retained live request-body budget in MB (default: 64)
-  --upstream-retry S MITM retry window for pre-connect model failures (default: 30s,
-                     0 disables; TLS/reset/timeout/HTTP responses never replay)
+  --upstream-retry S MITM retry window for pre-send model failures: connect,
+                     DNS, TLS handshake (default: 30s, 0 disables;
+                     reset/timeout/HTTP responses never replay)
   --capture-external MITM every host (default: non-first-party hosts pass
                      through as opaque byte-counted tunnels). External
                      bodies over 64KB are summarized, not stored

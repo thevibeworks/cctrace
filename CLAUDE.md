@@ -47,7 +47,7 @@ src/
 │                   #   Idempotent per pair; folds out-of-order arrivals against the
 │                   #   request that already re-sent them (docs/live-resources.md)
 ├── upstream.ts     # Model-call forwarding for mitm: bounded retries for
-│                   #   connection-refused/DNS only, manual redirects, and the
+│                   #   pre-send failures (connect/DNS/TLS handshake), manual redirects, and the
 │                   #   cctrace-generated 502 that carries the failure as trace data
 ├── trace-log.ts    # The .jsonl sink: append a pair, remember its offset, read one back
 │                   #   without retaining a body (identity-verified, scan after a rewrite)

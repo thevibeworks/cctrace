@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.52.0
+
+- Added cctrace doctor. Reads one session's latest request window (exact: the body is the context) and reports what it holds: system prompt by section, tool schemas and the ones the thread never called per MCP server, harness injections recurring vs one-off with instruction files sized one by one, user messages, assistant output, tool results by tool. Splits the window into task / overhead / work. Lists duplicates: exact groups by hash, near copies by line-set overlap, the same file or command asked again. Folds the thread timeline: peak vs the model window, compactions, cache hit and bumps by cause, injections by producer. Fires findings from fixed named rules, each printed with its rule. Every item has a key; --show KEY prints its text. --peak, --step and --thread pick another window. --json is the input for the cctrace-doctor skill. No target inside a traced session diagnoses the caller's own run.
+- Added cctrace export. Writes the session as a markdown transcript (prompts and answers in full, one line per tool call, harness injections folded to one line, times UTC) or, with --jsonl, the merged wire pairs of the whole session across every run. Stdout unless --out.
+- Added the cctrace-doctor skill: reads the doctor JSON, drills with --show, writes the diagnosis and the levers (which file to trim, which server to drop, which read to stop repeating).
+- A file the harness delivers as a plain user message ("Contents of /path/CLAUDE.md") classifies as an injection, not the human's words. On a real session three 11k copies of one CLAUDE.md read as user text before.
+- Reminder-wrapped notes are labeled by family (project instructions, notification, file contents), not by the wrapper tag.
+- The transcript routes role:system wire messages through the user path, so hook output and nudges no longer print as assistant text. Recurring per-step nudges are dropped; one-off injections fold to one line naming producer and size.
+- The chars/4 estimate runs 1.6-1.8x under the provider count on real sessions. Every doctor window is anchored to the provider's prompt-token count and a calibration finding fires when the ratio drifts past 0.4. Shares rank; absolute figures do not.
+- Tools marked defer_loading are not counted as never-called dead weight; they are not in the prompt until searched.
+
 ## 0.51.0
 
 - Context view reads every folded step. A superseded request body is derived from the keeper's body sliced back to the stub's history length, and both fold sites stamp the composition on the stub before dropping the bytes. On a live run 3 of 40 steps had a composition before; all do now. The margin, the deck hint and the inspector's origin facet say when a step is derived.

@@ -78,9 +78,27 @@ describe("renderTranscript", () => {
     expect(md).toContain("1 utility thread (probes, title generation) omitted");
   });
 
-  test("user text is blockquoted in full; system reminders dropped", () => {
+  test("user text is blockquoted in full; a reminder folds to one harness line, never the human's voice", () => {
     expect(md).toContain("> please fix the bug\n> in the parser");
-    expect(md).not.toContain("injected noise");
+    expect(md).not.toContain("> injected noise");
+    expect(md).toContain("_[harness · injected noise · 14 chars]_");
+  });
+
+  test("recurring nudges are dropped; a role:system hook message folds, not prints", () => {
+    const pairs = [msgPair("p9", 2000, {
+      reqBody: {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "hello" }, { type: "text", text: "<system-reminder>\nOnly you see that command's output.\n</system-reminder>" }] },
+          { role: "system", content: [{ type: "text", text: "SessionStart hook additional context: deadman: resume at HANDOFF.md\n\n# Environment\n - cwd: /x" }] },
+        ],
+      },
+      resBody: { content: [{ type: "text", text: "hi" }] },
+    })];
+    const out = renderTranscript(pairs);
+    expect(out).toContain("> hello");
+    expect(out).not.toContain("Only you see that command");
+    expect(out).not.toContain("# Environment");
+    expect(out).toContain("_[harness · SessionStart hook · ");
   });
 
   test("tool calls are one line with their result; thinking omitted", () => {

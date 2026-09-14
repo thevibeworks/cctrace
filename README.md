@@ -135,6 +135,23 @@ else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
   `cctrace-insights` skill turns that into answers ("how is my caching
   doing this week", "which session is the heavy one") with the coverage
   gaps stated.
+- **A doctor for the context.** `cctrace doctor` reads one session's
+  latest request window -- exact, because the body *is* the context --
+  and says what it is made of: the system prompt by section, the tool
+  schemas the thread never called (per MCP server), harness injections
+  recurring vs one-off with instruction files sized one by one, tool
+  results by tool, and the duplicates -- byte-identical blocks, near
+  copies by line overlap, the same file or command asked again -- plus
+  the timeline (peak vs the model window, compactions, cache bumps) and
+  the findings fixed rules fire. Every item has a key; `--show` prints
+  its text. Run it with no target inside a traced session and it
+  diagnoses *your own* window. The `cctrace-doctor` skill turns the
+  `--json` into a diagnosis with levers: which file to trim, which
+  server to drop, which read to stop repeating.
+- **Export a session.** `cctrace export` writes the markdown transcript
+  (every prompt and answer in full, tool calls one line each, harness
+  injections folded to one line) or, with `--jsonl`, the merged wire
+  pairs of the whole session across every run.
 - **The trajectory, in the timeline.** Every step on the sessions rail
   carries a track: how full the window was, split into the prefix read
   from cache and what was billed fresh. Down the rail that column is the
@@ -340,8 +357,6 @@ sharing. Never paste raw output into a public issue. Seriously.
   streaming replay ([design](docs/design/session-replay.md)).
 - **WebSocket relay** -- capture ws frames instead of the current fast
   refusal + HTTP fallback.
-- **Conversation dump** -- export the reconstructed conversation as
-  Markdown or JSON.
 - **MCP server** -- query captured traffic from any agent (the agent
   *skill* already ships; the MCP surface is the remaining half).
 - **Tunnel PID attribution** -- which subprocess called npm (Linux,

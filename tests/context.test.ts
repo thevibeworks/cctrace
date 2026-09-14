@@ -574,9 +574,15 @@ describe("ctxInjectLabel", () => {
     expect(ctxInjectLabel("# AGENTS.md instructions\n...")).toBe("AGENTS.md");
     expect(ctxInjectLabel("<environment_context>x</environment_context>")).toBe("environment context");
   });
+  test("a reminder-wrapped note names its family, not its wrapper", () => {
+    expect(ctxInjectLabel("<system-reminder>As you answer the user's questions, you can use the following context</system-reminder>")).toBe("session context");
+    expect(ctxInjectLabel("<system-reminder>\nCodebase and user instructions are shown below. Be sure to adhere.\n</system-reminder>")).toBe("project instructions");
+    expect(ctxInjectLabel("<system-reminder>[SYSTEM NOTIFICATION - NOT USER INPUT] agent done</system-reminder>")).toBe("notification");
+    expect(ctxInjectLabel("Contents of /repo/CLAUDE.md:\n\n# repo")).toBe("file contents");
+  });
   test("falls back to the reminder's opening words", () => {
-    const l = ctxInjectLabel("<system-reminder>As you answer the user's questions, you can use the following context</system-reminder>");
-    expect(l.startsWith("As you answer")).toBe(true);
+    const l = ctxInjectLabel("<system-reminder>Remember to floss between tool calls</system-reminder>");
+    expect(l.startsWith("Remember to floss")).toBe(true);
   });
 });
 

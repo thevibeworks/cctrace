@@ -322,6 +322,22 @@ cctrace title [--force] [--json]           # list sessions needing a name + thei
                                           # skill (subagent fan-out), not cctrace itself
 cctrace title set <id> "<title>" [--dir DIR]  # record one title; titles.json per store
                                           # dir, shown everywhere a run is listed
+cctrace doctor [target] [--json] [--show KEY] [--peak]  # context health of ONE session: the
+                                          # latest window's composition (system prompt by
+                                          # section, tool schemas + never-called ones,
+                                          # harness injections recurring vs one-off, your
+                                          # words, tool results by tool), duplicates
+                                          # (exact / near / the same file or command asked
+                                          # again), the timeline (peak, compactions, cache)
+                                          # and rule-fired findings. --show KEY prints any
+                                          # item's text. No target = YOUR OWN trace when
+                                          # you run under cctrace. The cctrace-doctor
+                                          # skill reasons over --json
+cctrace export [target] [--jsonl] [--out F]  # the session as an artifact: markdown
+                                          # transcript (prompts + answers in full, one
+                                          # line per tool call, injections folded) or
+                                          # --jsonl = the merged wire pairs of the whole
+                                          # session. Default target as for doctor
 cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
                                           # move legacy ./.cctrace dirs into the store
                                           # (no DIR: this project's + every one the registry
@@ -366,7 +382,10 @@ The UI rail's foot shows a "⇄ N more" switcher when siblings exist.
 tombstones as a global timeline; open any row with `cctrace view <SESSION>`.
 
 If you (the agent) are yourself running under cctrace — `CCTRACE_TRACE_FILE`
-/ `CCTRACE_SERVER_PORT` in your env say so — see docs/agent-awareness.md:
+/ `CCTRACE_SERVER_PORT` in your env say so — `cctrace doctor` with no target
+diagnoses the context window YOU are running in (what your window holds,
+what is duplicated, which schemas you never call), and `cctrace export`
+dumps your own session. See docs/agent-awareness.md:
 your HTTPS goes through a local tracing proxy, and the one caveat that
 matters is that some tools behave differently behind proxy env vars
 (wrangler swaps undici's dispatcher; its timeout overrides need the proxy

@@ -8,7 +8,8 @@
 // one line, thinking omitted, utility threads omitted (counted in the
 // header). Times are UTC — a dump is a shareable artifact, the reader's
 // timezone is unknown.
-import { buildSession, loopTurns, mainThread, toolPreview } from "./session";
+import { buildSession, loopTurns, mainThread, toolPreview, harnessNotes } from "./session";
+import { ctxTextCat, ctxInjectLabel } from "./context";
 import { shortModel, fmtCompact } from "./summarize";
 import { fmtCost } from "./pricing";
 
@@ -24,17 +25,31 @@ function blockText(b: any): string {
   return "";
 }
 
-/** Real human text only: system-reminder blocks and tool results are noise
- * in a transcript (results attach to their tool line instead). */
-function userText(blocks: any[]): string {
+/**
+ * A user turn split into the human's own words and what the harness put
+ * there. Tool results are noise here (they attach to their tool line). The
+ * per-step nudges (terminal caveat, token budget, ...) are dropped; a
+ * one-off injection (project instructions, a hook's output, a file the
+ * harness delivered) folds to ONE line naming its producer and size — it
+ * was in the model's context, so the transcript says so, but it is not the
+ * human's voice and never reads as one.
+ */
+function userText(blocks: any[]): { human: string; harness: string[] } {
   const parts: string[] = [];
+  const harness: string[] = [];
   for (const b of blocks || []) {
     if (!b || b.type !== "text" || typeof b.text !== "string") continue;
     const t = b.text.trim();
-    if (!t || t.lastIndexOf("<system-reminder>", 0) === 0) continue;
+    if (!t) continue;
+    if (ctxTextCat(t) === "inject") {
+      const bare = t.replace(/<\/?system-reminder>/g, "").trim();
+      if (!harnessNotes(bare).injection) continue;
+      harness.push("_[harness · " + ctxInjectLabel(t) + " · " + fmtCompact(bare.length) + " chars]_");
+      continue;
+    }
     parts.push(t);
   }
-  return parts.join("\n\n");
+  return { human: parts.join("\n\n"), harness };
 }
 
 function oneLine(s: string, cap = 200): string {
@@ -76,11 +91,18 @@ function renderThread(t: any, pairs: any[]): string {
     for (const vi of idxs) {
       const turn = vis[vi];
       if (!turn) continue;
-      if (turn.role === "user") {
-        const txt = userText(turn.blocks);
-        if (txt) {
+      // Anything not the model's reply goes through userText: the human's
+      // turns, and the role:"system" wire messages Claude Code sends its
+      // nudges and hook output as (they used to print as reply text).
+      if (turn.role !== "assistant") {
+        const { human, harness } = userText(turn.blocks);
+        if (human) {
           out.push("");
-          out.push(quote(txt));
+          out.push(quote(human));
+        }
+        if (harness.length) {
+          out.push("");
+          out.push(harness.join("\n"));
         }
         continue;
       }

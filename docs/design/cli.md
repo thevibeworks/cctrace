@@ -128,6 +128,41 @@ cctrace title set <session-id|key> "<title>" [--dir DIR]
                                           # record one title (atomic); titles.json per
                                           # store dir, shown in dashboard/history/picker/
                                           # header
+cctrace doctor [target] [--json] [--show KEY] [--peak] [--step ID] [--thread K] [--dir DIR]
+                                          # the DATA side of context health: the main
+                                          # thread's latest request window (exact — the
+                                          # body IS the context) read as its six
+                                          # categories + the attention split (task /
+                                          # overhead / work); the system prompt by
+                                          # markdown section; tool schemas with the ones
+                                          # the thread never called (per MCP server);
+                                          # harness injections recurring vs one-off (an
+                                          # instructions block sized per file); tool
+                                          # results by tool, errors, the largest; the
+                                          # duplicates — exact groups, near pairs by
+                                          # line-set Jaccard, the same file/command
+                                          # asked again; the timeline (peak vs model
+                                          # window, compactions, cache hit + bumps by
+                                          # cause, injections by producer); and the
+                                          # findings fixed DOCTOR_RULES fire, each with
+                                          # its rule. --show KEY prints the text behind
+                                          # any item (sys:N, sys:N/M, tool:NAME, inj:T,
+                                          # res:T, user:T, dup:HASH). No target = the
+                                          # caller's own trace when it runs under cctrace
+                                          # (CCTRACE_TRACE_FILE), else latest. --json is
+                                          # the cctrace-doctor skill's input (src/doctor.ts)
+cctrace export [target] [--jsonl] [--out FILE] [--dir DIR]
+                                          # the session as an artifact: the markdown
+                                          # transcript (every human prompt + assistant
+                                          # answer in full, one line per tool call with
+                                          # its result, harness injections folded to one
+                                          # line each, thinking omitted, times UTC —
+                                          # src/transcript.ts, what the live server's
+                                          # /api/session.md serves) or --jsonl = the
+                                          # merged wire pair set of the whole session
+                                          # (every run, deduped, viewer-only markers
+                                          # stripped — what merge would write). Default
+                                          # target as for doctor; stdout unless --out
 cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst] [--yes]
                                           # move legacy ./.cctrace dirs into the store: no
                                           # DIR = cwd's + every legacy dir the registry

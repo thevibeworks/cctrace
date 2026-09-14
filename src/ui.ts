@@ -3418,10 +3418,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 the conversation reads clean: harness system notes fold to one line, long tool results scroll in place, a hover peeks a collapsed tool row, images render inline with a lightbox, memory writes wear a brain\\n' +
-        '\\u00b7 the live status bar says what the session is doing now (in flight / waiting on tools / idle) and how long the prompt cache has left\\n' +
-        '\\u00b7 the Context view composes every folded step: a superseded body is derived from the request that kept the history, so a fold takes bytes, never the reading\\n' +
-        '\\u00b7 the dashboard is one list of runs with one identity grammar (project, client, what it was about) and a storage picture per project, each archivable on its own\\n' +
+        '\\u00b7 cctrace doctor: what a context window is made of, what is duplicated, which tool schemas never get called, and the findings fixed rules fire; run it with no target inside a traced session for your own window\\n' +
+        '\\u00b7 cctrace export: the session as a markdown transcript, or --jsonl for the merged wire pairs of every run\\n' +
+        '\\u00b7 the cctrace-doctor skill reads the doctor JSON and writes the diagnosis with levers\\n' +
+        '\\u00b7 files the harness delivers as user messages and role:system nudges read as injections, never as human words\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

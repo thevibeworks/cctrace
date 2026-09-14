@@ -66,6 +66,22 @@ src/
 │                   #   runs; createScanFold streams the window's traces for
 │                   #   the wire truth — cache read/write split + est $ per
 │                   #   component, per-model, per-session, quota polls
+├── doctor.ts       # `cctrace doctor`: the DATA layer for context health (title
+│                   #   precedent: cctrace computes + fires fixed DOCTOR_RULES, the
+│                   #   cctrace-doctor skill reasons). diagnoseSession reads the
+│                   #   main thread's latest window (exact: the body IS the
+│                   #   context) — composition + attention split, system prompt
+│                   #   by markdown section, tool schemas never called (per MCP
+│                   #   server), injections recurring vs one-off (instruction
+│                   #   blocks sized per file), results by tool, duplicates
+│                   #   (exact by hash, near by line-set Jaccard, re-reads of one
+│                   #   target), the thread timeline (peak/compactions/cache
+│                   #   bumps/injections by producer) — every item keyed so
+│                   #   --show opens its text. No target under cctrace = the
+│                   #   caller's own run (CCTRACE_TRACE_FILE)
+├── transcript.ts   # Markdown transcript of a session (cctrace export, /api/
+│                   #   session.md): prompts + answers in full, tool calls one
+│                   #   line, harness injections folded to one line, times UTC
 ├── report.ts       # End-of-run close-out: Traced/Session/failed lines (pairs by
 │                   #   category, wall-clock, on-disk size, sids, tokens+cache%,
 │                   #   est cost — this run's pairs only, prior merges excluded)

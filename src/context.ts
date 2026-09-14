@@ -1,5 +1,5 @@
 import { extractCallInfo } from "./summarize";
-import { harnessPrompt, turnContentSig, loopTurns, buildToolResultIndex } from "./session";
+import { harnessPrompt, harnessNoteKind, turnContentSig, loopTurns, buildToolResultIndex } from "./session";
 import {
   wireDialect,
   openaiInput,
@@ -75,6 +75,11 @@ export function ctxTextCat(text: any): string {
   if (s.lastIndexOf("This session is being continued from a previous conversation", 0) === 0) return "inject";
   if (s.lastIndexOf("The conversation so far has been compacted", 0) === 0) return "inject";
   if (/^(# AGENTS\.md instructions|<environment_context>|<user_instructions>|<permissions instructions>|<collaboration_mode>|<plugins_instructions>|<multi_agent_mode>)/.test(s)) return "inject";
+  // A file the harness delivered as a plain user message ("Contents of
+  // /path/CLAUDE.md:" — what entering a worktree injects, unwrapped).
+  // Measured 2026-09-11: three 11k copies of one CLAUDE.md read as the
+  // human's words until this line.
+  if (/^Contents of \/\S+/.test(s)) return "inject";
   return "user";
 }
 
@@ -804,6 +809,16 @@ export function ctxInjectLabel(text: any): string {
   const s = String(text || "");
   const kind = harnessPrompt(s);
   if (kind) return kind;
+  // A reminder-wrapped note names its family (project instructions,
+  // notification, file contents, ...); the wrapper tags are not the label.
+  if (s.lastIndexOf("<system-reminder>", 0) === 0) {
+    const bare = s.replace(/<\/?system-reminder>/g, "").trim();
+    const nk = harnessNoteKind(bare);
+    if (nk && nk !== "note") return nk;
+    const hp = harnessPrompt(bare);
+    if (hp) return hp;
+  }
+  if (/^Contents of \/\S+/.test(s)) return "file contents";
   // Stable producer names for the per-turn banners: their text carries a
   // changing number, so the snippet fallback would make one group each.
   if (s.lastIndexOf("<total_tokens>", 0) === 0) return "token budget";

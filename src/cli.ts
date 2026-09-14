@@ -15,6 +15,8 @@ import { extractSessionId } from "./summarize";
 import { termWrite, muteTerm, unmuteTerm } from "./termlog";
 import { writeView, resolveView, applySlice, followTrace, listTraceInfos, peekTrace, findTraceCarrier, truncationNotice, traceSizes, ViewError, VIEW_BYTES, type ViewOpts } from "./view";
 import { planTitles, setTitle, cleanTitle, titleFor, titleLookup, mainSessionId, type TitleJob } from "./title";
+import { diagnoseSession, renderDoctor } from "./doctor";
+import { renderTranscript } from "./transcript";
 import {
   resolveTraceDirs, ensureProjectDir, projectTraceDir, projectPathOf, listStoreProjects, storeRoot,
   registryLegacyDirs, scanLegacyDirs, planAdopt, applyAdopt, liveLogFiles, parseRebase, staleSealJobs, LEGACY_DIRNAME, type TraceDirs, type Rebase,
@@ -72,7 +74,7 @@ function parseArgvOrExit(argv: string[]) {
 // detect them before the strict parser rejects their positionals.
 const RAW_ARGV = Bun.argv.slice(2);
 const ARGV_HEAD = RAW_ARGV[0] ?? "";
-const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt", "title", "insights"]);
+const SUBCOMMANDS = new Set(["view", "clean", "merge", "compress", "purge", "compact", "ps", "spec", "history", "store", "adopt", "title", "insights", "doctor", "export"]);
 const SUBCOMMAND = SUBCOMMANDS.has(ARGV_HEAD) ? ARGV_HEAD : null;
 // Internal detached helper (`cctrace __seal <job>`): skip client/flag
 // parsing entirely — it is spawned by the exit path, never typed.
@@ -884,6 +886,148 @@ async function runTitle(args: string[]) {
   log(`Name them with the cctrace-title skill (fans out across subagents), or --json to drive it yourself; write back with: cctrace title set <id> "<title>" --dir <store dir>`, C.dim);
 }
 
+// `cctrace doctor [target] [--json] [--show KEY] [--step ID] [--peak]
+// [--thread KEY] [--dir DIR]` — context health of ONE session: what the
+// main thread's latest request window is made of (system prompt sections,
+// tool schemas and which were never called, harness injections recurring
+// vs one-off, real user words, tool results by tool), what is duplicated
+// (exact groups, near-duplicates by line overlap, the same file/command
+// asked again), and the thread's timeline (peak, compactions, cache hit,
+// injections by producer) — then the findings the fixed DOCTOR_RULES fire.
+// cctrace computes; the cctrace-doctor skill reasons over --json and drills
+// with --show. No target = this run's own trace when the caller is a traced
+// child (CCTRACE_TRACE_FILE), else the newest trace in the store.
+async function runDoctor(args: string[]) {
+  const usage = "usage: cctrace doctor [file.jsonl[.zst|.gz] | session-id | latest] [--json] [--show KEY] [--step PAIR-ID] [--peak] [--thread KEY] [--full] [--dir DIR]";
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: {
+        dir: { type: "string" },
+        json: { type: "boolean" },
+        show: { type: "string" },
+        step: { type: "string" },
+        peak: { type: "boolean" },
+        thread: { type: "string" },
+        full: { type: "boolean" },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] doctor: ${(err as Error).message}\n  ${usage}`);
+    process.exit(1);
+  }
+  const dirs = traceDirsFor(parsed.values.dir as string | undefined);
+  const target = parsed.positionals[0] || defaultTraceTarget();
+  (globalThis as { __PRICING__?: unknown }).__PRICING__ = pricingCatalog(DATA_DIR);
+  let result;
+  try {
+    result = await resolveView(target, dirs.readDirs, parsed.values.full ? { tailBytes: Infinity } : { foldBytes: VIEW_BYTES });
+  } catch (err) {
+    if (err instanceof ViewError) { console.error(`[cctrace] doctor: ${err.message}`); process.exit(1); }
+    throw err;
+  }
+  const dx = diagnoseSession(result.pairs, wireTables(), {
+    step: parsed.values.step as string | undefined,
+    peak: !!parsed.values.peak,
+    thread: parsed.values.thread as string | undefined,
+  });
+  if (!dx) {
+    console.error(`[cctrace] doctor: no model call to diagnose in ${result.sources.join(", ")}`);
+    process.exit(1);
+  }
+  if (parsed.values.show) {
+    const text = dx.show(parsed.values.show as string);
+    if (text == null) {
+      console.error(`[cctrace] doctor: no item ${parsed.values.show} in this window (keys: sys:N, sys:N/M, tool:NAME, inj:TURN, user:TURN, asst:TURN, res:TURN, dup:HASH — see --json)`);
+      process.exit(1);
+    }
+    await writeStdout(text + (text.endsWith("\n") ? "" : "\n"));
+    return;
+  }
+  const report = { ...dx.report, sources: result.sources, target };
+  if (parsed.values.json) {
+    await writeStdout(JSON.stringify(report, null, 2) + "\n");
+    return;
+  }
+  log(`${result.pairs.length} pairs from ${result.sources.join(", ")}` + (result.folded ? " (folded read)" : ""), C.dim);
+  console.log(renderDoctor(report));
+  log(`Drill: cctrace doctor ${basename(target)} --show <key>   · JSON for the cctrace-doctor skill: --json`, C.dim);
+}
+
+// `cctrace export [target] [--jsonl] [--out FILE] [--dir DIR]` — the
+// session as a shareable artifact, from disk: the markdown transcript
+// (every human prompt and assistant answer in full, one line per tool
+// call, times UTC — src/transcript.ts, the same render the live server's
+// /api/session.md serves) or, with --jsonl, the merged wire pair set of
+// the session (every run, deduped, viewer-only markers stripped — what
+// `cctrace merge` would write). Default target as for doctor.
+async function runExport(args: string[]) {
+  const usage = "usage: cctrace export [file.jsonl[.zst|.gz] | session-id | latest] [--jsonl] [--out FILE] [--dir DIR]";
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args,
+      options: { dir: { type: "string" }, out: { type: "string" }, jsonl: { type: "boolean" } },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (err) {
+    console.error(`[cctrace] export: ${(err as Error).message}\n  ${usage}`);
+    process.exit(1);
+  }
+  const dirs = traceDirsFor(parsed.values.dir as string | undefined);
+  const target = parsed.positionals[0] || defaultTraceTarget();
+  (globalThis as { __PRICING__?: unknown }).__PRICING__ = pricingCatalog(DATA_DIR);
+  let result;
+  try {
+    // A transcript reads through folded bodies (session.ts is stub-aware);
+    // the wire export must be the wire, so it reads every byte.
+    result = await resolveView(target, dirs.readDirs, parsed.values.jsonl ? { tailBytes: Infinity } : { foldBytes: VIEW_BYTES });
+  } catch (err) {
+    if (err instanceof ViewError) { console.error(`[cctrace] export: ${err.message}`); process.exit(1); }
+    throw err;
+  }
+  const outPath = parsed.values.out as string | undefined;
+  const emit = (text: string) => (outPath ? Bun.write(Bun.file(outPath), text).then(() => {}) : writeStdout(text));
+  if (parsed.values.jsonl) {
+    const lines: string[] = [];
+    for (const p of result.pairs) {
+      const { prior, speculative, ...rest } = p as TracePair & { speculative?: boolean };
+      for (const k of Object.keys(rest)) if (k[0] === "_") delete (rest as Record<string, unknown>)[k];
+      lines.push(JSON.stringify(rest));
+    }
+    await emit(lines.join("\n") + "\n");
+  } else {
+    const wire = wireTables();
+    const sid = mainSessionId(result.pairs, wire);
+    const client = (result.pairs.find((p) => p.client) || {}).client;
+    const md = renderTranscript(result.pairs, wire, { project: basename(viewProjectRoot(dirs)), client, sid });
+    await emit(md.endsWith("\n") ? md : md + "\n");
+  }
+  if (outPath) log(`Exported ${result.pairs.length} pairs from ${result.sources.join(", ")} → ${outPath}`, C.green);
+  if (result.truncated) log(truncationNotice(result), C.yellow);
+}
+
+/** stdout as a sink for a big payload: Bun.write awaits the full drain (a
+ * process.stdout.write to a pipe loses the tail past 64 KB), and a reader
+ * that closed early (`| head`) is not an error worth a stack trace. */
+async function writeStdout(text: string): Promise<void> {
+  try { await Bun.write(Bun.stdout, text); }
+  catch (err) { if ((err as { code?: string }).code !== "EPIPE") throw err; }
+}
+
+/** The trace a target-less doctor/export means: the caller's own run when
+ * it is a traced child (the identity env every proxy mode exports), else
+ * the newest trace in the store dir. */
+function defaultTraceTarget(): string {
+  const own = process.env.CCTRACE_TRACE_FILE;
+  if (own && (existsSync(own) || existsSync(own + ".zst") || existsSync(own + ".gz"))) return own;
+  return "latest";
+}
+
 // `cctrace adopt [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
 // [--yes]` — move legacy ./.cctrace dirs into the store. No DIR = the cwd's
 // plus every legacy dir the registry knows that resolves here; --scan walks
@@ -1368,6 +1512,24 @@ ${C.yellow}SUBCOMMANDS:${C.reset} ${C.dim}(operate on saved traces; no proxy, no
                           ${C.cyan}cctrace-title${C.reset} skill to name across subagents;
                           --json feeds it, title set writes one back. Titles
                           show in the dashboard, history, picker and header.
+  ${C.cyan}doctor${C.reset} [target] [--json] [--show KEY] [--peak] [--step ID]
+                          Context health of one session: what the latest
+                          request window is made of (system prompt by
+                          section, tool schemas + the ones never called,
+                          harness injections recurring vs one-off, your
+                          words, tool results by tool), what is duplicated
+                          (exact, near, the same file/command asked again),
+                          the timeline (peak, compactions, cache hit) and the
+                          findings fixed rules fire. --show KEY prints the
+                          text behind any item; --json feeds the
+                          ${C.cyan}cctrace-doctor${C.reset} skill. No target = your own trace
+                          when run inside a traced session, else the newest.
+  ${C.cyan}export${C.reset} [target] [--jsonl] [--out FILE]
+                          The session as an artifact: markdown transcript
+                          (every prompt + answer in full, one line per tool
+                          call) or --jsonl = the merged wire pair set of the
+                          whole session (every run, deduped). Default target
+                          as for doctor. Writes stdout unless --out.
   ${C.cyan}adopt${C.reset} [DIR...] [--scan ROOT] [--rebase FROM=TO] [--copy] [--zst]
                           Move legacy ./.cctrace dirs into the store. No DIR:
                           this project's + every one the run registry knows;
@@ -2418,6 +2580,8 @@ async function main() {
     else if (SUBCOMMAND === "store") runStore(rest);
     else if (SUBCOMMAND === "adopt") await runAdopt(rest);
     else if (SUBCOMMAND === "title") await runTitle(rest);
+    else if (SUBCOMMAND === "doctor") await runDoctor(rest);
+    else if (SUBCOMMAND === "export") await runExport(rest);
     process.exit(0);
   }
 

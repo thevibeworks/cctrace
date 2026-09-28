@@ -304,12 +304,15 @@ describe("probeInstance", () => {
 
 describe("patchEntry", () => {
   test("merges a patch atomically; preserves other fields; no-op on a missing entry", () => {
-    registerInstance(dir, info({ id: "run-p", logFile: "/x/trace.jsonl", endedAt: "2026-08-19T00:00:00Z", sessionId: "sid-1" }));
+    // endedAt relative to now: a fixed date ages past TOMBSTONE_TTL_MS and
+    // registration prunes the entry before the patch can find it.
+    const endedAt = new Date(Date.now() - 60_000).toISOString();
+    registerInstance(dir, info({ id: "run-p", logFile: "/x/trace.jsonl", endedAt, sessionId: "sid-1" }));
     expect(patchEntry(dir, "run-p", { logFile: "/x/trace.jsonl.zst" })).toBe(true);
     const j = JSON.parse(readFileSync(join(instancesDir(dir), "run-p.json"), "utf8"));
     expect(j.logFile).toBe("/x/trace.jsonl.zst");
     expect(j.sessionId).toBe("sid-1"); // untouched
-    expect(j.endedAt).toBe("2026-08-19T00:00:00Z");
+    expect(j.endedAt).toBe(endedAt);
     expect(patchEntry(dir, "nope", { logFile: "/y" })).toBe(false);
     expect(readdirSync(instancesDir(dir)).some((f) => f.endsWith(".tmp"))).toBe(false);
   });

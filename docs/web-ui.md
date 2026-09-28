@@ -174,11 +174,12 @@ offline snapshots -- same UI, three ways in.
 - **Estimated cost** -- every messages request shows an estimated USD cost
   (live models.dev pricing with an embedded offline fallback, cache
   read/write TTLs priced separately; Fable 5.1 / Mythos 5.1 read the
-  cache at 0.025x, Sonnet 5 is $2/$10, long context on Claude 4.6+ is
+  cache at 0.025x, Opus 5.5 is $4/$20 with 0.05x reads, Sonnet 5 is
+  $2/$10, long context on Claude 4.6+ is
   standard-rate), with per-turn and per-thread totals in the Sessions
   view. Two modifiers are read off the wire and named in the cost
-  tooltip: fast mode when the response's `usage.speed` is "fast" (Opus 5
-  / 4.8, every rate doubled) and US-only inference (`inference_geo:
+  tooltip: fast mode when the response's `usage.speed` is "fast" (Opus 5.5
+  / 5 / 4.8, every rate doubled) and US-only inference (`inference_geo:
   "us"`, 1.1x). Estimates, not bills.
 - **Multi-instance aware** -- run cctrace in three repos at once and nothing
   gets lost: ports allocate predictably (8722, 8723, ...), `cctrace ps`

@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { modelPricing, pairRates, pairCost, fmtCost, costTitle } from "../src/pricing";
+import { modelPricing, modelWindow, pairRates, pairCost, fmtCost, costTitle } from "../src/pricing";
 
 describe("modelPricing", () => {
   test("current models resolve to their per-MTok sticker price", () => {
@@ -57,6 +57,17 @@ describe("modelPricing", () => {
     expect(modelPricing(null)).toBeNull();
   });
 
+  test("opus 5.5: $4/$20 with 0.05x cache reads — its own tier, not a family-wide cut", () => {
+    const p = modelPricing("claude-opus-5-5");
+    expect(p).toMatchObject({ input: 4, output: 20 });
+    expect(p.cacheRead).toBeCloseTo(0.2);
+    expect(p.cacheWrite5m).toBeCloseTo(5);
+    expect(p.cacheWrite1h).toBeCloseTo(8);
+    expect(modelPricing("claude-opus-5-5[1m]")).toMatchObject({ input: 4, output: 20 });
+    expect(modelPricing("claude-opus-5")).toMatchObject({ input: 5, output: 25, cacheRead: 0.5 });
+    expect(modelWindow("claude-opus-5-5", {})).toBe(1000000);
+  });
+
   test("unknown future version of a known family falls back to the family's current price", () => {
     expect(modelPricing("claude-opus-5")).toMatchObject({ input: 5, output: 25 });
     expect(modelPricing("claude-haiku-5")).toMatchObject({ input: 1, output: 5 });
@@ -75,6 +86,11 @@ describe("pairRates: the wire's pricing modifiers", () => {
     expect(p.cacheRead).toBeCloseTo(1);
     expect(p.cacheWrite5m).toBeCloseTo(12.5);
     expect(p.cacheWrite1h).toBeCloseTo(20);
+  });
+  test("fast mode on opus 5.5 — $8/$40, its 0.05x read doubles too", () => {
+    const p = pairRates({ model: "claude-opus-5-5", fast: true });
+    expect(p).toMatchObject({ input: 8, output: 40, mods: ["fast mode"] });
+    expect(p.cacheRead).toBeCloseTo(0.4);
   });
   test("us inference is 1.1x on every class, and stacks with fast mode", () => {
     const g = pairRates({ model: "claude-sonnet-4-6", geoUs: true });

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.52.1
+
+- Claude Opus 5.5 prices right offline. The embedded fallback table priced it as Opus 5 ($5/$25, 0.1x cache reads); it is $4/$20 with cache reads at 0.05x ($0.20 per MTok), and fast mode doubles that to $8/$40. Cache reads are most of an agent session's bill, so an Opus 5.5 run priced without the models.dev catalog read about 2.5x high on its largest line. Pages with the catalog already had the right rates.
+- Checked the September releases against real traces: Opus 5.5 sends the same wire shape cctrace already reads, and GPT-6 (astra, sol, luna) through codex prices from the catalog, including the cache_write_tokens its usage now reports. No other change needed.
+
 ## 0.52.0
 
 - Added cctrace doctor. Reads one session's latest request window (exact: the body is the context) and reports what it holds: system prompt by section, tool schemas and the ones the thread never called per MCP server, harness injections recurring vs one-off with instruction files sized one by one, user messages, assistant output, tool results by tool. Splits the window into task / overhead / work. Lists duplicates: exact groups by hash, near copies by line-set overlap, the same file or command asked again. Folds the thread timeline: peak vs the model window, compactions, cache hit and bumps by cause, injections by producer. Fires findings from fixed named rules, each printed with its rule. Every item has a key; --show KEY prints its text. --peak, --step and --thread pick another window. --json is the input for the cctrace-doctor skill. No target inside a traced session diagnoses the caller's own run.

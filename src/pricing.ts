@@ -5,14 +5,15 @@
 // module state; cross-calls only to other inlined functions by name).
 //
 // Prices are USD per million tokens, embedded so snapshots work offline.
-// Sources: platform.claude.com/docs/en/about-claude/pricing (2026-09-01),
+// Sources: platform.claude.com/docs/en/about-claude/pricing (2026-09-28),
 // cross-checked against models.dev (the live catalog, src/pricing-catalog.ts).
 // Cache rates follow Anthropic's multipliers: read = 0.1x input — 0.025x on
-// Claude Fable 5.1 / Mythos 5.1 — write = 1.25x (5m TTL) or 2x (1h TTL).
+// Claude Fable 5.1 / Mythos 5.1, 0.05x on Opus 5.5 — write = 1.25x (5m TTL)
+// or 2x (1h TTL).
 // Long context is standard-rate on Claude 4.6+ (a 900k request bills like a
 // 9k one), so no tier applies. Two modifiers ARE read off the wire (pairRates):
 // fast mode — the response's usage.speed says "fast" — doubles every rate on
-// Opus 5 / Opus 4.8; US-only inference (request inference_geo: "us") is 1.1x
+// Opus 5.5 / Opus 5 / Opus 4.8; US-only inference (request inference_geo: "us") is 1.1x
 // on every token class. Every figure shown in the UI is an estimate, not a
 // bill.
 
@@ -66,14 +67,16 @@ export function modelPricing(model: unknown, catalog?: any): any {
     .replace(/^(\d(?:-\d)?)-(opus|sonnet|haiku)/, "$2-$1"); // claude-3-opus -> opus-3
   let io: number[] | null = null;
   // Cache reads are 0.1x input everywhere except Fable 5.1 / Mythos 5.1
-  // (0.025x — $0.25 on $10 input; Fable 5 / Mythos 5 stay at $1).
+  // (0.025x — $0.25 on $10 input; Fable 5 / Mythos 5 stay at $1) and
+  // Opus 5.5 (0.05x — $0.20 on $4 input).
   let readX = 0.1;
   if (/fable|mythos/.test(m)) {
     io = [10, 50];
     if (/(fable|mythos)-5-1(?!\d)/.test(m)) readX = 0.025;
   }
   else if (/^opus-(3|4|4-0|4-1)$/.test(m)) io = [15, 75]; // opus 3 / 4.0 / 4.1
-  else if (/opus/.test(m)) io = [5, 25]; // opus 4.5+
+  else if (/^opus-5-5(?!\d)/.test(m)) { io = [4, 20]; readX = 0.05; } // opus 5.5: cheaper than 5, not a family-wide cut
+  else if (/opus/.test(m)) io = [5, 25]; // opus 4.5 through 5
   else if (/^sonnet-5(?!\d)/.test(m)) io = [2, 10]; // sonnet 5: the launch price is the standard price
   else if (/sonnet/.test(m)) io = [3, 15];
   else if (/haiku-3-5/.test(m)) io = [0.8, 4];
@@ -94,9 +97,10 @@ export function modelPricing(model: unknown, catalog?: any): any {
  * modifiers the wire states for that request — read here, in one place,
  * so pairCost and the cost-bump arithmetic price the same request the
  * same way:
- *   - fast mode: the response's `usage.speed` is "fast" (Opus 5 / Opus 4.8
- *     research preview; a request that asked and was downgraded reports
- *     "standard" and is not a modifier) — $10/$50, i.e. 2x the base rates,
+ *   - fast mode: the response's `usage.speed` is "fast" (Opus 5.5 / Opus 5 /
+ *     Opus 4.8 research preview; a request that asked and was downgraded reports
+ *     "standard" and is not a modifier) — 2x the base rates ($8/$40 on
+ *     Opus 5.5, $10/$50 on Opus 5 / 4.8),
  *     and the cache multipliers stack on top, so every rate doubles;
  *   - US-only inference: the request's `inference_geo` is "us" — 1.1x on
  *     every token class (Claude 4.6+; earlier models reject the parameter,
@@ -148,7 +152,7 @@ export function modelWindow(model: unknown, catalog?: any): number {
     }
   }
   // Embedded fallback, the docs' rule (2026-09): Claude 4.6 and later ship
-  // the full 1M window at standard rates — Opus 4.6/4.7/4.8/5, Sonnet
+  // the full 1M window at standard rates — Opus 4.6/4.7/4.8/5/5.5, Sonnet
   // 4.6/5, Fable and Mythos. Earlier tiers are 200k (Opus 4.5 and before,
   // Sonnet 4.5 and before, every Haiku); the caller's context-1m header
   // override covers Sonnet 4.5's beta. An unversioned family name is not

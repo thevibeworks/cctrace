@@ -8,7 +8,8 @@
   "devDependencies": {
     "@types/bun": "latest",
     "marked": "^18.0.9",
-    "parse5": "^8.0.1"
+    "parse5": "^8.0.1",
+    "playwright": "^1.63.0"
   },
   "bin": {
     "cctrace": "./src/cli.ts"
@@ -16,7 +17,7 @@
   "bugs": {
     "url": "https://github.com/thevibeworks/cctrace/issues"
   },
-  "description": "TLS-intercepting HTTP tracer for the Claude Code, Codex, and Grok CLIs — captures every API call (messages, OAuth, usage/credits, MCP) with a live web UI: reconstructed sessions, replay, cost/cache/latency chips. External hosts pass through as byte-counted tunnels, never decrypted.",
+  "description": "Local tracing, session replay, and context insights for Claude Code, Codex, Grok, Kimi Code, and opencode. Inspect requests, follow subagents, diagnose context, and explore token usage and estimated costs.",
   "files": [
     "src",
     "assets",
@@ -46,7 +47,8 @@
   "scripts": {
     "dev": "bun run --watch src/cli.ts",
     "start": "bun run src/cli.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "docs:build": "bun run docs/demo/build.ts"
   },
   "type": "module"
 }

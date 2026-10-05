@@ -1,461 +1,396 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>cctrace — HTTP tracer for Claude Code, Codex, Grok, and Kimi Code</title>
-  <meta name="description" content="TLS-intercepting HTTP tracer for the Claude Code, Codex, Grok, and Kimi Code CLIs: see what the LLM sends and receives each turn, and audit what leaves your machine — hosts, telemetry, payloads.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Cstyle%3E@media(prefers-color-scheme:dark){.s{stroke:%23e6edf3}.f{fill:%23e6edf3}}%3C/style%3E%3Cg fill='none' stroke='%230d1117' stroke-linecap='round'%3E%3Cpath class='s' stroke-width='26' d='M270.75 175.6A125 125 0 1 0 270.75 336.4'/%3E%3Cpath class='s' stroke-width='26' d='M395.75 175.6A125 125 0 1 0 395.75 336.4'/%3E%3Cline class='s' stroke-width='9' x1='250' y1='256' x2='452' y2='256'/%3E%3Ccircle class='s' stroke-width='9' cx='452' cy='256' r='17'/%3E%3Ccircle class='f' fill='%230d1117' stroke='none' cx='250' cy='256' r='12'/%3E%3C/g%3E%3C/svg%3E">
-  <style>
-    :root {
-      --bg: #0d1117; --bg-surface: #161b22; --border: #30363d;
-      --text: #c9d1d9; --text-muted: #8b949e; --text-faint: #6e7681;
-      --accent: #58a6ff; --green: #3fb950;
-      color-scheme: dark;
-    }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #fff; --bg-surface: #f6f8fa; --border: #d0d7de;
-        --text: #1f2328; --text-muted: #656d76; --text-faint: #8c959f;
-        --accent: #0969da; --green: #1a7f37;
-        color-scheme: light;
-      }
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-      background: var(--bg); color: var(--text);
-      line-height: 1.6; min-height: 100vh;
-      display: flex; flex-direction: column;
-    }
-
-    /* i18n: hide content for the non-active language */
-    [lang="en"] .zh { display: none; }
-    [lang="zh"] .en { display: none; }
-
-    nav {
-      display: flex; justify-content: flex-end; align-items: center;
-      padding: 12px 24px; gap: 8px;
-    }
-    .lang-toggle {
-      display: inline-flex; align-items: center; gap: 0;
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 6px; overflow: hidden; font-size: 13px;
-    }
-    .lang-toggle button {
-      padding: 5px 12px; border: none; background: none;
-      color: var(--text-muted); cursor: pointer; font-size: 13px;
-      font-family: inherit; transition: all .15s;
-    }
-    .lang-toggle button.active {
-      background: var(--accent); color: #fff;
-    }
-    .lang-toggle button:not(.active):hover { background: var(--border); }
-
-    .hero {
-      text-align: center;
-      padding: 40px 24px 40px;
-      max-width: 720px; margin: 0 auto;
-    }
-    .hero svg { width: 80px; height: 80px; margin-bottom: 20px; }
-    .hero h1 {
-      font-size: 48px; font-weight: 700;
-      letter-spacing: -0.02em; margin-bottom: 12px;
-    }
-    .hero .tagline {
-      font-size: 26px; font-weight: 600; color: var(--text);
-      max-width: 520px; margin: 0 auto 12px; letter-spacing: -0.01em;
-    }
-    .hero .subtitle {
-      font-size: 15px; color: var(--text-faint);
-      max-width: 480px; margin: 0 auto 32px;
-    }
-
-    .install-box {
-      display: inline-flex; align-items: center; gap: 12px;
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px 20px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 15px; margin-bottom: 12px;
-    }
-    .install-box .prompt { color: var(--green); user-select: none; }
-    .install-box code { color: var(--text); }
-    .install-box button {
-      background: none; border: none; color: var(--text-faint);
-      cursor: pointer; padding: 4px; border-radius: 4px;
-      display: flex; align-items: center;
-    }
-    .install-box button:hover { color: var(--text); background: var(--border); }
-    .install-box button.copied { color: var(--green); }
-    .alt-install {
-      font-size: 14px; color: var(--text-faint); margin-bottom: 32px;
-    }
-    .alt-install a { color: var(--accent); text-decoration: none; }
-    .alt-install a:hover { text-decoration: underline; }
-    .alt-install code {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 13px; background: var(--bg-surface); padding: 2px 6px; border-radius: 4px;
-    }
-
-    .demo {
-      max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
-    }
-    .demo img {
-      width: 100%; border-radius: 10px;
-      border: 1px solid var(--border);
-    }
-
-    .features {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 16px; max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
-    }
-    .feature {
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 10px; padding: 20px;
-    }
-    .feature h3 { font-size: 15px; margin-bottom: 6px; }
-    .feature p { font-size: 13px; color: var(--text-muted); line-height: 1.5; }
-
-    .roadmap {
-      max-width: 960px; margin: 0 auto; padding: 0 24px 48px;
-    }
-    .roadmap h2 {
-      font-size: 20px; margin-bottom: 16px;
-      padding-bottom: 8px; border-bottom: 1px solid var(--border);
-    }
-    .roadmap ul { list-style: none; }
-    .roadmap li {
-      display: flex; align-items: flex-start; gap: 12px;
-      background: var(--bg-surface); border: 1px solid var(--border);
-      border-radius: 8px; padding: 12px 16px; font-size: 14px;
-      margin-bottom: 8px; transition: border-color .15s;
-    }
-    .roadmap li:hover { border-color: var(--accent); }
-    .roadmap li strong { color: var(--text); display: block; margin-bottom: 2px; }
-    .roadmap li span { color: var(--text-muted); font-size: 13px; }
-    .status-dot {
-      flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px;
-      border-radius: 50%; border: 2px solid var(--border);
-      display: flex; align-items: center; justify-content: center;
-    }
-    .status-dot.done { background: var(--green); border-color: var(--green); }
-    .status-dot.done::after { content: ""; width: 6px; height: 3px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg) translateY(-1px); }
-    .status-dot.next { border-color: var(--accent); }
-    .status-dot.next::after { content: ""; width: 0; height: 0; border-left: 6px solid var(--accent); border-top: 4px solid transparent; border-bottom: 4px solid transparent; margin-left: 2px; }
-
-    .links {
-      text-align: center; padding: 32px 24px;
-      border-top: 1px solid var(--border);
-      display: flex; justify-content: center; gap: 32px; flex-wrap: wrap;
-    }
-    .links a {
-      display: inline-flex; align-items: center; gap: 8px;
-      color: var(--text-muted); text-decoration: none;
-      font-size: 14px; transition: color .15s;
-    }
-    .links a:hover { color: var(--accent); }
-    .links svg { width: 18px; height: 18px; }
-
-    footer {
-      text-align: center; padding: 20px;
-      color: var(--text-faint); font-size: 13px; margin-top: auto;
-    }
-    footer a { color: var(--text-muted); text-decoration: none; }
-    footer a:hover { color: var(--accent); }
-  </style>
-</head>
-<body>
-  <nav>
-    <div class="lang-toggle">
-      <button id="lang-en" class="active" onclick="setLang('en')">EN</button>
-      <button id="lang-zh" onclick="setLang('zh')">ZH</button>
-    </div>
-  </nav>
-
-  <div class="hero">
-    <svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <g fill="none" stroke="currentColor" stroke-linecap="round">
-        <path stroke-width="26" d="M270.75 175.6A125 125 0 1 0 270.75 336.4"/>
-        <path stroke-width="26" d="M395.75 175.6A125 125 0 1 0 395.75 336.4"/>
-        <line stroke-width="9" x1="250" y1="256" x2="452" y2="256"/>
-        <circle stroke-width="9" cx="452" cy="256" r="17"/>
-        <circle fill="currentColor" stroke="none" cx="250" cy="256" r="12"/>
-      </g>
-    </svg>
-    <h1>cctrace</h1>
-    <p class="tagline en">See what Claude really sends.</p>
-    <p class="tagline zh">看看 Claude 到底发了什么。</p>
-    <p class="subtitle en">
-      <strong>LLM tracing</strong> &mdash; what Claude Code sends and receives
-      each turn. <strong>Security &amp; privacy tracing</strong> &mdash; what
-      actually leaves your machine. One command. Traces the Codex, Grok, and
-      Kimi Code CLIs too.
-    </p>
-    <p class="subtitle zh">
-      <strong>LLM 追踪</strong>：Claude Code 每轮到底发送和接收了什么。
-      <strong>安全/隐私审计</strong>：哪些请求出站、去了哪些 host、payload
-      里带了什么。一行命令。也支持追踪 Codex、Grok 和 Kimi Code CLI。
-    </p>
-
-    <div class="install-box">
-      <span class="prompt">$</span>
-      <code id="install-cmd">npm install -g @thevibeworks/cctrace</code>
-      <button onclick="copyInstall()" id="copy-btn" title="Copy">
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>
-      </button>
-    </div>
-    <div class="alt-install">
-      <span class="en">or <code>bunx @thevibeworks/cctrace</code> to run without installing</span>
-      <span class="zh">或 <code>bunx @thevibeworks/cctrace</code> 直接运行，无需安装</span>
-    </div>
-  </div>
-
-  <div class="demo">
-    <img src="https://raw.githubusercontent.com/thevibeworks/cctrace/main/assets/cctrace-demo.gif" alt="cctrace demo">
-  </div>
-
-  <div class="features">
-    <div class="feature">
-      <h3 class="en">Full picture</h3>
-      <h3 class="zh">完整全貌</h3>
-      <p class="en">
-        Captures <code>/v1/messages</code>, OAuth, usage/credits, MCP registry,
-        bootstrap, and telemetry &mdash; not just the chat endpoint.
-      </p>
-      <p class="zh">
-        捕获 <code>/v1/messages</code>、OAuth、用量/额度、MCP registry、bootstrap、
-        遥测 &mdash; 不只是聊天端点。
-      </p>
-    </div>
-    <div class="feature">
-      <h3 class="en">Live categorized UI</h3>
-      <h3 class="zh">实时分类界面</h3>
-      <p class="en">
-        Filter chips with live counts, colored category badges, expandable
-        headers and bodies, decoded SSE streams. System, light, and dark themes.
-      </p>
-      <p class="zh">
-        带实时计数的筛选标签、彩色分类徽章、可展开的 headers/bodies、解码后的 SSE 流。
-        支持跟随系统、浅色和深色主题。
-      </p>
-    </div>
-    <div class="feature">
-      <h3 class="en">Sessions, reconstructed</h3>
-      <h3 class="zh">重建的会话</h3>
-      <p class="en">
-        The conversation on one rail: threads with per-turn cost and latency,
-        subagents attached at the turn that spawned them, model switches as
-        epochs, compactions as break nodes with the context collapse in turns
-        and tokens, superseded exchanges kept at their timeline position.
-        Plus time-travel replay; <code>view --html</code> exports a
-        self-contained snapshot.
-      </p>
-      <p class="zh">
-        对话在一条轨道上重建：线程带每轮成本与延迟，子代理挂在派发它的回合下，
-        /model 切换成为 epoch，compact 压缩成为断点节点（上下文收缩了多少回合/
-        token 一目了然），被覆盖的交互保留在原本的位置。外加时间轴回放；
-        <code>view --html</code> 可导出自包含快照分享。
-      </p>
-    </div>
-    <div class="feature">
-      <h3 class="en">Scoped interception</h3>
-      <h3 class="zh">有边界的拦截</h3>
-      <p class="en">
-        First-party hosts are decrypted; everything else your session touches
-        &mdash; npm, GitHub, apt &mdash; passes through as an opaque
-        byte-counted tunnel. An audit trail without the payload copies;
-        <code>--capture-external</code> when you need every byte.
-      </p>
-      <p class="zh">
-        只解密第一方主机；会话触碰到的其他主机 &mdash; npm、GitHub、apt &mdash;
-        以不解密的字节计数隧道通过：留下审计线索，不复制 payload。需要全量时用
-        <code>--capture-external</code>。
-      </p>
-    </div>
-    <div class="feature">
-      <h3 class="en">Safe by default</h3>
-      <h3 class="zh">默认安全</h3>
-      <p class="en">
-        Credentials are redacted from headers, bodies, and URLs before anything
-        hits disk. Your API keys stay your API keys.
-      </p>
-      <p class="zh">
-        凭据在落盘前就已从 headers、bodies 和 URL 中脱敏。你的 API key 还是你的
-        API key。
-      </p>
-    </div>
-    <div class="feature">
-      <h3 class="en">Zero config</h3>
-      <h3 class="zh">零配置</h3>
-      <p class="en">
-        Auto-generates a CA, auto-detects your Claude install, and captures
-        everything by default. Run <code>cctrace</code> and you're done.
-      </p>
-      <p class="zh">
-        自动生成 CA、自动识别 Claude 安装、默认捕获全部。运行 <code>cctrace</code>
-        就完事了。
-      </p>
-    </div>
-  </div>
-
-  <div class="roadmap">
-    <h2 class="en">Coming soon</h2>
-    <h2 class="zh">即将推出</h2>
-    <ul>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Full interception</strong>
-          <strong class="zh">完整拦截</strong>
-          <span class="en">Dynamic certs for all hosts — Datadog, MCP servers, everything</span>
-          <span class="zh">为所有主机动态生成证书 — Datadog、MCP 服务器，全覆盖</span>
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cctrace — understand the whole agent session</title>
+    <meta
+      name="description"
+      content="Follow your coding agent's sessions, inspect its context, and see every request. Local tracing, replay, and context insights for Claude Code, Codex, Grok, Kimi Code, and opencode."
+    />
+    <meta property="og:title" content="cctrace — see the whole agent session" />
+    <meta
+      property="og:description"
+      content="Follow the work. Find what fills the context. Inspect every request. Try an interactive sample in your browser."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://thevibeworks.github.io/cctrace/" />
+    <meta
+      property="og:image"
+      content="https://thevibeworks.github.io/cctrace/assets/context.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="canonical" href="https://thevibeworks.github.io/cctrace/" />
+    <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="assets/site.css" />
+    <script>
+      try {
+        document.documentElement.dataset.theme =
+          localStorage.getItem("cctrace-site-theme") || "dark";
+      } catch {}
+    </script>
+    <script src="assets/demo-data.js" defer></script>
+    <script src="assets/site.js" defer></script>
+  </head>
+  <body>
+    <a class="skip" href="#main" data-i18n="skip">Skip to content</a>
+    <header class="shell masthead">
+      <a href="./" class="wordmark" aria-label="cctrace home"
+        ><img src="assets/logo.svg" width="38" height="38" alt="" />cctrace<span
+          class="wordmark-cursor"
+          aria-hidden="true"
+          >_</span
+        ></a
+      >
+      <nav aria-label="Main navigation">
+        <a href="#explore" data-i18n="tour">Tour</a>
+        <a
+          href="https://github.com/thevibeworks/cctrace/blob/main/docs/install.md"
+          data-i18n="docs"
+          >Docs</a
+        >
+        <a href="https://github.com/thevibeworks/cctrace"
+          >GitHub <span aria-hidden="true">↗</span></a
+        >
+        <span class="nav-divider" aria-hidden="true"></span>
+        <button id="language" aria-label="切换到中文">中文</button>
+        <button
+          id="theme"
+          aria-label="Switch to light theme"
+          title="Switch theme"
+        >
+          <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true">
+            <circle
+              cx="12"
+              cy="12"
+              r="8"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+            />
+            <path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" />
+          </svg>
+        </button>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="shell hero">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span class="signal-dot" aria-hidden="true"></span
+            ><span data-i18n="eyebrow">YOUR CODING AGENT, OBSERVABLE.</span>
+          </p>
+          <h1 data-i18n="headline">
+            See the whole<br /><span>agent session.</span>
+          </h1>
+          <p class="intro" data-i18n="intro">
+            Follow the work. Find what fills the context.<br />Inspect every
+            request that made it happen.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="demo/sample.html#/context"
+              ><span data-i18n="try">Explore a sample session</span
+              ><span aria-hidden="true">↗</span></a
+            >
+            <a class="text-link" href="#install"
+              ><span data-i18n="installLink">Trace your own</span
+              ><span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="footnote" data-i18n="local">
+            Open source. Runs locally. No cctrace account.
+          </p>
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Smart categories</strong>
-          <strong class="zh">智能分类</strong>
-          <span class="en">Count Tokens separated from Messages, External host filter</span>
-          <span class="zh">Count Tokens 独立于 Messages，外部主机筛选</span>
+        <div class="scope" aria-label="Interactive sample context timeline">
+          <div class="scope-heading">
+            <span data-i18n="contextScope">CONTEXT / REQUEST BY REQUEST</span
+            ><span class="scope-mark" aria-hidden="true">[↗]</span>
+          </div>
+          <div class="scope-readout">
+            <div>
+              <span id="token-count">42,385</span
+              ><span class="unit" data-i18n="estTokens">est. tokens</span>
+            </div>
+            <span id="step-label">09 / 09</span>
+          </div>
+          <div
+            class="scope-chart"
+            id="scope-chart"
+            role="group"
+            aria-label="Choose a request"
+          ></div>
+          <div class="scope-axis">
+            <span data-i18n="firstRequest">first request</span
+            ><span data-i18n="afterCompact">after compaction</span>
+          </div>
+          <div class="scope-controls">
+            <button id="play" aria-pressed="false">
+              <span aria-hidden="true">▷</span>
+              <span data-i18n="play">Play through requests</span></button
+            ><a id="step-wire" href="demo/sample.html#/context"
+              ><span data-i18n="openRequest">Open request</span> ↗</a
+            >
+          </div>
+          <p class="scope-insight" id="scope-insight" aria-live="polite">
+            Injected context occupies 49% of this window.
+          </p>
+          <p class="scope-note" data-i18n="sampleNote">
+            A real captured session. Composition calculated by cctrace.
+          </p>
+          <noscript
+            ><p>
+              The interactive walkthrough needs JavaScript. The screenshots and
+              installation guide below are available without it.
+            </p></noscript
+          >
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Copy + token summary</strong>
-          <strong class="zh">复制 + Token 摘要</strong>
-          <span class="en">Copy button on JSON blocks, token usage bar on message pairs</span>
-          <span class="zh">JSON 块复制按钮，消息请求的 token 用量摘要栏</span>
+      </section>
+      <div class="shell clients">
+        <span data-i18n="worksWith">TRACES</span><span>Claude Code</span
+        ><span>Codex</span><span>Grok</span><span>Kimi Code</span
+        ><span>opencode</span
+        ><a
+          href="https://github.com/thevibeworks/cctrace/blob/main/docs/clients.md"
+          data-i18n="coverage"
+          >Client coverage ↗</a
+        >
+      </div>
+      <section
+        class="shell explore"
+        id="explore"
+        aria-labelledby="explore-title"
+      >
+        <div class="section-label">
+          <span>01 / <span data-i18n="underHood">UNDER THE HOOD</span></span
+          ><span data-i18n="actualUI">THE ACTUAL CCTRACE UI</span>
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Sessions view</strong>
-          <strong class="zh">会话视图</strong>
-          <span class="en">Split-pane: wire view + reconstructed conversation side by side</span>
-          <span class="zh">分屏模式：原始请求 + 还原的对话并排显示</span>
+        <div class="explore-heading">
+          <h2 id="explore-title" data-i18n="exploreTitle">
+            One session. Three ways in.
+          </h2>
+          <a id="open-demo" href="demo/sample.html#/context"
+            ><span data-i18n="interactive">Open interactive demo</span> ↗</a
+          >
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Codex, Grok &amp; Kimi support</strong>
-          <strong class="zh">Codex、Grok 与 Kimi 支持</strong>
-          <span class="en"><code>cctrace codex</code> / <code>cctrace grok</code> / <code>cctrace kimi</code> / <code>cctrace opencode</code> — same MITM front door, per-request dialect detection (Anthropic, OpenAI Responses, Chat Completions)</span>
-          <span class="zh"><code>cctrace codex</code> / <code>cctrace grok</code> / <code>cctrace kimi</code> / <code>cctrace opencode</code> — 同一套 MITM 前门，按请求识别方言（Anthropic、OpenAI Responses 与 Chat Completions）</span>
+        <div class="view-tabs" role="tablist" aria-label="Product screenshots">
+          <button
+            id="tab-session"
+            role="tab"
+            aria-selected="false"
+            aria-controls="product-panel"
+            tabindex="-1"
+            data-view="session"
+          >
+            <span class="tab-number">01</span
+            ><span
+              ><strong data-i18n="sessions">Sessions</strong
+              ><small data-i18n="sessionQuestion">What happened?</small></span
+            >
+          </button>
+          <button
+            id="tab-context"
+            role="tab"
+            aria-selected="true"
+            aria-controls="product-panel"
+            data-view="context"
+          >
+            <span class="tab-number">02</span
+            ><span
+              ><strong data-i18n="context">Context</strong
+              ><small data-i18n="contextQuestion"
+                >What filled the window?</small
+              ></span
+            >
+          </button>
+          <button
+            id="tab-requests"
+            role="tab"
+            aria-selected="false"
+            aria-controls="product-panel"
+            tabindex="-1"
+            data-view="requests"
+          >
+            <span class="tab-number">03</span
+            ><span
+              ><strong data-i18n="requests">Requests</strong
+              ><small data-i18n="requestQuestion"
+                >What went over the wire?</small
+              ></span
+            >
+          </button>
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Token metrics</strong>
-          <strong class="zh">Token 指标</strong>
-          <span class="en">Per-request cost estimates, cache verdicts, usage-limit bars, first-token latency</span>
-          <span class="zh">每请求费用估算、缓存判定、用量限额进度条、首 token 延迟</span>
+        <div
+          id="product-panel"
+          role="tabpanel"
+          aria-labelledby="tab-context"
+          tabindex="0"
+        >
+          <a
+            class="product-shot"
+            id="screenshot-link"
+            href="demo/sample.html#/context"
+            aria-label="Explore the context view in the sample session"
+            ><img
+              id="product-image"
+              src="assets/context.png"
+              width="1440"
+              height="850"
+              alt="cctrace Context view: request history, token composition, and a graph showing which tools fill the window."
+              fetchpriority="high"
+            /><span class="image-action" data-i18n="inspect"
+              >Open it. Inspect it. ↗</span
+            ></a
+          >
+          <div class="shot-caption">
+            <p id="view-caption">
+              Find the heavy tool results, repeated instructions, and compaction
+              boundaries. Click through to the content behind each block.
+            </p>
+            <span data-i18n="screenshotNote"
+              >Real captured session · current UI</span
+            >
+          </div>
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Agent skill</strong>
-          <strong class="zh">Agent Skill</strong>
-          <span class="en">skills/cctrace teaches coding agents to drive cctrace and read traces</span>
-          <span class="zh">skills/cctrace 让编码代理会用 cctrace、会读 trace</span>
+        <noscript
+          ><p>
+            <a href="assets/session.png">Sessions screenshot</a> ·
+            <a href="assets/requests.png">Requests screenshot</a>
+          </p></noscript
+        >
+      </section>
+      <section class="shell insight-section" aria-labelledby="insight-title">
+        <div class="section-label">
+          <span
+            >02 / <span data-i18n="beyond">FROM EVIDENCE TO ACTION</span></span
+          >
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Sessions layer</strong>
-          <strong class="zh">Sessions 层</strong>
-          <span class="en">0.18: sessions &gt; threads &gt; turns on one rail — epochs, subagent branches, compaction boundaries, superseded exchanges</span>
-          <span class="zh">0.18：sessions &gt; threads &gt; turns 一条轨道 — epoch、子代理分支、compact 断点、被覆盖的交互</span>
+        <div class="insight-grid">
+          <div>
+            <h2 id="insight-title" data-i18n="insightTitle">
+              Find the weight.<br />Know where to look.
+            </h2>
+            <p data-i18n="insightIntro">
+              A large context window is a starting point. Find which file was
+              read again, which instructions keep returning, and which tool
+              schemas were never called.
+            </p>
+            <a
+              class="text-link"
+              href="https://github.com/thevibeworks/cctrace/blob/main/skills/cctrace-doctor/SKILL.md"
+              ><span data-i18n="doctorSkill"
+                >Let your agent inspect its own context</span
+              >
+              ↗</a
+            >
+          </div>
+          <div class="command-ledger">
+            <div>
+              <span class="command-index">01</span>
+              <div>
+                <code>cctrace doctor</code>
+                <p data-i18n="doctorDesc">
+                  What's in this context? Find duplicates, repeated reads, and
+                  unused tool schemas.
+                </p>
+              </div>
+            </div>
+            <div>
+              <span class="command-index">02</span>
+              <div>
+                <code>cctrace insights --scan</code>
+                <p data-i18n="insightsDesc">
+                  Where did the tokens and estimated cost go across runs?
+                  Inspect cache reads, writes, and the heaviest sessions.
+                </p>
+              </div>
+            </div>
+            <div>
+              <span class="command-index">03</span>
+              <div>
+                <code>cctrace view</code>
+                <p data-i18n="viewDesc">
+                  Return to a saved session. Replay the work, follow subagents,
+                  and reopen the exact requests.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
-      </li>
-      <li>
-        <div class="status-dot done"></div>
-        <div>
-          <strong class="en">Kimi Code client</strong>
-          <strong class="zh">Kimi Code 客户端</strong>
-          <span class="en">0.19: cctrace kimi — Chat Completions dialect, prompt_cache_key session identity, auto-compaction boundaries, pay-per-token cost estimates</span>
-          <span class="zh">0.19：cctrace kimi — Chat Completions 方言、prompt_cache_key 会话标识、自动 compact 分界、按量计价的费用估算</span>
-        </div>
-      </li>
-      <li>
-        <div class="status-dot next"></div>
-        <div>
-          <strong class="en">Showcase trace</strong>
-          <strong class="zh">示例 trace</strong>
-          <span class="en">A real (sanitized) session published here — browse the Sessions view without installing</span>
-          <span class="zh">在这里发布一份真实（已脱敏）的会话 — 无需安装即可体验 Sessions 视图</span>
-        </div>
-      </li>
-      <li>
-        <div class="status-dot"></div>
-        <div>
-          <strong class="en">Conversation dump</strong>
-          <strong class="zh">对话导出</strong>
-          <span class="en">Export reconstructed conversations as Markdown or JSON</span>
-          <span class="zh">将还原的对话导出为 Markdown 或 JSON</span>
-        </div>
-      </li>
-      <li>
-        <div class="status-dot"></div>
-        <div>
-          <strong class="en">Timed replay</strong>
-          <strong class="zh">计时回放</strong>
-          <span class="en"><code>--record-timing</code>: replay streams at their captured chunk cadence</span>
-          <span class="zh"><code>--record-timing</code>：按捕获时的分块节奏回放流式输出</span>
-        </div>
-      </li>
-    </ul>
-  </div>
+      </section>
+      <section
+        class="install-section"
+        id="install"
+        aria-labelledby="install-title"
+      >
+        <div class="shell">
+          <div class="section-label">
+            <span>03 / <span data-i18n="yourTurn">YOUR TURN</span></span
+            ><span data-i18n="noService"
+              >NO SERVICE TO RUN. NO ACCOUNT TO CREATE.</span
+            >
+          </div>
+          <div class="install-grid">
+            <div>
+              <h2 id="install-title" data-i18n="installTitle">
+                Same agent.<br />Now with a window.
+              </h2>
+              <p data-i18n="installIntro">
+                Launch your agent through cctrace. It opens a local browser view
+                and records the run for later.
+              </p>
+              <p class="requirements">
+                <span data-i18n="requires">Requires</span>
+                <a href="https://bun.sh">Bun</a>, <code>openssl</code>,
+                <span data-i18n="agentCLI">and your agent's CLI.</span>
+              </p>
+            </div>
+            <div class="terminal">
+              <div class="terminal-title">
+                <span>TERMINAL</span
+                ><button id="copy" data-i18n="copy">Copy commands</button>
+              </div>
+              <pre><span class="terminal-comment" data-i18n="installComment"># install once</span>
+<span class="terminal-prompt" aria-hidden="true">$ </span><code>npm install -g @thevibeworks/cctrace</code>
 
-  <div class="links">
-    <a href="https://github.com/thevibeworks/cctrace">
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
-    <a href="https://www.npmjs.com/package/@thevibeworks/cctrace">
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M0 0v16h16V0H0zm13 13H8V5h5v8zm-2-7H9v6h2V6z"/></svg>
-      npm
-    </a>
-    <a href="https://github.com/thevibeworks/cctrace/blob/main/CHANGELOG.md">
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5zm-1.43-.25a2.5 2.5 0 10-5 0 2.5 2.5 0 005 0z"/></svg>
-      Changelog
-    </a>
-  </div>
-
-  <footer>
-    MIT License &middot; <a href="https://github.com/thevibeworks">thevibeworks</a>
-  </footer>
-
-  <script>
-    function setLang(lang) {
-      document.documentElement.lang = lang;
-      document.getElementById('lang-en').className = lang === 'en' ? 'active' : '';
-      document.getElementById('lang-zh').className = lang === 'zh' ? 'active' : '';
-      localStorage.setItem('cctrace-lang', lang);
-    }
-    var saved = localStorage.getItem('cctrace-lang');
-    if (saved) setLang(saved);
-    else if (navigator.language.startsWith('zh')) setLang('zh');
-
-    function copyInstall() {
-      var cmd = document.getElementById('install-cmd').textContent;
-      navigator.clipboard.writeText(cmd).then(function() {
-        var btn = document.getElementById('copy-btn');
-        btn.classList.add('copied');
-        btn.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.751.751 0 01.018-1.042.751.751 0 011.042-.018L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>';
-        setTimeout(function() {
-          btn.classList.remove('copied');
-          btn.innerHTML = '<svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25zM5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25z"/></svg>';
-        }, 2000);
-      });
-    }
-  </script>
-</body>
+<span class="terminal-comment" data-i18n="runComment"># start Claude Code with tracing</span>
+<span class="terminal-prompt" aria-hidden="true">$ </span><code>cctrace</code></pre>
+              <p>
+                <span data-i18n="otherClients">Or</span>
+                <code>cctrace codex</code> · <code>cctrace kimi</code>
+              </p>
+              <div id="copy-status" class="sr-only" role="status"></div>
+            </div>
+          </div>
+          <div class="trust-line">
+            <p data-i18n="privacy">
+              Captured data stays on your machine. Credential fields are
+              redacted; conversation content is preserved. Review traces before
+              sharing.
+            </p>
+            <a
+              href="https://github.com/thevibeworks/cctrace/blob/main/docs/capture-modes.md"
+              ><span data-i18n="captureScope">Capture scope &amp; privacy</span>
+              ↗</a
+            ><a
+              href="https://github.com/thevibeworks/cctrace/blob/main/docs/install.md"
+              ><span data-i18n="installOptions">Install options</span> ↗</a
+            >
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="shell">
+      <a class="wordmark" href="./"
+        >cctrace<span class="wordmark-cursor" aria-hidden="true">_</span></a
+      >
+      <p data-i18n="footer">A closer look at the work.</p>
+      <div>
+        <a href="https://github.com/thevibeworks/cctrace/blob/main/LICENSE"
+          >MIT</a
+        ><a href="https://github.com/thevibeworks/cctrace/blob/main/llms.txt"
+          >llms.txt</a
+        ><a href="https://github.com/thevibeworks/cctrace">GitHub ↗</a>
+      </div>
+    </footer>
+  </body>
 </html>

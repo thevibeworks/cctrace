@@ -1,300 +1,65 @@
-<p align="center"><img src="assets/cctrace-logo.svg" width="84" alt="cctrace"></p>
+<p align="center"><img src="assets/cctrace-logo.svg" width="64" alt="cctrace"></p>
 
-# cctrace
-
-> **看看你的 coding agent 到底发了什么。**
->
-> Claude Code 发出的每一个请求 -- messages、OAuth、用量/额度、MCP --
-> 全部实时呈现在你的浏览器里。Codex、Grok、Kimi Code 同样支持。
-
-[English](README.md) | 简体中文
-
-[![tests](https://github.com/thevibeworks/cctrace/actions/workflows/test.yml/badge.svg)](https://github.com/thevibeworks/cctrace/actions/workflows/test.yml)
-[![version](https://img.shields.io/github/v/tag/thevibeworks/cctrace?label=version&sort=semver)](https://github.com/thevibeworks/cctrace/tags)
-[![license](https://img.shields.io/github/license/thevibeworks/cctrace)](LICENSE)
-[![runtime](https://img.shields.io/badge/runtime-bun-f9f1e1)](https://bun.sh)
-
-[文档](https://thevibeworks.github.io/cctrace/) · [安装](#快速开始) · [Web 界面](docs/web-ui.md) · [已保存的 trace](docs/traces.md) · [Claude 之外](docs/clients.md) · [llms.txt](llms.txt)
-
-<sub>AI agent / LLM：请读 [/llms.txt](llms.txt)；agent skill 见 [skills/cctrace](skills/cctrace/SKILL.md)。</sub>
+<h1 align="center">cctrace</h1>
+<p align="center"><strong>看清整个 Agent 会话。</strong><br>跟随工作过程，找出上下文占用，查看背后的每一次请求。</p>
 
 <p align="center">
-  <img src="assets/cctrace-demo.gif" alt="cctrace 实时演示" width="100%">
+  <a href="https://github.com/thevibeworks/cctrace/actions/workflows/test.yml"><img src="https://github.com/thevibeworks/cctrace/actions/workflows/test.yml/badge.svg" alt="测试"></a>
+  <a href="https://www.npmjs.com/package/@thevibeworks/cctrace"><img src="https://img.shields.io/npm/v/@thevibeworks/cctrace" alt="npm 版本"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/thevibeworks/cctrace" alt="MIT 许可证"></a>
 </p>
 
-cctrace 卡在 coding agent 和它的 API 中间，把每一个 HTTP 请求记录到本地的分类
-Web 界面和一份 `.jsonl` trace，`cctrace view` 随时重开。无云端、无账号，数据
-不出你的机器。
+<p align="center"><a href="https://thevibeworks.github.io/cctrace/">交互导览</a> · <a href="#快速开始">安装</a> · <a href="docs/web-ui.md">文档</a> · <a href="README.md">English</a></p>
 
-```bash
-cctrace                # 追踪 Claude Code
-cctrace codex          # 或 OpenAI Codex CLI
-cctrace grok           # 或 Grok CLI
-cctrace kimi           # 或 Kimi Code CLI（月之暗面）
-```
+[![cctrace 上下文视图：请求历史、token 组成，以及占用窗口的工具](docs/assets/context.png)](https://thevibeworks.github.io/cctrace/demo/sample.html#/context)
 
-就这一行。agent 照常启动，你多了一个浏览器标签页，里面是它干的所有事。
+*当前界面，展示 cctrace 捕获的一次真实 Claude Code 会话（沙箱运行并已脱敏，[制作方式](docs/demo/capture.sh)）。[打开它，探索上下文、回放会话，或查看请求。](https://thevibeworks.github.io/cctrace/demo/sample.html#/context)*
 
-## 为什么需要它
+cctrace 记录编程 Agent 的 API 流量，并将其变成本地可探索的会话。
+支持 **Claude Code、Codex、Grok、Kimi Code 和 opencode**；
+[各客户端的捕获范围有所不同](docs/clients.md)。
 
-cctrace 只为两件事而生：
-
-1. **LLM 追踪** -- 看清 agent 每轮到底发送和接收了什么：system prompt、
-   上下文、工具定义、流式回复、token 与缓存用量。
-2. **安全/隐私审计** -- 看清哪些请求从本机出站、去了哪些 host、有没有遥测、
-   每个 payload 里实际带了什么。
-
-这两件事都需要完整的图景 -- 每一个请求都得看到，而不只是好拿的那部分。
-Claude Code 以 Bun 编译的**原生二进制**分发，`node --require` 注入 `fetch()`
-钩子的老路已经彻底失效。cctrace 在传输层拦截：一个零配置的 **TLS 拦截代理**
-（类似 Charles），agent 通过 `HTTPS_PROXY` 走它，并信任自动生成的 CA。拦截
-发生在 URL 拼出来之前的那一层，所以 base-url 代理在结构上碰不到的 OAuth 和
-用量/额度端点也尽收眼底 -- 从 0.16 起这个范围是刻意为之：第一方 host 才解密，
-其他一切（npm、GitHub、apt）都以不解密的字节计数隧道透传。
-
-## 你能得到什么
-
-- **完整全貌。** `/v1/messages`、OAuth、**用量/额度**、MCP registry、bootstrap、
-  遥测 -- 不只是聊天端点。
-- **实时分类界面。** 带计数的筛选标签、解码后的 SSE 流、推理 effort 与
-  prompt 缓存判定、首 token 延迟、每请求的估算费用。完整导览见
-  [docs/web-ui.md](docs/web-ui.md)。
-- **会话重建。** 按人类的方式数轮次（用户请求 -> agent 工作 -> 最终回复；
-  213 条 wire 消息读起来就是 3 轮）、工具行直接写明改了哪个文件、
-  子代理分支、`/model` epoch、compact 分界、被覆盖的交互 --
-  外加一条常驻顶部的**轨迹条**：按时间排布的泳道（每一轮一个可点击的方块、
-  请求、工具、子代理、压缩点），时钟刻度，空闲时段折叠；它与对话双向同步 --
-  一枚标记跟着你正在读的位置走，点一个方块就跳到那一轮，悬停给出这一轮的
-  统计。**回放**在同一条轨迹条上逐轮播放任何已捕获的会话，任意时刻可深链，
-  并展示 agent 每一步做了什么的 beat。实时运行时回放会跟尾：光标跟着最新
-  落地的请求走，对话跟着光标走。
-- **上下文洞察，DevTools 式的。** Context 视图展示 agent 的上下文窗口随
-  时间的变化。顶部是一条常驻不滚动的**总览轨**：每个 wire 请求一根堆叠柱，
-  按窗口的六种成分着色，✂ 标出 compact/rewind；下面第二条轨道是这一步的
-  墙钟去向（模型 / 工具 / 等待）。在总览上拖拽就框选一段区间，拖两端的把手
-  改宽窄，拖中间平移，滚轮以光标为中心缩放，点一根柱子就钉住那一步。
-  左侧页边栏给出被钉住那一步的结账 -- prompt token 数、对照模型上下文窗口的
-  六色组成条、chars/4 估算比实际计费低（或高）多少、以及六个分类各占一行，
-  点任意一行就把图放大到该分类。右侧则是同一份选择的三种读法，一次一种：
-  - **window** -- 被钉住那一步的 **context graph**：一张 icicle（火焰图），
-    宽度是 token，行是层级，把该请求拆成分类 -> 分组 -> 条目 --
-    工具结果按产出它的工具分组、schema 按 MCP server 分组、注入按来源分组。
-    于是 `Bash x189，占窗口 38%` 就是那一行里最宽的一块，不是要翻出来的
-    数字；点一下放大，点叶子节点就在**检查器**里打开 -- 三个 deck 共用的一块
-    右侧面板，左缘一列竖排的切面，只列 wire 能回答的：内容、工具的 schema
-    及其重量、来源（哪一步把它带进窗口、此后被多少个请求重复发送）、以及
-    承载它的 wire 请求本身。
-  - **stream** -- agent 的路径，一条线性记录流：system prompt、你的每一轮、
-    harness 注入的上下文（就地、在它进入的那一刻）、模型的思考、每次工具
-    调用与其结果合为一行、回复。MAP / READ / FULL 三档只做过滤，从不摘要：
-    下到骨架，上到全部；按类型筛选可以只看注入 -- 这就是上下文轨迹。
-  - **events** -- 每次注入、压缩、换模型、工具 schema 变化，以及它对窗口
-    做了什么。
-
-  一条 trace 里有多个
-  session 时，同一标尺对比各自的峰值。全部锚定在服务端上报的 token 数上 --
-  是 wire 事实，不是猜测。
-- **额度花在哪里。** 总览还有第三条轨道：每一步花了多少钱，按缓存读 /
-  缓存写 / 输入 / 输出堆叠；把前缀买了两遍的那些步骤挂一枚琥珀色 `$`。
-  页边栏给出钱的去向（按成分、按模型），数清这些 cost bump，并从 wire
-  上给每一次点名原因：缓存过期（1h ttl，闲置 15h）、前缀变了（工具
-  schema 变化）、529 之后的重试 -- 每条都附上「若命中缓存本可省下多少」。
-  旁边是客户端轮询到的账号额度：5h / 7d / 按模型限额的百分比、何时重置、
-  以及这条 trace 期间涨了多少。每一个金额都是按目录价估算的，每一个原因
-  都是 wire 事实。价格跟随 2026-09 的定价页（Fable 5.1 的缓存读取
-  0.025x、Sonnet 5 的 $2/$10、Claude 4.6+ 的 1M 窗口），wire 上写明的两个
-  修正项 -- fast mode（`usage.speed: "fast"`）与仅限美国推理 -- 按其所属
-  的请求计价，并在提示里点名。
-- **跨运行的洞察。** `cctrace insights` 把共享同一数据目录的全部运行折成
-  按时间窗的聚合 -- 按天、按项目、按客户端的运行数 / 请求对 / token /
-  估算费用，以及带标题的最重运行 -- 从注册表的退出统计毫秒级得出；
-  `--scan` 则流式读取 trace 本身，取只有 wire 才知道的：缓存读 / 写 /
-  未缓存的美元拆分、按模型与按会话的权重、客户端轮询到的额度百分比。
-  `cctrace-insights` skill 把这些变成回答（「这周缓存命中如何」「哪个会话
-  最重」），并如实说明覆盖缺口。
-- **轨迹进入时间线。** 会话 rail 上每一步都带一条轨道：窗口占用了多少，
-  并拆成从缓存读到的前缀与按全价计费的新增部分。顺着 rail 往下看，
-  这一列就是 agent 的上下文轨迹 -- 一路爬升，compact 让它掉下来，
-  下一步冷启动，然后再次回暖。
-- **可重开的 trace。** 每次运行写一份 `.jsonl`；`cctrace view` 随时重开，
-  `--html` 按需渲染离线快照发给同事。
-- **一个仪表盘看全部。** 任意实例的 `/dashboard` 汇总所有项目的存活运行与
-  历史 trace -- 按项目或 client 分组，每次运行带体积/token/费用 --
-  任意一行一键打开渲染好的会话视图。
-- **零配置。** 自动生成 CA、自动识别安装，默认捕获完整的第一方全貌。
-- **范围即设计。** agent 子进程碰到的外部 host 以不透明隧道透传（只记 host +
-  字节数），`go install` 再也不会往 trace 里塞 53MB 的 tarball。细节见
-  [捕获模式](docs/capture-modes.md)。
-- **默认安全。** 凭据在落盘前就已从 headers、bodies **和** URL 中脱敏（见
-  [安全与隐私](#安全与隐私)）。
-
-## 对比
-
-|  | **cctrace** | base-URL 代理 | claude-trace (`node --require`) | Charles / mitmproxy |
-|---|:---:|:---:|:---:|:---:|
-| 支持原生二进制 | 是 | 是 | **否** | 是 |
-| 捕获 `/v1/messages` | 是 | 是 | 是 | 是 |
-| 捕获 **OAuth / 用量 / 额度** | 是 | **否** | **否** | 需手动 |
-| 零配置（自动 CA 与信任） | 是 | 是 | 是 | **否** |
-| 懂 agent 的界面（分类、会话、SSE 解码） | 是 | -- | 部分 | **否** |
-| 纯本地，数据不外流 | 是 | 是 | 是 | 是 |
-
-`fetch()` 钩子方案（claude-trace 之类）在 Claude Code 转原生之后就废了。base-URL
-代理还能用，但只看得到 `/v1/messages`。Charles 这类通用 TLS 代理什么都看得到，
-但要手动装 CA，而且完全不理解这些端点。cctrace 走中间路线：零配置、全覆盖、
-懂你的 agent。
+- **发生了什么？** 按人的工作轮次阅读，跟随工具和子 Agent，回放整个过程。
+- **什么占满了上下文？** 查看指令、工具 schema 和工具结果的变化，了解压缩改了什么。
+- **Tokens 花在哪了？** 查看会话内和跨次运行的缓存行为与估算费用。
+- **到底发送了什么？** 打开捕获的请求和响应，包括模型调用以外的第一方流量。
 
 ## 快速开始
 
-需要 [Bun](https://bun.sh)、`openssl`，以及你要追踪的 CLI。
+需要 [Bun](https://bun.sh)、`openssl`，以及你要追踪的 Agent CLI。
 
 ```bash
-npm install -g @thevibeworks/cctrace    # 或：bunx @thevibeworks/cctrace
+npm install -g @thevibeworks/cctrace
+cctrace                              # 启动 Claude Code 和本地网页界面
 ```
 
-或构建独立二进制（推荐 -- 运行时不需要 Bun，`--` 原样透传）：
+终端会打印 Live UI 地址。照常使用 Agent，浏览器中会实时显示请求。
+Trace 会保存下来，方便之后查看。
 
 ```bash
-git clone https://github.com/thevibeworks/cctrace && cd cctrace
-make install                            # 编译并安装到 ~/.local/bin
+cctrace codex                        # 也支持 grok、kimi、opencode
+cctrace view                         # 重新打开保存的会话
+cctrace doctor                       # 诊断当前或最近一次会话的上下文
+cctrace insights --scan              # 查看多次运行的用量和缓存
+cctrace export                       # 将会话导出为 Markdown
 ```
 
-然后：
-
-```bash
-cctrace                                    # 追踪 claude，打开实时界面
-cctrace -- --continue                      # 续上上一次会话，带追踪
-cctrace -- -p "hello"                      # -- 之后的参数原样传给 agent
-```
-
-```
-[cctrace] Live UI: http://localhost:8722/trace
-[cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
-```
-
-打开 Live UI 看请求流入。结束按 Ctrl-C -- trace 落在 store 里
-（`~/.local/share/cctrace/traces/<project>/`，每个项目一个目录，退出时归档为
-`.jsonl.zst`），随时 `cctrace view` 重开，`cctrace store` 看占用。安装变体、运行时说明和 bun 的 `--` 坑见
-[docs/install.md](docs/install.md)。
-
-## 常用命令
-
-```bash
-cctrace view                     # 重开已保存的 trace（回车 = 最新）
-cctrace view <target> --html     # 渲染可分享的离线快照
-cctrace ps                       # 存活实例：URL、client、项目、会话
-cctrace history                  # 所有项目的全部运行记录，最新在前
-cctrace clean|merge|compress     # 清理归档 -- 默认 dry-run，--yes 才执行
-cctrace purge                    # 从已保存 trace 中删除噪音类别
-cctrace compact                  # 折叠冗余请求体（-95%+），会话视图不变
-```
-
-清理命令永不缩水你的数据（删除前校验、合并取并集、对正在写入的 trace 安全）；
-`compact` 是唯一声明过的例外。完整保证见 [docs/traces.md](docs/traces.md)。
-
-## 常用选项
-
-| 选项 | 说明 |
-|--------|-------------|
-| `--mode MODE` | `auto`（默认）、`mitm`、`base-url`、`node` |
-| `-p, --port PORT` | Live UI 端口（默认 8722，被占自动顺延） |
-| `--messages-only` | 只捕获模型 API 调用 |
-| `--capture-external` | 解密所有 host（超 64KB 的外部 body 只留摘要） |
-| `--intercept-host H` | 额外解密 host `H`（可重复 -- 远程 MCP 服务器） |
-| `--bypass-host H` | 让 host `H` 完全绕开代理（写入子进程 `NO_PROXY`） |
-| `--dir PATH` | 日志目录（默认：store 里该项目的目录） |
-| `--client-path PATH` | 任意 client 的自定义二进制路径 |
-
-完整表格（含 `--fresh`、`--with`、`--data-dir`、`--print-ca`）：
-[docs/install.md](docs/install.md#all-options)。
-
-## 工作原理
-
-```mermaid
-flowchart LR
-    CC["Claude Code<br/>(原生二进制)"]
-    FD{"cctrace<br/>CONNECT 前门"}
-    TLS["TLS 终结<br/>(我们的叶证书)"]
-    BT["TLS 终结<br/>(动态证书)"]
-    TUN["不透明隧道<br/>(只记字节数)"]
-    API[("api.anthropic.com")]
-    PIN[("pinned / 纳入的<br/>host")]
-    EXT[("外部 host<br/>npm · github · apt")]
-    TEE(["tee 响应流"])
-    RD["脱敏<br/>headers · bodies · URLs"]
-    UI["实时界面<br/>(分类)"]
-    OUT[["store · jsonl.zst"]]
-
-    CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
-    FD -- "Anthropic host" --> TLS
-    FD -- "白名单 host" --> BT
-    FD -- "其他一切" --> TUN
-    TLS --> API
-    BT --> PIN
-    TUN --> EXT
-    PIN -- "响应流" --> TEE
-    API -- "响应流" --> TEE
-    TUN -- "一行元数据" --> RD
-    TEE -- "流式回给 Claude，<br/>零缓冲" --> CC
-    TEE -- "捕获副本" --> RD
-    RD --> UI
-    RD --> OUT
-
-    classDef accent stroke:#3fb950,stroke-width:2px;
-    class RD accent
-```
-
-代理用自动生成的叶证书终结 TLS，转发到真实 API，并对响应流做 `tee` -- agent
-立即拿到字节，cctrace 同时留副本，SSE 零缓冲。每个捕获的请求对在进入任何
-输出前都先脱敏。子进程信任（合并 CA bundle）、为什么不设 `HTTP_PROXY`、
-隧道范围模型：[docs/capture-modes.md](docs/capture-modes.md)。
+独立二进制安装及 Agent 参数透传，见[安装方式](docs/install.md)。
 
 ## 安全与隐私
 
-cctrace 是本地调试工具，但它拦截的是真实的带凭据流量，所以落盘前先脱敏：
+cctrace 在本地运行 TLS 拦截代理。默认解密第一方 host，其他 host 通过
+不透明隧道转发。凭证字段在写入前脱敏。**对话内容会保留**，分享 trace 前
+请检查。cctrace 不会把捕获数据上传到服务；Agent 仍会连接其配置的提供商。
+[捕获范围](docs/capture-modes.md) · [脱敏细节](SECURITY.md)。
 
-- **Headers** -- `authorization`、`x-api-key`、`cookie` 等掩码为前 10/后 4
-  预览（够分辨是哪把 key，拿不到 key 本身）。
-- **Bodies** -- 凭据字段（`access_token`、`refresh_token`、`client_secret`、
-  `api_key` 等）在 JSON 和表单里掩码。对话内容原样保留。
-- **URLs** -- 带凭据的查询参数（如 OAuth `?code=`）掩码。
-- **身份 id**（会话/用户/设备 UUID）默认**不**掩码 -- 它们是工作流身份而非
-  凭据，且会话相关功能依赖真实 id。要把 trace 分享到本机之外？用
-  `--redact-ids`（或 `CCTRACE_REDACT_IDS=1`）连同它们一起掩码。
+## 深入了解
 
-脱敏发生在唯一的收口点，对 `.jsonl`、`.html`、实时 WebSocket 一视同仁。
-trace 存在项目树之外（`~/.local/share/cctrace/` 下的 store），不会误入仓库。
+[Web UI](docs/web-ui.md) · [保存的 trace](docs/traces.md) · [客户端](docs/clients.md)
+· [实时捕获与资源](docs/live-resources.md) · [更新日志](CHANGELOG.md)
 
-**但是：** trace 是你真实会话的记录。分享前先自查。永远不要把原始输出贴进
-公开 issue。真的。
+**给 Agent：** [llms.txt](llms.txt) · [cctrace skill](skills/cctrace/SKILL.md)
+· [上下文诊断](skills/cctrace-doctor/SKILL.md) · [用量洞察](skills/cctrace-insights/SKILL.md)。
+CLI 计算事实，skill 帮助 Agent 解读。
 
-## 文档
-
-| 入门 | 深入 |
-|---|---|
-| [安装与选项](docs/install.md) | [捕获模式与代理内部](docs/capture-modes.md) |
-| [Web 界面导览](docs/web-ui.md) | [trace 管理与清理保证](docs/traces.md) |
-| [Codex / Grok / Kimi / 兼容服务](docs/clients.md) | [Agent skill](skills/cctrace/SKILL.md) · [CHANGELOG](CHANGELOG.md) |
-
-## 路线图
-
-- **会话回放 P3/P4** -- 可选 `--record-timing`，按块计时的流式回放
-  （[设计文档](docs/design/session-replay.md)）。
-- **WebSocket 中继** -- 捕获 ws 帧，替代当前的快速拒绝 + HTTP 回退。
-- **对话导出** -- 把重建的对话导出为 Markdown 或 JSON。
-- **MCP 服务器** -- 让任意 agent 以编程方式查询捕获的流量（agent *skill*
-  已内置；MCP 是剩下的一半）。
-- **隧道 PID 归因** -- 哪个子进程调了 npm（Linux，已调研，暂缓）。
-
-## 开发
-
-```bash
-bun test                                # 单元测试
-bun run tests/e2e-live.ts mitm "hi"     # 对真实 Claude 的端到端测试
-```
-
-见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 许可证
-
-[MIT](LICENSE)
+[贡献指南](CONTRIBUTING.md) · [MIT 许可证](LICENSE)。

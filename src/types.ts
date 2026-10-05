@@ -56,6 +56,9 @@ export interface TransportFailure {
  * pair lands. Never written to the trace: it is live state, not a wire pair.
  */
 export interface TraceStart {
+  /** Model and reasoning configuration from this request, before its response. */
+  model?: string;
+  effort?: { v: string; title: string };
   id: string;
   url: string;
   method: string;

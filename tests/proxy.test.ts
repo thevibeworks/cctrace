@@ -294,10 +294,13 @@ describe("proxy: live start events", () => {
     await fetch(`http://localhost:${proxy.port}/v1/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify({ model: "claude-opus-4-6", output_config: { effort: "high" }, messages: [{ role: "user", content: "private prompt" }] }),
     });
     // Emitted before the forward: the start exists while the pair does not.
     expect(starts.length).toBe(1);
+    expect(starts[0]!.model).toBe("claude-opus-4-6");
+    expect(starts[0]!.effort?.v).toBe("high");
+    expect(JSON.stringify(starts[0])).not.toContain("private prompt");
 
     await Bun.sleep(50);
     expect(pairs.length).toBe(1);

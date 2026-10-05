@@ -5,6 +5,7 @@ import { join } from "path";
 import { isInterceptHost, hostInSet, generateHostCert } from "./certs";
 import { categorizeUrl, isModelCallPath } from "./categorize";
 import { redactPair } from "./redact";
+import { extractEffort } from "./summarize";
 import { captureTee, decodeBodyForTrace } from "./stream";
 import { createUpstream, UpstreamError } from "./upstream";
 import type { TracePair, TraceStart } from "./types";
@@ -139,9 +140,13 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
   // SHAPE before any host/client rule, so no client label can turn a
   // non-messages URL into "messages" or vice versa. Fail-soft by
   // construction: the hint must never cost the request it precedes.
-  const emitStart = (id: string, method: string, url: string, ts: number) => {
+  const emitStart = (id: string, method: string, url: string, ts: number, body: unknown) => {
     if (!config.onStart || categorizeUrl(url) !== "messages") return;
-    try { config.onStart({ id, url, method, ts }); } catch {}
+    try {
+      const model = body && typeof body === "object" && "model" in body && typeof body.model === "string" ? body.model : undefined;
+      const effort = extractEffort(body) || undefined;
+      config.onStart({ id, url, method, ts, model, effort });
+    } catch {}
   };
 
   let pairCount = 0;
@@ -254,7 +259,7 @@ export function startMitm(config: MitmConfig): Promise<MitmServer> {
       delete fetchHeaders["content-length"];
 
       let upstream: Response;
-      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
+      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000, reqBody);
       try {
         upstream = await forward.fetch(targetUrl, {
           method: req.method,

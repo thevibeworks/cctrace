@@ -13,6 +13,7 @@ import {
   applyCompact,
 } from "../src/compact";
 import { buildSession } from "../src/session";
+import { extractEffort } from "../src/summarize";
 import { categorizeUrl } from "../src/categorize";
 import { wireTables } from "../src/clients";
 import type { TracePair } from "../src/types";
@@ -147,6 +148,19 @@ describe("stubPair", () => {
     // grouping + attribution equivalence
     expect(threadKeyOf(s, WIRE)).toBe(threadKeyOf(a, WIRE));
     expect(histLenOf(s)).toBe(histLenOf(a));
+  });
+
+  test("keeps the requested effort, not the output schema", () => {
+    seq = 0;
+    const [a, b] = growingThread(2);
+    a.request.body.output_config = { effort: "xhigh", format: { type: "json_schema", schema: { type: "object" } } };
+    a.request.body.thinking = { type: "adaptive" };
+    const s: any = stubPair(a, b.id).request.body;
+    expect(s.output_config).toEqual({ effort: "xhigh" });
+    expect(s.thinking).toEqual({ type: "adaptive" });
+    expect(extractEffort(s)?.v).toBe("xhigh");
+    const o: any = stubPair({ ...a, request: { ...a.request, body: { model: "gpt-6", reasoning: { effort: "high", summary: "auto" } } } }, b.id).request.body;
+    expect(extractEffort(o)?.v).toBe("high");
   });
 });
 

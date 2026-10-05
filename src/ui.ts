@@ -842,7 +842,9 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       white-space: nowrap; overflow: hidden;
     }
     body.view-session.pulse-on #pulse { display: flex; }
-    #pulse .p-state { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+    #pulse .p-state { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+    #pulse .p-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text-method); }
+    #pulse .model-effort { flex: none; }
     #pulse .p-dot {
       width: 8px; height: 8px; border-radius: var(--radius-full);
       background: var(--text-faint); flex: none;
@@ -878,7 +880,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     #pulse .p-exp .p-fill { background: var(--red); }
     #pulse .p-exp .p-left, #pulse .p-exp .p-clabel { color: var(--red); }
     @media (prefers-reduced-motion: reduce) { #pulse .p-flight .p-dot { animation: none; } }
-    @media (max-width: 760px) { #pulse .p-act { display: none; } }
+    @media (max-width: 760px) {
+      #pulse { flex-wrap: wrap; gap: 4px 8px; padding: 6px 12px; font-size: var(--text-sm); }
+      #pulse .p-state { flex: 1 0 100%; }
+      #pulse .p-act { display: none; }
+      #pulse .p-cache { margin-left: auto; }
+    }
     .tj-pagination { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: end; gap: 8px; padding: 8px 0; background: var(--bg); border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
     .tj-pagination > span:first-child { margin-right: auto; }
     .tj-pagination button:disabled { opacity: 0.4; cursor: default; }
@@ -1145,39 +1152,20 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     }
     .chip { font-variant-numeric: tabular-nums; }
     .chip b { color: var(--text-muted); font-weight: 500; margin-right: 6px; }
-    /* ---- The session chips stay put (item 16) ----
-       They answer "what am I reading" — model, requests, tokens, cache,
-       cost, time — and they used to scroll away on the first turn. In the
-       conversation column they are the column's own bar: sticky at the top,
-       bleeding to the pane edges, and once the reader is past the head they
-       COMPACT to one scrolling row with a hairline under it. The context
-       jump pins to the right edge, so the way across is never scrolled out
-       of reach. */
-    #convo > .chips {
-      position: sticky; top: 0; z-index: 3;
-      margin: -12px -48px 8px -16px;
-      padding: 8px 16px;
-      border: 0; border-bottom: 1px solid transparent; border-radius: 0;
-      background: var(--bg);
+    /* Session facts belong to the fixed heading, outside the reading pane. */
+    #session-heading > .chips {
+      flex: 1 1 0; min-width: 0; box-sizing: border-box;
+      flex-wrap: nowrap; align-items: center; gap: 4px 18px;
+      overflow-x: auto; margin: 0; padding: 4px 0;
+      border: 0; border-radius: 0; background: transparent;
     }
-    #convo.stuck > .chips {
-      flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
-      padding-top: 5px; padding-bottom: 5px;
-      border-bottom-color: var(--border);
-    }
-    #convo.stuck > .chips > .chip { flex: none; }
-    #convo > .chips > .turn-wire {
+    #session-heading > .chips:empty { display: none; }
+    #session-heading > .chips > .chip { flex: none; white-space: nowrap; }
+    #session-heading > .chips > .turn-wire {
       position: sticky; right: 0; margin-left: auto; flex: none;
-      padding-left: 12px; background: var(--bg);
+      padding-left: 12px; background: var(--bg-surface);
     }
-    /* Stuck, the row scrolls under the pane's 48px right gutter (the
-       floating toolbar lives there): the jump wears that gutter as its own
-       padding so no chip text shows to its right. */
-    #convo.stuck > .chips { padding-right: 0; }
-    #convo.stuck > .chips > .turn-wire { padding-right: 48px; }
-    @media (max-width: 760px) {
-      #convo > .chips { margin: -10px -44px 8px -12px; padding: 6px 12px; }
-    }
+    .model-effort { color: var(--text-muted); font-weight: 400; white-space: nowrap; }
     .turn { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; }
     .turn-role {
       display: flex; align-items: center; gap: 8px;
@@ -1510,7 +1498,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .thread-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     /* the model wears the identifier color (same as request METHOD and
        tool names) — it is the header fact people look for; hover carries
-       the exact id, effort level, and context-window facts */
+       the exact id and context-window facts */
     .tmodel {
       margin-left: auto; flex-shrink: 0; font-size: 10px;
       color: var(--text-method); font-variant-numeric: tabular-nums;
@@ -2136,11 +2124,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       flex: 1 1 0; min-width: 0;
     }
     .cx-colw.out { opacity: 0.32; }
-    /* The COLUMN always takes exactly 1/N of the track (the brush's
-       geometry depends on it) — the BAR inside it is what gets capped, so
-       a five-step thread reads as five slim bars across the axis instead
-       of a 110px huddle in a 1000px field, and every column keeps a
-       full-width hit target. */
+    /* Each column takes 1/N of the shared track. The track caps its width
+       at 30px per step at fit zoom, keeping short runs together on the left. */
     /* the time track: where THIS step's wall-clock went (model, then the
        gap to the next request — tools when the reply made calls, waiting
        when the harness came back on its own). Same x, same brush; the
@@ -2354,8 +2339,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     .tctx-c { background: color-mix(in srgb, var(--green) 70%, transparent); }
     .tctx-f { background: color-mix(in srgb, var(--amber) 80%, transparent); }
     .tctx-x { background: color-mix(in srgb, var(--red) 70%, transparent); }
-    #session-heading { display: flex; align-items: center; gap: 8px; padding: 5px 16px; min-width: 0; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
-    #thread-jump { min-width: 0; max-width: 460px; flex: 1; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--text-sm); text-overflow: ellipsis; }
+    #session-heading { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 16px; min-width: 0; border-bottom: 1px solid var(--border); background: var(--bg-surface); }
+    #thread-jump { min-width: 0; max-width: 220px; flex: 0 1 220px; height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--text-sm); text-overflow: ellipsis; }
     #thread-parent { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text-muted); font-size: var(--text-sm); text-decoration: none; }
     #thread-parent:hover { color: var(--accent); }
     .threads-collapsed #threads, body.session-focus #threads { display: none; }
@@ -2386,7 +2371,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       #tb-trace { padding-left: 6px; }
       .toolbar .icon-btn { width: 44px; }
       #session-heading { padding: 4px 12px; gap: 6px; }
-      #thread-jump { height: 44px; flex: 1; width: 0; }
+      #thread-jump { height: 44px; flex: 1; width: 0; max-width: none; }
+      #session-heading > .chips { flex-basis: 100%; }
       #thread-parent { width: 44px; height: 44px; justify-content: center; }
       #thread-parent .parent-label { display: none; }
       #threads { display: none; position: absolute; z-index: 12; left: 0; top: 0; bottom: 0; width: min(360px, calc(100% - 44px)); background: var(--bg); box-shadow: var(--shadow-2); }
@@ -2640,6 +2626,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       <button class="icon-btn" id="threads-toggle" aria-label="Collapse session navigation" aria-controls="threads" aria-expanded="true" title="Collapse session navigation">${UI_ICONS.listTree}</button>
       <a id="thread-parent" hidden></a>
       <select id="thread-jump" aria-label="Jump to thread"></select>
+      <div class="chips" id="session-chips" role="group" aria-label="Session statistics" tabindex="0"></div>
     </div>
     <div id="session-main">
       <button id="threads-dismiss" aria-label="Close session navigation" tabindex="-1"></button>
@@ -2973,6 +2960,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
 
     const threadsToggle = document.getElementById('threads-toggle');
     const threadJump = document.getElementById('thread-jump');
+    const sessionChips = document.getElementById('session-chips');
     const threadParent = document.getElementById('thread-parent');
     const focusToggle = document.getElementById('focus-toggle');
     const narrowNavigation = () => !!(window.matchMedia && window.matchMedia('(max-width: 760px)').matches);
@@ -3665,8 +3653,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
           if (detailId && !detailOriginal) openDetail(detailId);
         } else if (msg.type === 'start') {
           // A model call was forwarded and has no response yet. The strip
-          // draws it as an open span to the newest known time; nothing
-          // else on the page reads it, and no timer ticks it.
+          // draws it as an open span; the live status shows its own model
+          // and effort while the request is working.
           if (msg.start && msg.start.id && !openStarts.has(msg.start.id)) {
             openStarts.set(msg.start.id, msg.start);
             rpLiveRefresh();
@@ -4594,11 +4582,11 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let row1 = '';
       if (m.error) row1 += kv('error', m.error, 'err');
       if (m.model) row1 += kv('model', m.model, 'model');
+      const eff = extractEffort(pair.request.body);
+      if (eff) row1 += kv('effort', eff.v, '', eff.title);
       row1 += kv('stream', m.stream ? 'yes' : 'no');
       if (m.maxTokens != null) row1 += kv('max_tokens', m.maxTokens.toLocaleString());
       if (m.temperature != null) row1 += kv('temp', m.temperature);
-      const eff = extractEffort(pair.request.body);
-      if (eff) row1 += kv('effort', eff.v, '', eff.title);
       if (m.stopReason) row1 += kv('stop', m.stopReason, m.stopReason === 'end_turn' || m.stopReason === 'tool_use' ? '' : 'warn');
       if (pair.response && pair.response.truncated) row1 += kv('stopped', 'early', 'warn', 'stream ended before completion \\u2014 the partial response up to that point was captured (cctrace keeps capturing after a CLI abort)');
       if (m.serviceTier) row1 += kv('tier', m.serviceTier);
@@ -5365,6 +5353,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
                 showSession(key, sub);
               });
           }
+          sessionChips.innerHTML = '';
           convoEl.innerHTML = '<div class="empty">' + (replayLoad && replayLoad.failed
             ? 'Original request could not be loaded. <a href="#/p/' + encodeURIComponent(anchor.id) + '">Inspect request</a>.'
             : 'Loading this moment from the trace…') + '</div>';
@@ -5378,6 +5367,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         // The stage still stands while replaying: at a cursor before the
         // first response it says so, instead of blanking the column.
         threadsEl.innerHTML = stageHtml();
+        sessionChips.innerHTML = '';
         convoEl.innerHTML = '<div class="empty">' + (replay.active
           ? 'Nothing on the wire yet at this moment \\u2014 step forward (\\u2192) or press play.'
           : 'No /v1/messages requests captured yet.') + '</div>';
@@ -5401,6 +5391,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             // Not on the wire yet at this moment: the rail renders without a
             // selection to mark, the convo says so, the stage still stands.
             renderThreadsPane(threads, { key: want.key });
+            sessionChips.innerHTML = '';
             convoEl.innerHTML = '<div class="empty">Nothing on this thread\\u2019s wire yet at this moment \\u2014 step forward (\\u2192) or press play.</div>';
             convoKey = null;
             tailPill.classList.remove('show');
@@ -5770,7 +5761,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '<span class="tctx tctx-none"></span>' +
         '<span class="rgut"><span class="enode"></span></span>' +
         '<span class="tepoch-ord">T' + i + '</span>' +
-        '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + '</span>' +
+        '<span class="tepoch-model">' + escapeHtml(shortModel(e.model) || '?') + effortHtml(threadWireFacts({ turns: vis.slice(e.from, e.to + 1) }, e.model).effs.join(' / ')) + '</span>' +
         '<span class="tepoch-turns">' + (n ? n + ' turn' + (n === 1 ? '' : 's') : 'mid-turn') + '</span></a>';
     }
 
@@ -6010,7 +6001,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
             ' data-tip="' + escapeHtml(threadTitle(m.t) + '\\n---\\n> click to open this subagent thread') + '">' +
             '<span class="rgut rgut-br"></span>' +
             '<span class="tbranch-label">' + escapeHtml(m.t.label || 'subagent') + '</span>' +
-            (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + '</span>' : '') +
+            (m.t.model ? '<span class="tbranch-model">' + escapeHtml(shortModel(m.t.model)) + effortHtml(threadWireFacts(m.t, m.t.model).effs.join(' / ')) + '</span>' : '') +
             '<span class="tbranch-stat">' + escapeHtml(m.stats || '') + '</span></a>');
         }
         if (!rows.length) return '';
@@ -6347,22 +6338,31 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     // can span models). "+N" marks mid-thread switches.
     // Wire-level model config for a thread's hover: exact ids, the effort
     // level(s) requested, 1m-context beta. Read from the thread's own
-    // pairs (capped scan) — facts the wire states, never inferred.
-    function threadWireFacts(t) {
+    // pairs — facts the wire states, never inferred.
+    function threadWireFacts(t, model) {
       const effs = [];
-      const seen = {};
+      const seen = new Set();
       let ctx1m = false;
-      let scanned = 0;
-      for (const turn of t.turns || []) {
-        if (!turn.pairId) continue;
-        if (++scanned > 80) break;
-        const p = pairOf(turn.pairId);
+      const ids = t.pairIds || (t.turns || []).map(turn => turn.pairId).filter(Boolean);
+      for (const id of new Set(ids)) {
+        const p = pairOf(id);
         if (!p || !p.request) continue;
+        const ci = p._ci || (p._ci = extractCallInfo(p));
+        if (model && ci.model !== model) continue;
         const e = extractEffort(p.request.body);
-        if (e && !seen[e.v]) { seen[e.v] = 1; effs.push(e.v); }
+        if (e && !seen.has(e.v)) { seen.add(e.v); effs.push(e.v); }
         if (!ctx1m && String((p.request.headers || {})['anthropic-beta'] || '').indexOf('context-1m') !== -1) ctx1m = true;
       }
       return { effs, ctx1m };
+    }
+
+    function effortHtml(value, title) {
+      return value ? ' <span class="model-effort"' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>effort ' + escapeHtml(value) + '</span>' : '';
+    }
+
+    function pairEffortHtml(p) {
+      const eff = p && extractEffort(p.request && p.request.body);
+      return eff ? effortHtml(eff.v, eff.title) : '';
     }
 
     function modelChip(t) {
@@ -6370,7 +6370,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const extra = Math.max(0, Object.keys(t.models || {}).length - 1);
       const mt = modelTitle(t);
       const ids = Object.keys(t.models || {});
-      const wf = threadWireFacts(t);
+      const wf = threadWireFacts(t, t.model);
       const tip = 'model ' + shortModel(t.model) + (extra ? ' (+' + extra + ' via /model)' : '') +
         (ids.length ? '\\nexact: ' + ids.join(', ') : '') +
         (wf.effs.length ? '\\neffort: ' + wf.effs.join(' / ') : '') +
@@ -6378,7 +6378,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         '\\nprimary = most output tokens, never last-used' +
         (mt ? '\\n\\n' + mt : '');
       return '<span class="tmodel" data-tip="' + escapeHtml(tip) + '">' +
-        escapeHtml(shortModel(t.model)) + (extra ? ' +' + extra : '') + '</span>';
+        escapeHtml(shortModel(t.model)) + effortHtml(wf.effs.join(' / ')) + (extra ? ' +' + extra : '') + '</span>';
     }
 
     // Spelled-out breakdown for an error count — the aggregate chip stays
@@ -6804,7 +6804,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         const bits = [];
         // Every attributed reply names its model — with /model switches the
         // set is the story, and the epoch divider marks where it changes.
-        if (u.model) bits.push(escapeHtml(shortModel(u.model)));
+        if (u.model) bits.push(escapeHtml(shortModel(u.model)) + pairEffortHtml(p));
         bits.push('in ' + fmtCompact(u.input));
         bits.push('out ' + fmtCompact(u.output));
         if (u.cacheRead) bits.push('cache ' + fmtCompact(u.cacheRead));
@@ -6893,8 +6893,6 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     };
     convoEl.addEventListener('scroll', () => {
       if (convoAtBottom()) tailPill.classList.remove('show');
-      // Past the head, the sticky chips row compacts to one line (item 16).
-      if (convoEl.classList) convoEl.classList.toggle('stuck', convoEl.scrollTop > 4);
       rpQueueSyncRead();
     });
 
@@ -7004,6 +7002,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // /model switch shows as "+N" with the per-model split in the tooltip.
       const mextra = Math.max(0, Object.keys(t.models || {}).length - 1);
       chips += kv('model', (t.model || '?') + (mextra ? ' +' + mextra : ''), 'model', modelTitle(t));
+      const wf = threadWireFacts(t, t.model);
+      if (wf.effs.length) chips += kv('effort', wf.effs.join(' / '), '', 'Requested reasoning effort for ' + t.model + ' across this thread');
       chips += kv('requests', t.usage.requests);
       chips += kv('input', t.usage.input.toLocaleString());
       chips += kv('output', t.usage.output.toLocaleString());
@@ -7052,7 +7052,8 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // The pane renders as a PARTS array — one string per top-level node —
       // so live re-renders can patch only the nodes whose html actually
       // changed (see the apply step below).
-      const parts = ['<div class="chips">' + chips + '</div>'];
+      if (sessionChips.innerHTML !== chips) sessionChips.innerHTML = chips;
+      const parts = [];
       if (t.agentOf) {
         parts.push('<div class="agent-note">subagent run' +
           (t.agentOf.agentType ? ' \\u00b7 [' + escapeHtml(t.agentOf.agentType) + '] ' + escapeHtml(t.agentOf.description || '') : '') +
@@ -7089,7 +7090,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // the same indexing threadEpochs emits and the epoch rows jump to.
       const epochAt = {};
       const eps = t.epochs || [];
-      for (let i = 1; i < eps.length; i++) epochAt[eps[i].from] = eps[i].model;
+      for (let i = 1; i < eps.length; i++) epochAt[eps[i].from] = eps[i];
       let ti = 0;
       let vi = 0;
       // Working-loop ordinals, same numbering as the outline: the user head
@@ -7141,7 +7142,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         }
         if (turn.toolResultsOnly) continue; // results fold into their tool_use
         if (epochAt[vi] !== undefined) {
-          parts.push('<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi]) || '?') + '</div>');
+          parts.push('<div class="epoch-mark" title="/model switch \\u2014 the conversation continues, a different model answers from here">\\u2192 ' + escapeHtml(shortModel(epochAt[vi].model) || '?') + effortHtml(threadWireFacts({ turns: cvis.slice(epochAt[vi].from, epochAt[vi].to + 1) }, epochAt[vi].model).effs.join(' / ')) + '</div>');
         }
         try { parts.push(renderSessionTurn(turn, results, viOrd[vi] != null ? viOrd[vi] : null, isSummary, viStep[vi] || '', cts[vi] || 0)); }
         catch (e) { parts.push(brokenItem('turn', turn && turn.pairId, e)); }
@@ -7868,7 +7869,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       const at = ctxOrdLbl(ctxAddr, pairId);
       let h = '';
       h += ctxKv('request', (at ? '<b>' + escapeHtml(at) + '</b> \\u00b7 ' : '') + (p.request.timestamp ? fmtDateTime(new Date(p.request.timestamp * 1000)) : 'wire request'));
-      h += ctxKv('model', '<b>' + escapeHtml(ci.model || (p.request.body && p.request.body.model) || '?') + '</b>');
+      h += ctxKv('model', '<b>' + escapeHtml(ci.model || (p.request.body && p.request.body.model) || '?') + '</b>' + pairEffortHtml(p));
       h += ctxKv('status', failed
         ? '<span style="color:var(--red)">' + (p.response ? st : 'no response') + '</span>' + (ci.error ? ' \\u00b7 ' + escapeHtml(String(ci.error).slice(0, 200)) : '')
         : st + (ci.stopReason ? ' \\u00b7 stop ' + escapeHtml(ci.stopReason) : '') + (p.response && p.response.truncated ? ' \\u00b7 stream truncated' : ''));
@@ -8149,7 +8150,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       let h = '<div class="cx-mblock"><div class="cx-bal">' +
         '<span class="cx-bal-n">' + (known ? '' : '\\u2248') + fmtCompact(total) +
         '<span class="cx-bal-u">' + (known ? 'prompt tokens' : 'estimated') + '</span></span>' +
-        '<span class="cx-bal-d">' + escapeHtml((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : '')) + '</span>';
+        '<span class="cx-bal-d">' + escapeHtml((at || 'wire request') + (s.model ? ' \\u00b7 ' + shortModel(s.model) : '')) + (s.model ? pairEffortHtml(pairOf(s.pairId)) : '') + '</span>';
       // the bar: six segments against the window when we know it, against
       // themselves when we do not — never a made-up denominator
       const segW = ctxWin ? pctWin : 100;
@@ -8894,8 +8895,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         (spend > 0 ? ' · \\u2248' + fmtCost(spend) : '');
     }
 
-    function ctxTrackStyle() {
-      return 'width:' + (ctxZoom > 1 ? (ctxZoom * 100).toFixed(2) : '100') + '%';
+    function ctxTrackStyle(n) {
+      // Cap the whole shared axis, so short runs pack left and brushing,
+      // timing and cost still use exactly the same column coordinates.
+      return 'width:min(' + (ctxZoom * 100).toFixed(2) + '%, ' + (Math.max(1, n) * 30 * ctxZoom).toFixed(2) + 'px)';
     }
 
     // ---- the overview ----
@@ -8990,7 +8993,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         (hasTime ? '<div class="cx-ov-gl" style="height:var(--cx-ov-th)"><span>' + fmtSpan(maxTime) + '</span><span class="cx-ov-gn">time</span></div>' : '') +
         (hasCost ? '<div class="cx-ov-gl" style="height:var(--cx-ov-ch)"><span>\\u2248' + fmtCost(maxCost) + '</span><span class="cx-ov-gn">cost</span></div>' : '') +
         '</div>';
-      const tracks = '<div class="cx-ov-tracks" id="cx-tracks" style="' + ctxTrackStyle() + '">' +
+      const tracks = '<div class="cx-ov-tracks" id="cx-tracks" style="' + ctxTrackStyle(N) + '">' +
         '<div class="cx-chart">' + ctxCols + '</div>' +
         (hasTime ? '<div class="cx-time">' + timeCols + '</div>' : '') +
         (hasCost ? '<div class="cx-cost">' + costCols + '</div>' : '') +
@@ -9508,7 +9511,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
       // (native horizontal scroll). Zoom is a WIDTH change on the track —
       // the columns are flex:1, so nothing re-renders.
       const applyZoom = () => {
-        tracks.setAttribute('style', ctxTrackStyle());
+        tracks.setAttribute('style', ctxTrackStyle(N));
         const z = document.getElementById('cx-ov-z');
         if (z) z.textContent = ctxZoom > 1 ? ctxZoom.toFixed(1) + '×' : 'fit';
       };
@@ -10616,12 +10619,12 @@ export function getLiveHtml(meta: PageMeta = {}): string {
     let pulsePair = null;
     let pulseAction = '';
     function pulseState() {
-      let oldest = 0;
+      let oldest = 0, start = null;
       openStarts.forEach((s) => {
         const ms = (s && s.ts ? s.ts : 0) * 1000;
-        if (ms && (!oldest || ms < oldest)) oldest = ms;
+        if (ms && (!oldest || ms < oldest)) { oldest = ms; start = s; }
       });
-      if (oldest) return { kind: 'flight', since: oldest };
+      if (oldest) return { kind: 'flight', since: oldest, start };
       const p = lastModelPair;
       if (!p) return { kind: 'none', since: 0 };
       const ci = p._ci || (p._ci = extractCallInfo(p));
@@ -10658,7 +10661,7 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         tip = 'live status\\nNothing has reached /v1/messages on this run yet.';
       } else if (st.kind === 'flight') {
         cls = 'p-flight';
-        label = 'in flight';
+        label = 'working…';
         detail = pulseElapsed(now - st.since);
         tip = 'live status\\nA model call was forwarded and has not answered yet \\u2014 the counter is its wall-clock so far.';
       } else if (st.kind === 'tools') {
@@ -10670,15 +10673,17 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         detail = pulseElapsed(now - st.since);
         tip = 'live status\\nSince the newest response landed. Nothing is on the wire.';
       }
+      // An active request owns its identity, including the first call and
+      // model switches. Never label it with a previous response's model.
+      const model = st.start ? st.start.model : p ? (p._ci || (p._ci = extractCallInfo(p))).model : '';
+      const eff = st.start ? st.start.effort : p ? extractEffort(p.request.body) : null;
       let html = '<span class="p-state ' + cls + '" data-tip="' + escapeHtml(tip) + '">' +
-        '<span class="p-dot"></span><span class="p-label">' + escapeHtml(label) + '</span>' +
+        '<span class="p-dot" aria-hidden="true"></span>' +
+        (model ? '<span class="p-model" title="' + escapeHtml(model) + '">' + escapeHtml(model) + '</span>' : '') +
+        (eff ? effortHtml(eff.v, eff.title) : '') +
+        '<span class="p-label">' + escapeHtml(label) + '</span>' +
         (detail ? '<span class="p-t">' + escapeHtml(detail) + '</span>' : '') + '</span>';
-      // WHAT it is doing: the tool labels of the newest completed call
-      // while its tools run, the model id while a call is out.
-      const act = st.kind === 'tools' && pulseAction ? pulseAction
-        : st.kind === 'flight' && p && p._ci ? escapeHtml(shortModel(p._ci.model || '') || '')
-        : '';
-      if (act) html += '<span class="p-act">' + act + '</span>';
+      if (st.kind === 'tools' && pulseAction) html += '<span class="p-act">' + pulseAction + '</span>';
       html += '<span class="p-gap"></span>';
       // The prompt-cache window, DRAINING. Only the newest model call's
       // deadline means anything (every later hit refreshes the TTL), which

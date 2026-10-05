@@ -252,8 +252,27 @@ describe("live page boot", () => {
     ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [toolStop] }) });
     expect(page.els["pulse"].innerHTML).toContain("waiting on tools");
     ws.onmessage!({ data: JSON.stringify({ type: "start", start: { id: "p2", url: "https://api.anthropic.com/v1/messages", method: "POST", ts: Date.now() / 1000 } }) });
-    expect(page.els["pulse"].innerHTML).toContain("in flight");
+    expect(page.els["pulse"].innerHTML).toContain("working…");
     expect(page.els["pulse"].innerHTML).toContain('class="p-state p-flight"');
+    expect(page.errors).toEqual([]);
+  });
+
+  test("live status uses the active request model and effort, including the first call", () => {
+    const page = bootPage(getLiveHtml({}));
+    const ws = page.sockets[0]!;
+    const start = { id: "p2", url: "https://api.openai.com/v1/responses", method: "POST", ts: 1005,
+      model: "gpt-5.4", effort: { v: "xhigh", title: "requested reasoning effort" } };
+    const check = () => {
+      const bar = page.els.pulse.innerHTML;
+      expect(bar).toMatch(/>gpt-5.4<\/span> <span[^>]*>effort xhigh<\/span><span class="p-label">working…/);
+      expect(bar).not.toContain("claude-opus");
+    };
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [], starts: [start] }) });
+    check();
+    ws.onmessage!({ data: JSON.stringify({ type: "init", pairs: [msgPair("p1")], starts: [start] }) });
+    check();
+    ws.onmessage!({ data: JSON.stringify({ type: "start-end", id: "p2" }) });
+    expect(page.els.pulse.innerHTML).toContain(">idle<");
     expect(page.errors).toEqual([]);
   });
 
@@ -696,25 +715,36 @@ describe("the session rail's spine", () => {
   });
 });
 
-// The chips answer "what am I reading" and used to scroll away on the
-// first turn.
+// Session facts stay in the heading while the conversation scrolls.
 describe("the session chips stay put", () => {
-  test("the chips are the conversation column's own sticky bar", () => {
+  test("the chips belong to the fixed session heading", () => {
     const html = getLiveHtml({});
-    expect(html).toContain("#convo > .chips {");
-    expect(html).toContain("position: sticky; top: 0; z-index: 3;");
-    expect(html).toContain("#convo.stuck > .chips {");
-    // the context jump pins to the right edge of that row
-    expect(html).toContain("#convo > .chips > .turn-wire {");
-    expect(html).toContain("classList.toggle('stuck', convoEl.scrollTop > 4)");
+    const shell = parseFragment(html);
+    const find = (node: any, id: string): any => {
+      if (node.attrs?.some((a: any) => a.name === "id" && a.value === id)) return node;
+      for (const child of node.childNodes || []) {
+        const found = find(child, id);
+        if (found) return found;
+      }
+    };
+    const chips = find(shell, "session-chips");
+    expect(chips.parentNode).toBe(find(shell, "session-heading"));
   });
 
-  test("the chips row still opens the conversation and carries the context jump", () => {
-    const page = bootSnapshotPage(renderSnapshot([msgPair("p1")]));
+  test("the heading carries the model, effort and context jump", () => {
+    const page = bootSnapshotPage(renderSnapshot([msgPair("p1", {
+      reqBody: { output_config: { effort: "high" } },
+    })]));
     page.goto("#/session");
-    const convo = page.els["convo"].innerHTML;
-    expect(convo.indexOf('<div class="chips">')).toBe(0);
-    expect(convo).toContain("context →");
+    const chips = page.els["session-chips"].innerHTML;
+    expect(chips).toContain('<b>model</b>claude-opus-4-6</span><span class="chip "');
+    expect(chips).toContain('<b>effort</b>high</span><span class="chip "><b>requests</b>');
+    expect(chips).toContain("context →");
+    expect(page.els.convo.innerHTML).not.toContain('<div class="chips">');
+    expect(page.els.convo.innerHTML).toContain('>effort high</span>');
+    expect(page.els.threads.innerHTML).toContain('>effort high</span>');
+    page.goto("#/p/p1");
+    expect(page.els.detail.innerHTML).toMatch(/<b>model<\/b>claude-opus-4-6<\/span><span[^>]*><b>effort<\/b>high<\/span><span[^>]*><b>stream/);
     expect(page.errors).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import { categorizeUrl } from "./categorize";
 import { redactPair } from "./redact";
+import { extractEffort } from "./summarize";
 import { captureTee, decodeBodyForTrace } from "./stream";
 import { createUpstream, UpstreamError } from "./upstream";
 import type { TracePair, TraceStart } from "./types";
@@ -40,9 +41,13 @@ export function startProxy(config: ProxyConfig): ProxyServer {
   // Live state, not a pair: only a MESSAGES-category request is a "the model
   // is thinking" moment (a count_tokens probe is not). Same predicate the
   // pair's category comes from; fail-soft, the hint never costs the request.
-  const emitStart = (id: string, method: string, url: string, ts: number) => {
+  const emitStart = (id: string, method: string, url: string, ts: number, body: unknown) => {
     if (!config.onStart || categorizeUrl(url) !== "messages") return;
-    try { config.onStart({ id, url, method, ts }); } catch {}
+    try {
+      const model = body && typeof body === "object" && "model" in body && typeof body.model === "string" ? body.model : undefined;
+      const effort = extractEffort(body) || undefined;
+      config.onStart({ id, url, method, ts, model, effort });
+    } catch {}
   };
 
   const server = Bun.serve({
@@ -87,7 +92,7 @@ export function startProxy(config: ProxyConfig): ProxyServer {
       delete fetchHeaders["content-length"];
 
       let upstreamRes: Response;
-      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000);
+      if (shouldLog) emitStart(captureId, req.method, targetUrl, startTime / 1000, reqBody);
       try {
         upstreamRes = await forward.fetch(targetUrl, {
           method: req.method,

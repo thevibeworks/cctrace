@@ -58,7 +58,9 @@ offline snapshots -- same UI, three ways in.
   the context collapse in turns and tokens; superseded exchanges
   (rewinds, edits, injected recaps) sit grey at the ordinal they
   occupied. Every turn links back to its wire request; tokens, timing,
-  cost, exact model ids, and effort levels live in hovers. Image
+  cost and exact model ids live in hovers; captured effort levels appear
+  directly after model labels. Session statistics stay in the session
+  heading while the conversation scrolls. Image
   attachments render as real thumbnails (click for full size) -- the bytes
   were already in the trace; remote image URLs are named, never fetched.
   A masked screen-share mode (the eye toggle in the rail's foot) blurs
@@ -66,7 +68,8 @@ offline snapshots -- same UI, three ways in.
 - **Context view** -- the agent's context window over time, in a shell
   that reads like Chrome DevTools' Performance panel. An interactive
   OVERVIEW sits on top and never scrolls away: one stacked column per
-  wire request (or per turn), colored by the six things a window is made
+  wire request (or per turn), packed from the left for short runs,
+  colored by the six things a window is made
   of, with ✂ and an amber axis break marking compactions and rewinds, and
   a second track underneath showing where that step's wall-clock went
   (model / tools / waiting). Drag across it to select a range, drag the
@@ -194,6 +197,9 @@ offline snapshots -- same UI, three ways in.
   force-merges any trace file.
 - **Offline snapshots** -- the saved `.html` embeds the full trace and renders
   the same UI with no server. Open it a year from now, it still works.
+- **Live status** -- the active request reads `model effort high working…`,
+  with elapsed time. Model and effort come from that request, including
+  the first call and model switches. Tool waits and idle stay explicit.
 - **Stays fresh** -- a daily background check against npm (never blocks
   startup, fail-soft) offers new releases with an `upgrade now? [y/N]`
   prompt on interactive runs; declining snoozes that version. The rail's

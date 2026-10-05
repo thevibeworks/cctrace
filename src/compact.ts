@@ -303,6 +303,12 @@ export function stubPair(p: TracePair, keptPairId: string, kind: StubKind = "sup
   };
   if (body && body.metadata !== undefined) stub.metadata = body.metadata; // anthropic session id lives here
   if (body && body.prompt_cache_key !== undefined) stub.prompt_cache_key = body.prompt_cache_key; // kimi session id
+  // The requested reasoning effort is a reading, not bulk: keep the few
+  // fields extractEffort reads (never output_config.format — a schema).
+  if (typeof body?.output_config?.effort === "string") stub.output_config = { effort: body.output_config.effort };
+  if (body && body.thinking !== undefined) stub.thinking = body.thinking;
+  if (body && body.reasoning !== undefined) stub.reasoning = body.reasoning;
+  if (body && body.reasoning_effort !== undefined) stub.reasoning_effort = body.reasoning_effort;
   return { ...p, request: { ...p.request, body: stub } };
 }
 

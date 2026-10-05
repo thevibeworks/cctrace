@@ -82,5 +82,7 @@ material UI changes. The landing chart and sample always come from the same buil
 
 Serve the repo with `python3 -m http.server 8733`, then open `/docs/`.
 Check keyboard operation, narrow screens, reduced motion, copy feedback,
-all three screenshots, and the linked sample before publishing. No autoplay:
-the reader starts and stops the context walkthrough.
+all three screenshots, and the linked sample before publishing. The context
+walkthrough plays itself while in view (decision 2026-10-05: a still hero
+read as a screenshot) and stops for good the moment the reader picks a
+request or presses pause; reduced motion keeps it still on the peak step.

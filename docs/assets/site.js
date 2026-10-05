@@ -94,6 +94,10 @@
   let selectedView = "context";
   let selectedStep = 0;
   let playing = false;
+  // The hero plays itself while it is in view, until the reader takes over.
+  // Reduced motion keeps it still; the readout then opens on the peak step.
+  let auto = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let inView = false;
   let timer;
   let copyTimer;
   const words = (key) =>
@@ -228,7 +232,7 @@
         button.append(segment);
       }
       button.addEventListener("click", () => {
-        stop();
+        settle();
         selectStep(index);
       });
       button.addEventListener("keydown", (event) => {
@@ -240,7 +244,7 @@
         if (event.key === "End") next = data.length - 1;
         if (next === undefined) return;
         event.preventDefault();
-        stop();
+        settle();
         selectStep(next);
         chart.children[next].focus();
       });
@@ -306,33 +310,56 @@
     playing = false;
     playLabel();
   }
+  // The reader touched the chart: the hero stops playing itself for good.
+  function settle() {
+    auto = false;
+    stop();
+  }
   function tick() {
     if (selectedStep >= data.length - 1) {
-      stop();
+      if (!auto) {
+        stop();
+        return;
+      }
+      // Hold the last window, then run the session again from the top.
+      timer = setTimeout(() => {
+        selectStep(0);
+        timer = setTimeout(tick, 1100);
+      }, 2600);
       return;
     }
     selectStep(selectedStep + 1);
     timer = setTimeout(tick, 1100);
   }
-  $("#play").addEventListener("click", () => {
-    if (playing) {
-      stop();
-      return;
-    }
+  function play(fromStart) {
+    if (!data.length || playing) return;
     playing = true;
-    selectStep(0);
+    if (fromStart || selectedStep >= data.length - 1) selectStep(0);
     playLabel();
     timer = setTimeout(tick, 1100);
+  }
+  function resume() {
+    if (auto && !document.hidden && inView) play(false);
+  }
+  $("#play").addEventListener("click", () => {
+    auto = false;
+    if (playing) stop();
+    else play(true);
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) stop();
+    else resume();
   });
   new IntersectionObserver((entries) => {
-    if (!entries[0].isIntersecting) stop();
+    inView = entries[0].isIntersecting;
+    if (inView) resume();
+    else stop();
   }).observe($(".scope"));
   window
     .matchMedia("(prefers-reduced-motion: reduce)")
-    .addEventListener("change", stop);
+    .addEventListener("change", (event) => {
+      if (event.matches) settle();
+    });
   function setLanguage(value) {
     language = value;
     document.documentElement.lang = value;

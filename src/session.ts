@@ -645,15 +645,20 @@ export function buildSession(pairs: any[], wire?: any): any {
         t.kind = "utility";
         t.label = "title generation";
       } else if (
-        // Sidechain markers: the agent-id header (cc >= ~2.1.2xx), the billing
-        // block's cc_is_subagent flag, or the subagent system prompt. A
-        // sidechain must never compete as "chat" — mainThread() picks chats —
-        // even when its Task dispatch isn't on the wire to link against.
+        // Sidechain markers: the agent-id header (cc >= ~2.1.2xx) or the
+        // billing block's cc_is_subagent flag. A sidechain must never compete
+        // as "chat" — mainThread() picks chats.
         (spine.request.headers || {})["x-claude-code-agent-id"] ||
-        sysText.indexOf("cc_is_subagent=true") !== -1 ||
-        /You are (a Claude agent|an agent for Claude Code)/.test(sysText)
+        sysText.indexOf("cc_is_subagent=true") !== -1
       ) {
         t.kind = "agent";
+      } else if (/You are (a Claude agent|an agent for Claude Code)/.test(sysText)) {
+        // The subagent SYSTEM PROMPT is only a hint now: Claude Code 2.1.27x
+        // opens a headless top-level run (`claude -p`, the CI/scripted shape)
+        // with the same line, so believing it alone leaves a whole session
+        // with no chat thread and mainThread() falling back to a stray
+        // one-request thread. Resolved after dispatch linking, below.
+        t.sidechainHint = true;
       }
     }
 
@@ -711,6 +716,25 @@ export function buildSession(pairs: any[], wire?: any): any {
       }
     }
   }
+
+  // Resolve the legacy sidechain hints no dispatch claimed. A real sidechain
+  // is a BRANCH of a conversation, so it never outweighs the conversation it
+  // branched from: a hint that stays smaller than the trace's chat threads is
+  // still a sidechain (old traces, where the Task dispatch never reached the
+  // wire). A hint that dwarfs them is the conversation itself — a headless
+  // `claude -p` run, whose own system prompt opens with the subagent line
+  // while the only real "chats" in the trace are one-request harness probes.
+  const hinted = threads.filter((t: any) => t.sidechainHint && t.kind === "chat");
+  if (hinted.length) {
+    let chatTurns = 0;
+    for (const t of threads) {
+      if (t.kind === "chat" && !t.sidechainHint) chatTurns = Math.max(chatTurns, t.turns.length);
+    }
+    const biggest = hinted.reduce((a: any, b: any) => (b.turns.length > a.turns.length ? b : a));
+    const keep = biggest.turns.length > chatTurns ? biggest : null;
+    for (const t of hinted) if (t !== keep) t.kind = "agent";
+  }
+  for (const t of threads) delete t.sidechainHint;
 
   for (const t of threads) {
     if (!t.label) {

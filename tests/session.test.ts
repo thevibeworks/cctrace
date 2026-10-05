@@ -230,6 +230,52 @@ describe("buildSession", () => {
     expect(mainThread(threads)).toBe(threads[0]); // fallback, no chat thread
   });
 
+  test("headless run: the agent system prompt alone does not retire the chat", () => {
+    seq = 0;
+    // Claude Code 2.1.27x opens a `claude -p` top-level run with the same
+    // "You are a Claude agent" line a sidechain gets. Believing the line left
+    // the whole session without a chat thread, and mainThread() fell back to
+    // whichever one-request thread came first.
+    const AGENT_SYS = [{ type: "text", text: "You are a Claude agent, built on Anthropic's Claude Agent SDK." }];
+    // The harness probes that DO look like chats in a headless trace: one
+    // request each, no agent line. They must not outrank the conversation.
+    const stray = msgPair([{ role: "user", content: "name this conversation" }], { reply: "Fix the label" });
+    const hist: any[] = [{ role: "user", content: "fix the dashboard label" }];
+    const turns = [msgPair(hist.slice(), { system: AGENT_SYS })];
+    for (let i = 0; i < 3; i++) {
+      hist.push({ role: "assistant", content: [{ type: "text", text: "step " + i }] }, { role: "user", content: "next " + i });
+      turns.push(msgPair(hist.slice(), { system: AGENT_SYS }));
+    }
+    const { threads } = buildSession([stray, ...turns]);
+    const main = mainThread(threads);
+    expect(main.kind).toBe("chat");
+    expect(main.pairIds.length).toBe(turns.length);
+    // The one-request probe is still a chat — it just never outranks the
+    // conversation, which is the whole point of the size rule.
+    expect(threads.find((t: any) => t.pairIds[0] === stray.id).turns.length).toBeLessThan(main.turns.length);
+  });
+
+  test("legacy trace: an unclaimed agent prompt stays a sidechain beside a real chat", () => {
+    seq = 0;
+    // The chat outweighs the orphan sidechain, which is what makes it a
+    // sidechain: a branch never carries more of the conversation than the
+    // thread it branched from.
+    const hist: any[] = [{ role: "user", content: "what does this repo do?" }];
+    const chatPairs = [msgPair(hist.slice())];
+    for (let i = 0; i < 2; i++) {
+      hist.push({ role: "assistant", content: [{ type: "text", text: "a" + i }] }, { role: "user", content: "more " + i });
+      chatPairs.push(msgPair(hist.slice()));
+    }
+    const chat = chatPairs[0];
+    const orphan = msgPair([{ role: "user", content: "investigate the retry path" }], {
+      system: [{ type: "text", text: "You are an agent for Claude Code" }],
+    });
+    const { threads } = buildSession([...chatPairs, orphan]);
+    expect(threads.find((t: any) => t.pairIds[0] === chat.id).kind).toBe("chat");
+    expect(threads.find((t: any) => t.pairIds[0] === orphan.id).kind).toBe("agent");
+    expect(mainThread(threads).pairIds[0]).toBe(chat.id);
+  });
+
   test("cc_is_subagent billing marker classifies a sidechain", () => {
     seq = 0;
     const p = msgPair([{ role: "user", content: "orphan subagent run" }], {

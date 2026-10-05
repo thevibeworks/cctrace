@@ -1,23 +1,14 @@
 # cctrace
 
-> TLS-intercepting HTTP tracer for the Claude Code, OpenAI Codex, Grok, and
-> Kimi Code CLIs. Spawns the client behind a local zero-config MITM proxy and captures
-> its first-party traffic (/v1/messages, OAuth, usage/credits, MCP registry,
-> telemetry) into a live categorized web UI with a reconstructed Sessions
-> view — sessions > threads > turns on one rail, where a turn is the human
-> unit (user request > agent work > final response) and tool rows name what
-> they touched (Edit(src/ui.ts), workspace-relative); model epochs, subagent
-> spawns attached at their dispatching turn, harness-injected messages
-> (recaps, reminders) tagged SYS, compaction boundaries with the
-> context collapse in turns and tokens, superseded exchanges kept at their
-> timeline position — plus replay, cost, reasoning-effort, cache-verdict, and
-> first-token-latency chips. External hosts (npm, github, apt) pass through
-> as opaque byte-counted tunnels — logged, never decrypted. Built for two
-> jobs: LLM tracing (see exactly what the agent sends and receives each
-> turn, and what the harness rewrote — /model switches, /compact repacks,
-> injected exchanges) and security/privacy auditing (see what actually
-> leaves the machine). Local-only; credentials are redacted before anything
-> hits disk.
+> Local tracing, session replay, and context insights for Claude Code,
+> OpenAI Codex, Grok, Kimi Code, and opencode. Inspect requests and responses,
+> reconstruct human turns and subagent branches, and explore context
+> composition, injections, compaction, cache behavior, and estimated cost.
+> `cctrace doctor` diagnoses a session's context; `cctrace insights` aggregates
+> usage across runs. The CLI computes facts; bundled skills help an agent
+> interpret them. Capture uses a local TLS-intercepting proxy: first-party
+> hosts are decrypted, external hosts pass through as opaque tunnels by
+> default. Credential fields are redacted; conversation content is preserved.
 
 Runs on Bun. `cctrace` wraps the client transparently: `cctrace -- --continue`
 passes everything after `--` to the Claude CLI verbatim; a leading client
@@ -47,11 +38,19 @@ Key commands:
   (purge default drop: telemetry,tokens,external; compact folds superseded
   request bodies to stubs, -95%+ with an identical session view)
 - `cctrace ps` — live cctrace instances: URL, pids, client, project, session
+- `cctrace doctor [target] --json` — diagnose context composition, repeated
+  reads, duplicate content, and unused tool schemas; no target inside a
+  traced session selects the caller's own run, otherwise the latest
+- `cctrace insights --scan` — aggregate usage and estimated cost across
+  runs, including cache reads/writes and per-session weight
+- `cctrace export [target]` — export a session as Markdown; `--jsonl`
+  exports its merged wire pairs instead
 - `cctrace --print-ca` — path to the auto-generated MITM CA
 
 ## Docs
 
-- [README](https://raw.githubusercontent.com/thevibeworks/cctrace/main/README.md): overview, quick start, comparison, security model
+- [README](https://raw.githubusercontent.com/thevibeworks/cctrace/main/README.md): overview, quick start, security model
+- [Interactive tour](https://thevibeworks.github.io/cctrace/): current UI screenshots and a real captured sample session (sandboxed, redacted)
 - [Install & options](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/install.md): install methods, runtime, prerequisites, full options table, `--` pass-through
 - [Capture modes](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/capture-modes.md): mitm/base-url/node, tunnel scope model, proxy internals, output format
 - [Web UI](https://raw.githubusercontent.com/thevibeworks/cctrace/main/docs/web-ui.md): row chips, sessions view, context view, replay, cost, continuity, multi-instance
@@ -61,6 +60,8 @@ Key commands:
 - [CLAUDE.md](https://raw.githubusercontent.com/thevibeworks/cctrace/main/CLAUDE.md): architecture and design decisions (agent-oriented)
 - [SECURITY](https://raw.githubusercontent.com/thevibeworks/cctrace/main/SECURITY.md): redaction guarantees, reporting
 - [Agent skill](https://raw.githubusercontent.com/thevibeworks/cctrace/main/skills/cctrace/SKILL.md): how coding agents drive cctrace (commands, UI routes, jsonl anatomy)
+- [Context doctor skill](https://raw.githubusercontent.com/thevibeworks/cctrace/main/skills/cctrace-doctor/SKILL.md): interpret context findings and identify concrete changes
+- [Insights skill](https://raw.githubusercontent.com/thevibeworks/cctrace/main/skills/cctrace-insights/SKILL.md): reason about usage and caching across runs
 
 ## Notes
 

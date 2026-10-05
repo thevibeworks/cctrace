@@ -1,376 +1,67 @@
-<p align="center"><img src="assets/cctrace-logo.svg" width="84" alt="cctrace"></p>
+<p align="center"><img src="assets/cctrace-logo.svg" width="64" alt="cctrace"></p>
 
-# cctrace
-
-> **See what your coding agent really sends.**
->
-> Every request Claude Code makes -- messages, OAuth, usage/credits, MCP --
-> captured live in your browser. Codex, Grok, and Kimi Code too.
-
-English | [简体中文](README.zh-CN.md)
-
-[![tests](https://github.com/thevibeworks/cctrace/actions/workflows/test.yml/badge.svg)](https://github.com/thevibeworks/cctrace/actions/workflows/test.yml)
-[![version](https://img.shields.io/github/v/tag/thevibeworks/cctrace?label=version&sort=semver)](https://github.com/thevibeworks/cctrace/tags)
-[![license](https://img.shields.io/github/license/thevibeworks/cctrace)](LICENSE)
-[![runtime](https://img.shields.io/badge/runtime-bun-f9f1e1)](https://bun.sh)
-
-[Docs](https://thevibeworks.github.io/cctrace/) · [Install](#quick-start) · [Web UI](docs/web-ui.md) · [Saved traces](docs/traces.md) · [Beyond Claude](docs/clients.md) · [llms.txt](llms.txt)
-
-<sub>AI agents / LLMs: read [/llms.txt](llms.txt); an agent skill ships in [skills/cctrace](skills/cctrace/SKILL.md).</sub>
+<h1 align="center">cctrace</h1>
+<p align="center"><strong>See the whole agent session.</strong><br>Follow the work. Find what fills the context. Inspect every request.</p>
 
 <p align="center">
-  <img src="assets/cctrace-demo.gif" alt="cctrace live demo" width="100%">
+  <a href="https://github.com/thevibeworks/cctrace/actions/workflows/test.yml"><img src="https://github.com/thevibeworks/cctrace/actions/workflows/test.yml/badge.svg" alt="tests"></a>
+  <a href="https://www.npmjs.com/package/@thevibeworks/cctrace"><img src="https://img.shields.io/npm/v/@thevibeworks/cctrace" alt="npm version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/thevibeworks/cctrace" alt="MIT license"></a>
 </p>
 
-cctrace sits between your coding agent and its API, recording every HTTP
-call to a live categorized web UI and a `.jsonl` trace you can reopen any
-time with `cctrace view`. No cloud, no account, nothing leaves your machine.
+<p align="center"><a href="https://thevibeworks.github.io/cctrace/">Interactive tour</a> · <a href="#quick-start">Install</a> · <a href="docs/web-ui.md">Docs</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-```bash
-cctrace                # trace Claude Code
-cctrace codex          # or the OpenAI Codex CLI
-cctrace grok           # or the Grok CLI
-cctrace kimi           # or the Kimi Code CLI (Moonshot AI)
-cctrace opencode       # or opencode (any provider it routes to)
-```
+[![cctrace Context view: request history, token composition, and the tools filling the window](docs/assets/context.png)](https://thevibeworks.github.io/cctrace/demo/sample.html#/context)
 
-That's it. The agent launches normally. You get a browser tab showing
-everything it does.
+*The current UI, showing a real Claude Code session captured by cctrace (sandboxed and redacted — [how it is made](docs/demo/capture.sh)). [Open it and inspect the context, replay the session, or read the requests.](https://thevibeworks.github.io/cctrace/demo/sample.html#/context)*
 
-## Why
+cctrace records your coding agent's API traffic and turns it into a local,
+explorable session. Works with **Claude Code, Codex, Grok, Kimi Code, and
+opencode**; [capture coverage varies by client](docs/clients.md).
 
-cctrace is built for exactly two jobs:
-
-1. **LLM tracing** -- see exactly what your agent sends and receives each
-   turn: system prompt, context, tool definitions, streamed replies,
-   token/cache usage.
-2. **Security & privacy tracing** -- audit what actually leaves your machine:
-   which hosts get contacted, what telemetry goes out, what's inside every
-   payload.
-
-Both jobs need the full picture -- every request, not just the convenient
-ones. Claude Code ships as a Bun-compiled **native binary**, so the classic
-`node --require` fetch-hook is dead. cctrace captures at the transport
-layer instead: a zero-config **TLS-intercepting proxy** (Charles-style)
-that the agent routes through via `HTTPS_PROXY`, trusting an auto-generated
-CA. Intercepting below where URLs are built is what reaches the OAuth and
-usage/credit endpoints a base-URL proxy physically cannot see -- and since
-0.16 the scope is deliberate: first-party hosts are decrypted, everything
-else (npm, GitHub, apt) passes through as an opaque byte-counted tunnel.
-
-## What you get
-
-- **The full picture.** `/v1/messages`, OAuth, **usage/credits**, MCP registry,
-  bootstrap, telemetry -- not just the chat endpoint.
-- **Live, categorized UI.** Filter chips with counts, decoded SSE streams,
-  reasoning-effort and prompt-cache verdicts, first-token latency,
-  estimated cost per request. The [full tour](docs/web-ui.md).
-- **Reconstructed sessions.** Turns the way a human counts them (user
-  request -> agent work -> final response; a 213-message trace reads as
-  3 turns), tool rows naming the files they touched, subagent branches,
-  `/model` epochs, compaction boundaries, superseded exchanges -- and
-  a **trajectory bar** always on top: lanes over time (one clickable
-  block per turn, requests, tools, subagents, cuts) under a clock axis
-  with idle gaps folded, synced with the conversation both ways -- a
-  marker tracks where you are reading, a block click jumps to that
-  turn, and its hover is the turn's tally. **Replay** steps or plays
-  back any captured session on the same bar, deep-links any moment, and
-  shows the beat of what the agent did at each step. On a live run
-  replay TAILS: the cursor follows the newest landed pair and the
-  conversation follows the cursor.
-- **Context insights, DevTools-shaped.** A Context view shows the agent's
-  window over time. An interactive **overview** owns the top and never
-  scrolls away: one stacked column per wire request, colored by the six
-  things a window is made of, ✂ marking the compactions, and a second
-  track showing where that step's wall-clock went (model / tools /
-  waiting). Drag across it to select a range, drag the handles to resize
-  it, wheel to zoom in, click a column to pin a step. A margin beside it
-  states the balance for that step -- prompt tokens, a six-color
-  composition bar against the model's context window, how far the chars/4
-  estimate reads under the billed prompt, and the six categories as lines
-  you click to zoom. Then the selection is read three ways, one deck at a
-  time:
-  - **window** -- the pinned step as a **context graph**: an icicle where
-    width is tokens and rows are levels, decomposing the request into
-    category -> group -> item, with tool results grouped by the tool that
-    made them, schemas by MCP server, injections by producer.
-    `Bash x189, 38% of the window` is the widest block on the row, not a
-    number you had to go find; click it to zoom, click a leaf to open it
-    in the **inspector** -- one right panel every deck shares, with a
-    vertical rail of facets the wire can answer: the content, a tool's
-    schema and its weight, the origin (which step carried it in and how
-    many requests have re-sent it since), and the wire request itself.
-  - **stream** -- the agent's path as one linear list of records: system
-    prompt, your turns, the context the harness injected (inline, at the
-    moment it entered), the model's thinking, each tool call fused with
-    its result, the reply. MAP / READ / FULL filters it down to the
-    skeleton or up to everything without ever summarizing; a kind filter
-    isolates just the injections -- the context trajectory.
-  - **events** -- every injection, compaction, model switch and
-    tool-schema change, with what it did to the window.
-
-  Traces holding several sessions compare their peaks on one
-  scale. Anchored to provider-reported tokens -- the wire, not a guess.
-- **Where the quota goes.** The overview carries a third track: what each
-  step cost, stacked cache read / cache write / input / output -- and an
-  amber `$` on the steps that bought their prefix twice. The margin says
-  where the money went (per component, per model), counts those bumps and
-  names each cause off the wire: cache expired (1h ttl, 15h idle), prefix
-  changed (tool schemas changed), retry after 529 -- each with what a warm
-  cache would have saved. Beside it, the account's quota as the client
-  polled it: 5h / 7d / model-scoped, percent, when it resets, and how far
-  it moved across this trace. Every dollar is an estimate from catalog
-  rates; every cause is a wire fact. Rates follow the 2026-09 pricing
-  page (Fable 5.1's 0.025x cache reads, Sonnet 5's $2/$10, 1M windows
-  on Claude 4.6+), and the two modifiers the wire states -- fast mode
-  (`usage.speed: "fast"`) and US-only inference -- price the request
-  they belong to, named in the tooltip.
-- **Insights across runs.** `cctrace insights` folds every run sharing
-  the data dir into windowed aggregates -- runs, pairs, tokens and
-  estimated cost by day, project and client, the heaviest runs with
-  their titles -- in milliseconds from the registry's exit stats, and
-  `--scan` streams the traces themselves for what only the wire knows:
-  the cache read / write / uncached split in dollars, per-model and
-  per-session weight, the quota percentages the client polled. The
-  `cctrace-insights` skill turns that into answers ("how is my caching
-  doing this week", "which session is the heavy one") with the coverage
-  gaps stated.
-- **A doctor for the context.** `cctrace doctor` reads one session's
-  latest request window -- exact, because the body *is* the context --
-  and says what it is made of: the system prompt by section, the tool
-  schemas the thread never called (per MCP server), harness injections
-  recurring vs one-off with instruction files sized one by one, tool
-  results by tool, and the duplicates -- byte-identical blocks, near
-  copies by line overlap, the same file or command asked again -- plus
-  the timeline (peak vs the model window, compactions, cache bumps) and
-  the findings fixed rules fire. Every item has a key; `--show` prints
-  its text. Run it with no target inside a traced session and it
-  diagnoses *your own* window. The `cctrace-doctor` skill turns the
-  `--json` into a diagnosis with levers: which file to trim, which
-  server to drop, which read to stop repeating.
-- **Export a session.** `cctrace export` writes the markdown transcript
-  (every prompt and answer in full, tool calls one line each, harness
-  injections folded to one line) or, with `--jsonl`, the merged wire
-  pairs of the whole session across every run.
-- **The trajectory, in the timeline.** Every step on the sessions rail
-  carries a track: how full the window was, split into the prefix read
-  from cache and what was billed fresh. Down the rail that column is the
-  agent's context trajectory -- it climbs, a compaction drops it, the next
-  step runs cold, then warms again.
-- **Reads like Claude.** The UI wears the Claude Design System -- measured
-  off claude.ai and adopted whole, not approximated: warm paper and
-  near-black grounds, hairlines at 10% ink, the reading face for prose
-  with mono kept for the wire, clay for identity and blue for anything
-  interactive. A destination rail on the left carries the run's identity
-  and where you can go; the request list is a recording, every row drawn
-  with its own pen stroke and every wait over two minutes named.
-- **Replayable traces.** Every run writes a `.jsonl`; `cctrace view` reopens
-  it anytime, `--html` renders an offline snapshot you can send around.
-- **One dashboard for everything.** `/dashboard` on any instance shows every
-  live run and every finished trace across all your projects -- grouped by
-  project or client, with size/tokens/cost per run -- and any row opens as
-  a rendered session view in one click. It also acts: **stop** ends a live
-  run from the page (through its normal close-out, so the trace is still
-  sealed), and the **store** section shows what your traces cost on disk
-  with one button to archive whatever is still plain -- `cctrace compress
-  --all --yes`, run for you, output and all.
-- **Zero config.** Auto-generates its CA, auto-detects your install, full
-  first-party capture by default.
-- **Scoped by design.** External hosts your agent's subprocesses contact
-  pass through as opaque tunnels (host + byte counts) -- a `go install`
-  never lands 53MB of tarball in your trace. Details in
-  [capture modes](docs/capture-modes.md).
-- **Safe by default.** Credentials are redacted from headers, bodies, *and*
-  URLs before anything hits disk
-  (see [Security & privacy](#security--privacy)).
-
-## How it compares
-
-|  | **cctrace** | base-URL proxy | claude-trace (`node --require`) | Charles / mitmproxy |
-|---|:---:|:---:|:---:|:---:|
-| Works on the native binary | yes | yes | **no** | yes |
-| Captures `/v1/messages` | yes | yes | yes | yes |
-| Captures **OAuth / usage / credits** | yes | **no** | **no** | manual |
-| Zero config (auto CA + trust) | yes | yes | yes | **no** |
-| Agent-aware UI (categories, sessions, SSE decode) | yes | -- | partial | **no** |
-| Local-only, nothing leaves your machine | yes | yes | yes | yes |
-
-The `fetch()`-hook approach (claude-trace and friends) stopped working when
-Claude Code went native. A base-URL proxy still works but only sees
-`/v1/messages`. A general TLS proxy sees everything but needs manual CA
-setup and knows nothing about the endpoints. cctrace is the middle path:
-zero-config, whole first-party picture, and it speaks your agent's wire.
+- **What happened?** Read human turns, follow tools and subagents, and replay the work.
+- **What filled the context?** Inspect instructions, tool schemas, and tool results over time. See what compaction changed.
+- **Where did the tokens go?** Check cache behavior and estimated cost, within a session or across runs.
+- **What actually went out?** Open captured requests and responses, including first-party traffic beyond model calls.
 
 ## Quick start
 
-Requires [Bun](https://bun.sh), `openssl`, and the CLI you want to trace.
+Requires [Bun](https://bun.sh), `openssl`, and the agent CLI you want to trace.
 
 ```bash
-npm install -g @thevibeworks/cctrace    # or: bunx @thevibeworks/cctrace
+npm install -g @thevibeworks/cctrace
+cctrace                              # launches Claude Code and a local web UI
 ```
 
-Or build the standalone binary (recommended -- no Bun at runtime, exact
-`--` pass-through):
+The terminal prints the Live UI URL. Use your agent normally; the browser
+shows its requests as they arrive. Your trace is saved for later.
 
 ```bash
-git clone https://github.com/thevibeworks/cctrace && cd cctrace
-make install                            # compiles, installs to ~/.local/bin
+cctrace codex                        # also: grok, kimi, opencode
+cctrace view                         # reopen a saved session
+cctrace doctor                       # diagnose the current or latest context
+cctrace insights --scan              # inspect usage and caching across runs
+cctrace export                       # export a session as Markdown
 ```
 
-Then:
-
-```bash
-cctrace                                    # trace claude, open the live UI
-cctrace -- --continue                      # resume your last session, traced
-cctrace -- -p "hello"                      # args after -- go to the agent verbatim
-```
-
-```
-[cctrace] Live UI: http://localhost:8722/trace
-[cctrace] Capture: MITM proxy http://127.0.0.1:44775 (all Anthropic hosts)
-```
-
-Open the Live UI and watch requests stream in. Ctrl-C when done -- the
-trace lands in the store (`~/.local/share/cctrace/traces/<project>/`, one
-dir per project, archived to `.jsonl.zst` at exit); reopen anytime with
-`cctrace view`, see what the store holds with `cctrace store`.
-Install variants, runtime notes, and the bun `--` caveat:
-[docs/install.md](docs/install.md).
-
-## Everyday commands
-
-```bash
-cctrace view                     # reopen a saved trace (Enter = newest)
-cctrace view <target> --html     # render a shareable offline snapshot
-cctrace ps                       # live instances: URL, client, project, session
-cctrace history                  # every traced run, all projects, newest first
-cctrace clean|merge|compress     # housekeeping -- dry-run by default, --yes applies
-cctrace purge                    # drop noise categories from saved traces
-cctrace compact                  # fold redundant bodies (-95%+), view unchanged
-```
-
-Housekeeping never shrinks your data (verified deletes, union merges,
-live-append safety); `compact` is the one stated exception. The full
-guarantees: [docs/traces.md](docs/traces.md).
-
-## Common options
-
-Long sessions use full disk recording with live request bodies loaded on
-demand. `--live-bodies full` retains every body in the live view;
-`--live-body-mb 128` increases the default 64 MiB request-body budget.
-`--upstream-retry 0` disables the default bounded retries for confirmed
-pre-connect MITM model-call failures. Details and limits:
-[live resources and recovery](docs/live-resources.md).
-
-| Option | Description |
-|--------|-------------|
-| `--mode MODE` | `auto` (default), `mitm`, `base-url`, `node` |
-| `-p, --port PORT` | Live UI port (default: 8722, walks 8722..8821 when busy) |
-| `--messages-only` | Capture only the model API calls |
-| `--capture-external` | Decrypt every host (bodies over 64KB summarized) |
-| `--intercept-host H` | Also decrypt host `H` (repeatable -- remote MCP servers) |
-| `--bypass-host H` | Exempt host `H` from the proxy entirely (child `NO_PROXY`) |
-| `--dir PATH` | Log directory (default: the project's dir in the store) |
-| `--client-path PATH` | Custom binary path for any client |
-
-Full table incl. `--fresh`, `--with`, `--data-dir`, `--print-ca`:
-[docs/install.md](docs/install.md#all-options).
-
-## How it works
-
-```mermaid
-flowchart LR
-    CC["Claude Code<br/>(native binary)"]
-    FD{"cctrace<br/>CONNECT front door"}
-    TLS["TLS terminator<br/>(our leaf cert)"]
-    BT["TLS terminator<br/>(dynamic cert)"]
-    TUN["opaque tunnel<br/>(byte counts only)"]
-    API[("api.anthropic.com")]
-    PIN[("pinned / enrolled<br/>host")]
-    EXT[("external host<br/>npm · github · apt")]
-    TEE(["tee response"])
-    RD["redact<br/>headers · bodies · URLs"]
-    UI["live UI<br/>(categorized)"]
-    OUT[["store · jsonl.zst"]]
-
-    CC -- "HTTPS_PROXY +<br/>NODE_EXTRA_CA_CERTS" --> FD
-    FD -- "Anthropic host" --> TLS
-    FD -- "include-listed host" --> BT
-    FD -- "anything else" --> TUN
-    TLS --> API
-    BT --> PIN
-    TUN --> EXT
-    PIN -- "response stream" --> TEE
-    API -- "response stream" --> TEE
-    TUN -- "one meta row" --> RD
-    TEE -- "streamed to Claude,<br/>no buffering" --> CC
-    TEE -- "captured copy" --> RD
-    RD --> UI
-    RD --> OUT
-
-    classDef accent stroke:#3fb950,stroke-width:2px;
-    class RD accent
-```
-
-The proxy terminates TLS with an auto-generated leaf cert, forwards to the
-real API, and `tee`s the response so the agent gets bytes immediately while
-cctrace captures a copy -- zero SSE buffering. Every captured pair is
-redacted before it reaches any sink. Subprocess trust (the combined CA
-bundle), why `HTTP_PROXY` stays unset, and the tunnel scope model:
-[docs/capture-modes.md](docs/capture-modes.md).
+For a standalone binary or agent argument pass-through, see [install options](docs/install.md).
 
 ## Security & privacy
 
-cctrace is a local debugging tool, but it intercepts real credentialed
-traffic, so it redacts before writing anything:
+cctrace runs a local TLS-intercepting proxy. First-party hosts are decrypted;
+other hosts pass through as opaque tunnels by default. Credential fields are
+redacted before storage. **Conversation content is preserved:** review traces
+before sharing. cctrace does not upload your captures to a service; your agent
+still contacts its configured providers. [Capture scope](docs/capture-modes.md)
+· [Redaction details](SECURITY.md).
 
-- **Headers** -- `authorization`, `x-api-key`, `cookie`, etc. masked to a
-  first-10/last-4 preview (enough to tell *which* key, not the key itself).
-- **Bodies** -- credential fields (`access_token`, `refresh_token`,
-  `client_secret`, `api_key`, ...) masked in JSON and form bodies. Your
-  conversation content is left intact.
-- **URLs** -- credential-bearing query params (e.g. OAuth `?code=`) masked.
-- **Identity ids** (session/user/device UUIDs) are *not* masked by default --
-  they're workflow identity, not credentials, and session-keyed features
-  depend on them. Sharing a trace outside your machine? `--redact-ids`
-  (or `CCTRACE_REDACT_IDS=1`) masks them too.
+## Go deeper
 
-Redaction happens at a single choke point, so it applies uniformly to the
-`.jsonl`, the `.html`, and the live WebSocket. Traces live outside the
-project tree (the store under `~/.local/share/cctrace/`), so nothing lands
-in your repo by accident.
+[Web UI](docs/web-ui.md) · [Saved traces](docs/traces.md) · [Clients](docs/clients.md)
+· [Live capture & resources](docs/live-resources.md) · [Changelog](CHANGELOG.md)
 
-**Still:** a trace is a record of your real session. Review it before
-sharing. Never paste raw output into a public issue. Seriously.
+**For agents:** [llms.txt](llms.txt) · [cctrace skill](skills/cctrace/SKILL.md)
+· [Context doctor](skills/cctrace-doctor/SKILL.md) · [Insights](skills/cctrace-insights/SKILL.md).
+The CLI computes the facts; the skills help an agent interpret them.
 
-## Docs
-
-| Start here | Go deeper |
-|---|---|
-| [Install & options](docs/install.md) | [Capture modes & proxy internals](docs/capture-modes.md) |
-| [The web UI tour](docs/web-ui.md) | [Saved traces & housekeeping](docs/traces.md) |
-| [Codex / Grok / Kimi / opencode / providers](docs/clients.md) | [Agent skill](skills/cctrace/SKILL.md) · [CHANGELOG](CHANGELOG.md) |
-
-## Roadmap
-
-- **Session replay P3/P4** -- opt-in `--record-timing` for chunk-timed
-  streaming replay ([design](docs/design/session-replay.md)).
-- **WebSocket relay** -- capture ws frames instead of the current fast
-  refusal + HTTP fallback.
-- **MCP server** -- query captured traffic from any agent (the agent
-  *skill* already ships; the MCP surface is the remaining half).
-- **Tunnel PID attribution** -- which subprocess called npm (Linux,
-  investigated, deferred).
-
-## Development
-
-```bash
-bun test                                # unit tests
-bun run tests/e2e-live.ts mitm "hi"     # end-to-end against real Claude
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-[MIT](LICENSE)
+[Contributing](CONTRIBUTING.md) · [MIT license](LICENSE).

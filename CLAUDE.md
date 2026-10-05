@@ -583,7 +583,7 @@ does not support the legacy node mode (needs repo sources).
   re-sending the whole conversation. Per thread-EPOCH (a history-length drop
   = compaction/clear closed an epoch) the longest request stays full; the
   rest become stubs carrying model/metadata/historyLen/firstUserText/
-  keptPairId, so grouping, per-turn attribution, and continuity all still
+  keptPairId/requested effort, so grouping, per-turn attribution, and continuity all still
   work (`session.ts` is stub-aware; regression: thread set, turn count,
   per-turn pairId attribution and token totals are identical pre/post
   compact — NOT the whole buildSession object: a stubbed turn's request

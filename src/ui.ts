@@ -3406,10 +3406,10 @@ export function getLiveHtml(meta: PageMeta = {}): string {
         'Traces Claude Code, Codex, Grok, Kimi, and opencode at the TLS layer, then rebuilds sessions, turns, costs, and cache behavior.\\n' +
         '---\\n' +
         'fresh off the wire:\\n' +
-        '\\u00b7 cctrace doctor: what a context window is made of, what is duplicated, which tool schemas never get called, and the findings fixed rules fire; run it with no target inside a traced session for your own window\\n' +
-        '\\u00b7 cctrace export: the session as a markdown transcript, or --jsonl for the merged wire pairs of every run\\n' +
-        '\\u00b7 the cctrace-doctor skill reads the doctor JSON and writes the diagnosis with levers\\n' +
-        '\\u00b7 files the harness delivers as user messages and role:system nudges read as injections, never as human words\\n' +
+        '\\u00b7 the live status names the request in flight: its own model and effort, from the first call on\\n' +
+        '\\u00b7 requested effort sits next to every model label, folded steps included\\n' +
+        '\\u00b7 session stats live in the fixed heading, outside the scrolling conversation\\n' +
+        '\\u00b7 a headless claude -p run reads as a conversation, not as subagents\\n' +
         '---\\n' +
         '> github.com/thevibeworks/cctrace';
       let html = '<span class="ver-badge" title="' + escapeHtml(about) + '">v' + escapeHtml(META.version) + '</span>';

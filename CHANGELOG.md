@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.53.0
+
+- The live status bar names the request in flight: model and requested effort come from the forwarded request itself (the start frame now carries them), so the first call and a /model switch read right instead of borrowing the previous response's model. Only those two fields leave the body.
+- Requested effort shows next to every model label: the session heading, the rail's thread chip, epoch rows and /model marks, subagent branches, per-turn usage, the request detail (now right after model), and the context inspector and balance line.
+- Session stats (model, effort, requests, tokens, cost, time) moved into the fixed session heading, outside the scrolling conversation. The sticky in-pane chips row is gone.
+- The context overview caps each step at 30px at fit zoom, so a short run packs left instead of stretching a few bars across the screen.
+- Fixed: a folded request lost its requested effort. The supersede stub (view fold, live fold, cctrace compact) now keeps output_config.effort, thinking, reasoning and reasoning_effort; a real 66-turn session showed effort on 1 of 32 replies before, 32 of 32 after.
+- Fixed: a headless claude -p run is a conversation again. Claude Code 2.1.27x opens it with the same system line a subagent gets, so every thread classified as a subagent and the session view fell back to a one-request probe. The line is now a hint resolved after dispatch linking.
+- SECURITY.md describes where keys and traces actually live (the data-dir store), the tunnel-by-default scope, and opt-in id masking.
+
 ## 0.52.1
 
 - Claude Opus 5.5 prices right offline. The embedded fallback table priced it as Opus 5 ($5/$25, 0.1x cache reads); it is $4/$20 with cache reads at 0.05x ($0.20 per MTok), and fast mode doubles that to $8/$40. Cache reads are most of an agent session's bill, so an Opus 5.5 run priced without the models.dev catalog read about 2.5x high on its largest line. Pages with the catalog already had the right rates.

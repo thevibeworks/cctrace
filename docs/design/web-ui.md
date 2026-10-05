@@ -40,8 +40,10 @@ closes the card, and the browser tab title is brand-first:
 
 Live/tail pages carry a STATUS BAR at the bottom of the session view (body
 `.pulse-on`, 0.51 items 1+4). It states what the session is DOING, read off
-the wire: a forwarded call with no pair yet is IN FLIGHT (pulsing accent
-dot, ticking elapsed counter, the model named beside it); a reply that
+the wire: a forwarded call with no pair yet is WORKING (pulsing accent
+dot, ticking elapsed counter, and that request's own model and effort,
+carried on its `start` frame — never the previous response's, so the
+first call and a /model switch read right); a reply that
 stopped on `tool_use` with nothing since is WAITING ON TOOLS (with that
 step's tool labels); anything else is IDLE, counting since the newest
 response. Beside it the prompt-cache window DRAINS — a bar against the
@@ -602,11 +604,12 @@ hash-routed:
   same block (its key handler binds in the capture phase so Esc closes the
   overlay before the page's own Esc chain gets it). A remote url is still
   named and still never fetched.
-  **The chips stay put** (item 16): the conversation column's chips row
-  (model · requests · in/out · cache · cost · time · `context →`) is sticky
-  at its top, bleeding to the pane edges; past the head it COMPACTS to one
-  scrolling row with a hairline under it, and the `context →` jump pins to
-  the right edge so the way across is never scrolled out of reach.
+  **The chips stay put** (item 16, 0.53): the session chips (model ·
+  effort · requests · in/out · cache · cost · time · `context →`) live in
+  the fixed session heading beside the thread picker, outside the
+  scrolling conversation — one scrolling row, wrapping under the picker
+  below 760px, with the `context →` jump pinned to the right edge so the
+  way across is never scrolled out of reach.
   Every turn's role
   bar carries the outline's ordinal ("03" on the rail is "turn 03" here —
   .turn-ord) and its wall-clock at the right edge (.turn-time, 24h, hover =
@@ -630,8 +633,8 @@ hash-routed:
   request body IS the assembled context, so every step is exact and
   anchored to that pair's provider-reported prompt tokens).
   Same key grammar and thread resolution as Sessions (`resolveThreadSel`),
-  selection shared both ways (tab switches keep the thread; the convo
-  chips row carries "context →", the context head "sessions →"). The
+  selection shared both ways (tab switches keep the thread; the session
+  heading's chips carry "context →", the context head "sessions →"). The
   legacy `#/trajectory[/<key>]` route lands on the stream deck and
   rewrites itself to `#/context/<key>/=stream`.
 
